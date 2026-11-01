@@ -6,6 +6,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import type { TradeBalanceResponse } from "@shared/trade-balance";
 import { axisTicks, lastPointLabel, proxySuffix, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
@@ -23,6 +24,8 @@ interface TrendPoint {
   zScore: number;
   /** #245: Proxy-Symbol bei fortgeschriebenen Punkten */
   proxy?: string;
+  /** F1-74: „etf“, wenn der Punkt aus einem ETF-Kurs geschätzt ist (EU/CN) */
+  proxyKind?: "etf";
 }
 
 interface BuffettPayload {
@@ -31,6 +34,45 @@ interface BuffettPayload {
   note: string;
   latest: TrendPoint | null;
   points: TrendPoint[];
+  /** F1-31: gesetzt, wenn der Zähler aus FRED (Quartalswerte) statt aus dem Wilshire 5000 kommt. */
+  fallback?: { source: string; reason: string; frequency: "quarterly"; asOf: string | null } | null;
+  /** F1-71/F1-74: nur EU/CN – Schätzung ab der letzten Weltbank-Quote (Anker) mit Index- oder ETF-Kurs. */
+  benchmark?: {
+    symbol: string; name: string; kind: "index" | "etf"; currency: "EUR" | "USD"; estimate: true;
+    anchorYear: number; anchorDate: string; anchorQuote: number; gdpSeries: string; gdpAsOf: string; skipped: string[];
+  } | null;
+  benchmarkUnavailable?: string | null;
+}
+
+function pctDe(v: number): string {
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1).replace(".", ",")} %`;
+}
+
+function monthDe(iso: string): string {
+  return `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
+}
+
+/**
+ * F1-38: Zeile Handelsbilanz/BIP (eigene Route /api/analyze-recession/trade-balance). US mit Wert / lädt /
+ * US n/a mit Grund / EU, CN n/a (Reihe nur für die USA). Nur Anzeige, kein Score.
+ */
+export function tradeBalanceLine(
+  region: RegionId,
+  state: { data: TradeBalanceResponse | null | undefined; loading: boolean; error: unknown },
+): string {
+  const label = "Handelsbilanz/BIP (FRED BOPGSTB)";
+  if (region !== "US") return `${label}: n/a — Reihe gilt nur für die USA`;
+  if (state.loading) return `${label}: wird geladen …`;
+  const t = state.data?.value;
+  if (!t) return `${label}: n/a — ${state.data?.reason ?? (state.error ? errorReason(state.error) : "keine Daten")}`;
+  const ago = t.pctYearAgo != null && t.asOfYearAgo ? ` · Vorjahr ${pctDe(t.pctYearAgo)} (bis ${monthDe(t.asOfYearAgo)})` : " · Vorjahr n/a";
+  return `${label}: ${pctDe(t.pct)} — 12 Monate ${monthDe(t.from)} bis ${monthDe(t.asOf)}, ${t.ttmBn.toFixed(0).replace("-", "−")} Mrd. $ ÷ BIP ${t.gdpBn.toFixed(0)} Mrd. $ (Quartal ab ${t.gdpDate})${ago} · nur Anzeige, kein Score`;
+}
+
+/** F1-34: Grund aus dem 502-Body sichtbar machen, nicht nur im eingeklappten Detail. */
+function errorReason(error: unknown): string {
+  const message = String((error as { message?: unknown } | null)?.message ?? "").trim();
+  return message || "Datenquelle nicht erreichbar";
 }
 
 const REGIONS: { id: RegionId; name: string }[] = [
@@ -73,11 +115,12 @@ function sliceWindow(points: TrendPoint[], range: RangeId): TrendPoint[] {
   return points.filter(point => Date.parse(`${point.date}T00:00:00Z`) >= start);
 }
 
-function yDomain(rows: TrendPoint[], range: RangeId): [number, number] {
+function yDomain(rows: TrendPoint[], range: RangeId, fallback = false): [number, number] {
   const ratios = rows.map(row => row.ratio);
   const maxRatio = Math.max(...ratios);
   const minRatio = Math.min(...ratios);
-  if (range === "Max" && maxRatio >= 180) return [0, 250];
+  // F1-31: nur beim FRED-Ersatz (Financial Accounts, über 250 %) die Obergrenze in 50er-Schritten erweitern; Wilshire-Achse unverändert.
+  if (range === "Max" && maxRatio >= 180) return [0, fallback ? Math.max(250, Math.ceil(maxRatio / 50) * 50) : 250];
   const near = rows
     .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2])
     .filter(value => value >= minRatio - 25 && value <= maxRatio + 25);
@@ -90,7 +133,9 @@ function yDomain(rows: TrendPoint[], range: RangeId): [number, number] {
 }
 
 function yTicksFor(domain: [number, number], range: RangeId): number[] {
-  if (range === "Max" && domain[0] === 0 && domain[1] === 250) return [0, 50, 100, 150, 200, 250];
+  if (range === "Max" && domain[0] === 0 && domain[1] >= 250 && domain[1] % 50 === 0) {
+    return Array.from({ length: domain[1] / 50 + 1 }, (_, i) => i * 50);
+  }
   const span = domain[1] - domain[0];
   const step = span <= 40 ? 5 : span <= 90 ? 10 : span <= 180 ? 20 : 50;
   const ticks: number[] = [];
@@ -259,7 +304,7 @@ function ChartOverlay(props: {
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
             <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}{" "}</text>
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? (last.proxyKind === "etf" ? ` (ETF-Proxy ${last.proxy})` : ` (via ${last.proxy})`) : ""}{" "}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
             <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}{" "}</text>
           </g>
@@ -305,6 +350,18 @@ export function BuffettRatioPanel() {
     },
   });
 
+  // F1-38: Handelsbilanz/BIP nur für US laden (eigene Route, Buffett-Antwort unverändert).
+  const tradeQuery = useQuery({
+    queryKey: ["recession-trade-balance"],
+    enabled: region === "US",
+    staleTime: 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch("/api/analyze-recession/trade-balance");
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return await res.json() as TradeBalanceResponse;
+    },
+  });
+
   const all = query.data?.points ?? [];
 
   // PR 3 (Chat-Kontext): letzter angezeigter Punkt aus der bestehenden Query — keine neue Abfrage.
@@ -317,14 +374,15 @@ export function BuffettRatioPanel() {
     _auffaelligkeiten: [
       bl && bl.zScore >= 2 ? "Bewertung ≥ +2σ über dem Trend" : bl && bl.zScore >= 1 ? "Bewertung ≥ +1σ über dem Trend" : "",
       bl && bl.zScore <= -1 ? "Bewertung ≤ −1σ unter dem Trend" : "",
-      bl?.proxy ? `letzter Punkt fortgeschrieben via ${bl.proxy}` : "",
+      bl?.proxy ? (bl.proxyKind === "etf" ? `Schätzung über ETF-Proxy ${bl.proxy}` : `letzter Punkt fortgeschrieben via ${bl.proxy}`) : "",
+      query.data.benchmark ? `Schätzung ab Anker ${query.data.benchmark.anchorDate}` : "",
     ].filter(Boolean).join("; ") || null,
   } : null);
   const chart = sliceWindow(all, range).map(point => ({
     ...point,
     t: Date.parse(`${point.date}T00:00:00Z`),
   }));
-  const domain = chart.length > 0 ? yDomain(chart, range) : [0, 250] as [number, number];
+  const domain = chart.length > 0 ? yDomain(chart, range, !!query.data?.fallback) : [0, 250] as [number, number];
   const ticks = axisTicks(chart, range, wide);
   const yTicks = yTicksFor(domain, range);
 
@@ -373,6 +431,43 @@ export function BuffettRatioPanel() {
           retrying={query.isFetching}
           testId="text-buffett-error"
         />
+      )}
+      {query.error && !query.data && (
+        <p className="text-xs text-muted-foreground" data-testid="text-buffett-error-reason">
+          n/a — {errorReason(query.error)}
+        </p>
+      )}
+      {query.data?.fallback && (
+        <p
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300"
+          data-testid="text-buffett-fallback"
+        >
+          Ersatzquelle: {query.data.fallback.source}
+          {query.data.fallback.asOf ? `, letztes Quartal ${longDate(query.data.fallback.asOf)}` : ""}.
+          {" "}Wilshire 5000 nicht verfügbar ({query.data.fallback.reason}). Niveau nicht mit der Wilshire-Linie vergleichbar.
+        </p>
+      )}
+
+      {query.data?.benchmark && (
+        <p className="flex flex-wrap items-center gap-1.5 text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-benchmark">
+          {query.data.benchmark.kind === "etf" && (
+            <span
+              className="rounded border border-violet-500/50 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300"
+              data-testid="badge-buffett-etf-proxy"
+            >
+              ETF-Proxy
+            </span>
+          )}
+          <span>
+            Schätzung ab {longDate(query.data.benchmark.anchorDate)} über {query.data.benchmark.name} ({query.data.benchmark.symbol}),
+            geeicht auf die Weltbank-Quote {query.data.benchmark.anchorYear} ({query.data.benchmark.anchorQuote.toFixed(1).replace(".", ",")} %).
+          </span>
+        </p>
+      )}
+      {query.data?.benchmarkUnavailable && (
+        <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-benchmark-unavailable">
+          Benchmark-Schätzung n/a — {query.data.benchmarkUnavailable}
+        </p>
       )}
 
       {query.data && (
@@ -442,6 +537,9 @@ export function BuffettRatioPanel() {
               In diesem Fenster liegt kein Verlauf.
             </p>
           )}
+          <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-trade-balance">
+            {tradeBalanceLine(region, { data: tradeQuery.data, loading: tradeQuery.isLoading, error: tradeQuery.error })}
+          </p>
           <p className="text-[10px] text-muted-foreground leading-relaxed">{query.data.note}</p>
         </>
       )}

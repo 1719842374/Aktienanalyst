@@ -38,7 +38,10 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
+  // Follow-up #271: Server liefert ohne Konzernumsatz companyDataMissing='no-revenue' und null statt 0/Default.
+  // companyNa deckt beides ab (Yahoo-Flag oder Server-Flag/null), damit Altdaten und neue Payloads gleich aussehen.
   const yahooTamNa = isYahooOnly(data);
+  const companyNa = yahooTamNa || data.tamAnalysis?.companyDataMissing === 'no-revenue' || (data.tamAnalysis != null && data.tamAnalysis.companyGrowth == null);
 
   // Discount panel shows Forward P/E values → base decision on fwdPEPremium
   const isDiscount = fwdPEValid && fwdPEPremium < 0;
@@ -212,7 +215,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
             {metrics.map((m, i) => {
               const isGrowthRow = 'isGrowth' in m && m.isGrowth;
               // For valuation metrics with negative stock value (loss-making): premium meaningless
-              const stockInvalid = isGrowthRow ? yahooTamNa : m.stock <= 0;
+              const stockInvalid = isGrowthRow ? companyNa : m.stock <= 0;
               const premiumColor = isGrowthRow
                 ? (m.premium >= 0 ? 'text-emerald-500' : 'text-red-500')
                 : (m.premium > 0 ? 'text-amber-500' : 'text-emerald-500');
@@ -250,14 +253,14 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={yahooTamNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
             <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
           </div>
         </div>
       </div>
 
       {/* TAM Analysis */}
-      {tam && (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0)) && (
+      {tam && (tam.companyDataMissing === 'no-revenue' || (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0))) && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
             <Globe className="w-3 h-3" />
@@ -266,7 +269,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
           {/* A1 Qualitaetstor: bei quality==='unreliable' (Coverage < 70% oder < 2
               unterschiedliche TAM-Labels) zeigen wir KEINE falsche Konzernzahl
               mehr (z.B. den $896B-Bug), sondern einen erklaerenden Banner. */}
-          {tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined ? (
+          {tam.companyDataMissing !== 'no-revenue' && (tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined) ? (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5 mb-3 text-[10.5px] text-amber-600 dark:text-amber-400 leading-relaxed">
               Segment-TAM nicht belastbar genug fuer eine Gesamtkennzahl
               {typeof tam.coveragePct === 'number' ? ` (nur ${formatNumber(tam.coveragePct, 0)}% des Umsatzes zuordenbar` : ''}
@@ -277,7 +280,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{yahooTamNa ? 'n/a' : <>${formatNumber(tam.tamTotal, 0)}B</>}</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.tamTotal, 0)}B</>}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -287,8 +290,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
-                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${yahooTamNa ? 'text-muted-foreground' : tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {yahooTamNa ? 'n/a' : <>{tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%</>}
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${companyNa ? 'text-muted-foreground' : companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
               </div>
@@ -299,8 +302,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     <span title="Mindestens ein Segment-Marktanteil > 25% — Wert mit Vorsicht interpretieren" className="text-amber-500">⚠</span>
                   )}
                 </div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{yahooTamNa || tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
-                <div className="text-[9px] text-muted-foreground mt-0.5">{yahooTamNa ? 'n/a' : <>${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</>}</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">{companyNa || tam.companyRevenue == null || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</>}</div>
               </div>
             </div>
           )}
@@ -465,7 +468,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                   {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                   <span className="font-medium">
                     Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
-                    {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
+                    {' '}({companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>} vs. {formatNumber(tam.tamCAGR, 1)}%)
                   </span>
                 </div>
               ) : (
@@ -484,7 +487,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     </span>
                   </span>
                   <span className="text-muted-foreground/60">
-                    (vs. Revenue Growth {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                    (vs. Revenue Growth {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                     {typeof tam.segmentGrowthCoveragePct === 'number' && tam.segmentGrowthCoveragePct < 99.5
                       ? `, Abdeckung ${formatNumber(tam.segmentGrowthCoveragePct, 0)}% des Umsatzes`
                       : ''})
@@ -497,8 +500,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                belastbar sind (Pfad A liefert quality:'weak', aber tamCAGR ist dort
                immer eine Zahl, nie null; Guard bleibt trotzdem defensiv).
                Yahoo-only: kein Umsatz → kein Wachstumsvergleich (n/a statt „Wächst X Pkt. langsamer“). */
-            yahooTamNa ? (
-              <div className="text-[10px] text-muted-foreground/70 italic" data-testid="s9-growth-vs-sector-na">Wachstum Unternehmen vs. Branche: n/a (Yahoo-Daten)</div>
+            companyNa ? (
+              <div className="text-[10px] text-muted-foreground/70 italic" data-testid="s9-growth-vs-sector-na">Wachstum Unternehmen vs. Branche: n/a ({yahooTamNa ? 'Yahoo-Daten' : 'kein Umsatz'})</div>
             ) : tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
             <div className="space-y-1.5">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
@@ -507,11 +510,11 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                 <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
                   <div
                     className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
-                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
                   />
                 </div>
-                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -530,8 +533,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                 {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                 <span className="font-medium">
                   {tam.outperforming
-                    ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
-                    : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche`
+                    ? `Wächst ${formatNumber(companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
+                    : `Wächst ${formatNumber(tam.tamCAGR - companyGrowth, 1)} Pkt. langsamer als die Branche`
                   }
                 </span>
               </div>

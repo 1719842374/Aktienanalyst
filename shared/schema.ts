@@ -61,8 +61,8 @@ export interface TAMAnalysis {
   tamTotal: number | null; // Weighted total TAM in $B — null wenn quality==='unreliable' oder coveragePct<=0
   tamLabel: string; // Primary TAM label
   tamCAGR: number | null; // Weighted average industry CAGR % — null wenn tamTotal null ist
-  companyGrowth: number; // Company revenue growth %
-  companyRevenue: number; // Company revenue in $B
+  companyGrowth: number | null; // Company revenue growth % — null wenn kein Konzernumsatz (companyDataMissing)
+  companyRevenue: number | null; // Company revenue in $B — null wenn kein Konzernumsatz
   marketShare: number | null; // Company share of weighted TAM in % — null wenn tamTotal null ist
   tamSource: string; // Source description
   outperforming: boolean | null; // Company growing faster than weighted TAM CAGR? null wenn tamCAGR null ist
@@ -79,6 +79,9 @@ export interface TAMAnalysis {
   coveragePct?: number;
   /** A1: mindestens ein Segment hat marketShare > TAM_SHARE_WARN (25%). */
   shareWarning?: boolean;
+  /** Follow-up #271: 'no-revenue' = kein Konzernumsatz (z.B. Yahoo-only). tamTotal, companyGrowth, companyRevenue,
+   *  marketShare, outperforming sind dann null (n/a), nie 0/Sektor-Default. */
+  companyDataMissing?: 'no-revenue';
 }
 
 export interface PeerCompany {
@@ -109,6 +112,9 @@ export interface PeerCompany {
   industry?: string | null;
   /** wie industry, FMP-Profil-Sektor. */
   sector?: string | null;
+  /** Peer-Variante A: Forward-KGV (Kurs / EPS-Konsens nächstes GJ, shared/peer-forward-pe.ts). null = nicht verfügbar
+   *  oder Währung nicht sicher → Ansicht fällt auf pe (trailing) zurück. Nur Ansicht/Filter, nicht score-wirksam. */
+  forwardPe?: number | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';
@@ -650,6 +656,14 @@ export interface StockAnalysis {
   // NEW: Currency conversion info (for non-USD reporting companies)
   currencyInfo?: CurrencyInfo;
 
+  /** FMP-ADR (#265 v2): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das
+   *  US-/ADR-Symbol bekommt (SAP.DE→SAP, VOW3.DE→VWAPY, Rückfall VWAGY = Proxy Stammaktie). Kurs und Chart vom
+   *  lokalen Listing. Fehlt bei allen anderen Analysen. Shape: server/fmp-adr-map.ts AdrSourceInfo. */
+  adrSource?: {
+    fmpSymbol: string; sharesPerAdr: number; proxy: boolean; impliedSharesPerAdr: number;
+    ratioDeviationPct: number; mcapDeviationPct: number; perShareUnit: "adr" | "ordinary"; note: string;
+  };
+
   // NEW: PESTEL analysis
   pestelAnalysis?: PESTELAnalysis;
 
@@ -681,6 +695,10 @@ export interface StockAnalysis {
   thesisStrengthScore?: number | null;
   /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
   impliedGStar?: number | null; // null bei Yahoo-Daten (C1, #252): keine Bewertung
+  /** Server-FCF-DCF je Aktie; null = n/a (Yahoo-Daten oder nicht berechenbar, nie 0 als Ersatz). */
+  dcfFairValue?: number | null;
+  /** #326: Grund für dcfFairValue = null; nur gesetzt bei negativem FCF-TTM. */
+  dcfNaReason?: "negativer FCF";
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
   /** Datenquelle der Analyse. 'yahoo' = C1 (#252): FMP 402, Yahoo-Fallback ohne Statements →

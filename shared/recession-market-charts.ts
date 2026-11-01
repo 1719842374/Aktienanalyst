@@ -669,6 +669,8 @@ export const marketChartSchema = z.object({
   bandsAnalog: z.boolean(),
   volYMax: z.literal(90),
   volNote: z.string().nullable(),
+  /** F1-66: real source of the VIX series ("FRED VIXCLS" / "Yahoo ^VIX"), null = both empty; absent otherwise. */
+  volSource: z.string().nullable().optional(),
   ohlcv: z.array(chartBarSchema),
   vol: z.array(z.object({ date: z.string(), value: z.number() })),
   marks: z.array(z.object({ date: z.string(), value: z.number() })),

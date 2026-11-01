@@ -1,4 +1,4 @@
-import type { ConflictMatrix, ConflictSignal } from "../../lib/conflictMatrix";
+import type { ConflictMatrixOf, ConflictSignal } from "../../lib/conflictMatrix";
 
 const STYLE: Record<ConflictSignal, string> = {
   positiv: "bg-emerald-500/10 border-emerald-500/30 text-emerald-500",
@@ -8,8 +8,10 @@ const STYLE: Record<ConflictSignal, string> = {
 };
 const ICON: Record<ConflictSignal, string> = { positiv: "▲", neutral: "●", negativ: "▼", "n/a": "–" };
 
-/** Konfliktmatrix above the Fazit. Display only; the rating below is unchanged. */
-export function ConflictMatrixPanel({ matrix }: { matrix: ConflictMatrix }) {
+export const CONFLICT_MATRIX_NOTE = "Nur Darstellung: fünf Dimensionen nebeneinander, Divergenz explizit. Rating und Score im Fazit unverändert. n/a zählt nicht.";
+
+/** Konfliktmatrix above the Fazit. Display only; the rating below is unchanged. `note` defaults to the stock text. */
+export function ConflictMatrixPanel({ matrix, note = CONFLICT_MATRIX_NOTE }: { matrix: ConflictMatrixOf; note?: string }) {
   return (
     <div className="rounded-lg border border-border/60 p-3 space-y-2" data-testid="conflict-matrix">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -31,7 +33,7 @@ export function ConflictMatrixPanel({ matrix }: { matrix: ConflictMatrix }) {
         ))}
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Nur Darstellung: fünf Dimensionen nebeneinander, Divergenz explizit. Rating und Score im Fazit unverändert. n/a zählt nicht.
+        {note}
       </p>
     </div>
   );

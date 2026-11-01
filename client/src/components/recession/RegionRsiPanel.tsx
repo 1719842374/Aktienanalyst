@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiErrorFromResponse } from "@/lib/apiError";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { usePublishChatSection } from "@/lib/chatSectionData";
+import { VIX_SOURCE_NA } from "@/lib/vixSourceLabel";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, ComposedChart, Bar, Cell,
@@ -57,6 +58,8 @@ interface MarketPayload {
   volLatest?: number | null;
   volBand?: string;
   volNote?: string | null;
+  /** F1-66: real source of the VIX series ("FRED VIXCLS" / "Yahoo ^VIX"), null = both empty. */
+  volSource?: string | null;
   vol?: VolPoint[];
 }
 
@@ -108,7 +111,9 @@ function divDe(d: NonNullable<MarketPayload["divergence"]>) {
 function volTitle(data: MarketPayload) {
   if (data.volKind === "realized") return "Realisierte Vol 20T (ASHR), %";
   if (data.region === "EU") return "VSTOXX (analog), Index";
-  return "VIX (FRED VIXCLS), Index";
+  // F1-66: name the source that really delivered; null = FRED and Yahoo empty (reason in volNote).
+  if (data.volSource === null) return `${VIX_SOURCE_NA}, Index`;
+  return `VIX (${data.volSource ?? "FRED VIXCLS"}), Index`;
 }
 
 /** Recharts default tooltip is an opaque white box. Theme tokens follow light and dark. */
@@ -237,7 +242,8 @@ export function RegionRsiPanel() {
           <div>
             <p className="text-[11px] text-muted-foreground mb-1">
               {volTitle(q.data)} · Y linear 0–{yMax} · Fenster {q.data.window}
-              {q.data.volId ? ` · ${q.data.volId}` : ""}
+              {/* F1-66: source already named in volTitle for US (VIX); suffix only for EU/AS volId. */}
+              {q.data.volSource !== undefined ? "" : q.data.volId ? ` · ${q.data.volId}` : ""}
             </p>
             {q.data.volNote && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 mb-1">{q.data.volNote}</p>
@@ -252,7 +258,7 @@ export function RegionRsiPanel() {
                     <Tooltip
                       contentStyle={chartTooltipStyle}
                       labelStyle={chartTooltipLabelStyle}
-                      formatter={(v: number) => [Number(v).toFixed(2), q.data?.volId || "Vol"]}
+                      formatter={(v: number) => [Number(v).toFixed(2), q.data?.volSource || q.data?.volId || "Vol"]}
                     />
                     <ReferenceLine y={40} stroke="#ef4444" strokeDasharray="4 4" />
                     <ReferenceLine y={30} stroke="#f97316" strokeDasharray="4 4" />
