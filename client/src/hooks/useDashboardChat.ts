@@ -48,5 +48,6 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
   }, [context, sectionId, entries, pending]);
 
   const reset = useCallback(() => { reqRef.current++; setEntries([]); setPending(false); setContextTrimmed(undefined); }, []);
-  return { entries, pending, send, reset, contextTrimmed };
+  const replace = useCallback((next: ChatEntry[]) => { reqRef.current++; setEntries(next); setPending(false); setContextTrimmed(undefined); }, []);
+  return { entries, pending, send, reset, replace, contextTrimmed };
 }

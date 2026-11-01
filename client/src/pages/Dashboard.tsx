@@ -53,6 +53,7 @@ import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import { PodcastTranscript } from "@/components/podcast/PodcastTranscript";
 import { visibleTopOf } from "@/lib/activeSection";
 import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
@@ -718,6 +719,7 @@ export default function Dashboard() {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
               }} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
+              <PodcastTranscript symbol={data.ticker} />
               <div className="pb-8" />
             </div>
           ) : (
@@ -755,7 +757,7 @@ export default function Dashboard() {
         sections={chatSections}
         getActiveSectionId={getActiveSectionId}
         onJumpToSection={scrollToSection}
-        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
+        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks."]}
       />
     </div>
   );
