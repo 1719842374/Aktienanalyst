@@ -152,6 +152,11 @@ export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
   }
 }
 
+/** GET /stable/earnings-surprises. Wirft, damit der Aufrufer auf /earnings ausweichen kann. */
+export async function fmpEarningsSurprises(symbol: string): Promise<unknown> {
+  return fmpFetch(`/earnings-surprises`, { symbol: symbol.toUpperCase() });
+}
+
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
   const params: Record<string, string> = { symbol };
   if (from) params.from = from;
