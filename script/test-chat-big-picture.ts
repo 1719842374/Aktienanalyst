@@ -24,6 +24,7 @@ import { clampChatWindow, parseChatWindow } from "../client/src/lib/chatWindowGe
 
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
+process.exitCode = 1;
 
 function mainPrompt(ctx: ChatRequestBody["context"]): string {
   const body: ChatRequestBody = {
@@ -237,9 +238,12 @@ async function main() {
   ok("Ladezustand nennt den Grund; andere Dashboards ohne Brief zeigen ihn nicht");
 
   console.log(`chat big picture: ${n} checks ok`);
+  process.exitCode = 0;
 }
 
-main().catch((err) => {
+main().then(() => {
+  process.exit(process.exitCode ?? 1);
+}).catch((err) => {
   console.error(err);
   process.exit(1);
 });

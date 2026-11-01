@@ -517,4 +517,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 18. GET /api/chat/earnings-brief/:symbol — letzter Earnings Call für den KI-Chat. Kein Score.
   const { registerChatEarningsRoute } = await import("./chat-earnings-route");
   registerChatEarningsRoute(app);
+
+  // 19. Chat-Verlauf im Prozess-Speicher, pro Session. Kein Supabase, kein Score.
+  const { registerChatHistoryRoute } = await import("./chat-history-route");
+  registerChatHistoryRoute(app);
 }
