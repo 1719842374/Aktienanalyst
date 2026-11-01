@@ -1,5 +1,6 @@
 import type { Express } from "express";
-import { execSync } from "child_process";
+import { execFile, execSync } from "child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +39,8 @@ import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlot
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
 import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
+
+const execFileAsync = promisify(execFile);
 
 // ============================================================
 // Generic Data Helpers
@@ -517,10 +520,6 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 // A miss inside 48h is scored with the last print. Older than that, the slot closes.
 const GOOGLE_TRENDS_ATTEMPT_TIMEOUT_MS = 12_000;
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function parseRetryAfterMs(headers: string, now: number): number | null {
   const match = headers.match(/^retry-after:\s*(.+)$/im);
   if (!match) return null;
@@ -532,40 +531,45 @@ function parseRetryAfterMs(headers: string, now: number): number | null {
 }
 
 /** One SerpApi call with status. curl failure (timeout) is status null, not a print. */
-function requestSerpApi(url: string, timeoutMs: number): SerpApiAttempt {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "trends-"));
+async function requestSerpApi(url: string, timeoutMs: number): Promise<SerpApiAttempt> {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "trends-"));
   const bodyPath = path.join(dir, "body");
   const hdrPath = path.join(dir, "hdr");
   try {
     const seconds = Math.max(1, Math.floor(timeoutMs / 1000));
     let code = "";
     try {
-      code = execSync(
-        `curl -sS -L --max-time ${seconds} -o ${shellQuote(bodyPath)} -D ${shellQuote(hdrPath)} -w "%{http_code}" ${shellQuote(url)}`,
-        { encoding: "utf-8", timeout: timeoutMs + 5000 },
-      ).trim();
+      const { stdout } = await execFileAsync("curl", [
+        "-sS", "-L",
+        "--max-time", String(seconds),
+        "-o", bodyPath,
+        "-D", hdrPath,
+        "-w", "%{http_code}",
+        url,
+      ], { encoding: "utf-8", timeout: timeoutMs + 5000 });
+      code = String(stdout).trim();
     } catch {
       return { status: null, body: "", retryAfterMs: null };
     }
     const status = Number(code);
-    const body = fs.existsSync(bodyPath) ? fs.readFileSync(bodyPath, "utf8") : "";
-    const hdr = fs.existsSync(hdrPath) ? fs.readFileSync(hdrPath, "utf8") : "";
+    const body = await fs.promises.readFile(bodyPath, "utf8").catch(() => "");
+    const hdr = await fs.promises.readFile(hdrPath, "utf8").catch(() => "");
     return {
       status: Number.isFinite(status) ? status : null,
       body,
       retryAfterMs: parseRetryAfterMs(hdr, Date.now()),
     };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    await fs.promises.rm(dir, { recursive: true, force: true });
   }
 }
 
-function sleepMs(ms: number): void {
-  if (!(ms > 0)) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function sleepMs(ms: number): Promise<void> {
+  if (!(ms > 0)) return Promise.resolve();
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function scoreGoogleTrends(): IndicatorResult {
+async function scoreGoogleTrends(): Promise<IndicatorResult> {
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
   if (!serpKey) {
     console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
@@ -588,7 +592,7 @@ function scoreGoogleTrends(): IndicatorResult {
   let missStatus: number | null = null;
   try {
     const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const outcome = collectTrendsFetch({
+    const outcome = await collectTrendsFetch({
       sleep: sleepMs,
       call: () => requestSerpApi(url, GOOGLE_TRENDS_ATTEMPT_TIMEOUT_MS),
     });

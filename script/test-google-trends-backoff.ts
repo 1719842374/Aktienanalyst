@@ -41,7 +41,7 @@ console.log("\n=== Backoff nur bei 429, benannte Parameter ===");
 
   const sleeps: number[] = [];
   const calls: number[] = [];
-  const recovered = cache.collectTrendsFetch({
+  const recovered = await cache.collectTrendsFetch({
     sleep: (ms: number) => { sleeps.push(ms); },
     call: () => {
       calls.push(1);
@@ -51,20 +51,37 @@ console.log("\n=== Backoff nur bei 429, benannte Parameter ===");
   });
   check("429 dann 200: ein Warten, der Körper des zweiten Versuchs", recovered.ok === true && recovered.attempts === 2 && recovered.body === timeline(62) && sleeps.length === 1 && sleeps[0] === 50, JSON.stringify({ recovered, sleeps }));
 
+  let loopRan = false;
+  const yielded = await cache.collectTrendsFetch({
+    sleep: (ms: number) => new Promise<void>((resolve) => {
+      setTimeout(() => { loopRan = true; }, 0);
+      setTimeout(resolve, ms);
+    }),
+    call: (() => {
+      let n = 0;
+      return () => {
+        n += 1;
+        if (n === 1) return { status: 429 as const, body: "", retryAfterMs: 15 };
+        return { status: 200 as const, body: timeline(62), retryAfterMs: null };
+      };
+    })(),
+  });
+  check("die Pause gibt den Event-Loop frei", yielded.ok === true && loopRan === true, `ok=${yielded.ok} loop=${loopRan}`);
+
   const burned: number[] = [];
-  const empty = cache.collectTrendsFetch({
+  const empty = await cache.collectTrendsFetch({
     sleep: () => { burned.push(1); },
     call: () => ({ status: 200, body: "{\"interest_over_time\":{\"timeline_data\":[]}}", retryAfterMs: null }),
   });
   check("leere Timeline ist ein Fehlversuch ohne weiteren Abruf", empty.ok === false && empty.kind === "empty" && empty.attempts === 1 && burned.length === 0 && empty.body == null);
 
-  const limited = cache.collectTrendsFetch({
+  const limited = await cache.collectTrendsFetch({
     sleep: () => {},
     call: () => ({ status: 429, body: "", retryAfterMs: null }),
   });
   check("dauerhaft 429 stoppt nach den benannten Versuchen", limited.ok === false && limited.kind === "rate_limit" && limited.attempts === cache.GOOGLE_TRENDS_BACKOFF.maxAttempts && limited.delaysMs.length === cache.GOOGLE_TRENDS_BACKOFF.maxAttempts - 1);
 
-  const timed = cache.collectTrendsFetch({
+  const timed = await cache.collectTrendsFetch({
     sleep: () => { burned.push(1); },
     call: () => ({ status: null, body: "", retryAfterMs: null }),
   });
@@ -99,8 +116,11 @@ console.log("\n=== Pipeline: 429 fällt nicht auf Score 0 ===");
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   const scoreFn = server.slice(server.indexOf("function scoreGoogleTrends"), server.indexOf("function scoreCrowdLeg"));
   check("frischer Cache vor SerpApi", scoreFn.indexOf("freshGoogleTrends") !== -1 && scoreFn.indexOf("freshGoogleTrends") < scoreFn.indexOf("serpapi.com/search.json"));
-  check("Backoff-Helfer sitzt vor accept", scoreFn.indexOf("collectTrendsFetch") !== -1 && scoreFn.indexOf("collectTrendsFetch") < scoreFn.indexOf("acceptGoogleTrendsFetch"));
+  check("Backoff-Helfer sitzt vor accept", scoreFn.indexOf("collectTrendsFetch") !== -1 && scoreFn.indexOf("await collectTrendsFetch") < scoreFn.indexOf("acceptGoogleTrendsFetch"));
   check("kein pytrends und kein Redis", !scoreFn.includes("pytrends") && !scoreFn.includes("redis") && !scoreFn.includes("REDIS"));
+  const trendsPath = server.slice(server.indexOf("async function requestSerpApi"), server.indexOf("function scoreCrowdLeg"));
+  check("Pause ist setTimeout, nicht Atomics.wait", trendsPath.includes("setTimeout") && !trendsPath.includes("Atomics"));
+  check("SerpApi-curl blockiert nicht über execSync", trendsPath.includes("execFileAsync") && !trendsPath.includes("execSync"));
   const tableSrc = readFileSync(new URL("../client/src/components/recession/recessionDashboardPartsB1.tsx", import.meta.url), "utf8");
   check("375 px bricht den Grund um, 1440 px lässt die Spalte offen", tableSrc.includes("break-words max-w-[11rem] min-[1440px]:max-w-none") && tableSrc.includes("overflow-x-auto"));
   const { readGoogleTrendsOverlay } = await import("../server/recession-trends-route.ts");

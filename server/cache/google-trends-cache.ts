@@ -257,12 +257,12 @@ export function trendsBackoffDelayMs(retryIndex: number, retryAfterMs: number | 
   return exponential;
 }
 
-/** Ruft SerpApi so oft auf, wie der Backoff erlaubt. Der Score wertet das Ergebnis separat. */
-export function collectTrendsFetch(input: {
-  call: () => SerpApiAttempt;
-  sleep: (ms: number) => void;
+/** Ruft SerpApi so oft auf, wie der Backoff erlaubt. Die Pause gibt den Event-Loop frei. Der Score wertet das Ergebnis separat. */
+export async function collectTrendsFetch(input: {
+  call: () => SerpApiAttempt | Promise<SerpApiAttempt>;
+  sleep: (ms: number) => void | Promise<void>;
   maxAttempts?: number;
-}): TrendsFetchOutcome {
+}): Promise<TrendsFetchOutcome> {
   const max = input.maxAttempts ?? GOOGLE_TRENDS_BACKOFF.maxAttempts;
   const delaysMs: number[] = [];
   let kind: GoogleTrendsMissKind = "error";
@@ -270,7 +270,7 @@ export function collectTrendsFetch(input: {
   let attempts = 0;
   for (let i = 0; i < max; i++) {
     attempts = i + 1;
-    const attempt = input.call();
+    const attempt = await input.call();
     const classified = classifySerpApiAttempt(attempt);
     if (classified.ok) {
       return { ok: true, body: attempt.body, kind: null, httpStatus: attempt.status, attempts, delaysMs };
@@ -280,7 +280,7 @@ export function collectTrendsFetch(input: {
     if (kind !== "rate_limit" || i >= max - 1) break;
     const delay = trendsBackoffDelayMs(i, attempt.retryAfterMs);
     delaysMs.push(delay);
-    input.sleep(delay);
+    await input.sleep(delay);
   }
   return { ok: false, body: null, kind, httpStatus, attempts, delaysMs };
 }
