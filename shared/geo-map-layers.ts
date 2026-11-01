@@ -1,10 +1,11 @@
 /**
  * Gold- und Wertschöpfungs-Layer.
  * Der Miner-Layer bleibt in researcher-geo-map-route.ts (Netz aus btc-miner.ts).
- * Kein Score, keine geschätzten Unzen.
+ * Kein Score. Firmen-Unzen werden nicht geschätzt. Länder-Unzen sind die Umrechnung der veröffentlichten Tonnen.
  */
 import type { GeoMapCountry } from "./geo-map";
 import { lookupAliasCodes, type TickerAliasGroup } from "./gold-aisc";
+import { GOLD_PRODUCTION_SOURCE_MISSING, resolveGoldProduction, type GoldMapProductionInput } from "./gold-mine-production";
 
 export const GOLD_LAYER_SYMBOLS = ["NEM", "GOLD", "AEM", "KGC", "WPM", "FNV"] as const;
 
@@ -83,7 +84,7 @@ export interface GoldMapResponse {
   coverage: { withData: number; total: number };
   countries: GoldMapCountry[];
   goldCompanies: GoldMapCompanyRow[];
-  /** Gesetzter Grund, wenn keine Länder-Bubble existiert. */
+  /** Fehlende Quelle, oder der nicht als Bubble gezeichnete Rest des Weltvolumens. */
   note: string | null;
   pending?: boolean;
   _cached?: boolean;
@@ -97,7 +98,6 @@ export interface AiscPoint {
 }
 
 const NO_OZ = "n/a — gold-aisc.json und gold-routes enthalten keine Produktions-Unzen";
-const NO_COUNTRY = "n/a — keine Produktions-Unzen und kein Länderanteil in gold-aisc.json und den Gold-Routen";
 
 function latestAisc(points: readonly AiscPoint[], codes: readonly string[]): { quarter: string; aisc: number } | null {
   const want = new Set(codes.map(code => code.toUpperCase()));
@@ -107,15 +107,22 @@ function latestAisc(points: readonly AiscPoint[], codes: readonly string[]): { q
   return rows[rows.length - 1];
 }
 
+function estimatePhrase(estimated: boolean | null): string {
+  if (estimated === true) return "in der Quelle als Schätzung gekennzeichnet";
+  if (estimated === false) return "in der Quelle nicht als Schätzung gekennzeichnet";
+  return "Schätzkennzeichen in der Quelle nicht gesetzt";
+}
+
 /**
- * Gold-Layer aus bereits gelesenen AISC-Punkten. points === null → Datei nicht lesbar.
- * aliasGroups kommt aus companies[].aliases der AISC-Datei.
- * Länder-Fakten gibt es in dieser Quelle nicht: leere Liste, keine gesetzten Länder.
+ * Gold-Layer aus AISC-Punkten und einer Produktionstabelle.
+ * points === null → AISC-Datei nicht lesbar. production === null → keine Weltproduktion.
+ * Länderanteil = Fördermenge / Weltzeile. Firmen-Unzen bleiben null.
  */
 export function buildGoldMapLayer(
   asOf: string,
   points: readonly AiscPoint[] | null,
   aliasGroups: readonly TickerAliasGroup[] = [],
+  production: GoldMapProductionInput | null = null,
 ): GoldMapResponse {
   const fileMissing = points == null;
   const goldCompanies: GoldMapCompanyRow[] = GOLD_LAYER_SYMBOLS.map(symbol => {
@@ -135,16 +142,28 @@ export function buildGoldMapLayer(
       note,
     };
   });
-  const countries = goldCountriesFromFacts([]);
+  const resolved = production == null ? null : resolveGoldProduction(production.table, production.placements);
+  const countries = goldCountriesFromFacts(resolved && !resolved.unavailable ? resolved.facts : []);
+  const withData = countries.filter(c => c.status === "ok").length;
+  const sourceMissing = production == null || resolved == null || resolved.unavailable;
+  const note = sourceMissing
+    ? (resolved?.note ?? GOLD_PRODUCTION_SOURCE_MISSING)
+    : resolved.note;
+  const source = production == null
+    ? "server/data/gold-aisc.json über loadGoldAiscSeries. USGS-Weltproduktion nicht geladen."
+    : `${production.table.source} (${production.table.sourceUrl}). AISC: server/data/gold-aisc.json über loadGoldAiscSeries.`;
+  const attribution = sourceMissing || resolved == null || resolved.year == null || resolved.worldVolume == null
+    ? "AISC ist ein Firmenwert. Die USGS-Weltproduktion fehlt oder hat kein Weltvolumen, deshalb keine Länder-Bubbles und keine interpolierten Anteile."
+    : `Länderanteil = Fördermenge / Weltvolumen (${resolved.worldVolume} ${resolved.unit}, Jahr ${resolved.year}, ${estimatePhrase(resolved.estimated)}). ${resolved.facts.some(fact => fact.productionOz != null) ? "Unzen = metrische Tonnen × 1.000.000 / 31,1034768." : "Unzen nicht umgerechnet."} AISC bleibt ein Firmenwert ohne Produktions-Unzen.`;
   return {
     layer: "gold",
     asOf,
-    source: "server/data/gold-aisc.json über loadGoldAiscSeries. Ticker-Aliase stehen in der Datei.",
-    attribution: "AISC ist ein Firmenwert. Produktions-Unzen und Länderanteile fehlen in den Gold-Quellen, deshalb keine Länder-Bubbles.",
-    coverage: { withData: countries.filter(c => c.status === "ok").length, total: countries.length },
+    source,
+    attribution,
+    coverage: { withData, total: sourceMissing ? countries.length : withData + resolved.unplacedCount },
     countries,
     goldCompanies,
-    note: countries.length === 0 ? NO_COUNTRY : null,
+    note,
   };
 }
 

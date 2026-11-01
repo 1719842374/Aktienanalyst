@@ -55,7 +55,6 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   const gold = await t.get("?layer=gold");
   assert.equal(gold.status, 200);
   assert.equal(gold.json.layer, "gold");
-  assert.equal(gold.json.coverage.withData, 0);
   const nem = gold.json.goldCompanies.find((c: any) => c.symbol === "NEM");
   assert.equal(typeof nem.aiscUsdPerOz, "number");
   assert.ok(nem.aiscUsdPerOz > 0);
@@ -67,9 +66,33 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(barrick.aiscUsdPerOz, bRows[bRows.length - 1].aisc);
   assert.equal(barrick.productionOz, null);
   assert.doesNotMatch(barrick.note, /nicht als GOLD/);
-  assert.equal(gold.json.countries.length, 0);
-  assert.equal(gold.json.coverage.total, 0);
-  assert.match(gold.json.note, /^n\/a — /);
+  const { metricTonsToTroyOunces } = await import("../shared/gold-mine-production");
+  const production = JSON.parse(readFileSync("server/data/gold-mine-production.json", "utf8"));
+  const yearColumns = [...production.yearColumns].sort((a: any, b: any) => Number(b.year) - Number(a.year));
+  const year = yearColumns[0].year;
+  const world = production.rows.find((row: any) => row.role === "world").tonnes[year];
+  const countryRows = production.rows.filter((row: any) => row.role === "country" && typeof row.tonnes[year] === "number" && row.tonnes[year] > 0);
+  const chinaTonnes = production.rows.find((row: any) => row.iso2 === "CN").tonnes[year];
+  const cn = gold.json.countries.find((c: any) => c.iso2 === "CN");
+  assert.equal(gold.json.countries.length, countryRows.length);
+  assert.equal(gold.json.coverage.withData, countryRows.length);
+  assert.equal(gold.json.coverage.total, countryRows.length);
+  assert.ok(Math.abs(cn.countrySharePct - (chinaTonnes / world) * 100) < 1e-9);
+  assert.ok(Math.abs(cn.productionOz - metricTonsToTroyOunces(chinaTonnes)) < 1e-6);
+  const shareSum = gold.json.countries.reduce((sum: number, c: any) => sum + c.countrySharePct, 0);
+  const countrySum = countryRows.reduce((sum: number, row: any) => sum + row.tonnes[year], 0);
+  assert.ok(Math.abs(shareSum - (countrySum / world) * 100) < 1e-6);
+  assert.ok(gold.json.countries.some((c: any) => c.iso2 === "BF"));
+  assert.ok(gold.json.countries.some((c: any) => c.iso2 === "TZ"));
+  assert.equal(gold.json.countries.some((c: any) => /other/i.test(c.name)), false);
+  assert.match(gold.json.note, /Other Countries/);
+  assert.match(gold.json.note, /kein einzelnes Land/);
+  const accounted = production.rows.filter((row: any) => row.role !== "world").reduce((sum: number, row: any) => sum + (row.tonnes[year] || 0), 0);
+  if (accounted !== world) assert.match(gold.json.note, /nicht auf Länder verteilt/);
+  assert.match(gold.json.attribution, /Weltvolumen/);
+  assert.match(gold.json.source, /USGS/);
+  const au = gold.json.countries.find((c: any) => c.iso2 === "AU");
+  assert.ok(au.lat < 0 && au.lon > 100, `Australien-Mittelpunkt ${au.lat},${au.lon}`);
   const vc = await t.get("?layer=valuechain");
   assert.equal(vc.status, 200);
   assert.equal(vc.json.countries.length, 0);
@@ -126,6 +149,9 @@ assert.match(panel, /sectorLegendShares/);
 assert.match(panel, /geo-legend-/);
 assert.match(panel, /goldCountryHasProduction/);
 assert.match(panel, /geo-gold-na/);
+assert.match(panel, /geo-gold-remainder/);
+assert.match(panel, /Länderanteil am Weltvolumen/);
+assert.match(routeHttp, /loadGoldMapProduction/);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
 assert.equal(Number(pin.VWAGY.overallScore).toFixed(6), "4.735718");
@@ -375,6 +401,78 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   assert.equal(kept[0].iso2, "CA");
   assert.equal(kept[0].productionOz, 1_000_000);
   assert.equal(kept[0].countrySharePct, 12);
+  const { resolveGoldProduction, metricTonsToTroyOunces: toOz } = await import("../shared/gold-mine-production");
+  const { buildGoldMapLayer } = await import("../shared/geo-map-layers");
+  const missing = resolveGoldProduction(null);
+  assert.equal(missing.facts.length, 0);
+  assert.match(missing.note || "", /nicht interpoliert/);
+  const emptyLayer = buildGoldMapLayer("2026-11-01T00:00:00.000Z", [], [], null);
+  assert.equal(emptyLayer.countries.length, 0);
+  assert.match(emptyLayer.note || "", /nicht interpoliert/);
+  const place = (iso2: string, isoNum: string, name: string) => ({ iso2, isoNum, name, lat: 10, lon: 10 });
+  const skipped = resolveGoldProduction({
+    source: "t",
+    sourceUrl: "u",
+    unit: "metric tons",
+    yearColumns: [{ year: "2023", estimated: false }, { year: "2024", estimated: true }],
+    rows: [
+      { country: "China", iso2: "CN", isoNum: "156", role: "country", tonnes: { "2023": 10, "2024": 40 } },
+      { country: "Ghana", iso2: "GH", isoNum: "288", role: "country", tonnes: { "2023": 90, "2024": null } },
+      { country: "World total", role: "world", tonnes: { "2023": 100, "2024": 50 } },
+    ],
+  }, [place("CN", "156", "China"), place("GH", "288", "Ghana")]);
+  assert.equal(skipped.year, "2024");
+  assert.equal(skipped.facts.length, 1);
+  assert.equal(skipped.facts[0].iso2, "CN");
+  assert.ok(Math.abs((skipped.facts[0].countrySharePct ?? 0) - 80) < 1e-9);
+  assert.match(skipped.note || "", /Ghana/);
+  assert.match(skipped.note || "", /nicht aus einem anderen Jahr/);
+  const noWorld = resolveGoldProduction({
+    source: "t",
+    sourceUrl: "u",
+    unit: "metric tons",
+    rows: [{ country: "China", iso2: "CN", role: "country", tonnes: { "2024": 10 } }],
+  }, []);
+  assert.equal(noWorld.unavailable, true);
+  assert.equal(noWorld.facts.length, 0);
+  assert.match(noWorld.note || "", /keine eindeutige Weltzeile/);
+  const dup = resolveGoldProduction({
+    source: "t",
+    sourceUrl: "u",
+    unit: "metric tons",
+    rows: [
+      { country: "China", iso2: "CN", role: "country", tonnes: { "2024": 10 } },
+      { country: "China again", iso2: "CN", role: "country", tonnes: { "2024": 20 } },
+      { country: "World", role: "world", tonnes: { "2024": 100 } },
+    ],
+  }, [place("CN", "156", "China")]);
+  assert.equal(dup.facts.length, 0);
+  assert.match(dup.note || "", /nicht addiert/);
+  const tiny = resolveGoldProduction({
+    source: "t",
+    sourceUrl: "u",
+    unit: "metric tons",
+    rows: [
+      { country: "Mali", iso2: "ML", role: "country", tonnes: { "2024": 1 } },
+      { country: "China", iso2: "CN", role: "country", tonnes: { "2024": 9999 } },
+      { country: "World", role: "world", tonnes: { "2024": 10000 } },
+    ],
+  }, [place("ML", "466", "Mali"), place("CN", "156", "China")]);
+  assert.equal(tiny.facts.length, 2);
+  assert.ok(tiny.facts.some(fact => fact.iso2 === "ML" && Math.abs((fact.countrySharePct ?? 0) - 0.01) < 1e-9));
+  const kg = resolveGoldProduction({
+    source: "t",
+    sourceUrl: "u",
+    unit: "kilograms",
+    rows: [
+      { country: "China", iso2: "CN", role: "country", tonnes: { "2024": 10 } },
+      { country: "World", role: "world", tonnes: { "2024": 100 } },
+    ],
+  }, [place("CN", "156", "China")]);
+  assert.equal(kg.facts[0].productionOz, null);
+  assert.ok(Math.abs((kg.facts[0].countrySharePct ?? 0) - 10) < 1e-9);
+  assert.match(kg.note || "", /nicht in Unzen umgerechnet/);
+  assert.ok(Math.abs(toOz(1) - (1_000_000 / 31.1034768)) < 1e-9);
 }
 
 {
@@ -526,6 +624,30 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     diskResearcherDelete("geo-map-capex__global");
     process.chdir(root);
   }
+}
+
+{
+  const { loadGoldMapProduction } = await import("../server/gold-mine-production");
+  const { feature } = await import("topojson-client");
+  const { geoContains } = await import("d3-geo");
+  const atlas = JSON.parse(readFileSync("node_modules/world-atlas/countries-110m.json", "utf8"));
+  const collection = feature(atlas, atlas.objects.countries);
+  const byId = new Map(collection.features.map((entry: { id?: string | number; geometry: unknown }) => [String(entry.id).padStart(3, "0"), entry]));
+  const loaded = loadGoldMapProduction();
+  assert.ok(loaded);
+  const countryRows = JSON.parse(readFileSync("server/data/gold-mine-production.json", "utf8")).rows.filter((row: { role?: string }) => row.role === "country");
+  assert.equal(loaded.placements.length, countryRows.length);
+  for (const place of loaded.placements) {
+    assert.ok(place.lon >= -180 && place.lon <= 180, `${place.iso2} lon ${place.lon}`);
+    assert.ok(place.lat >= -90 && place.lat <= 90, `${place.iso2} lat ${place.lat}`);
+    const entry = byId.get(place.isoNum.padStart(3, "0"));
+    assert.ok(entry, place.iso2);
+    assert.equal(geoContains(entry, [place.lon, place.lat]), true, `${place.iso2} ${place.lon},${place.lat} liegt nicht im Land`);
+  }
+  const panelSrc = readFileSync("client/src/components/researcher/GeoMapPanel.tsx", "utf8");
+  assert.match(panelSrc, /Quelle: \{goldData\.source\}<\/div>/);
+  assert.doesNotMatch(panelSrc, /goldData\.source\}\./);
+  assert.match(panelSrc, /spreadMarkerOffsets/);
 }
 
 console.log("test-researcher-geo-map: OK");
