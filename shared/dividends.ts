@@ -2,6 +2,7 @@
  * Dividend history for the Section-10 TA overlay (Future_1 §11.1, Mini-PR 7 overlay part).
  * Real cash dividends only. No source → empty list → no overlay. Nothing is substituted.
  */
+import { minorUnitInfo } from "./listing-units";
 
 export type DividendSource = "fmp" | "yahoo" | "none";
 
@@ -22,8 +23,16 @@ export interface DividendHistoryResponse {
 }
 
 const CCY = /^[A-Z]{3}$/;
+/**
+ * ISO-Code, oder der Minor-Unit-Code unverändert (GBp, nicht GBP).
+ * toUpperCase würde Pence als Pfund lesen und den Währungsbruch verdecken.
+ */
 function ccy(v: unknown): string | null {
-  const c = typeof v === "string" ? v.trim().toUpperCase() : "";
+  if (typeof v !== "string") return null;
+  const raw = v.trim();
+  const minor = minorUnitInfo(raw);
+  if (minor) return minor.minor;
+  const c = raw.toUpperCase();
   return CCY.test(c) ? c : null;
 }
 
@@ -302,9 +311,10 @@ export function attractiveYieldBand(axisMax: number): { y1: number; y2: number }
 // ─── F1-17 / F1-18: yield vs own history and peers. Display only, no score. ───
 
 /**
- * Auffällig = Mid-Rank der eigenen TTM-Historie im äußeren Dezil.
- * notableTailPercentile 0.9 → P ≥ 90 oder P ≤ 10. Kein fester Rendite-Prozentwert
- * (Future_1_Work.md Z.313, Philip 01.11.: Schwelle als benannter Perzentil-Parameter).
+ * Auffällig = adaptive Schwelle, kein fester Rendite-Prozentwert (die 4-%-Marke entfällt hier).
+ * notableTailPercentile 0.9 → Rendite am P90 bzw. P10 der eigenen TTM-Historie.
+ * historyWeight / peerWeight: Anteile dieser Rendite und des Peer-Medians an der Schwelle.
+ * Fehlt ein Bein, ist die Schwelle n/a — Grund, der fehlende Median wird nicht als 0 eingesetzt.
  * minSpanPoints 2: unter zwei gültigen TTM-Punkten ist ein Rang nicht definiert.
  * midrankTieWeight 0.5: gleiche Konvention wie shared/sector-attr-band.ts.
  */
@@ -313,6 +323,8 @@ export const DIVIDEND_YIELD_DISPLAY_PARAMS = {
   minSpanPoints: 2,
   midrankTieWeight: 0.5,
   percentScale: 100,
+  historyWeight: 1,
+  peerWeight: 1,
 } as const;
 
 export type DividendYieldDisplayParams = {
@@ -320,6 +332,8 @@ export type DividendYieldDisplayParams = {
   minSpanPoints: number;
   midrankTieWeight: number;
   percentScale: number;
+  historyWeight: number;
+  peerWeight: number;
 };
 
 export type DividendYieldSpan =
@@ -333,6 +347,25 @@ export type DividendYieldSpan =
       min: number;
       max: number;
       n: number;
+      /** Rendite am Perzentil notableTailPercentile (z. B. P90). Eingang der adaptiven Schwelle. */
+      tailHighPct: number;
+      /** Rendite am Perzentil 1 − notableTailPercentile (z. B. P10). */
+      tailLowPct: number;
+      notable: boolean;
+      notableSide: "high" | "low" | null;
+    };
+
+export type DividendAdaptiveThreshold =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      highPct: number;
+      lowPct: number;
+      historyHighPct: number;
+      historyLowPct: number;
+      peerMedianPct: number;
+      historyWeight: number;
+      peerWeight: number;
       notable: boolean;
       notableSide: "high" | "low" | null;
     };
@@ -348,6 +381,18 @@ function finiteYields(values: Array<number | null | undefined>): number[] {
 function medianOf(sorted: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Lineare Interpolation auf der sortierten Stichprobe. p = 0 ist das Minimum, p = 1 das Maximum. */
+function yieldAtPercentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const clamped = Math.min(1, Math.max(0, p));
+  const idx = clamped * (sortedAsc.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedAsc[lo];
+  const w = idx - lo;
+  return sortedAsc[lo] * (1 - w) + sortedAsc[hi] * w;
 }
 
 /** Perzentil, Median, Min, Max der eigenen TTM-Renditen. Der letzte Wert ist die aktuelle Rendite. */
@@ -382,6 +427,8 @@ export function dividendYieldSpanFromValues(
     min: sorted[0],
     max: sorted[sorted.length - 1],
     n: vals.length,
+    tailHighPct: yieldAtPercentile(sorted, high),
+    tailLowPct: yieldAtPercentile(sorted, low),
     notable: notableSide != null,
     notableSide,
   };
@@ -405,7 +452,10 @@ export function dividendYieldSpan(
   if (dividendCurrencyCheck(history.currency, priceCurrency) === "mismatch") {
     return { available: false, reason: `Dividende ${history.currency} ≠ Kurs ${priceCurrency}` };
   }
-  const seriesBars = (bars ?? []).filter(b => typeof b?.date === "string" && Number.isFinite(b.close) && b.close > 0);
+  const seriesBars = (bars ?? [])
+    .filter(b => typeof b?.date === "string" && Number.isFinite(b.close) && b.close > 0)
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   if (seriesBars.length === 0) return { available: false, reason: "keine Kurse für die historische Rendite" };
   const series = dividendOverlaySeries(seriesBars, history.events);
   const vals = series.points.map(p => p.yieldPct);
@@ -433,16 +483,81 @@ export function sectorDividendMedian(pct: number | null | undefined): DividendMe
   return { available: false, reason: "Sektorprofil ohne Dividendenrendite (Damodaran liefert keinen Dividend-Yield-Median)" };
 }
 
-/** Kurzer Hinweis nur bei auffälliger eigener Historie. Sonst null. Kein Score. */
-export function dividendNotableHint(
+const THRESHOLD_EPS = 1e-9;
+
+/**
+ * Schwelle in Rendite-Prozent: gewichtetes Mittel aus der eigenen Perzentil-Rendite und dem Peer-Median.
+ * historyWeight und peerWeight sind die benannten Gewichte. Fehlender Peer-Median → n/a, nicht 0.
+ */
+export function dividendAdaptiveThreshold(
   span: DividendYieldSpan,
+  peer: DividendMedianResult,
   params: DividendYieldDisplayParams = DIVIDEND_YIELD_DISPLAY_PARAMS,
-): string | null {
-  if (!span.available || !span.notable || span.notableSide == null) return null;
+): DividendAdaptiveThreshold {
+  if (!span.available) return { available: false, reason: span.reason };
+  if (!peer.available) return { available: false, reason: peer.reason };
+  const wH = params.historyWeight;
+  const wP = params.peerWeight;
+  if (!Number.isFinite(wH) || !Number.isFinite(wP) || wH < 0 || wP < 0 || wH + wP <= 0) {
+    return { available: false, reason: "Gewichte der adaptiven Schwelle fehlen" };
+  }
+  const highPct = (wH * span.tailHighPct + wP * peer.medianPct) / (wH + wP);
+  const lowPct = (wH * span.tailLowPct + wP * peer.medianPct) / (wH + wP);
+  const notableSide = span.currentPct + THRESHOLD_EPS >= highPct
+    ? "high" as const
+    : span.currentPct - THRESHOLD_EPS <= lowPct
+      ? "low" as const
+      : null;
+  return {
+    available: true,
+    highPct,
+    lowPct,
+    historyHighPct: span.tailHighPct,
+    historyLowPct: span.tailLowPct,
+    peerMedianPct: peer.medianPct,
+    historyWeight: wH,
+    peerWeight: wP,
+    notable: notableSide != null,
+    notableSide,
+  };
+}
+
+function historyTailPhrase(span: Extract<DividendYieldSpan, { available: true }>, params: DividendYieldDisplayParams): string {
   const hi = Math.round(params.notableTailPercentile * params.percentScale);
   const lo = params.percentScale - hi;
   const where = span.notableSide === "high"
     ? `über P${hi} der eigenen Historie`
     : `unter P${lo} der eigenen Historie`;
-  return `Dividendenrendite ${span.currentPct.toFixed(2)} % ist auffällig (${where}, Perzentil ${span.percentile.toFixed(0)}). Nur Hinweis, kein Score.`;
+  return `${where}, Perzentil ${span.percentile.toFixed(0)}`;
+}
+
+/**
+ * Kurzer Hinweis, wenn die Rendite auffällig ist. Kein Score.
+ * Mit Peer-Median gilt die adaptive Schwelle. Ohne Peer-Median bleibt der Hinweis auf der eigenen Historie
+ * und nennt den Grund; der fehlende Median wird nicht als 0 in die Schwelle eingesetzt.
+ * Ohne peer-Argument (Aufrufer ohne Peer-Set) bleibt der reine Historien-Hinweis.
+ */
+export function dividendNotableHint(
+  span: DividendYieldSpan,
+  peer?: DividendMedianResult | null,
+  params: DividendYieldDisplayParams = DIVIDEND_YIELD_DISPLAY_PARAMS,
+): string | null {
+  if (!span.available) return null;
+  if (peer == null) {
+    if (!span.notable || span.notableSide == null) return null;
+    return `Dividendenrendite ${span.currentPct.toFixed(2)} % ist auffällig (${historyTailPhrase(span, params)}). Nur Hinweis, kein Score.`;
+  }
+  const threshold = dividendAdaptiveThreshold(span, peer, params);
+  if (threshold.available) {
+    if (!threshold.notable || threshold.notableSide == null) return null;
+    const edge = threshold.notableSide === "high" ? threshold.highPct : threshold.lowPct;
+    const anchor = threshold.notableSide === "high" ? threshold.historyHighPct : threshold.historyLowPct;
+    const hi = Math.round(params.notableTailPercentile * params.percentScale);
+    const lo = params.percentScale - hi;
+    const pLabel = threshold.notableSide === "high" ? `P${hi}` : `P${lo}`;
+    const dir = threshold.notableSide === "high" ? "über" : "unter";
+    return `Dividendenrendite ${span.currentPct.toFixed(2)} % ist auffällig (${dir} der adaptiven Schwelle ${edge.toFixed(2)} %; eigene Historie ${pLabel} ${anchor.toFixed(2)} %, Peer-Median ${threshold.peerMedianPct.toFixed(2)} %, Gewichte Historie ${threshold.historyWeight} / Peers ${threshold.peerWeight}). Nur Hinweis, kein Score.`;
+  }
+  if (!span.notable || span.notableSide == null) return null;
+  return `Dividendenrendite ${span.currentPct.toFixed(2)} % ist auffällig (${historyTailPhrase(span, params)}). Peer-Schwelle: n/a — ${threshold.reason}. Nur Hinweis, kein Score.`;
 }
