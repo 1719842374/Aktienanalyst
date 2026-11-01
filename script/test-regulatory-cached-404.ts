@@ -13,7 +13,7 @@ import path from "node:path";
 import express from "express";
 import * as esbuild from "esbuild";
 import { persistAssessment } from "../server/regulatory-risks";
-import { registerRegulatoryRisksRoute } from "../server/regulatory-risks-route";
+import { registerRegulatoryRisksHooks, registerRegulatoryRisksRoute } from "../server/regulatory-risks-route";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright-core") as typeof import("playwright-core");
@@ -49,21 +49,68 @@ async function main() {
 
   console.log("\nRoute: Miss 200, Hit unverändert");
   const app = express();
+  app.use(express.json());
+  registerRegulatoryRisksHooks(app);
   registerRegulatoryRisksRoute(app);
+  app.post("/api/regulatory", (req, res) => {
+    res.json({
+      ticker: String(req.body?.ticker ?? ""),
+      exposures: [{
+        country: "USA",
+        regulationAxis: "price_regulation",
+        title: "Testregime",
+        description: "Session-Fixture",
+        estimatedImpactOnSales: -0.08,
+        probability: 0.7,
+        confidence: "high",
+        epsImpact: -0.88,
+        material: true,
+        badgeOnly: false,
+      }],
+      discarded: 0,
+      gate: { cap: 65, severity: "warn", rationale: "Session-Fixture" },
+      modelUsed: "test",
+      generatedAt: new Date().toISOString(),
+    });
+  });
   const dir = mkdtempSync(path.join(tmpdir(), "reg404-"));
+  const clientSrc = path.join(process.cwd(), "client/src");
   writeFileSync(path.join(dir, "entry.tsx"), `
     import React from "react";
     import { createRoot } from "react-dom/client";
-    import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-    import { RegulatoryPestelRisks } from ${JSON.stringify(path.join(process.cwd(), "client/src/components/sections/RegulatoryPestelRisks.tsx"))};
-    const ticker = new URLSearchParams(location.search).get("ticker") || "MSFT";
-    const data = { ticker } as any;
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnWindowFocus: false } } });
+    import { QueryClientProvider } from "@tanstack/react-query";
+    import { queryClient } from "@/lib/queryClient";
+    import { RegulatoryPestelRisks } from ${JSON.stringify(path.join(clientSrc, "components/sections/RegulatoryPestelRisks.tsx"))};
+    import { PestelSection } from ${JSON.stringify(path.join(clientSrc, "components/sections/PestelSection.tsx"))};
+    const qs = new URLSearchParams(location.search);
+    const ticker = qs.get("ticker") || "MSFT";
+    const withPost = qs.get("post") === "1";
+    const data = {
+      ticker,
+      companyName: "Session",
+      sector: "Technology",
+      industry: "Software",
+      description: "d",
+      revenue: 100,
+      sharesOutstanding: 10,
+      geoSegments: [{ name: "USA", percentage: 80 }],
+      financialStatements: { incomeStatement: { operatingMargin: 20 } },
+      pestelAnalysis: withPost ? {
+        overallExposure: "Niedrig",
+        geopoliticalScore: 1,
+        macroSummary: "m",
+        interestRateOutlook: "i",
+        capitalCostImpact: "c",
+        factors: [],
+      } : undefined,
+    } as any;
     createRoot(document.getElementById("root")!).render(
-      React.createElement(QueryClientProvider, { client },
+      React.createElement(QueryClientProvider, { client: queryClient },
         React.createElement(React.Fragment, null,
           React.createElement(RegulatoryPestelRisks, { data }),
-          React.createElement(RegulatoryPestelRisks, { data }),
+          withPost
+            ? React.createElement(PestelSection, { data })
+            : React.createElement(RegulatoryPestelRisks, { data }),
         ),
       ),
     );
@@ -77,6 +124,10 @@ async function main() {
     jsx: "automatic",
     platform: "browser",
     nodePaths: [path.join(process.cwd(), "node_modules")],
+    alias: {
+      "@": clientSrc,
+      "@shared": path.join(process.cwd(), "shared"),
+    },
     define: { "process.env.NODE_ENV": '"production"' },
     logLevel: "silent",
   });
@@ -161,6 +212,33 @@ async function main() {
       check(`${ticker}: ohne Cache kein Panel`, !r.text.includes("PESTEL-Risks"), JSON.stringify(r.text));
     }
 
+    console.log("\nPOST /api/regulatory → Panel in derselben Sitzung, kein Poll");
+    const postPage = await browser.newPage();
+    const gets: { url: string; status: number }[] = [];
+    const posts: number[] = [];
+    const pageErrors: string[] = [];
+    postPage.on("pageerror", (e: Error) => pageErrors.push(e.message));
+    postPage.on("response", (res: { url: () => string; status: () => number; request: () => { method: () => string } }) => {
+      const url = res.url();
+      if (url.includes("/api/regulatory/cached/")) gets.push({ url, status: res.status() });
+      if (url.endsWith("/api/regulatory") && res.request().method() === "POST") posts.push(res.status());
+    });
+    await postPage.goto(`${base}/?ticker=POSTREG&post=1`, { waitUntil: "networkidle" });
+    await postPage.waitForTimeout(400);
+    check("Mount-Paar vor POST: genau 1 GET", gets.length === 1 && gets[0]?.status === 200, JSON.stringify(gets));
+    check("vor POST kein Panel", !(await postPage.locator("#root").innerText()).includes("Testregime"));
+    await postPage.locator('[data-testid="regulatory-run"]').click();
+    await postPage.waitForTimeout(1200);
+    const after = await postPage.locator("#root").innerText();
+    check("POST genau 1× HTTP 200", posts.length === 1 && posts[0] === 200, JSON.stringify(posts));
+    check("Panel erscheint ohne Remount", after.includes("Testregime") && after.includes("PESTEL-Risks aus Regulatory-Matrix"), after.slice(0, 500));
+    check("kein zweiter GET und kein Poll", gets.length === 1, JSON.stringify(gets));
+    await postPage.waitForTimeout(2000);
+    check("2s nach POST immer noch genau 1 GET", gets.length === 1, JSON.stringify(gets));
+    if (pageErrors.length) check("keine Page-Errors", false, pageErrors.join(" | "));
+    const disk = await getJson("POSTREG");
+    check("Hook persistiert pestelRisks", disk.status === 200 && String(disk.body?.pestelRisks?.political?.[0] ?? "").includes("Testregime"), JSON.stringify(disk.body?.pestelRisks ?? disk.body));
+    await postPage.close();
     await browser.close();
   }
 
@@ -182,6 +260,7 @@ async function main() {
   }
 
   rmSync(path.join(process.cwd(), ".cache", "regulatory", "REG404T.json"), { force: true });
+  rmSync(path.join(process.cwd(), ".cache", "regulatory", "POSTREG.json"), { force: true });
   rmSync(dir, { recursive: true, force: true });
   server.close();
 
