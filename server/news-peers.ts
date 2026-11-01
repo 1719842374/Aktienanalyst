@@ -8,6 +8,7 @@ import type { Catalyst } from "../shared/schema";
 import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
 import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates } from "./fmp";
 import { peerForwardPe } from "../shared/peer-forward-pe";
+import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
 
@@ -348,6 +349,24 @@ export async function fillMissingPeerIndustry(
   }));
 }
 
+/**
+ * F1-17: Rendite in % aus der Ratios-Zeile, die der Peer-Vergleich schon lädt.
+ * Feld fehlt → null (Anzeige n/a, nicht 0). Explizite 0 auf der Zeile → 0 (keine Dividende).
+ * Kein Extra-Call, nicht score-wirksam.
+ */
+export function peerDividendYieldPct(ratio: { dividendYield?: unknown; dividendYieldPercentage?: unknown; dividendPerShare?: unknown } | null | undefined, price: unknown): number | null {
+  if (!ratio || typeof ratio !== "object") return null;
+  const hasField = ratio.dividendYield != null || ratio.dividendYieldPercentage != null || ratio.dividendPerShare != null;
+  if (!hasField) return null;
+  const priceN = typeof price === "number" && Number.isFinite(price) && price > 0 ? price : 0;
+  return normalizeDividendYieldPct({
+    price: priceN,
+    ratioDividendYield: ratio.dividendYield,
+    ratioDividendYieldPercentage: ratio.dividendYieldPercentage,
+    ratioDividendPerShare: ratio.dividendPerShare,
+  }).pct;
+}
+
 export async function fetchPeerComparisonFromTickers(
   ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
@@ -418,6 +437,7 @@ export async function fetchPeerComparisonFromTickers(
         roicFiscalYear: peerRoic?.fiscalYear ?? null,
         roic5Y: peerRoic?.roic5YPercent ?? null,
         roic5YYearsUsed: peerRoic?.roic5YYearsUsed ?? 0,
+        dividendYield: peerDividendYieldPct(r0, q?.price),
         ...(peerProfiles ? {
           industry: peerProfiles.get(t)?.industry || null,
           sector: peerProfiles.get(t)?.sector || null,
