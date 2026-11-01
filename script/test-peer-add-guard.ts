@@ -4,12 +4,21 @@
  * Lauf: npx tsx script/test-peer-add-guard.ts
  */
 import { classifyPeerAdd, PEER_ADD_ALREADY, PEER_ADD_SUBJECT } from "../shared/peer-identity";
+import { readFileSync } from "fs";
 import {
-  PEER_LATENCY_SAMPLE_WEIGHT,
+  FMP_PROVIDER_TIMEOUT_MS,
+  LLM_PROVIDER_TIMEOUT_MS,
+  PEER_APPEND_FIRST_CALL_TIMEOUT_MS,
+  PEER_LATENCY_PERCENTILE,
+  PEER_LATENCY_SAFETY_FACTOR,
+  PEER_NA_FILL_FIRST_CALL_TIMEOUT_MS,
   clearPeerCallSamples,
+  fmpProviderWorstCaseMs,
   peerCallSamples,
   peerLoadingLabel,
-  peerTimeoutFromSamples,
+  peerTimeoutAbortText,
+  peerTimeoutMs,
+  percentileMs,
   recordPeerCallMs,
 } from "../shared/peer-latency";
 import { peerAvgFromPeers } from "../shared/peer-metrics";
@@ -61,19 +70,40 @@ console.log("\n=== Duplikat und Hauptticker, kein Request ===");
   check("IBM ist neu und darf einen Request auslösen", fresh.kind === "new" && fresh.request === true && fresh.ticker === "IBM", JSON.stringify(fresh));
 }
 
-console.log("\n=== Timeout und Ladehinweis aus dem Median ===");
+console.log("\n=== Timeout: hohes Perzentil × Faktor, getrennte Pools, Erstaufruf ===");
 {
   clearPeerCallSamples();
-  check("ohne Aufrufe kein Timeout", peerTimeoutFromSamples([]) === null);
-  check("Hinweis ohne Messung nennt keine erfundene Dauer", peerLoadingLabel([]) === "Peer wird geladen…");
+  check("Sicherheitsfaktor ist benannt und > 1", PEER_LATENCY_SAFETY_FACTOR > 1);
+  check("Perzentil liegt über dem Median", PEER_LATENCY_PERCENTILE > 0.5);
+  const appendFirst = peerTimeoutMs("peer-append");
+  const fillFirst = peerTimeoutMs("peer-na-fill");
+  check("Erstaufruf peer-append bricht ab", appendFirst === PEER_APPEND_FIRST_CALL_TIMEOUT_MS && appendFirst > 0, String(appendFirst));
+  check("Append-Fallback ist der FMP-Worst-Case", appendFirst === fmpProviderWorstCaseMs() && appendFirst > FMP_PROVIDER_TIMEOUT_MS);
+  check("Erstaufruf peer-na-fill bricht ab", fillFirst === PEER_NA_FILL_FIRST_CALL_TIMEOUT_MS && fillFirst > appendFirst, String(fillFirst));
+  check("KI-Fallback enthält den LLM-Provider-Timeout", fillFirst >= LLM_PROVIDER_TIMEOUT_MS);
+  const appendSeconds = appendFirst / 1000;
+  const appendShown = Number.isInteger(appendSeconds) ? String(appendSeconds) : appendSeconds.toFixed(1);
+  check("Hinweis nennt die Abbruchgrenze", peerLoadingLabel("peer-append").includes(appendShown), peerLoadingLabel("peer-append"));
+  check("Abbruch hat einen sichtbaren Text", peerTimeoutAbortText(appendFirst).startsWith("Timeout:") && peerTimeoutAbortText(appendFirst).includes("s"));
+
   const samples = [6700, 7800];
-  const timeout = peerTimeoutFromSamples(samples, PEER_LATENCY_SAMPLE_WEIGHT);
+  const p90 = percentileMs(samples, PEER_LATENCY_PERCENTILE);
   const median = (6700 + 7800) / 2;
-  check("Timeout ist der Median mal benanntem Gewicht", timeout === median * PEER_LATENCY_SAMPLE_WEIGHT, String(timeout));
-  check("Hinweis nennt die Median-Dauer", peerLoadingLabel(samples).includes("7.3"), peerLoadingLabel(samples));
-  recordPeerCallMs(6700);
-  recordPeerCallMs(7800);
-  check("gemessene Aufrufe bleiben in der Reihe", peerCallSamples().length === 2);
+  check("P90 der Messungen liegt über dem Median", p90 != null && p90 > median, String(p90));
+  for (const ms of samples) recordPeerCallMs("peer-append", ms);
+  const timeout = peerTimeoutMs("peer-append");
+  check("Timeout ist P90 mal Sicherheitsfaktor", p90 != null && timeout === p90 * PEER_LATENCY_SAFETY_FACTOR, String(timeout));
+  check("der langsamere Call liegt unter dem Timeout", 7800 < timeout);
+  check("Append-Pool sieht nur seine Messungen", peerCallSamples("peer-append").length === 2 && peerCallSamples("peer-na-fill").length === 0);
+  recordPeerCallMs("peer-na-fill", 40000);
+  check("KI-Messung ändert den FMP-Timeout nicht", peerTimeoutMs("peer-append") === timeout && peerCallSamples("peer-na-fill").length === 1);
+
+  const dash = readFileSync(new URL("../client/src/pages/Dashboard.tsx", import.meta.url), "utf8");
+  const section7 = readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8");
+  const client = readFileSync(new URL("../client/src/lib/queryClient.ts", import.meta.url), "utf8");
+  check("Dashboard hängt am peer-append-Pool", dash.includes('peerTimeoutMs("peer-append")') && dash.includes('recordPeerCallMs("peer-append"'));
+  check("Section7 hängt am peer-na-fill-Pool", section7.includes('peerTimeoutMs("peer-na-fill")') && section7.includes('recordPeerCallMs("peer-na-fill"'));
+  check("apiRequest bricht bei Abort mit demselben Text ab", client.includes("peerTimeoutAbortText") && !client.includes("timeoutMs == null"));
 }
 
 console.log("\n=== Ein Peer nachladen, Score-Formel unverändert ===");

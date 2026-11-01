@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { peerTimeoutAbortText } from "@shared/peer-latency";
 
 // Compute API base URL based on environment.
 // IMPORTANT: The string "__PORT_5000__" is a sentinel that publish_website
@@ -52,22 +53,22 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
-  timeoutMs: number | null = 90000,
+  timeoutMs = 90000,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = timeoutMs == null ? null : setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}${url}`, {
       method,
       headers: data ? { "Content-Type": "application/json" } : {},
       body: data ? JSON.stringify(data) : undefined,
-      signal: timer ? controller.signal : undefined,
+      signal: controller.signal,
     });
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
     return res;
   } catch (err: any) {
-    if (timer) clearTimeout(timer);
-    if (err?.name === 'AbortError') throw new Error(`Timeout: Server hat nicht innerhalb von ${Math.round((timeoutMs ?? 0) / 1000)}s geantwortet`);
+    clearTimeout(timer);
+    if (err?.name === 'AbortError') throw new Error(peerTimeoutAbortText(timeoutMs));
     throw err;
   }
 }

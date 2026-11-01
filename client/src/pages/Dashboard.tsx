@@ -13,7 +13,7 @@ import {
   writeOverrides,
   type PeerOverrideLists,
 } from "@shared/peer-override-persist";
-import { peerCallSamples, peerLoadingLabel, peerTimeoutFromSamples, recordPeerCallMs } from "@shared/peer-latency";
+import { peerCallSamples, peerLoadingLabel, peerTimeoutMs, recordPeerCallMs } from "@shared/peer-latency";
 import {
   PEER_OVERRIDES_REJECTED,
   clampPeerOverrides,
@@ -127,7 +127,7 @@ export default function Dashboard() {
   const [peerAppendPending, setPeerAppendPending] = useState(false);
   const [peerAddNotice, setPeerAddNotice] = useState<string | null>(null);
   const [peerAddError, setPeerAddError] = useState<string | null>(null);
-  const [peerLatencies, setPeerLatencies] = useState<number[]>([]);
+  const [, setPeerLatencies] = useState<number[]>([]);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
@@ -365,8 +365,8 @@ export default function Dashboard() {
   analyzeMutationRef.current = analyzeMutation;
 
   const notePeerCall = (started: number) => {
-    recordPeerCallMs(Date.now() - started);
-    setPeerLatencies(peerCallSamples().slice());
+    recordPeerCallMs("peer-append", Date.now() - started);
+    setPeerLatencies(peerCallSamples("peer-append").slice());
   };
 
   // Nur der neue Peer. Duplikat/Hauptticker bleiben im Kind und lösen das hier nicht aus.
@@ -383,7 +383,7 @@ export default function Dashboard() {
         add: addTicker,
         useLLM: useLLMRef.current,
         peerOverrides,
-      }, peerTimeoutFromSamples(peerCallSamples()));
+      }, peerTimeoutMs("peer-append"));
       const json = await res.json().catch(() => null) as { ok?: boolean; error?: string; notice?: string | null; reason?: string | null; adopted?: boolean; analysis?: StockAnalysis } | null;
       notePeerCall(started);
       if (!res.ok || !json || json.ok === false || !json.analysis) {
@@ -731,7 +731,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell">{isYahooOnly(data) ? <YahooNoValuationCard number={7} title="DCF-MODELL (FCFF)" data={data} /> : <Section5 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV">{isYahooOnly(data) ? <YahooNoValuationCard number={8} title="RISIKOADJUSTIERTES CRV" data={data} /> : <Section6 data={data} />}</SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={peerAppendPending || (analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides))} peerAddNotice={peerAddNotice} peerAddError={peerAddError} peerLoadingHint={peerLoadingLabel(peerLatencies)} onPeerOverridesChange={(overrides) => {
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={peerAppendPending || (analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides))} peerAddNotice={peerAddNotice} peerAddError={peerAddError} peerLoadingHint={peerLoadingLabel("peer-append")} onPeerOverridesChange={(overrides) => {
                 if (!currentTickerRef.current) return;
                 const prev = dataRef.current?.activePeerOverrides ?? { add: [], remove: [] };
                 const added = overrides.add.filter(ticker => !prev.add.includes(ticker));
