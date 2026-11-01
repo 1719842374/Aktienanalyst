@@ -74,6 +74,14 @@ assert.equal(isratioReading(monthly("2015-01", Array(120).fill(1.3))).available,
   assert.ok(!r2.isratio.available && !r2.orderShipmentGap.available);
   ok("leere Reihen → n/a, nie 0");
 }
+// Review #343: Zweig „AMDMVS leer" (shared/inventory-demand-gap.ts) — DGORDER gültig, AMDMVS leer → n/a, Grund „AMDMVS: …"
+{
+  const r = orderShipmentGapReading(monthly("2024-01", Array.from({ length: 13 }, (_, i) => 100 + i)), []);
+  assert.equal(r.available, false);
+  if (!r.available) assert.match(r.reason, /^AMDMVS/);
+  assert.ok(!("gapPp" in r));
+  ok("AMDMVS leer → n/a mit Grund (AMDMVS), nie 0");
+}
 console.log(`Fixtures: ${n} grün`);
 
 if (process.env.OFFLINE !== "1") {
