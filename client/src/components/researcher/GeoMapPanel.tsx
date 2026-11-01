@@ -1,7 +1,8 @@
 /**
  * GeoMapPanel — Offen_WORK_CAPEX_SECTOR_MAP.md und Offen_WORK_RESEARCHER_CAPEX_MAP.md.
  * Capex- und Sektor-Layer: GET /api/researcher/geo-map?layer=capex|sector.
- * Miner-Layer: derselbe Pfad mit layer=miner. Gold bleibt Vorschlag.
+ * Miner-Layer: derselbe Pfad mit layer=miner (Netz aus btc-miner.ts).
+ * Gold und Wertschöpfung: layer=gold|valuechain.
  * Größe und Farbe der Hotspots kommen aus dem Perzentil der geladenen Verteilung.
  * HTML und Zeitüberschreitung werden zu n/a mit Grund, nie zu einer Parser-Meldung.
  * Nur Anzeige, kein Score.
@@ -27,16 +28,18 @@ import {
   type GeoMapMinerResponse,
   type GeoMapResponse,
 } from "@shared/geo-map";
+import type { GoldMapResponse, ValueChainMapResponse } from "@shared/geo-map-layers";
 
 type Metric = "capex" | "yoy";
-type LayerId = "capex" | "sector" | "miner";
-type MapPayload = GeoMapResponse | GeoMapMinerResponse;
+type LayerId = "capex" | "sector" | "miner" | "gold" | "valuechain";
+type MapPayload = GeoMapResponse | GeoMapMinerResponse | GoldMapResponse | ValueChainMapResponse;
 
-const LAYERS: { id: LayerId | "gold"; label: string; available: boolean; hint?: string }[] = [
+const LAYERS: { id: LayerId; label: string; available: boolean; hint?: string }[] = [
   { id: "capex", label: "Capex", available: true },
   { id: "sector", label: "Sektor-Exposure", available: true },
   { id: "miner", label: "BTC-Miner", available: true },
-  { id: "gold", label: "Gold-Minen", available: false, hint: "Vorschlag" },
+  { id: "gold", label: "Gold Mining", available: true },
+  { id: "valuechain", label: "Wertschöpfungskette", available: true },
 ];
 
 function isMiner(d: MapPayload): d is GeoMapMinerResponse {
@@ -57,7 +60,7 @@ function fmtNum(v: number | null | undefined, digits: number, unit: string): str
   return `${v.toFixed(digits)} ${unit}`;
 }
 
-export function GeoMapPanel() {
+export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportunity?: () => void } = {}) {
   const [data, setData] = useState<MapPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -114,8 +117,10 @@ export function GeoMapPanel() {
     return () => clearTimeout(timer);
   }, [data, load]);
 
-  const capexData = data && !isMiner(data) ? data : null;
+  const capexData = data && (data.layer === "capex" || data.layer === "sector") ? data : null;
   const minerData = data && isMiner(data) ? data : null;
+  const goldData = data && data.layer === "gold" ? data : null;
+  const chainData = data && data.layer === "valuechain" ? data : null;
   const minerSharePercentiles = useMemo(() => {
     const values = (minerData?.regions || []).map(r => r.hashrateSharePct);
     const pcts = metricPercentiles(values);
@@ -173,7 +178,7 @@ export function GeoMapPanel() {
           <div className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <Globe2 className="w-3.5 h-3.5 text-violet-400" /> Capex-Weltkarte
             <span className="font-normal text-[10px] text-foreground/45" data-testid="geo-attribution">
-              · {layer === "miner" ? "Miner-Netz, keine Farms" : "nach Firmensitz"}
+              · {layer === "miner" ? "Miner-Netz, keine Farms" : layer === "gold" ? "AISC je Firma, nicht je Land" : layer === "valuechain" ? "Katalog ohne Länderkette" : "nach Firmensitz"}
             </span>
           </div>
           {capexData && (
@@ -181,6 +186,14 @@ export function GeoMapPanel() {
               {capexData.coverage.withData}/{capexData.coverage.total} Länder mit Daten · Stand {new Date(capexData.asOf).toLocaleDateString("de-DE")}
               {capexData.pending ? " · Aufbau" : capexData._stale ? " · Cache veraltet" : capexData._cached ? " · Cache" : ""}
             </div>
+          )}
+          {goldData && (
+            <div className="text-[11px] text-foreground/50 mt-0.5">
+              {goldData.coverage.withData}/{goldData.coverage.total} Länder mit Produktionsanteil · Stand {new Date(goldData.asOf).toLocaleDateString("de-DE")}
+            </div>
+          )}
+          {chainData && (
+            <div className="text-[11px] text-foreground/50 mt-0.5">Stand {new Date(chainData.asOf).toLocaleDateString("de-DE")}</div>
           )}
           {minerData && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
@@ -297,7 +310,12 @@ export function GeoMapPanel() {
                   <div><div className="text-foreground/45 text-[10px]">YoY</div><div className="font-mono">{fmtPct(sel.yoyPct)}</div></div>
                 </div>
                 {layer === "sector" && (
-                  <div className="text-foreground/70">Dominanter Sektor: {sel.dominantSector ?? "n/a"}</div>
+                  <div className="text-foreground/70">
+                    Dominanter Sektor: {sel.dominantSector ?? "n/a"}
+                    {onOpenSectorOpportunity && (
+                      <button type="button" onClick={onOpenSectorOpportunity} className="ml-2 text-violet-300 hover:underline" data-testid="button-geo-open-sectors">Sector Opportunity</button>
+                    )}
+                  </div>
                 )}
                 {sel.note && <div className="text-foreground/45 italic" data-testid={`geo-note-${sel.iso2}`}>{sel.note}</div>}
                 {sel.companies.length > 0 && (
@@ -306,7 +324,12 @@ export function GeoMapPanel() {
                     <tbody>
                       {sel.companies.map(co => (
                         <tr key={co.symbol} className="border-t border-border/20">
-                          <td className="py-1"><div className="font-mono text-foreground/80">{co.symbol}</div><div className="text-[10px] text-foreground/45 truncate max-w-[150px]">{co.name}{co.sector ? ` · ${co.sector}` : ""}</div></td>
+                          <td className="py-1"><a href={`#/?ticker=${encodeURIComponent(co.symbol)}`} className="font-mono text-violet-300 hover:underline" data-testid={`geo-link-${co.symbol}`}>{co.symbol}</a><div className="text-[10px] text-foreground/45 truncate max-w-[150px]">{co.name}{co.sector ? ` · ${co.sector}` : ""}</div>
+                            {co.geoSegmentsNote && <div className="text-[10px] text-foreground/45 italic">{co.geoSegmentsNote}</div>}
+                            {co.geoSegments?.map(g => (
+                              <div key={g.name} className="text-[10px] text-foreground/60" data-testid={`geo-segment-${co.symbol}-${g.iso2 || "na"}`}>{g.name}{g.pct != null ? ` ${g.pct.toFixed(0)} %` : " n/a"}{g.iso2 ? ` → ${g.iso2}` : ""}{g.note ? ` · ${g.note}` : ""}</div>
+                            ))}
+                          </td>
                           <td className="text-right font-mono">{fmtBn(co.capexUsd)}{co.fiscalYear ? <div className="text-[9px] text-foreground/40">GJ {co.fiscalYear}</div> : null}</td>
                           <td className="text-right font-mono">{fmtPct(co.yoyPct)}</td>
                         </tr>
@@ -341,6 +364,37 @@ export function GeoMapPanel() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {goldData && (
+        <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-1" data-testid="geo-gold-panel">
+          <div className="text-foreground/55">AISC ist ein Firmenwert. Produktion in Unzen und Länderanteil: n/a.</div>
+          {goldData.goldCompanies.map(co => (
+            <div key={co.symbol} className="border-t border-border/20 py-1" data-testid={`geo-gold-${co.symbol}`}>
+              <div className="flex justify-between gap-2">
+                <a href={`#/?ticker=${encodeURIComponent(co.symbol)}`} className="font-mono text-violet-300 hover:underline">{co.symbol}</a>
+                <span className="font-mono">{co.aiscUsdPerOz != null ? `${co.aiscUsdPerOz} USD/oz${co.aiscQuarter ? ` · ${co.aiscQuarter}` : ""}` : "AISC n/a"}</span>
+              </div>
+              <div className="text-[10px] text-foreground/45">{co.name} · Produktion n/a</div>
+              {co.note && <div className="text-[10px] text-foreground/55 italic">{co.note}</div>}
+            </div>
+          ))}
+          <a href="#/gold" className="inline-block text-violet-300 underline" data-testid="geo-gold-dashboard">Gold-Dashboard</a>
+          <div className="text-[10px] text-foreground/40">{goldData.attribution}</div>
+        </div>
+      )}
+
+      {chainData && (
+        <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-1" data-testid="geo-valuechain-panel">
+          <div className="text-foreground/55 italic">{chainData.note}</div>
+          {chainData.chains.map(ch => (
+            <div key={ch.key}>
+              <a href={ch.href} className="text-violet-300 hover:underline" data-testid={`geo-valuechain-${ch.key}`}>{ch.label}</a>
+              <div className="text-[10px] text-foreground/45">{ch.placementNote}</div>
+            </div>
+          ))}
+          <div className="text-[10px] text-foreground/40">{chainData.attribution}</div>
         </div>
       )}
 

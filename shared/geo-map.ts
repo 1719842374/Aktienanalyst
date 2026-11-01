@@ -80,6 +80,19 @@ export interface GeoMapCompany {
   yoyPct: number | null;
   /** Originalwährung des Abschlusses (vor FX) */
   reportedCurrency: string | null;
+  /** Umsatz-Geosegmente von FMP. null = keine Zeilen. Capex bleibt beim Firmensitz. */
+  geoSegments?: GeoSegmentLine[] | null;
+  geoSegmentsNote?: string | null;
+}
+
+export interface GeoSegmentLine {
+  name: string;
+  /** Anteil am berichteten Segmentumsatz in %. null = nicht belegt. */
+  pct: number | null;
+  revenueUsd: number | null;
+  /** Karten-Land, nur bei eindeutigem Namen. null = nicht zuordenbar. */
+  iso2: string | null;
+  note: string | null;
 }
 
 export interface GeoMapCountry extends GeoMapCountryDef {
@@ -88,6 +101,10 @@ export interface GeoMapCountry extends GeoMapCountryDef {
   capexUsd: number | null;
   /** YoY der Summe, nur über Firmen mit beiden Jahren; null = n/a */
   yoyPct: number | null;
+  /** Mid-Rank des Capex unter Ländern mit Capex. null = Stichprobe zu klein oder kein Wert. */
+  capexPercentile?: number | null;
+  /** Mid-Rank des YoY unter Ländern mit YoY. */
+  yoyPercentile?: number | null;
   companies: GeoMapCompany[];
   /** Sektor-Anteil am erfassten Capex in % (Summe = 100) */
   sectorShares: { sector: string; pct: number }[];
@@ -269,4 +286,70 @@ export const SECTOR_COLORS: Record<string, string> = {
 export function sectorColor(sector: string | null | undefined): string {
   if (!sector || sector === "n/a") return GEO_SCALE_COLORS.na;
   return SECTOR_COLORS[sector] ?? GEO_SCALE_COLORS.na;
+}
+
+/**
+ * FMP-Segmentname → ISO2 der Karte. Nur exakter Name, kein Teilstring
+ * (damit „North America“ nicht zu US wird). Unbekannt → null.
+ */
+export const GEO_SEGMENT_ALIASES: readonly { iso2: string; names: readonly string[] }[] = [
+  { iso2: "US", names: ["united states", "united states of america", "usa", "u.s.", "u.s.a."] },
+  { iso2: "CA", names: ["canada", "kanada"] },
+  { iso2: "MX", names: ["mexico", "mexiko"] },
+  { iso2: "BR", names: ["brazil", "brasilien"] },
+  { iso2: "CL", names: ["chile"] },
+  { iso2: "GB", names: ["united kingdom", "uk", "u.k.", "great britain", "britain", "vereinigtes königreich"] },
+  { iso2: "DE", names: ["germany", "deutschland"] },
+  { iso2: "FR", names: ["france", "frankreich"] },
+  { iso2: "NL", names: ["netherlands", "niederlande", "holland"] },
+  { iso2: "CH", names: ["switzerland", "schweiz"] },
+  { iso2: "IT", names: ["italy", "italien"] },
+  { iso2: "ES", names: ["spain", "spanien"] },
+  { iso2: "SE", names: ["sweden", "schweden"] },
+  { iso2: "DK", names: ["denmark", "dänemark"] },
+  { iso2: "NO", names: ["norway", "norwegen"] },
+  { iso2: "SA", names: ["saudi arabia", "saudi-arabien"] },
+  { iso2: "ZA", names: ["south africa", "südafrika"] },
+  { iso2: "IN", names: ["india", "indien"] },
+  { iso2: "CN", names: ["china", "mainland china", "peoples republic of china", "people's republic of china"] },
+  { iso2: "HK", names: ["hong kong", "hongkong"] },
+  { iso2: "TW", names: ["taiwan"] },
+  { iso2: "KR", names: ["south korea", "republic of korea", "südkorea"] },
+  { iso2: "JP", names: ["japan"] },
+  { iso2: "SG", names: ["singapore", "singapur"] },
+  { iso2: "AU", names: ["australia", "australien"] },
+];
+
+function normSegmentName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function matchGeoSegmentIso2(name: string): string | null {
+  const n = normSegmentName(name);
+  if (!n) return null;
+  for (const row of GEO_SEGMENT_ALIASES) {
+    if (row.names.some(alias => normSegmentName(alias) === n)) return row.iso2;
+  }
+  return null;
+}
+
+export function mapGeoSegmentRows(rows: readonly { name: string; percentage?: number | null; revenue?: number | null }[] | null | undefined): { lines: GeoSegmentLine[] | null; note: string | null } {
+  if (!rows || rows.length === 0) return { lines: null, note: "n/a — FMP lieferte keine Geosegmente" };
+  const lines: GeoSegmentLine[] = [];
+  for (const row of rows) {
+    const name = String(row?.name ?? "").trim();
+    if (!name) continue;
+    const pct = typeof row.percentage === "number" && Number.isFinite(row.percentage) ? row.percentage : null;
+    const revenueUsd = typeof row.revenue === "number" && Number.isFinite(row.revenue) && row.revenue > 0 ? row.revenue : null;
+    const iso2 = matchGeoSegmentIso2(name);
+    lines.push({
+      name,
+      pct,
+      revenueUsd,
+      iso2,
+      note: iso2 ? null : "n/a — Segment keinem Karten-Land zugeordnet",
+    });
+  }
+  if (lines.length === 0) return { lines: null, note: "n/a — FMP lieferte keine Geosegmente" };
+  return { lines, note: null };
 }

@@ -88,6 +88,8 @@ import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } f
 import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth, mapGrowthProfile, LYNCH_TO_STYLE, robustSectorGrowth } from "./thesis-strength";
 import { fetchSecRpo } from "./sec-segments";
 import { filterAndSelectPeers } from "./news-peers";
+import { PEER_SET_MIN } from "../shared/peer-material";
+import { PEER_RATING_EXTENSIONS, selectExtendedPeerSet } from "../shared/peer-rating-extensions";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
@@ -381,7 +383,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
       vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
       const rawPeerTickers = Array.isArray(rawPeers) ? rawPeers.map((p:any)=>String(p?.symbol ?? p ?? "")).filter(Boolean) : [];
-      const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      const basePeers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      // Industry-Fallback und Thesis-Peer-Set sind rating-wirksam. Default AUS:
+      // selectExtendedPeerSet gibt dann dieselbe Listenreferenz zurück. Keine Tickerliste,
+      // keine Änderung an analyze-route. Kandidaten kämen nur bei Flag AN dazu.
+      const peerExtension = selectExtendedPeerSet({
+        enabled: PEER_RATING_EXTENSIONS.thesisPeerSet || PEER_RATING_EXTENSIONS.industryFallback,
+        baseTickers: basePeers,
+        subject: {
+          ticker,
+          sector: String(b.sector ?? ""),
+          industry: String(b.industry ?? ""),
+          marketCap: number(b.marketCap),
+          pe: number(b.peTTM),
+        },
+        candidates: [],
+        sameIndustry: () => false,
+        minCount: PEER_SET_MIN,
+      });
+      const peers = peerExtension.tickers;
       const peerStatements = await Promise.all(peers.map(async p => {
         const [i,c,bs,ratios] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[]),fmpRatios(p,1).catch(()=>[])]);
         const it=deriveStatementTrends({incomeRows:i,cashflowRows:c,balanceRows:bs}); const r0=number(i[0]?.revenue),r1=number(i[1]?.revenue);
@@ -526,4 +546,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
   (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
   const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
+
+  // 18. GET /api/credit-fundamentals/:ticker — F1-20/F1-21, FMP-Ratios, nur Anzeige, kein Score, kein CRV.
+  const { registerCreditFundamentalsRoute } = await import("./credit-fundamentals-route");
+  registerCreditFundamentalsRoute(app);
+
+  // 19. Earnings Yield + ROIC 5Y (Anzeige, Sektion 12). Kein Score.
+  const { registerEarningsYieldRoicRoutes } = await import("./earnings-yield-roic-route");
+  registerEarningsYieldRoicRoutes(app);
+
+  // 20. Sektor-KGV (Anzeige). Getrennt vom Score-Pfad der Sektorrotation.
+  const { registerSectorPeRoute } = await import("./sector-pe-route");
+  registerSectorPeRoute(app);
 }

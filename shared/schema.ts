@@ -956,6 +956,36 @@ export interface CreditSpreadResponse {
   note: string | null;
 }
 
+/**
+ * F1-20/F1-21: Debt/Equity und Zinsdeckung aus vorhandenen FMP-Ratios.
+ * GET /api/credit-fundamentals/:ticker. Nur Anzeige in Sektion 10 — kein Score, kein CRV.
+ * value null = nicht geliefert; die UI zeigt dann unavailable, nie 0 als Ersatz.
+ */
+export type CreditStance = "angespannt" | "im Mittelfeld" | "entspannt";
+export type CreditBasis = "eigene Historie" | "Peers";
+
+export interface CreditMetricReading {
+  value: number | null;
+  asOf: string | null;
+  /** Grund, wenn value null ist. */
+  unavailable: string | null;
+  /** Mid-Rank 0..1 gegen die gewählte Referenz. null = Stichprobe zu klein. */
+  percentile: number | null;
+  zScore: number | null;
+  sampleSize: number;
+  basis: CreditBasis | null;
+  stance: CreditStance | null;
+}
+
+export interface CreditFundamentalsResponse {
+  ticker: string;
+  /** z. B. "FMP ratios" */
+  source: string;
+  debtToEquity: CreditMetricReading;
+  interestCoverage: CreditMetricReading;
+  note: string | null;
+}
+
 /** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
 export interface CreditOverlayPoint {
   date: string;
@@ -1107,3 +1137,17 @@ export interface BtcLiquidityResponse {
   fetchedAt: string;
   sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
 }
+
+// ─── Earnings Yield / ROIC 5Y (Anzeige, Sektion 12) ─────────────────────────
+// GET /api/chart/earnings-yield/:symbol und GET /api/chart/roic/:symbol.
+// Kein Score, kein Rating. Fehlende Punkte: value null + note, nie 0.
+export type {
+  FundamentalPoint,
+  EarningsYieldResponse,
+  RoicSeriesResponse,
+  FundJoinPoint,
+} from "./earnings-yield-roic";
+
+// ─── Sektor-KGV (Anzeige, Researcher) ────────────────────────────────────────
+// GET /api/researcher/sector-pe. Getrennt von pe/pe10y der Sektorrotation.
+export type { SectorPeDisplay, SectorPeResponse } from "./sector-pe-display";
