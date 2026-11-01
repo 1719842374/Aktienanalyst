@@ -5,6 +5,7 @@
  */
 import type { Express, Request, Response } from "express";
 import { fetchFredCsv, fredCsvObservations } from "./fred-csv";
+import { m2YoyPoints } from "../shared/recession-rest-overlays";
 
 /**
  * Jahre der Historie. Herkunft: Recession-TA holt 30 Jahre (server/recession-ta-route.ts isoYearsAgo(30))
@@ -19,7 +20,9 @@ export const FRED_HISTORY_CACHE_HOURS = 12;
 const CACHE_MS = FRED_HISTORY_CACHE_HOURS * 60 * 60 * 1000;
 
 export const FRED_HISTORY_SERIES = {
-  T10Y2Y: { source: "FRED T10Y2Y (US)" },
+  T10Y2Y: { source: "FRED T10Y2Y (US)", transform: "level" },
+  /** YoY wie scoreM2 / yoyPercent, nicht das Niveau in Mrd. $. */
+  M2SL: { source: "FRED M2SL YoY (US)", transform: "yoy" },
 } as const;
 
 export type FredHistorySeriesId = keyof typeof FRED_HISTORY_SERIES;
@@ -55,7 +58,8 @@ export async function loadFredHistory(
   } catch {
     csv = null;
   }
-  const points = fredCsvObservations(csv);
+  const levels = fredCsvObservations(csv);
+  const points = spec.transform === "yoy" ? m2YoyPoints(levels) : levels;
   if (points.length === 0) return { seriesId, source: spec.source, points: [], note: "FRED nicht erreichbar oder leer" };
   return { seriesId, source: spec.source, points, note: null };
 }

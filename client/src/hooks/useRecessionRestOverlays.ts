@@ -55,7 +55,7 @@ export interface FredHistoryBody {
   note: string | null;
 }
 
-export function useRecessionFredHistory(series: "T10Y2Y", enabled: boolean) {
+export function useRecessionFredHistory(series: "T10Y2Y" | "M2SL", enabled: boolean) {
   const path = `/api/analyze-recession/fred-history?series=${series}`;
   return useQuery<FredHistoryBody | null>({
     queryKey: [path],

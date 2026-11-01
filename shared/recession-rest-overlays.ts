@@ -152,15 +152,38 @@ export function restOverlayStatusText(input: {
 }
 
 /**
- * Spanne eines CAPE-Drucks. Herkunft: latestMultplCape in server/recession.ts
- * (Wert &lt; 5 oder &gt; 80 ist kein CAPE-Druck). Keine neue Schwelle.
+ * Vorjahresabstand der M2-Rate.
+ * Herkunft: server/recession.ts yoyPercent — unter 13 Beobachtungen NaN,
+ * Jahr-zuvor = letzter Index minus 12. Für die Monatsreihe M2SL ist das ein Jahr.
  */
+export const M2_YOY_PARAMS = {
+  lagObservations: 12,
+} as const;
+
+/** YoY in Prozent je Beobachtung ab dem Lag. Letzter Punkt = yoyPercent(levels). */
+export function m2YoyPoints(levels: readonly DatedValue[]): DatedValue[] {
+  const lag = M2_YOY_PARAMS.lagObservations;
+  const sorted = levels
+    .filter(p => Number.isFinite(p.value))
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const out: DatedValue[] = [];
+  for (let i = lag; i < sorted.length; i++) {
+    const prev = sorted[i - lag].value;
+    const cur = sorted[i].value;
+    if (prev === 0 || !Number.isFinite(prev) || !Number.isFinite(cur)) continue;
+    out.push({ date: sorted[i].date, value: ((cur - prev) / prev) * 100 });
+  }
+  return out;
+}
+
+/** Spanne eines CAPE-Drucks. Herkunft: latestMultplCape (Wert unter 5 oder über 80 ist kein CAPE-Druck). */
 export const CAPE_PARAMS = {
   minValue: 5,
   maxValue: 80,
 } as const;
 
-export type RestOverlayId = "buffett" | "cape" | "curve";
+export type RestOverlayId = "buffett" | "cape" | "curve" | "m2";
 
 export interface RestOverlaySpec {
   id: RestOverlayId;
@@ -220,6 +243,20 @@ export const REST_OVERLAYS: Record<RestOverlayId, RestOverlaySpec> = {
     frequency: "daily",
     rawUnit: "pp",
     dash: "3 2",
+  },
+  m2: {
+    id: "m2",
+    chip: "M2",
+    label: "M2",
+    color: "#34d399",
+    onClass: "border-emerald-500 text-emerald-500",
+    testId: "toggle-recession-m2",
+    statusTestId: "recession-m2-status",
+    field: "_zM2",
+    axisId: "zM2",
+    frequency: "monthly",
+    rawUnit: "%",
+    dash: "2 4",
   },
 };
 

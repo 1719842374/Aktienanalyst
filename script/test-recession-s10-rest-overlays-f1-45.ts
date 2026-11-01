@@ -232,7 +232,7 @@ async function main() {
     const body = await fredMod.loadFredHistory("T10Y2Y", async () => csv);
     check("Route reicht fred-csv-Beobachtungen durch", body.points.length === 2 && body.points[0].date === "2024-01-02" && body.source.includes("T10Y2Y"), JSON.stringify(body));
     const denied = await fredMod.loadFredHistory("DGS10", async () => csv);
-    check("nur T10Y2Y, kein zweites FRED-Produkt", denied.points.length === 0 && /nicht/.test(denied.note ?? ""), JSON.stringify(denied));
+    check("DGS10 bleibt zu", denied.points.length === 0 && /nicht/.test(denied.note ?? ""), JSON.stringify(denied));
   }
 
   calls.length = 0;
@@ -254,6 +254,44 @@ async function main() {
     await click(findByTestId(r.c, "toggle-recession-curve"));
     const a = findByTestId(r.c, "recession-curve-status")?.textContent ?? "";
     check(`Kurve ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
+    await act(async () => { r.root.unmount(); });
+  }
+
+  console.log("5) M2 YoY aus M2SL, gleicher Lag wie yoyPercent");
+  mode = "ok";
+  const { m2YoyPoints, M2_YOY_PARAMS } = ov;
+  const { yoyPercent } = await import("../server/recession.ts");
+  const levels = Array.from({ length: 13 }, (_, i) => {
+    const d = new Date(Date.UTC(2023, i, 1)).toISOString().slice(0, 10);
+    return { date: d, value: 100 + i * 2 };
+  });
+  check("Lag ist 12 Beobachtungen", M2_YOY_PARAMS?.lagObservations === 12, JSON.stringify(M2_YOY_PARAMS));
+  const yoy = typeof m2YoyPoints === "function" ? m2YoyPoints(levels) : [];
+  check("ein YoY-Druck, identisch zu yoyPercent", yoy.length === 1 && yoy[0].value === yoyPercent(levels) && yoy[0].date === levels[12].date, `${yoy[0]?.value} vs ${yoyPercent(levels)}`);
+  if (fredMod?.loadFredHistory) {
+    const csv = ["DATE,M2SL", ...levels.map(p => `${p.date},${p.value}`)].join("\n");
+    const m2Body = await fredMod.loadFredHistory("M2SL", async () => csv);
+    check("Route liefert YoY, nicht das Niveau", m2Body.points.length === 1 && m2Body.points[0].value === yoyPercent(levels) && m2Body.source.includes("M2SL"), JSON.stringify(m2Body));
+  } else check("Route kennt M2SL", false);
+
+  calls.length = 0;
+  const m2Mount = await mount();
+  await click(findByTestId(m2Mount.c, "toggle-recession-m2"));
+  const m2Last = seriesOn(21, i => 2 + i * 0.15).at(-1)!;
+  const sM2 = findByTestId(m2Mount.c, "recession-m2-status")?.textContent ?? "";
+  check("Schalter M2", findByTestId(m2Mount.c, "toggle-recession-m2")?.textContent === "M2");
+  check("ein Abruf series=M2SL", calls.filter(u => u.includes("series=M2SL")).length === 1, calls.filter(u => u.includes("fred-history")).join(","));
+  check("Status: M2SL, US, Datum, kein Score", sM2.includes("M2SL") && sM2.includes("US") && sM2.includes(m2Last.date) && sM2.includes("kein Score-Einfluss"), sM2);
+  await click(findByTestId(m2Mount.c, "tab-ashr"));
+  const sM2As = findByTestId(m2Mount.c, "recession-m2-status")?.textContent ?? "";
+  check("M2 auf Asien-Tab bleibt die US-Reihe mit Datum", sM2As.includes("M2SL") && sM2As.includes(m2Last.date), sM2As);
+  await act(async () => { m2Mount.root.unmount(); });
+  for (const m of ["fail", "empty"] as const) {
+    mode = m;
+    const r = await mount();
+    await click(findByTestId(r.c, "toggle-recession-m2"));
+    const a = findByTestId(r.c, "recession-m2-status")?.textContent ?? "";
+    check(`M2 ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
     await act(async () => { r.root.unmount(); });
   }
 
