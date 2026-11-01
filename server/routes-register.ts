@@ -33,6 +33,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/analyze-recession/fred-history (F1-45, FRED über fred-csv, nur Anzeige, kein Score)
   const { registerFredHistoryRoute } = await import("./recession-fred-history-route");
   registerFredHistoryRoute(app);
+  // GET /api/analyze-recession/google-trends (F1-45, nur Cache-Lesen, kein SerpApi, kein Score)
+  const { registerGoogleTrendsOverlayRoute } = await import("./recession-trends-route");
+  registerGoogleTrendsOverlayRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");

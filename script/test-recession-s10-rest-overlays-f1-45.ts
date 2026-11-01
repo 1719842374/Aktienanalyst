@@ -52,6 +52,18 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
   if (url.includes("/api/analyze-recession/markets")) return json(fx.markets);
   if (url.includes("/api/credit-spread/market")) return json(fx.credit);
   if (url.includes("/api/analyze-btc/real10y-history")) return json(fx.real10y);
+  if (url.includes("/api/analyze-recession/google-trends")) {
+    if (mode === "fail") return new Response("upstream", { status: 503 });
+    if (mode === "empty") return json({ source: "Google-Trends-Cache", points: [], asOf: null, note: "Google-Trends-Cache leer", ageHours: null, isStale: false });
+    return json({
+      source: "Google Trends via SerpApi (7d Ø=60, Latest=70, Peak=100)",
+      points: seriesOn(3, i => 40 + (i % 7)),
+      asOf: dates[dates.length - 1],
+      note: null,
+      ageHours: 1,
+      isStale: false,
+    });
+  }
   if (url.includes("/api/analyze-recession/fred-history")) {
     if (mode === "fail") return new Response("upstream", { status: 503 });
     if (mode === "empty") return json({ seriesId: "T10Y2Y", source: "FRED T10Y2Y (US)", points: [], note: "FRED nicht erreichbar oder leer" });
@@ -292,6 +304,53 @@ async function main() {
     await click(findByTestId(r.c, "toggle-recession-m2"));
     const a = findByTestId(r.c, "recession-m2-status")?.textContent ?? "";
     check(`M2 ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
+    await act(async () => { r.root.unmount(); });
+  }
+
+  console.log("6) Google-Trends-Cache, keine zweite Quelle");
+  mode = "ok";
+  let trendsMod: any = null;
+  try { trendsMod = await import("../server/recession-trends-route.ts"); }
+  catch (e: any) { check("trends-Route lädt", false, e?.message ?? String(e)); }
+  const scoreSrc = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  const scoreFn = scoreSrc.slice(scoreSrc.indexOf("function scoreGoogleTrends"), scoreSrc.indexOf("function scoreCrowdLeg"));
+  check("Score öffnet weiter keine Route", !scoreFn.includes("app.get") && !scoreFn.includes("app.post"));
+  if (trendsMod) {
+    const routeSrc = readFileSync(new URL("../server/recession-trends-route.ts", import.meta.url), "utf8");
+    check("Route ruft SerpApi nicht selbst", !routeSrc.includes("serpapi.com"));
+    const { resetGoogleTrendsCache, writeGoogleTrendsCache, parseSerpApiGoogleTrends } = await import("../server/cache/google-trends-cache.ts");
+    resetGoogleTrendsCache();
+    check("leerer Cache → n/a", trendsMod.readGoogleTrendsOverlay(Date.parse("2026-11-01T12:00:00Z")).points.length === 0);
+    const raw = JSON.stringify({ interest_over_time: { timeline_data: [
+      { timestamp: "1761004800", values: [{ extracted_value: 40 }] },
+      { timestamp: "1761091200", values: [{ extracted_value: 70 }] },
+    ] } });
+    const parsed = parseSerpApiGoogleTrends(raw);
+    check("7d-Ø des Score-Parsers bleibt 55", parsed?.value === 55, JSON.stringify(parsed));
+    writeGoogleTrendsCache({ value: parsed!.value, timestamp: Date.parse("2026-10-22T00:00:00Z"), source: parsed!.source, points: trendsMod.pointsFromSerp(raw) });
+    const body = trendsMod.readGoogleTrendsOverlay(Date.parse("2026-10-22T01:00:00Z"));
+    check("Route gibt die Cache-Punkte zurück", body.points.length === 2 && body.points[1].value === 70 && body.source.includes("SerpApi"), JSON.stringify(body));
+    resetGoogleTrendsCache();
+  }
+
+  calls.length = 0;
+  const trMount = await mount();
+  await click(findByTestId(trMount.c, "toggle-recession-trends"));
+  const trLast = seriesOn(3, i => 40 + (i % 7)).at(-1)!;
+  const sTr = findByTestId(trMount.c, "recession-trends-status")?.textContent ?? "";
+  check("Schalter Trends", findByTestId(trMount.c, "toggle-recession-trends")?.textContent === "Trends");
+  check("ein Abruf google-trends", calls.filter(u => u.includes("/api/analyze-recession/google-trends")).length === 1, calls.filter(u => u.includes("trends")).join(","));
+  check("Status: SerpApi, US, Datum, kein Score", sTr.includes("SerpApi") && sTr.includes("US") && sTr.includes(trLast.date) && sTr.includes("kein Score-Einfluss"), sTr);
+  await click(findByTestId(trMount.c, "tab-vgk"));
+  const sTrEu = findByTestId(trMount.c, "recession-trends-status")?.textContent ?? "";
+  check("Trends auf EU-Tab bleibt der US-Cache mit Datum", sTrEu.includes("US") && sTrEu.includes(trLast.date) && calls.filter(u => u.includes("google-trends")).length === 1, sTrEu);
+  await act(async () => { trMount.root.unmount(); });
+  for (const m of ["fail", "empty"] as const) {
+    mode = m;
+    const r = await mount();
+    await click(findByTestId(r.c, "toggle-recession-trends"));
+    const a = findByTestId(r.c, "recession-trends-status")?.textContent ?? "";
+    check(`Trends ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
     await act(async () => { r.root.unmount(); });
   }
 

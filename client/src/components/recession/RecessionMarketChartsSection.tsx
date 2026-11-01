@@ -55,7 +55,7 @@ import {
   type RestOverlayId,
   type RestOverlaySpec,
 } from "@shared/recession-rest-overlays";
-import { buffettSourceIds, useRecessionBuffettOverlay, useRecessionCapeOverlay, useRecessionFredHistory, type BuffettOverlayBody, type CapeOverlayBody, type FredHistoryBody } from "@/hooks/useRecessionRestOverlays";
+import { buffettSourceIds, useRecessionBuffettOverlay, useRecessionCapeOverlay, useRecessionFredHistory, useRecessionGoogleTrends, type BuffettOverlayBody, type CapeOverlayBody, type FredHistoryBody, type GoogleTrendsOverlayBody } from "@/hooks/useRecessionRestOverlays";
 
 // F1-43/F1-45 (ohne F1-41): Overlays Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y) im Preis-Pane.
 // Bestehende Endpoints /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
@@ -66,7 +66,7 @@ export const RECESSION_CREDIT_LABEL = "Markt-Spread Baa (FRED BAA10Y, US)";
 export const RECESSION_T10Y_LABEL = "Real 10J (DFII10)";
 
 /** F1-45: welche Rest-Overlays der Schalterleiste schon verdrahtet sind. Ein Eintrag pro Overlay. */
-const REST_WIRED: RestOverlayId[] = ["buffett", "cape", "curve", "m2"];
+const REST_WIRED: RestOverlayId[] = ["buffett", "cape", "curve", "m2", "trends"];
 
 export interface RestOverlayToggle {
   spec: RestOverlaySpec;
@@ -595,6 +595,8 @@ function restOverlayToggles(input: {
   curve: { data?: FredHistoryBody | null; isLoading: boolean; isError: boolean };
   m2On: boolean;
   m2: { data?: FredHistoryBody | null; isLoading: boolean; isError: boolean };
+  trendsOn: boolean;
+  trends: { data?: GoogleTrendsOverlayBody | null; isLoading: boolean; isError: boolean };
 }): RestOverlayToggle[] {
   const body = input.buffett.data;
   const ids = buffettSourceIds(body);
@@ -623,6 +625,16 @@ function restOverlayToggles(input: {
     },
     fredToggle(REST_OVERLAYS.curve, input.curveOn, input.curve, "Zinskurve (US)", "FRED T10Y2Y (US)"),
     fredToggle(REST_OVERLAYS.m2, input.m2On, input.m2, "M2 (US)", "FRED M2SL YoY (US)"),
+    {
+      spec: REST_OVERLAYS.trends,
+      on: input.trendsOn,
+      loading: input.trendsOn && input.trends.isLoading,
+      failed: input.trends.isError,
+      raw: (input.trends.data?.points ?? []).flatMap(p => Number.isFinite(p.value) ? [{ date: p.date, value: p.value }] : []),
+      source: input.trends.data?.source ?? "Google-Trends-Cache (US)",
+      note: input.trends.data?.note ?? null,
+      label: "Trends (US)",
+    },
   ];
 }
 
@@ -654,7 +666,7 @@ function ChartsBody() {
   // F1-43/F1-45: Overlay-Schalter, Default aus (Anzeige wie bisher). Abruf nur, solange der Schalter an ist.
   const [showCredit, setShowCredit] = useState(false);
   const [showT10y, setShowT10y] = useState(false);
-  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false, cape: false, curve: false, m2: false });
+  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false, cape: false, curve: false, m2: false, trends: false });
   const creditQ = useMarketCreditSpread(showCredit);
   const q = useRecessionMarketCharts(window);
   // Real 10J: bestehende DFII10-Route aus #267 (useMarketReal10Y), Start = ältester Kurstag des aktiven Markts.
@@ -665,12 +677,14 @@ function ChartsBody() {
   const capeQ = useRecessionCapeOverlay(restOn.cape);
   const curveQ = useRecessionFredHistory("T10Y2Y", restOn.curve);
   const m2Q = useRecessionFredHistory("M2SL", restOn.m2);
+  const trendsQ = useRecessionGoogleTrends(restOn.trends);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
   const restToggles = restOverlayToggles({
     buffettOn: restOn.buffett, buffettRegion, buffett: buffettQ,
     capeOn: restOn.cape, cape: capeQ,
     curveOn: restOn.curve, curve: curveQ,
     m2On: restOn.m2, m2: m2Q,
+    trendsOn: restOn.trends, trends: trendsQ,
   });
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
 
