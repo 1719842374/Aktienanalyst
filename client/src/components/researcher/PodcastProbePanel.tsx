@@ -29,29 +29,29 @@ export function PodcastProbePanel({
     <section
       data-testid="podcast-probe"
       data-viewport={viewportWidth ?? ""}
-      className="max-w-full min-w-0 overflow-x-hidden break-words rounded-lg border border-violet-400/30 bg-violet-500/[0.04] p-3 space-y-3"
+      className="max-w-full min-w-0 overflow-x-hidden break-words rounded-lg border border-border bg-card text-card-foreground p-3 space-y-3"
     >
       <div className="flex items-center gap-2 min-w-0">
         <h2 className="text-sm font-semibold text-foreground">Key-Driver-Podcast</h2>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-200 border border-amber-400/30">
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-foreground border border-border">
           KI-generiert im Research-Stil
         </span>
       </div>
 
       {state.phase === "loading" && (
-        <p className="text-[12px] text-foreground/70" data-testid="podcast-progress">
+        <p className="text-[12px] text-muted-foreground" data-testid="podcast-progress">
           Quellen, Ranking und Skript …
         </p>
       )}
       {state.phase === "error" && (
-        <p className="text-[12px] text-rose-300 break-words">{state.error || "n/a — Podcast-Abruf fehlgeschlagen"}</p>
+        <p className="text-[12px] text-destructive break-words">{state.error || "n/a — Podcast-Abruf fehlgeschlagen"}</p>
       )}
 
       {result && (
         <div className="space-y-3 min-w-0">
           <ol className="space-y-1" data-testid="podcast-progress">
             {result.progress.map(step => (
-              <li key={step.step} className="text-[11px] text-foreground/70 break-words">
+              <li key={step.step} className="text-[11px] text-muted-foreground break-words">
                 {step.step}: {step.detail?.startsWith("n/a") ? step.detail : `${step.status}${step.detail ? ` — ${step.detail}` : ""}`}
               </li>
             ))}
@@ -59,24 +59,24 @@ export function PodcastProbePanel({
 
           <div data-testid="podcast-drivers" className="space-y-2">
             {result.drivers.map(driver => (
-              <article key={driver.id} className="rounded border border-border/40 bg-background/40 p-2 min-w-0">
+              <article key={driver.id} className="rounded border border-border bg-background p-2 min-w-0">
                 <div className="text-[12px] font-semibold text-foreground break-words">
                   {driver.rank}. {driver.label}
                 </div>
-                <p className="text-[11px] text-foreground/80 break-words">
+                <p className="text-[11px] text-foreground break-words">
                   Quelle: {driver.source} · Wert: {showValue(driver.value, driver.unit)} · Stand {driver.asOf}
                 </p>
-                <p className="text-[11px] text-foreground/70 break-words">{driver.reason}</p>
+                <p className="text-[11px] text-muted-foreground break-words">{driver.reason}</p>
               </article>
             ))}
             {!result.drivers.length && (
-              <p className="text-[11px] text-foreground/70">n/a — kein Treiber aus der eigenen Historie</p>
+              <p className="text-[11px] text-muted-foreground">n/a — kein Treiber aus der eigenen Historie</p>
             )}
           </div>
 
           <div data-testid="podcast-gaps" className="space-y-1">
             {result.gaps.map((gap, index) => (
-              <p key={`${gap.channel}-${gap.label}-${index}`} className="text-[11px] text-foreground/60 break-words">
+              <p key={`${gap.channel}-${gap.label}-${index}`} className="text-[11px] text-muted-foreground break-words">
                 {gap.label}: {gap.status}
               </p>
             ))}
@@ -85,7 +85,7 @@ export function PodcastProbePanel({
           {result.notes.length > 0 && (
             <div className="space-y-1">
               {result.notes.map((note, index) => (
-                <p key={`${note.channel}-${index}`} className="text-[11px] text-foreground/70 break-words">
+                <p key={`${note.channel}-${index}`} className="text-[11px] text-muted-foreground break-words">
                   {note.channel}: {note.text}
                 </p>
               ))}
@@ -93,20 +93,20 @@ export function PodcastProbePanel({
           )}
 
           <div data-testid="podcast-script" className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-foreground/40">Skript</div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Skript</div>
             {result.script ? (
               <div className="space-y-1">
-                <p className="text-[12px] font-semibold break-words">{result.script.title}</p>
-                <p className="text-[12px] leading-relaxed text-foreground/85 whitespace-pre-wrap break-words">
+                <p className="text-[12px] font-semibold text-foreground break-words">{result.script.title}</p>
+                <p className="text-[12px] leading-relaxed text-foreground whitespace-pre-wrap break-words">
                   {result.script.spokenScript}
                 </p>
               </div>
             ) : (
-              <p className="text-[12px] text-foreground/70 break-words">{result.scriptStatus}</p>
+              <p className="text-[12px] text-foreground break-words">{result.scriptStatus}</p>
             )}
           </div>
 
-          <p className="text-[11px] text-foreground/70 break-words" data-testid="podcast-audio">
+          <p className="text-[11px] text-muted-foreground break-words" data-testid="podcast-audio">
             Audio: {result.audio.reason}
           </p>
         </div>

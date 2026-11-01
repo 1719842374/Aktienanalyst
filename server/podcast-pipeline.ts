@@ -30,6 +30,20 @@ export interface PodcastCacheWrite {
   reason: string | null;
 }
 
+/** Gleicher Wortlaut wie der Chat, wenn kein OpenRouter-Key gesetzt ist. */
+export const PODCAST_NO_KEY_MESSAGE =
+  "KI nicht verfügbar: Auf diesem Server ist kein OpenRouter-Key konfiguriert. Es wird keine Antwort erzeugt.";
+
+function llmDetailOf(
+  llm: { data: unknown; modelUsed?: string } | null,
+  parsed: { status: string; reason: string },
+): string {
+  if (parsed.status === "ok") return llm?.modelUsed ?? "ok";
+  const used = llm?.modelUsed;
+  if (typeof used === "string" && (used.startsWith("n/a —") || used === PODCAST_NO_KEY_MESSAGE)) return used;
+  return parsed.reason;
+}
+
 export async function runPodcastProbe(deps: {
   collect: () => Promise<PodcastCollected>;
   llm: (prompt: string) => Promise<{ data: unknown; modelUsed?: string } | null>;
@@ -68,10 +82,7 @@ export async function runPodcastProbe(deps: {
     llm = { data: null, modelUsed: `n/a — ${message}` };
   }
   const parsed = podcastScriptFromLlm(llm?.data ?? null);
-  const timeoutReason = typeof llm?.modelUsed === "string" && llm.modelUsed.startsWith("n/a —")
-    ? llm.modelUsed
-    : null;
-  const llmDetail = parsed.status === "ok" ? (llm?.modelUsed ?? "ok") : (timeoutReason ?? parsed.reason);
+  const llmDetail = llmDetailOf(llm, parsed);
   progress.push({
     step: "llm",
     status: parsed.status === "ok" ? "ok" : "n/a",

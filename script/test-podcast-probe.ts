@@ -11,9 +11,9 @@ import { PODCAST_DRIVER_PARAMS, changeScaleFromSeries, rankPodcastDrivers, type 
 import { PODCAST_STRUCTURE, podcastStructurePrinciples } from "../server/podcast-structure";
 import { buildPodcastPrompt, podcastScriptFromLlm } from "../server/podcast-prompt";
 import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "../server/podcast-audio";
-import { EARNINGS_BRIEF_UNAVAILABLE, collectPodcastInputs } from "../server/podcast-sources";
-import { runPodcastProbe } from "../server/podcast-pipeline";
-import { callPodcastLlm } from "../server/podcast-route";
+import { EARNINGS_BRIEF_UNAVAILABLE, PODCAST_EARNINGS_ENDPOINT, collectPodcastInputs, collectPodcastSymbols, earningsBriefFromEndpoint, symbolsFromResearcherCache, yoyRatePoints } from "../server/podcast-sources";
+import { PODCAST_NO_KEY_MESSAGE, runPodcastProbe } from "../server/podcast-pipeline";
+import { callPodcastLlm, podcastLlmCall } from "../server/podcast-route";
 import { PodcastProbePanel } from "../client/src/components/researcher/PodcastProbePanel";
 
 let n = 0;
@@ -155,6 +155,97 @@ async function main() {
   assert.match(emptyEtf.status, /^n\/a —/);
   ok("Sammler übernimmt vorhandene Kataloge, Earnings-Brief und leere ETF bleiben n/a");
 
+  const prior = 326;
+  const indexNow = 336.3;
+  const expectedYoy = ((indexNow - prior) / prior) * 100;
+  const directYoy = yoyRatePoints([
+    { date: "2024-09-01", value: prior },
+    { date: "2025-09-01", value: indexNow },
+  ]);
+  assert.equal(directYoy.length, 1);
+  assert.ok(Math.abs(directYoy[0]!.value - expectedYoy) < 1e-9);
+  assert.ok(directYoy[0]!.value < 20);
+  const cpiLines = ["date,CPIAUCSL"];
+  for (let i = 0; i < 25; i++) {
+    const year = 2023 + Math.floor((8 + i) / 12);
+    const month = ((8 + i) % 12) + 1;
+    const date = `${year}-${String(month).padStart(2, "0")}-01`;
+    const value = i === 24 ? indexNow : i === 12 ? prior : 300 + i;
+    cpiLines.push(`${date},${value}`);
+  }
+  const inflation = await collectPodcastInputs({
+    fredCsv: async (id) => (id === "CPIAUCSL" ? cpiLines.join("\n") : "date,value\n"),
+    macroIndicators: async () => ([
+      { category: "Inflation Rate", latestValue: "336.3", previousValue: "326", date: "2025-09-01", unit: "%", source: "FRED CPIAUCSL" },
+    ]),
+    goldQuarters: async () => [],
+    sectorBars: async () => [],
+    news: async () => [],
+    researcherFiles: async () => [],
+    earningsBrief: async () => null,
+  });
+  const cpi = inflation.series.find(row => row.id === "CPIAUCSL");
+  assert.ok(cpi);
+  assert.equal(cpi.label, "Inflation Rate");
+  assert.equal(cpi.unit, "%");
+  const cpiLast = cpi.points[cpi.points.length - 1]!;
+  assert.ok(Math.abs(cpiLast.value - expectedYoy) < 1e-6, String(cpiLast.value));
+  assert.equal(cpi.points.some(point => point.value === indexNow), false);
+  const cpiRank = rankPodcastDrivers([cpi]);
+  assert.equal(cpiRank.drivers[0]?.label, "Inflation Rate");
+  assert.ok(cpiRank.drivers[0] != null && cpiRank.drivers[0].value < 20);
+  assert.ok(Math.abs((cpiRank.drivers[0]?.value ?? 0) - expectedYoy) < 1e-6);
+  ok("Inflation Rate zeigt die YoY-Prozentänderung, nicht den CPI-Indexstand");
+
+  const asked: string[] = [];
+  const fromEndpoint = await earningsBriefFromEndpoint(["msft", "SAP"], async (symbol) => {
+    asked.push(symbol);
+    return {
+      symbol,
+      status: "ok",
+      reason: null,
+      year: 2026,
+      quarter: 1,
+      date: "2026-01-28",
+      summary: `${symbol} Umsatz höher`,
+      excerpt: null,
+      excerptTruncated: false,
+      source: "fmp/earning-call-transcript",
+    };
+  });
+  assert.deepEqual(asked, ["MSFT", "SAP"]);
+  assert.match(fromEndpoint.text, /MSFT Umsatz höher/);
+  assert.equal(fromEndpoint.source, "fmp/earning-call-transcript");
+  const noSymbol = await earningsBriefFromEndpoint([], async () => { throw new Error("ohne Symbol kein Abruf"); });
+  assert.match(noSymbol.status ?? "", new RegExp(PODCAST_EARNINGS_ENDPOINT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(noSymbol.text, "");
+  const fed = await collectPodcastInputs({
+    fredCsv: async () => "date,value\n",
+    macroIndicators: async () => [],
+    goldQuarters: async () => [],
+    sectorBars: async () => [],
+    news: async () => [],
+    researcherFiles: async () => [],
+    earningsBrief: async () => fromEndpoint,
+  });
+  assert.ok(fed.notes.some(note => note.channel === "earnings-brief" && note.text.includes("MSFT Umsatz höher") && note.source === "fmp/earning-call-transcript"));
+  assert.equal(fed.gaps.some(gap => gap.status === EARNINGS_BRIEF_UNAVAILABLE), false);
+  assert.deepEqual(collectPodcastSymbols({ symbols: ["vow3.de", "bad symbol", "SAP", "MSFT", "AAPL", "NVDA"] }), ["VOW3.DE", "SAP", "MSFT", "AAPL"]);
+  assert.deepEqual(symbolsFromResearcherCache([
+    { name: "screener.json", json: { candidates: [{ ticker: "sap" }, { ticker: "msft" }] } },
+  ]), ["SAP", "MSFT"]);
+  const sourceText = readFileSync(new URL("../server/podcast-sources.ts", import.meta.url), "utf8");
+  assert.match(sourceText, /buildEarningsBrief/);
+  assert.match(sourceText, /\/api\/chat\/earnings-brief\/:symbol/);
+  assert.equal(sourceText.includes("earningsBrief: async () => null"), false);
+  const routeText = readFileSync(new URL("../server/podcast-route.ts", import.meta.url), "utf8");
+  assert.match(routeText, /podcastLlmCall/);
+  assert.match(routeText, /isLLMAvailable/);
+  const pageText = readFileSync(new URL("../client/src/pages/Researcher.tsx", import.meta.url), "utf8");
+  assert.match(pageText, /data-testid="button-podcast"/);
+  assert.match(pageText, /symbols: symbolsInResearcherView/);
+  ok("Podcast-Pipeline nutzt den Earnings-Endpoint als Quelle");
+
   const rankedCollected = rankPodcastDrivers(collected.series);
   const prompt = buildPodcastPrompt({
     today: "2026-11-01",
@@ -251,9 +342,30 @@ async function main() {
     today: "2026-11-01",
   });
   assert.match(noLlm.scriptStatus, /^n\/a —/);
+  assert.match(noLlm.scriptStatus, /kein JSON/);
   assert.equal(noLlm.script, null);
   assert.ok(noLlm.drivers.length > 0);
   ok("ohne OpenRouter bleiben die Treiber, das Skript ist n/a");
+
+  let keyCalls = 0;
+  const blocked = await podcastLlmCall("Skript", {
+    available: () => false,
+    invoke: async () => { keyCalls += 1; return { data: { title: "nein" }, modelUsed: "should-not-run" }; },
+  });
+  assert.equal(keyCalls, 0);
+  assert.equal(blocked?.modelUsed, PODCAST_NO_KEY_MESSAGE);
+  const noKeyProbe = await runPodcastProbe({
+    collect: async () => collected,
+    llm: async () => blocked,
+    audio: new CursorVoiceAudioAdapter(),
+    today: "2026-11-01",
+  });
+  assert.equal(noKeyProbe.script, null);
+  assert.equal(noKeyProbe.scriptStatus, PODCAST_NO_KEY_MESSAGE);
+  assert.equal(noKeyProbe.scriptStatus.includes("kein JSON"), false);
+  assert.equal(noKeyProbe.progress.find(step => step.step === "llm")?.detail, PODCAST_NO_KEY_MESSAGE);
+  assert.match(PODCAST_NO_KEY_MESSAGE, /kein OpenRouter-Key konfiguriert/);
+  ok("ohne Key dieselbe Meldung wie der Chat, kein erfundenes JSON");
 
   const sources = [
     "server/podcast-drivers.ts",
@@ -285,8 +397,19 @@ async function main() {
     assert.ok(html.includes(probe.drivers[0]!.source));
     assert.ok(html.includes("n/a —"));
     assert.equal(html.includes("whitespace-nowrap"), false);
+    assert.ok(html.includes("bg-card"));
+    assert.ok(html.includes("text-muted-foreground"));
+    assert.ok(html.includes("border-border"));
+    assert.equal(html.includes("text-amber-200"), false);
+    assert.equal(html.includes("text-rose-300"), false);
     ok(`Panel bricht bei ${vw}px um und zeigt Quelle, Grund und n/a`);
   }
+  const errorHtml = renderToStaticMarkup(React.createElement(PodcastProbePanel, {
+    state: { phase: "error", error: "n/a — Podcast-Abruf fehlgeschlagen" },
+  }));
+  assert.ok(errorHtml.includes("text-destructive"));
+  assert.equal(errorHtml.includes("text-rose-300"), false);
+  ok("Light-Mode nutzt Theme-Tokens statt heller Festfarben");
 
   console.log(`podcast probe: ${n} checks ok`);
 }

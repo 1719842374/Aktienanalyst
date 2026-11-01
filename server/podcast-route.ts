@@ -5,9 +5,9 @@
 import type { Express, Request, Response } from "express";
 import { CHAT_LLM_TIMEOUT_MS } from "./chat-route";
 import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "./podcast-audio";
-import { callLLMJson } from "./llm-openrouter";
-import { runPodcastProbe } from "./podcast-pipeline";
-import { collectPodcastInputs, defaultPodcastDeps } from "./podcast-sources";
+import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { PODCAST_NO_KEY_MESSAGE, runPodcastProbe } from "./podcast-pipeline";
+import { collectPodcastInputs, collectPodcastSymbols, defaultPodcastDeps } from "./podcast-sources";
 import { writePodcastTranscript } from "./podcast-transcript-route";
 import { PODCAST_MARKET_SYMBOL } from "../shared/podcast-transcript";
 
@@ -62,13 +62,39 @@ export async function callPodcastLlm(
   }
 }
 
+/**
+ * Ohne Key kein OpenRouter-Call. Die Meldung ist die des Chats, nicht
+ * „OpenRouter lieferte kein JSON“ — das gilt nur, wenn ein Key da ist und
+ * trotzdem kein JSON zurückkommt.
+ */
+export async function podcastLlmCall(
+  prompt: string,
+  deps: {
+    available: () => boolean;
+    invoke: (opts: {
+      prompt: string;
+      maxTokens: number;
+      temperature: number;
+      signal: AbortSignal;
+    }) => Promise<{ data: unknown; modelUsed: string } | null>;
+    timeoutMs?: number;
+  },
+): Promise<{ data: unknown; modelUsed?: string } | null> {
+  if (!deps.available()) return { data: null, modelUsed: PODCAST_NO_KEY_MESSAGE };
+  return callPodcastLlm(prompt, deps);
+}
+
 export function registerPodcastRoute(app: Express): void {
-  app.post("/api/podcast/brief", async (_req: Request, res: Response) => {
+  app.post("/api/podcast/brief", async (req: Request, res: Response) => {
     try {
-      const deps = await defaultPodcastDeps();
+      const symbols = collectPodcastSymbols(req.body);
+      const deps = await defaultPodcastDeps(symbols);
       const result = await runPodcastProbe({
         collect: () => collectPodcastInputs(deps),
-        llm: (prompt) => callPodcastLlm(prompt, { invoke: (opts) => callLLMJson(opts) }),
+        llm: (prompt) => podcastLlmCall(prompt, {
+          available: isLLMAvailable,
+          invoke: (opts) => callLLMJson(opts),
+        }),
         audio: new CursorVoiceAudioAdapter(),
         today: new Date().toISOString().slice(0, 10),
         remember: (text) => {

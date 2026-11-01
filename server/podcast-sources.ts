@@ -1,12 +1,17 @@
 /**
  * Liest die Reihen, die die App schon kennt (FRED-Kataloge, Gold-AISC,
  * Sektor-ETFs, News, Researcher-Cache). Was keine Historie hat, wird eine
- * Lücke mit Grund. Der Earnings-Brief aus #384 ist auf diesem Stand nicht im Baum.
+ * Lücke mit Grund. Der Earnings-Brief läuft über buildEarningsBrief, denselben
+ * Handler wie GET /api/chat/earnings-brief/:symbol.
  */
 import fs from "fs";
 import path from "path";
 import { BTC_LIQUIDITY_LABELS, BTC_LIQUIDITY_SERIES } from "../shared/btc-liquidity";
+import type { EarningsCallBrief } from "../shared/chat-earnings";
+import { buildEarningsBrief } from "./chat-earnings-route";
 import { fredCsvObservations } from "./fred-csv";
+import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates } from "./fmp";
+import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { FRED_HISTORY_PARAMS, FRED_HISTORY_SERIES } from "./recession-fred-history-route";
 import { DRIVER_SERIES } from "./recession-drivers";
 import { ETF_PROXY_MAP } from "./sector-rotation-math";
@@ -14,7 +19,22 @@ import type { PodcastGap, PodcastPoint, PodcastSeriesInput } from "./podcast-dri
 import type { PodcastNote } from "./podcast-prompt";
 
 export const EARNINGS_BRIEF_UNAVAILABLE =
-  "n/a — Earnings-Brief aus #384 liegt nicht auf diesem Stand (Draft-PR, nicht gemergt). Kein Transkript und kein Ersatzwert.";
+  "n/a — Earnings-Brief nicht geliefert";
+
+/** Derselbe Pfad wie die Chat-Route. Der Podcast ruft den Handler, nicht einen zweiten Anbieter. */
+export const PODCAST_EARNINGS_ENDPOINT = "GET /api/chat/earnings-brief/:symbol";
+
+/** So viele Symbole fragt ein Lauf den Earnings-Handler. Darüber bleibt der Rest ungefragt. */
+export const PODCAST_EARNINGS_SYMBOL_CAP = 4;
+
+const PODCAST_SYMBOL = /^[A-Za-z0-9.\-]{1,24}$/;
+
+/**
+ * Indexstände, deren Treiber die YoY-Rate in Prozent ist.
+ * CPIAUCSL ist „Inflation Rate“, CPILFESL und PCEPILFE sind dieselben Index-zu-Rate-Serien
+ * (fmp-macro mode yoy, recession INFLATION_IDS).
+ */
+export const PODCAST_YOY_INDEX_SERIES = new Set(["CPIAUCSL", "CPILFESL", "PCEPILFE"]);
 
 /** Dieselbe Keyword-Liste wie buildMacroPulse in server/researcher.ts. Nur die Abfrage, nicht das Ranking. */
 export const PODCAST_MACRO_KEYWORDS = [
@@ -108,6 +128,138 @@ function fredIdFromSource(source: string): string | null {
 
 function addChannel(series: PodcastSeriesInput, channel: string) {
   if (!series.channels.includes(channel)) series.channels.push(channel);
+}
+
+function monthIndex(iso: string): number | null {
+  const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(iso);
+  if (!match) return null;
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return Number(match[1]) * 12 + (month - 1);
+}
+
+/**
+ * YoY in Prozent aus der eigenen Serie. Paarung 11–13 Monate, wie die
+ * Rezessions-Treiber einen Index in eine Rate übersetzen. Der Indexstand
+ * selbst bleibt nicht der Treiberwert.
+ */
+export function yoyRatePoints(points: PodcastPoint[]): PodcastPoint[] {
+  const sorted = points
+    .filter(point => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.value))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const out: PodcastPoint[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const current = sorted[i]!;
+    const now = monthIndex(current.date);
+    if (now == null) continue;
+    let prior: PodcastPoint | null = null;
+    let best = 99;
+    for (let j = i - 1; j >= 0; j--) {
+      const then = monthIndex(sorted[j]!.date);
+      if (then == null) continue;
+      const gap = now - then;
+      if (gap > 13) break;
+      if (gap < 11) continue;
+      const dist = Math.abs(gap - 12);
+      if (dist < best) {
+        best = dist;
+        prior = sorted[j]!;
+      }
+      if (dist === 0) break;
+    }
+    if (!prior || prior.value === 0) continue;
+    const rate = ((current.value - prior.value) / prior.value) * 100;
+    if (Number.isFinite(rate)) out.push({ date: current.date, value: rate });
+  }
+  return out;
+}
+
+export function collectPodcastSymbols(body: unknown): string[] {
+  const listed = body && typeof body === "object" && Array.isArray((body as { symbols?: unknown }).symbols)
+    ? (body as { symbols: unknown[] }).symbols
+    : [];
+  return mergePodcastSymbols(listed.map(item => (typeof item === "string" ? item : "")));
+}
+
+export function symbolsFromResearcherCache(files: ResearcherCacheFile[]): string[] {
+  const found: string[] = [];
+  const walk = (node: unknown, key: string | null) => {
+    if (found.length >= 40) return;
+    if (typeof node === "string" && (key === "ticker" || key === "symbol")) {
+      found.push(node);
+      return;
+    }
+    if (Array.isArray(node) && (key === "topPlayers" || key === "affectedTickers" || key === "tickers")) {
+      for (const item of node) if (typeof item === "string") found.push(item);
+      return;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item, key);
+      }
+      return;
+    }
+    for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      if (childKey.startsWith("_")) continue;
+      walk(child, childKey);
+    }
+  };
+  for (const file of files) walk(file.json, null);
+  return mergePodcastSymbols(found);
+}
+
+export function mergePodcastSymbols(raw: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const symbol = item.trim().toUpperCase();
+    if (!PODCAST_SYMBOL.test(symbol) || seen.has(symbol)) continue;
+    seen.add(symbol);
+    out.push(symbol);
+    if (out.length >= PODCAST_EARNINGS_SYMBOL_CAP) break;
+  }
+  return out;
+}
+
+export function earningsBriefText(brief: EarningsCallBrief): EarningsBriefText {
+  const text = (brief.summary || brief.excerpt || "").trim();
+  const quarter = brief.year != null && brief.quarter != null ? `FY${brief.year} Q${brief.quarter}` : null;
+  const head = [brief.symbol, brief.date, quarter].filter(Boolean).join(" ");
+  return {
+    text: text ? `${head}: ${text}` : "",
+    source: brief.source ?? PODCAST_EARNINGS_ENDPOINT,
+    status: text ? undefined : (brief.reason ?? `n/a — ${PODCAST_EARNINGS_ENDPOINT} ohne Text`),
+  };
+}
+
+export async function earningsBriefFromEndpoint(
+  symbols: string[],
+  load: (symbol: string) => Promise<EarningsCallBrief>,
+): Promise<EarningsBriefText> {
+  const picked = mergePodcastSymbols(symbols);
+  if (!picked.length) {
+    return {
+      text: "",
+      source: PODCAST_EARNINGS_ENDPOINT,
+      status: `n/a — kein Symbol für ${PODCAST_EARNINGS_ENDPOINT}`,
+    };
+  }
+  const parts: string[] = [];
+  const reasons: string[] = [];
+  let source: string | null = PODCAST_EARNINGS_ENDPOINT;
+  for (const symbol of picked) {
+    const brief = await load(symbol);
+    const row = earningsBriefText(brief);
+    if (row.text) {
+      parts.push(row.text);
+      if (brief.source) source = brief.source;
+    } else if (row.status) reasons.push(row.status);
+  }
+  if (!parts.length) {
+    return { text: "", source, status: reasons.join(" | ") || `n/a — ${PODCAST_EARNINGS_ENDPOINT} ohne Text` };
+  }
+  return { text: parts.join("\n"), source, status: reasons.length ? reasons.join(" | ") : undefined };
 }
 
 export function seriesFromResearcherFiles(files: ResearcherCacheFile[]): { series: PodcastSeriesInput[]; gaps: PodcastGap[] } {
@@ -206,17 +358,31 @@ export async function collectPodcastInputs(deps: PodcastSourceDeps): Promise<Pod
       gaps.push({ channel: item.channels.join("+"), label: item.label, status: `n/a — FRED ${item.id}: ${message}` });
       return;
     }
-    const points = fredCsvObservations(csv);
+    let points = fredCsvObservations(csv);
     if (!points.length) {
       gaps.push({ channel: item.channels.join("+"), label: item.label, status: `n/a — FRED ${item.id} leer oder nicht erreichbar` });
       return;
+    }
+    let unit: string | null = null;
+    if (PODCAST_YOY_INDEX_SERIES.has(item.id)) {
+      const rates = yoyRatePoints(points);
+      if (rates.length < 2) {
+        gaps.push({
+          channel: item.channels.join("+"),
+          label: item.label,
+          status: `n/a — ${item.label} ohne YoY-Vergleich über 12 Monate, Indexstand wird nicht als Rate gezeigt`,
+        });
+        return;
+      }
+      points = rates;
+      unit = "%";
     }
     series.push({
       id: item.id,
       label: item.label,
       source: `FRED ${item.id}`,
       channels: item.channels,
-      unit: null,
+      unit,
       points,
       citation: `https://fred.stlouisfed.org/series/${item.id}`,
     });
@@ -311,6 +477,9 @@ export async function collectPodcastInputs(deps: PodcastSourceDeps): Promise<Pod
       });
     } else {
       notes.push({ channel: "earnings-brief", text: brief.text, source: brief.source });
+      if (brief.status) {
+        gaps.push({ channel: "earnings-brief", label: "Earnings-Brief", status: brief.status });
+      }
       gaps.push({
         channel: "earnings-brief",
         label: "Earnings-Brief",
@@ -337,7 +506,7 @@ function yearsAgoIso(years: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export async function defaultPodcastDeps(): Promise<PodcastSourceDeps> {
+export async function defaultPodcastDeps(requestedSymbols: string[] = []): Promise<PodcastSourceDeps> {
   const { fetchFredCsv } = await import("./fred-csv");
   const cosd = yearsAgoIso(FRED_HISTORY_PARAMS.yearsBack);
   return {
@@ -375,7 +544,18 @@ export async function defaultPodcastDeps(): Promise<PodcastSourceDeps> {
       return headlines;
     },
     researcherFiles: async () => readResearcherCacheFiles(),
-    earningsBrief: async () => null,
+    earningsBrief: async () => {
+      const symbols = mergePodcastSymbols([
+        ...requestedSymbols,
+        ...symbolsFromResearcherCache(readResearcherCacheFiles()),
+      ]);
+      return earningsBriefFromEndpoint(symbols, (symbol) => buildEarningsBrief(symbol, {
+        dates: (s) => fmpEarningCallTranscriptDates(s),
+        transcript: (s, year, quarter) => fmpEarningCallTranscript(s, year, quarter),
+        llmAvailable: isLLMAvailable,
+        llm: callLLMJson,
+      }));
+    },
   };
 }
 

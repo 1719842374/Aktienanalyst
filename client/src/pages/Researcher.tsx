@@ -52,6 +52,43 @@ const IMPACT_COLORS: Record<string, string> = {
   low: "bg-foreground/10 text-foreground/60",
 };
 
+/** Symbole, die die Researcher-Ansicht schon zeigt. Der Podcast-Knopf bleibt, wo er ist. */
+function symbolsInResearcherView(data: Record<string, unknown>, briefing: unknown): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const symbol = value.trim().toUpperCase();
+    if (!/^[A-Z0-9.\-]{1,24}$/.test(symbol) || seen.has(symbol)) return;
+    seen.add(symbol);
+    found.push(symbol);
+  };
+  const walk = (node: unknown, key: string | null, depth: number) => {
+    if (found.length >= 12 || depth > 8 || node == null) return;
+    if (typeof node === "string") {
+      if (key === "ticker" || key === "symbol") push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      if (key === "topPlayers" || key === "affectedTickers" || key === "tickers") {
+        for (const item of node) push(item);
+        return;
+      }
+      for (const item of node) walk(item, key, depth + 1);
+      return;
+    }
+    if (typeof node !== "object") return;
+    for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      if (childKey.startsWith("_")) continue;
+      if (childKey === "ticker" || childKey === "symbol") push(child);
+      else walk(child, childKey, depth + 1);
+    }
+  };
+  walk(data, null, 0);
+  walk(briefing, null, 0);
+  return found;
+}
+
 export default function Researcher() {
   const [activeTab, setActiveTab] = useState<Tab>("macro");
   const [region, setRegion] = useState<Region>("US");
@@ -69,7 +106,7 @@ export default function Researcher() {
     setPodcastPhase("loading");
     setPodcastError(null);
     try {
-      const res = await apiRequest("POST", "/api/podcast/brief", {}, PODCAST_REQUEST_TIMEOUT_MS);
+      const res = await apiRequest("POST", "/api/podcast/brief", { symbols: symbolsInResearcherView(data, briefingData) }, PODCAST_REQUEST_TIMEOUT_MS);
       const body = await res.json().catch(() => null);
       if (!res.ok || !body || typeof body !== "object") {
         setPodcastPhase("error");
