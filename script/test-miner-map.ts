@@ -6,15 +6,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import express from "express";
 import type { AddressInfo } from "node:net";
+import { geoEqualEarth } from "d3-geo";
 import {
   MINER_MAP_SITES,
   MINER_MAP_GAPS,
+  MINER_MAP_RADIUS,
   MINER_BUBBLE_ROLES,
   bubbleCapacitySample,
   decorateMinerSites,
   buildMinerMapBody,
   pipelineFromMiner,
   siteHasFigure,
+  minerCoverage,
+  formatMinerCoverage,
+  spreadMarkerOffsets,
 } from "../shared/miner-map";
 
 const { buildMinerMap } = await import("../server/miner-map");
@@ -159,6 +164,102 @@ let capexCalled = false;
 
 assert.ok((MINER_BUBBLE_ROLES as readonly string[]).includes("developed"));
 assert.equal((MINER_BUBBLE_ROLES as readonly string[]).includes("planned"), false);
+
+const coverage = minerCoverage(MINER_MAP_SITES);
+assert.equal(coverage.total, MINER_MAP_SITES.length);
+assert.equal(coverage.total - coverage.withMw, 5, "fünf Pins ohne MW-Zahl");
+assert.equal(coverage.withMw, 12);
+assert.equal(coverage.withSiteEhs, 0, "keine erfundene Standort-EH/s");
+assert.equal(coverage.withCompanyEhs, 9);
+assert.equal(body.coverage.withMw, coverage.withMw);
+assert.equal(body.coverage.withSiteEhs, coverage.withSiteEhs);
+assert.equal(body.coverage.withCompanyEhs, coverage.withCompanyEhs);
+assert.equal("withFigure" in body.coverage, false);
+const coverageLabel = formatMinerCoverage(coverage);
+assert.equal(coverageLabel, "12/17 mit MW · 0/17 mit Standort-EH/s · 9/17 mit Konzern-EH/s");
+assert.doesNotMatch(coverageLabel, /mit Zahl/);
+
+const panelSrc = readFileSync("client/src/components/researcher/MinerMapPanel.tsx", "utf8");
+assert.match(panelSrc, /formatMinerCoverage\(data\.coverage\)/);
+assert.match(panelSrc, /spreadMarkerOffsets/);
+assert.doesNotMatch(panelSrc, /mit Zahl/);
+
+const hannibal = MINER_MAP_SITES.find(s => s.id === "us-oh-hannibal");
+const minden = MINER_MAP_SITES.find(s => s.id === "us-ne-minden");
+assert.ok(hannibal?.capacityMw && minden?.capacityMw);
+assert.equal(hannibal.capacityMw.value, 200);
+assert.equal(minden.capacityMw.value, 42);
+assert.equal(hannibal.capacityMw.asOf, "2026-04-30", "Hannibal zeigt das 8-K-Filing, nicht den Abruf");
+assert.equal(minden.capacityMw.asOf, "2026-08-06", "Minden zeigt das 10-Q-Filing, nicht den Abruf");
+assert.match(hannibal.capacityMw.sourceUrl, /^https:\/\/www\.sec\.gov\//);
+assert.match(minden.capacityMw.sourceUrl, /^https:\/\/www\.sec\.gov\//);
+assert.match(hannibal.capacityMw.scope, /Filing-Datum 2026-04-30/);
+assert.match(minden.capacityMw.scope, /Filing-Datum 2026-08-06/);
+for (const site of [hannibal, minden]) {
+  const blob = `${site.capacityMw?.asOf} ${site.capacityMw?.scope} ${site.capacityMw?.sourceLabel} ${site.capacityMw?.sourceUrl}`;
+  assert.doesNotMatch(blob, /Abruf|2026-11-01|mara\.com/);
+}
+assert.equal(hannibal.operators[0]?.companyHashrateEHs?.value, 53.2);
+assert.equal(hannibal.operators[0]?.companyHashrateEHs?.asOf, "2025-12-31");
+
+const work = readFileSync("Fertig_WORK_BITCOIN_MINER_MAP.md", "utf8");
+const workLines = work.endsWith("\n") ? work.slice(0, -1).split("\n") : work.split("\n");
+assert.equal(workLines.length, 75, "Spec nicht kürzen");
+assert.equal(workLines[0], "# Fertig_WORK_BITCOIN_MINER_MAP.md — Bitcoin-Miner-Lokalisierung auf der Weltkarte");
+assert.equal(workLines[0].includes("Offen_"), false);
+assert.ok(workLines.slice(1).some(line => line.includes("Nach Umsetzung auf `fertig_` umbenennen.")));
+
+function pairAt(gap: number) {
+  return spreadMarkerOffsets([
+    { id: "a", x: 0, y: 0, radiusPx: 10 },
+    { id: "b", x: gap, y: 0, radiusPx: 10 },
+  ]);
+}
+const tight = pairAt(4);
+const zoomedOut = pairAt(30);
+const tightB = tight.find(p => p.id === "b");
+const zoomedB = zoomedOut.find(p => p.id === "b");
+assert.ok(tightB && zoomedB);
+assert.ok(Math.abs(tightB.dx - 8) < 1e-9, "Versatz ist die halbe Pixellücke, keine feste Stufe");
+assert.equal(zoomedB.dx, 0, "bei größerer Pixeldistanz kein Versatz");
+assert.equal(zoomedOut.find(p => p.id === "a")?.dx, 0);
+
+const proj = geoEqualEarth().translate([400, 200]).scale(155);
+const texasIds = ["us-tx-rockdale", "us-tx-corsicana", "us-tx-childress", "us-tx-matagorda", "us-tx-odessa"];
+const texas = decorateMinerSites(MINER_MAP_SITES).filter(s => texasIds.includes(s.id));
+assert.equal(texas.length, texasIds.length);
+const texasPoints = texas.map(s => {
+  const xy = proj([s.lon, s.lat]);
+  assert.ok(xy, s.id);
+  return {
+    id: s.id,
+    x: xy[0],
+    y: xy[1],
+    radiusPx: s.bubble.radiusPx ?? MINER_MAP_RADIUS.naPx,
+  };
+});
+let rawOverlap = false;
+for (let i = 0; i < texasPoints.length; i++) {
+  for (let j = i + 1; j < texasPoints.length; j++) {
+    const need = texasPoints[i].radiusPx + texasPoints[j].radiusPx;
+    const raw = Math.hypot(texasPoints[i].x - texasPoints[j].x, texasPoints[i].y - texasPoints[j].y);
+    if (raw < need) rawOverlap = true;
+  }
+}
+assert.equal(rawOverlap, true, "ohne Versatz überlappen Texas-Bubbles");
+const texasOffsets = new Map(spreadMarkerOffsets(texasPoints).map(o => [o.id, o]));
+for (let i = 0; i < texasPoints.length; i++) {
+  for (let j = i + 1; j < texasPoints.length; j++) {
+    const a = texasPoints[i];
+    const b = texasPoints[j];
+    const oa = texasOffsets.get(a.id);
+    const ob = texasOffsets.get(b.id);
+    assert.ok(oa && ob);
+    const d = Math.hypot(a.x + oa.dx - (b.x + ob.dx), a.y + oa.dy - (b.y + ob.dy));
+    const need = a.radiusPx + b.radiusPx;
+    assert.ok(d + 1e-6 >= need, `${a.id}/${b.id} ${d} < ${need}`);
+  }
+}
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
 const scores = {

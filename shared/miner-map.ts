@@ -117,7 +117,7 @@ export interface MinerMapResponse {
   asOf: string;
   source: string;
   attribution: string;
-  coverage: { withFigure: number; total: number };
+  coverage: { total: number; withMw: number; withSiteEhs: number; withCompanyEhs: number };
   sites: (MinerMapSite & { bubble: MinerMapBubble })[];
   pipeline: MinerMapPipeline;
   /** Länderanteil bewusst nicht befüllt. */
@@ -133,7 +133,8 @@ const IREN_20F = "https://www.sec.gov/Archives/edgar/data/1878848/00018788482600
 const CLSK_IR = "https://investors.cleanspark.com/news/news-details/2026/CleanSpark-Releases-August-2026-Operational-Update/default.aspx";
 const CLSK_10Q = "https://ebs.publicnow.com/view/A41B7D68944796EAC04DD490719D6F774AA54BA7";
 const BITF_PR = "https://investor.bitfarms.com/news-releases/news-release-details/bitfarms-announces-plans-conversion-washington-site-hpcai";
-const MARA_WEB = "https://www.mara.com/";
+const MARA_8K_HANNIBAL = "https://www.sec.gov/Archives/edgar/data/1507605/000119312526193982/d54802dex991.htm";
+const MARA_10Q_MINDEN = "https://www.sec.gov/Archives/edgar/data/1507605/000150760526000022/mara-20260630.htm";
 const COINSHARES = "https://coinshares.com/corp/insights/research-data/bitcoin-mining-report-q1-2026/";
 const CAMBRIDGE = "https://ccaf.io/cbnsi/cbeci/mining_map";
 
@@ -458,10 +459,10 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     coordNote: "Ungefähre Lage Hannibal, Ohio, wie auf der MARA-Seite benannt.",
     capacityMw: {
       value: 200,
-      asOf: "2026-11-01",
-      sourceLabel: "MARA.com, Seite Hannibal",
-      sourceUrl: MARA_WEB,
-      scope: "200 MW available. Marketing-Seite, kein Filing-Stichtag; Abruf 1.11.2026.",
+      asOf: "2026-04-30",
+      sourceLabel: "MARA Form 8-K Exhibit 99.1",
+      sourceUrl: MARA_8K_HANNIBAL,
+      scope: "200 MW bestehende Kapazität des Hannibal-Rechenzentrums. Form 8-K Exhibit 99.1, Filing-Datum 2026-04-30.",
     },
     capacityNote: null,
     capacityRole: "available",
@@ -490,10 +491,10 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     coordNote: "Ungefähre Lage Minden, Nebraska.",
     capacityMw: {
       value: 42,
-      asOf: "2026-11-01",
-      sourceLabel: "MARA.com, Seite Minden",
-      sourceUrl: MARA_WEB,
-      scope: "42 MW grid-connected capacity. Marketing-Seite, Abruf 1.11.2026.",
+      asOf: "2026-08-06",
+      sourceLabel: "MARA Form 10-Q",
+      sourceUrl: MARA_10Q_MINDEN,
+      scope: "42 MW nameplate, Central Nebraska. Form 10-Q, Filing-Datum 2026-08-06.",
     },
     capacityNote: null,
     capacityRole: "developed",
@@ -766,6 +767,86 @@ export function siteHasFigure(site: MinerMapSite): boolean {
   return site.operators.some(o => o.siteHashrateEHs != null || o.companyHashrateEHs != null || o.companyPowerUsdPerKwh != null);
 }
 
+function siteHasMw(site: MinerMapSite): boolean {
+  return site.capacityMw != null && site.capacityMw.value > 0;
+}
+
+function siteHasSiteEhs(site: MinerMapSite): boolean {
+  return site.operators.some(o => o.siteHashrateEHs != null && o.siteHashrateEHs.value > 0);
+}
+
+function siteHasCompanyEhs(site: MinerMapSite): boolean {
+  return site.operators.some(o => o.companyHashrateEHs != null && o.companyHashrateEHs.value > 0);
+}
+
+/** MW und EH/s getrennt. Konzern-EH/s ist nicht die Standort-Hashrate. Fehlendes bleibt 0 in der Zählung, kein Ersatzwert. */
+export function minerCoverage(sites: MinerMapSite[]): MinerMapResponse["coverage"] {
+  return {
+    total: sites.length,
+    withMw: sites.filter(siteHasMw).length,
+    withSiteEhs: sites.filter(siteHasSiteEhs).length,
+    withCompanyEhs: sites.filter(siteHasCompanyEhs).length,
+  };
+}
+
+export function formatMinerCoverage(coverage: MinerMapResponse["coverage"]): string {
+  return `${coverage.withMw}/${coverage.total} mit MW · ${coverage.withSiteEhs}/${coverage.total} mit Standort-EH/s · ${coverage.withCompanyEhs}/${coverage.total} mit Konzern-EH/s`;
+}
+
+export interface MarkerPixel {
+  id: string;
+  x: number;
+  y: number;
+  radiusPx: number;
+}
+
+export interface MarkerPixelOffset {
+  id: string;
+  dx: number;
+  dy: number;
+}
+
+/**
+ * Trennt überlappende Marker in der Pixelebene der Kartenprojektion.
+ * Zielabstand ist die Summe der gezeichneten Radien. Der Versatz ist die
+ * fehlende Pixeldistanz. Ein größerer Projektionsmaßstab vergrößert die
+ * Pixeldistanz und verkleinert den Versatz. Kein fester Grad- oder Pixel-Schritt.
+ */
+export function spreadMarkerOffsets(points: MarkerPixel[]): MarkerPixelOffset[] {
+  const n = points.length;
+  const pos = points.map(p => ({ x: p.x, y: p.y, r: p.radiusPx }));
+  const sweeps = n * n;
+  for (let pass = 0; pass < sweeps; pass++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = pos[j].x - pos[i].x;
+        const dy = pos[j].y - pos[i].y;
+        const dist = Math.hypot(dx, dy);
+        const need = pos[i].r + pos[j].r;
+        if (!(dist < need)) continue;
+        if (need - dist <= Number.EPSILON * need * Math.max(n, 1)) continue;
+        const coincident = dist === 0;
+        const angle = (2 * Math.PI * (j - i)) / n;
+        const ux = coincident ? Math.cos(angle) : dx / dist;
+        const uy = coincident ? Math.sin(angle) : dy / dist;
+        const push = coincident ? need / 2 : (need - dist) / 2;
+        pos[i].x -= ux * push;
+        pos[i].y -= uy * push;
+        pos[j].x += ux * push;
+        pos[j].y += uy * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return points.map((p, i) => ({
+    id: p.id,
+    dx: pos[i].x - p.x,
+    dy: pos[i].y - p.y,
+  }));
+}
+
 export function decorateMinerSites(sites: MinerMapSite[]): (MinerMapSite & { bubble: MinerMapBubble })[] {
   const sample = bubbleCapacitySample(sites);
   return sites.map(s => ({
@@ -836,10 +917,7 @@ export function buildMinerMapBody(pipeline: MinerMapPipeline, asOf = new Date().
     asOf,
     source: "SEC-Filings, Unternehmensmeldungen, CoinShares-Report (kostenlos), Live-Kontext aus server/btc-miner.ts",
     attribution: `Länderanteil: ${CAMBRIDGE} (zuletzt öffentlich Jan 2022, hier nicht als Ist verwendet). Standorte nicht geschätzt.`,
-    coverage: {
-      withFigure: sites.filter(siteHasFigure).length,
-      total: sites.length,
-    },
+    coverage: minerCoverage(sites),
     sites,
     pipeline,
     countryShareNote: MINER_MAP_COUNTRY_SHARE_NOTE,
