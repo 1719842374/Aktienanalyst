@@ -7,9 +7,10 @@ import { parseBojSeries, parseEcbCsv } from "./liquidity-briefing-math";
 import { fetchVstoxxVol, fetchYahooDailySeries } from "./recession-markets";
 import { fetchYahooTimeseriesFundamentals } from "./yahoo-fetcher";
 import {
-  ASIA_PEER_WEIGHT,
+  ASIA_GDP_USD,
   REGION_WEIGHT,
   SERIES_STRESS_MAX,
+  asiaGdpWeights,
   alignSpread,
   catalogProbability,
   blendWeighted,
@@ -57,6 +58,11 @@ export interface RegionalPrints {
   cnVolSource: string;
   cnPe: number | null;
   cnPeSource: string;
+  /** Latest World Bank GDP, current US$. null when the FRED print is missing. */
+  jpGdpUsd: number | null;
+  cnGdpUsd: number | null;
+  jpGdpSource: string;
+  cnGdpSource: string;
 }
 
 export interface RegionScorers {
@@ -392,13 +398,26 @@ export function emptyRegionalPrints(): RegionalPrints {
     cnVolSource: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T",
     cnPe: null,
     cnPeSource: "n/a — ASHR KGV (FMP leer)",
+    jpGdpUsd: null,
+    cnGdpUsd: null,
+    jpGdpSource: `n/a — FRED ${ASIA_GDP_USD.JP} leer`,
+    cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} leer`,
   };
+}
+
+async function gdpUsd(id: string): Promise<{ value: number | null; source: string }> {
+  const points = await fred(id, "1990-01-01");
+  const value = latestFinite(points);
+  if (value == null || !(value > 0)) return { value: null, source: `n/a — FRED ${id} leer` };
+  const dated = [...points].reverse().find(point => point.value > 0);
+  const year = dated?.date.slice(0, 4) ?? "";
+  return { value, source: `FRED ${id} ${year}`.trim() };
 }
 
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, cnPe, cnVol, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, cnPe, cnVol, jpGdp, cnGdp, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -414,6 +433,8 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     topixPe(today),
     ashrPe(today),
     chinaVolPrint(cosd),
+    gdpUsd(ASIA_GDP_USD.JP),
+    gdpUsd(ASIA_GDP_USD.CN),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
   let oecdIp: DatedPoint[] = [];
@@ -449,6 +470,10 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     cnVolSource: cnVol.source,
     cnPe: cnPe.value,
     cnPeSource: cnPe.source,
+    jpGdpUsd: jpGdp.value,
+    cnGdpUsd: cnGdp.value,
+    jpGdpSource: jpGdp.source,
+    cnGdpSource: cnGdp.source,
   };
 }
 
@@ -626,15 +651,20 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const us = region("US", "USA", input.usSlots);
   const euro = region("EZ", "Eurozone", ez);
   const asia = region("JP", "Asien", [...jp, ...cn]);
+  const gdp = asiaGdpWeights({
+    jp: { gdpUsd: prints.jpGdpUsd, source: prints.jpGdpSource },
+    cn: { gdpUsd: prints.cnGdpUsd, source: prints.cnGdpSource },
+  });
+  const peerWeight = (weight: number | null) => weight != null && weight > 0 ? weight : Number.NaN;
   asia.recessionProbability = blendWeighted([
-    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(jp, "recession") },
-    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(cn, "recession") },
+    { weight: peerWeight(gdp.jp.weight), probability: catalogProbability(jp, "recession") },
+    { weight: peerWeight(gdp.cn.weight), probability: catalogProbability(cn, "recession") },
   ]);
   asia.correctionProbability = blendWeighted([
-    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(jp, "correction") },
-    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(cn, "correction") },
+    { weight: peerWeight(gdp.jp.weight), probability: catalogProbability(jp, "correction") },
+    { weight: peerWeight(gdp.cn.weight), probability: catalogProbability(cn, "correction") },
   ]);
-  asia.note = "Japan + China (ASHR), Peer-Gewicht 1/1. ^TPX bewertet Japan, ASHR ist der China-Markt. Ein leerer Markt fällt aus der Mischung. Kein Buffett im Katalog-Score.";
+  asia.note = `Japan + China (ASHR). ^TPX bewertet Japan, ASHR ist der China-Markt. ${gdp.text} Ein Markt ohne gewerteten Slot fällt aus der Mischung. Kein Buffett im Katalog-Score.`;
   return {
     weights: { ...REGION_WEIGHT },
     regions: [us, euro, asia],
