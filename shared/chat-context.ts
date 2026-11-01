@@ -556,7 +556,7 @@ function regionFacts(cat: any): Record<string, ChatFactValue> {
   out.gewichteteRezession12MPct = num(cat.blendedRecession12m, 1);
   out.gewichteteKorrektur12MPct = num(cat.blendedCorrection12m, 1);
   const w = cat.weights;
-  out.gewichte = w ? str(`US ${num(w.US, 2)?.toFixed(2) ?? "n/a"} / EZ ${num(w.EZ, 2)?.toFixed(2) ?? "n/a"} / JP ${num(w.JP, 2)?.toFixed(2) ?? "n/a"}`) : null;
+  out.gewichte = w ? str(`US ${num(w.US, 2)?.toFixed(2) ?? "n/a"} / EZ ${num(w.EZ, 2)?.toFixed(2) ?? "n/a"} / Asien ${num(w.JP, 2)?.toFixed(2) ?? "n/a"}`) : null;
   out.handlungAufUSBuechern = cat.actionUsesUsBooks === true ? "Handlung bleibt auf den US-Büchern P_korr12 und P_rez12." : null;
   return out;
 }
