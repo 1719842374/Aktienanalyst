@@ -1,7 +1,7 @@
 # Soll-Ist im Detail: alle 11 Future-Dateien gegen main `29fdf1d5`
 
 **Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
-**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung.
+**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung. **Nachzug 01.11.2026, Tip `3baef0e5` (#356, Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHAs per GitHub-API):** F1-14 (Schwelle), F1-45, F9-04 und die Zählung. F1-39 ✅ auf Tip `aa0b6f2a` (#354, Bundle `index-84vk90H1.js`). Kein App-Code in diesem Nachzug.
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -76,7 +76,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-11 | Z.229–234, 260 | Tests: VOW3.DE/BMW.DE/SAP.DE über Yahoo, AAPL bleibt FMP, ungültiger Ticker ohne Absturz | Code-Tests aus #252 vorhanden; Prod-Test 18.10. vor #264 FAIL. Nach #264 (`4dd43ab8`, Tests `script/test-yahoo-chart-meta.ts`, `script/test-yahoo-timeseries-fundamentals.ts`): Tester Prod PASS Soft, VOW3.DE/SAP.DE MCap/KGV/EPS in EUR, AAPL unverändert | 🟡 | Rest: BMW.DE und ungültiger Ticker noch nicht live geprüft (Tester auf Prod). Soft-Rest wie F1-01 |
 | F1-12 | Z.272–275, 296–297, 391 | Dividendenrendite als Overlay im technischen Chart (heute Sektion 12), eigene Achse | `client/src/components/sections/TechnicalChart.tsx:153–158, 362–369, 585–590` → `client/src/lib/useDividendHistory.ts` → `GET /api/dividends/:ticker` (`server/dividend-route.ts:85`) → FMP/Yahoo → `shared/dividends.ts`. SHA `50980b3` (#213), `a91261b` (#227) | ✅ | Keiner |
 | F1-13 | Z.298 | Nur anzeigen, wenn Dividende > 0 | `TechnicalChart.tsx:364, 369` (Overlay nur bei Ereignissen und Yield-Werten), Währungs-Schutz `:368` | ✅ | Keiner |
-| F1-14 | Z.299 | Farbe für attraktive Yield-Bereiche (> 4 %) | 0 Treffer für eine 4-%-Schwelle in `shared/dividends.ts` / `TechnicalChart.tsx` | ❌ | Klein, autonom: farbiges Band ab 4 % auf der Dividendenachse |
+| F1-14 | Z.299 | Farbe für attraktive Yield-Bereiche (> 4 %) | ✅ #341 `5eef74fca60dae431b1c326676fb41f9f7beae18`, gelesen auf Tip `3baef0e5`. Soll-Text Future_1 ist „> 4 %“. Der Code markiert **≥ 4 %**: `isAttractiveDividendYield` in `shared/dividends.ts:289–290` ist `yieldPct >= DIV_ATTRACTIVE_YIELD_PCT` (`DIV_ATTRACTIVE_YIELD_PCT = 4`, `:286`). UI `TechnicalChart.tsx:1638` und `:1669`: „≥ 4 % attraktiv“. Das Band `attractiveYieldBand` (`shared/dividends.ts:297–299`) beginnt bei 4 und entfällt, wenn die Achsenobergrenze ≤ 4 ist (`axisMax <= 4` → null). Exakt 4,00 % ist attraktiv markiert. Dateien des Merges: `shared/dividends.ts` (+19), `TechnicalChart.tsx` (+17/−2), `script/test-dividend-yield-band.ts` (+48) | ✅ | Keiner. Klarstellung: Future_1 schreibt „> 4 %“, Code und UI werten „≥ 4 %“ |
 | F1-15 | Z.304 | Markierungen bei Ex-Dividenden-Tagen | `TechnicalChart.tsx:1460` `dividendMarkerLines` (Ex-Tage im Tooltip), `shared/dividends.ts:265` | ✅ | Keiner |
 | F1-16 | Z.310, 317, 382 | Aktuelle Dividendenrendite als KPI in Sektion 1 (heute Sektion 2) | `client/src/components/sections/Section1.tsx:43, 181` (`useDividendKpi`). SHA `744075c` (#237); dieselbe Kachel in Financial Statements `582844e` (#246) | ✅ | Keiner |
 | F1-17 | Z.312, 384 | Sektion 4 alt (heute 6 „Bewertung“): Dividendenrendite gegen Sektor und historische Spanne | `client/src/components/sections/Section4.tsx`: 0 Treffer „dividend“. Es gibt nur die KPI-Kachel in Financial Statements | ❌ | Autonom: Spanne aus der vorhandenen Dividenden-Historie (`/api/dividends`) in Sektion 6 zeigen; Sektor-Vergleich braucht Peer-Daten |
@@ -101,13 +101,13 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-36 | Z.438–453, 494 | Globalisierungsbereinigter Buffett (Auslandsumsatz-Anteil φ, nicht fest codiert) | `server/buffett-ratio.ts:83–105` `buildBuffettSeries` rechnet `foreignShare`, wird aber nur in `script/test-buffett-ratio.ts` aufgerufen, nicht in der Route | ❌ | Erst als **Zusatzkennzahl** autonom. In den Score-Slot nur mit Philip |
 | F1-37 | Z.459, 464–473 | φ über LLM-Call schätzen, Fallback klar markiert | 0 Treffer in `buffett-*.ts` | ❌ | Mit F1-36, LLM-Kosten gering; Fallback 0,40 markieren |
 | F1-38 | Z.460 | Handelsbilanz/BIP (FRED `BOPGSTB`) | BOPGSTB/GDP, BuffettRatioPanel → trade-balance-route → shared/trade-balance | ✅ `730c12ab` | Keiner |
-| F1-39 | Z.461 | Dollar-Anteil an Weltreserven (IMF COFER) | 0 Treffer | ❌ | Mit F1-36 |
+| F1-39 | Z.461 | Dollar-Anteil an Weltreserven (IMF COFER) | ✅ #354 `aa0b6f2abed2c582d66e0ec71b85ba353481d346` (GitHub-API `merge_commit_sha`). Doublecheck GO, Tester Prod-PASS, Bundle `index-84vk90H1.js` (von Stabschef). Kette auf diesem SHA: `DollarReserveShareCard.tsx:36` → `RecessionDashboard.tsx:14` Import, `:195` `<DollarReserveShareCard />` → `GET /api/macro/dollar-reserve-share` (`server/dollar-reserve-share-route.ts:61`, Registrierung `server/routes.ts:515`) → `server/dollar-reserve-share.ts:24` `fetchDollarReserveShare` → `shared/dollar-reserve-share.ts:15` `COFER_SERIES_KEY` (IMF COFER, Kommentar `:3`). Modul-Vorläufer #346 `38217e61`. Dateien des Merges: `DollarReserveShareCard.tsx` (+81), `RecessionDashboard.tsx` (+2), `server/dollar-reserve-share-route.ts` (+77), `server/dollar-reserve-share.ts` (+1/−1), `server/routes.ts` (+1), `shared/dollar-reserve-share.ts` (+111), Test `script/test-dollar-reserve-share-route-ui.ts` (+367) | ✅ `aa0b6f2a` | Keiner |
 | F1-40 | Z.496 | Optional: bereinigter Buffett als zweiter Chart / Kennzahl | 0 Treffer | ❌ | Mit F1-36 |
 | F1-41 | Z.512, 550 | Eine Sektion „Technische Analyse – Rezession & Korrektur“ | Weiter getrennt: Sektion 9 `RecessionRsiSection`, Sektion 10 `RecessionMarketChartsSection`, Sektion 11 Buffett (`client/src/pages/RecessionDashboard.tsx:135–139`) | 🟡 | Autonom (groß). Erst Datenpunkte F1-58/F1-66 stabil |
 | F1-42 | Z.551 | Ein Backend-Endpunkt für SPY/VGK + VIX + Buffett + Kurve + Credit | `server/recession-markets.ts` liefert Preis/Vol je Region; Buffett eigener Endpunkt `/api/analyze-recession/buffett` | ❌ | Mit F1-41 |
 | F1-43 | Z.552–556 | Synchronisierte Panes, Overlay-Schalter, Zeitfenster 1/3/5/10/Max, aktuelle Werte als Label | Overlays BAA10Y + Real 10J DFII10 (Route #267) statt DGS10, Default aus | ✅ `470c28c5` | Keiner |
 | F1-44 | Z.557 | Leerer Overlay → kleiner Hinweis statt Blockade | `server/recession-markets.ts:277` „FRED VIXCLS leer“, `:281` „VSTOXX nicht lieferbar …“ | ✅ | Keiner |
-| F1-45 | Z.518–528 | Overlays: Buffett, CAPE, Margin Debt, Zinskurve, Credit Spread, M2, Google Trends | Baa-Spread (BAA10Y) + Real 10J (DFII10) + bestehendes Margin Debt | 🟡 Teil `470c28c5` | Rest-Overlays offen: Buffett, CAPE, Kurve, M2, Trends |
+| F1-45 | Z.518–528 | Overlays: Buffett, CAPE, Margin Debt, Zinskurve, Credit Spread, M2, Google Trends | #330 `470c28c5`: BAA10Y + Real 10J (DFII10) + Margin Debt. Rest #360 `53128cba48cf38c160ae277d8826e4a38076f896` PASS (Tester-Prod Bundle `index-r5nMqZmy.js` @ `3baef0e5`): `RecessionMarketChartsSection.tsx` (+174/−3) → `client/src/hooks/useRecessionRestOverlays.ts` (+87) → `GET /api/analyze-recession/buffett`, `/cape`, `/fred-history?series=T10Y2Y|M2SL`, `/google-trends` → `server/recession-cape-route.ts` (+99), `server/recession-fred-history-route.ts` (+82), `server/recession-trends-route.ts` (+55), `server/routes-register.ts` (+9) → `shared/recession-rest-overlays.ts` (+289). Default aus, kein Score. „Rest-Overlays offen“ gilt nicht mehr | ✅ `53128cba` | Keiner (F1-41 bleibt offen) |
 | F1-46 | Z.575–586, 611–615 | Auswahl-Buttons US / Europa / Asien | `client/src/components/recession/RegionGaugeSwitch.tsx:7–11, 42–55`. SHA `101c3c0` (#211). Label heißt „Asien (Japan)“ | ✅ | Keiner (Asien-Inhalt siehe F1-54) |
 | F1-47 | Z.588, 617 | Die **fünf** Gauges (Rez. 3M/6M/12M, Korr. 3–6M/12M) regionsspezifisch | `RegionGaugeSwitch.tsx:62–63`: für EZ/JP nur **zwei** Katalog-Gauges (Rezession, Korrektur 12M) | 🟡 | Backend muss die 5 Untergruppen je Region rechnen (F1-52). Nur Anzeige, US-Handlung bleibt |
 | F1-48 | Z.589, 617, 624 | Scoring-Tabelle (und Heatmap) passt sich der Region an | Sektionen 5/6 (`RecessionDashboard.tsx:120–126`) zeigen immer US | ❌ | Mit F1-52 |
@@ -255,7 +255,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-01 | Z.12 | Adaptive Signale (z-Score / Perzentil über 15–20 Jahre) | im Rezessionspfad nur Margin Debt z 5 Jahre (`server/recession.ts:1226`) | ❌ | Autonom (freigegeben), als Zusatzobjekt |
 | F9-02 | Z.26 | Gewinnwachstum vs. Trend (S&P-EPS YoY) | 0 Treffer | ❌ | Autonom; Quelle Multpl/FMP |
 | F9-03 | Z.27 | Realized Growth Gap (Überraschungsquote, Prognose-Revisionen) | 0 Treffer im Makropfad (nur Aktien-Factpack `server/factpack-validate.ts:244`) | ❌ | Autonom; Datenquelle klären |
-| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | DGORDER nur als YoY-Slot (`server/recession.ts:332–334`), keine Lücke; Rechenmodul shared/ und server/inventory-demand-gap.ts c474c621 (#343) | ❌ | Route und UI offen |
+| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | #357 `3f59edcb308798a0a428c69a434ff0c9a93dcf7f` PASS (Tester-Prod). Kette: `InventoryDemandGapCard.tsx` (+106) → `RecessionDashboard.tsx` (+2) → `GET /api/macro/inventory-demand-gap` (`server/inventory-demand-gap-route.ts` +55, `server/routes.ts` +3) → `server/inventory-demand-gap.ts` (+13/−8) → `shared/inventory-demand-gap.ts` (+81/−9) → FRED ISRATIO, DGORDER, AMDMVS. Modul-Vorläufer #343 `c474c621`, Test-Nachzug #345 `540d2a64`. Chat: `shared/chat-context.ts` (+3/−1), Schlüssel `lager` nur mit Hinweis `SELF_LOADED`, ohne die Zahlen. DGORDER-YoY-Slot in `server/recession.ts:332–334` bleibt daneben. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef) | ✅ (Soft) | Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef) |
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
@@ -373,19 +373,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 113 | 1 | 112 |
-| 🟡 teilweise | 34 | 3 | 31 |
-| ❌ fehlt | 70 | 6 | 64 |
+| ✅ erledigt | 117 | 1 | 116 |
+| 🟡 teilweise | 33 | 3 | 30 |
+| ❌ fehlt | 67 | 6 | 61 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 100 erledigte Bau-Punkte.
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 104 erledigte Bau-Punkte. Nachzug 01.11.2026: F1-14 ❌→✅, F1-39 ❌→✅ (`aa0b6f2a`), F1-45 🟡→✅, F9-04 ❌→✅ (Soft).
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 38 | 12 | 18 | 6 | 74 |
+| Future_1_Work.md | 41 | 11 | 16 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 4 | 3 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -393,10 +393,10 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_6_Recession_Dashboard_Scoring_Logic.md | 13 | 0 | 0 | 0 | 13 |
 | Future_7_Scoring_Adaptivity_Historical_Crashes.md | 2 | 0 | 2 | 0 | 4 |
 | Future_8_Adaptive_Scoring_Logics_Detailed.md | 2 | 0 | 5 | 0 | 7 |
-| Future_9_Adaptive_Macro_Framework_Complete.md | 1 | 0 | 17 | 0 | 18 |
+| Future_9_Adaptive_Macro_Framework_Complete.md | 2 | 0 | 16 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 24 | 4 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **113** | **34** | **70** | **16** | **233** |
+| **Summe** | **117** | **33** | **67** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -408,6 +408,11 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
 | (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
 | (nicht aus Future-Dateien) DCF-Währung alles in USD | – | **#261** (Draft) | wartet auf Philip |
+| F1-39 Route und UI | – | **#354** gemergt `aa0b6f2a` | 🟢 Tester Prod-PASS, Bundle `index-84vk90H1.js` (von Stabschef). Doublecheck GO. Z.104 ✅. Dateiname bleibt `Offen_` |
+| (nicht aus Future-Dateien) Peer-Duplikat | – | **#353** (Draft, Head `7e3e6612`, nicht gemergt) | HOLD bis Philip |
+| (nicht aus Future-Dateien) Szenario-Kegel | – | **#359** (Draft, Head `426a7621`, nicht gemergt) | Tester-Prod ❌ FAIL, NVO Label-Overlap |
+| F9-04 Route, UI, Chat | – | **#357** gemergt `3f59edcb` | 🟢 Soft. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef). Chat-Kontext ohne Werte |
+| Regulatory-Cache-Miss 200 statt 404 | – | **#356** gemergt `3baef0e5` | 🟢. Doublecheck Post-Merge GO, Tester Prod-PASS (von Stabschef) |
 
 ---
 
@@ -417,18 +422,18 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 
 Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 
-1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/04/06/07/08 (FRED/FMP, kostenlos) gehören dazu.
+1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad für diese Gewichte. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/06/07/08 (FRED/FMP, kostenlos) gehören dazu. Nachtrag 01.11.2026: F9-04 ist nicht mehr „0 Code“ und nicht mehr „Route und UI fehlen“. Route, UI und Chat liegen auf main (#357 `3f59edcb`, ✅ Soft). Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef).
 2. **Buffett robust machen** – F1-34 Fehlergrund statt generischem 502, F1-30 zweiter Versuch, F1-31 FRED-Marktwert als Ersatz (S). ✅ `99a06d1b` (#274), Nachzug #323 `cee85b81`.
 3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry ✅ `2e360ca9` (#325). Erledigt.
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
-6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6, F1-18 Hinweis in Sektion 20, F1-14 Band ab 4 % (S).
-7. **Rezessions-TA in einer Sektion** – F1-41, F1-42, F1-43 ✅ `470c28c5`, F1-45 🟡 Teil `470c28c5`, Rest-Overlays offen (L), nach Punkt 3.
+6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6 und F1-18 Hinweis in Sektion 20 bleiben ❌. F1-14 Band ✅ #341 `5eef74f` (Klarstellung: Future_1 „> 4 %“, Code „≥ 4 %“).
+7. **Rezessions-TA in einer Sektion** – F1-41 bleibt offen (Sektionen weiter getrennt), F1-42 offen, F1-43 ✅ `470c28c5`, F1-45 ✅ `53128cba` (#360). „Rest-Overlays offen“ gilt nicht mehr.
 8. **Buffett Europa/Asien mit echten Benchmarks** – F1-71, F1-74 (M, nur Chart). Das Label „Asien“ erst nach Philips Asien-Entscheidung. ✅ `09750838` (#320); Asia ^TPX und Label „Asien“ offen.
 9. **SPY-Fundamentals und Analystenschätzungen mit Yahoo-Ersatz** – F1-67, F1-68 (S). Erst nach #264, weil dasselbe Crumb-Problem gilt.
 10. **Google Trends: Retry mit Backoff** – F3-04 (S).
 11. **Gold-Zusatzschicht ergänzen** – F10-20 AISC-Marge (Quartalswerte an die Schicht, nicht an den GIS), F10-24 Fiskaldefizit, F10-08 Volumen-Trend, F10-33 Backtest der Kreuze, F10-34 Zentralbankkäufe, F10-12/13 Bollinger/ATR (S–M).
-12. **Bereinigter Buffett als Zusatzkennzahl** – F1-36 bis F1-40 (M), ohne den Score-Slot.
+12. **Bereinigter Buffett als Zusatzkennzahl** – F1-36, F1-37, F1-40 (M), ohne den Score-Slot. F1-38 bleibt ✅ `730c12ab`. F1-39 ✅ #354 `aa0b6f2a` (Z.104).
 13. **Kleinere Lücken** – F1-63 TOPIX über Yahoo, F1-56 ECB-Ersatz EZ-Kurve, FW-09 BTC-Fiscal als Overlay, FW-31 Sektorrotation im Rezessions-Dashboard, FW-36 Regulatory in Sektion 10, FW-38 Peer-Autocomplete, FW-16/17 GDX/GLD und Gold/Bond.
 14. **Große Blöcke ohne jeden Code** – FW-01 Deutsch/Englisch, FW-04 Kostolany-Rad, FW-27 Bilanzen-Screener, FW-05 gemeinsamer Refresh über Analyse/Researcher/Portfolio.
 15. **Nur Doku** – F10-35 (Future_10 nennt erledigte AISC-Punkte noch „Offen“), F6-01/F6-07 (Doku an Code angleichen), F5-06 (6 h oder 24 h).
@@ -467,7 +472,7 @@ Abgeglichen mit: `/home/box/agent-data/shared/Future_SOLL_IST_122762b3.md` und d
 | A-04 | Sektorrotations-Rat (FW-03, alt D4) | mit Kostolany zusammen „offen“ | Sektorrotations-Rat ist **live** (`SectorRotationPanel.tsx`, `fertig_WORK_SEKTORROTATIONS_RAT.md`). Offen ist nur das Kostolany-Rad (FW-04) |
 | A-05 | N/A-Katalog EZ/JP (alt F8) | „Ob die Serien heute liefern: unklar“ | FRED-Abruf 18.10.: EZ-HY (15.10.), JP-ALQ (08/2026), JP-10J (09/2026) liefern; EZ-Kurve bis 01/2026 (innerhalb 18 Monate); JP-Aktivität kommt aus OECD/DBnomics (alt nicht erwähnt). Live-Anzeige weiter ungeprüft |
 | A-06 | Credit-Teil von Future_1 §11.2 (F1-20 bis F1-26) | nur „E1 Firmenanleihen-YTM/CDS → Philip“ | Die Credit-**Karte** in Sektion 10, PESTEL-Zeile und Verschuldungs-Kennzahlen gehen ohne bezahlte Quelle (BAA10Y + FMP) und fehlen komplett. Nur CDS/Anleihe/Rating sind ⛔ |
-| A-07 | Dividende (F1-14, F1-17, F1-18) | „Dividende KPI/Overlay erledigt“ | Overlay und KPI ja. Es fehlen: Vergleich in Sektion 6 (Bewertung), Hinweis in Sektion 20, Farbband ab 4 % |
+| A-07 | Dividende (F1-14, F1-17, F1-18) | „Dividende KPI/Overlay erledigt“ | Overlay und KPI ja. Es fehlen zum Stand `35ead515`: Vergleich in Sektion 6 (Bewertung), Hinweis in Sektion 20, Farbband ab 4 %. Nachtrag 01.11.2026: das Band ist seit #341 `5eef74f` im Code. Future_1 schreibt „> 4 %“, der Code wertet „≥ 4 %“ (`yieldPct >= 4`). F1-17 und F1-18 bleiben ❌ |
 | A-08 | Gold-Kreuze (F10-04, alt H1) | „Crosses wirken nur als Gates“ | Kreuze wirken **auch** als z-Signal in der Zusatzschicht (`gold-adaptive-score.ts:510–522`), dazu MACD und Volumen-Divergenz. Der GIS selbst bleibt unverändert (F10-31) – das stand im alten Vergleich nicht |
 | A-09 | Gold-Schicht „erledigt“ (alt Liste (4)) | adaptive Gold-Schicht erledigt | Schicht ✅, aber der Layer-Score ändert den GIS nicht (nur „Δ GIS“ angezeigt) und die AISC-Marge bekommt `aisc: null` (F10-20) |
 | A-10 | Buffett-Robustheit (F1-31, F1-35, alt F4) | „Annotation erledigt, sonst Retry/Fallback fehlen“ | Ergänzung: Fortschreibung über Proxy bis 30 Tage existiert (#245) als Teil-Ersatz; Cache ist 15 min, nicht 6 h wie in `Offen_FUTURE_SOLL_IST.md` |
