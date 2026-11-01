@@ -155,6 +155,11 @@ async function main() {
   check("Default aus", !!tB && reactPropsOf(tB)?.["aria-pressed"] === false);
   check("Default aus: keine Buffett-Statuszeile und kein Abruf", !findByTestId(c, "recession-buffett-status") && !calls.some(u => u.includes("buffett")), calls.filter(u => u.includes("buffett")).join(","));
   check("Baa-Spread und Real 10J bleiben", findByTestId(c, "toggle-recession-credit")?.textContent === "Baa-Spread" && findByTestId(c, "toggle-recession-t10y")?.textContent === "Real 10J");
+  for (const id of ["toggle-recession-cape", "toggle-recession-curve", "toggle-recession-m2", "toggle-recession-trends"] as const) {
+    const el = findByTestId(c, id);
+    check(`${id} default aus`, !!el && reactPropsOf(el)?.["aria-pressed"] === false, el?.textContent);
+  }
+  check("Default aus: kein CAPE/FRED/Trends-Abruf", !calls.some(u => u.includes("/cape") || u.includes("fred-history") || u.includes("google-trends")), calls.join(","));
 
   await click(tB);
   const sB = findByTestId(c, "recession-buffett-status")?.textContent ?? "";
@@ -352,6 +357,24 @@ async function main() {
     const a = findByTestId(r.c, "recession-trends-status")?.textContent ?? "";
     check(`Trends ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
     await act(async () => { r.root.unmount(); });
+  }
+
+  console.log("7) Score unverändert: VOW3 4.735718 / SAP 5.174758 / MSFT 4.058138");
+  const pin = JSON.parse(readFileSync(new URL("./fixtures/prod-analyze-dcf-2026-10-25.json", import.meta.url), "utf8")).expectOldHead;
+  check("VOW3 (VWAGY) 4.735718", Number(pin.VWAGY.overallScore).toFixed(6) === "4.735718", String(pin.VWAGY.overallScore));
+  check("SAP 5.174758", Number(pin.SAP.overallScore).toFixed(6) === "5.174758", String(pin.SAP.overallScore));
+  check("MSFT 4.058138", Number(pin.MSFT.overallScore).toFixed(6) === "4.058138", String(pin.MSFT.overallScore));
+  const { buildBiasDecision } = await import("../shared/bias-fixes.ts");
+  const msftFx = JSON.parse(readFileSync(new URL("./fixtures/analysis-MSFT.json", import.meta.url), "utf8"));
+  const before = buildBiasDecision(msftFx);
+  const after = buildBiasDecision({ ...msftFx, buffett: buffettUs, cape: { points: [] }, fredHistory: { points: [] }, googleTrends: { points: [] } });
+  check("MSFT-Fixture: Overlay-Felder ändern den Gesamtscore nicht", before.overallScore === after.overallScore && before.overallRating === after.overallRating, `${before.overallScore} / ${after.overallScore}`);
+  const { execFileSync } = await import("node:child_process");
+  try {
+    execFileSync("npx", ["tsx", "--tsconfig", "script/tsconfig.jsx.json", "script/test-dcf-negative-fcf-na.ts"], { stdio: "pipe" });
+    check("Analyze-Route rechnet die drei Scores exakt wie der alte Head", true);
+  } catch (e: any) {
+    check("Analyze-Route rechnet die drei Scores exakt wie der alte Head", false, String(e?.stdout ?? e?.message ?? e).slice(-400));
   }
 
   console.log(failed ? `\n${failed} Check(s) fehlgeschlagen` : "\nAlle Checks grün");
