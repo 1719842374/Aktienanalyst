@@ -513,4 +513,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
   (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
   const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
+
+  // 18. GET /api/credit-fundamentals/:ticker — F1-20/F1-21, FMP-Ratios, nur Anzeige, kein Score, kein CRV.
+  const { registerCreditFundamentalsRoute } = await import("./credit-fundamentals-route");
+  registerCreditFundamentalsRoute(app);
 }

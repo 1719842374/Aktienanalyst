@@ -951,6 +951,36 @@ export interface CreditSpreadResponse {
   note: string | null;
 }
 
+/**
+ * F1-20/F1-21: Debt/Equity und Zinsdeckung aus vorhandenen FMP-Ratios.
+ * GET /api/credit-fundamentals/:ticker. Nur Anzeige in Sektion 10 — kein Score, kein CRV.
+ * value null = nicht geliefert; die UI zeigt dann unavailable, nie 0 als Ersatz.
+ */
+export type CreditStance = "angespannt" | "im Mittelfeld" | "entspannt";
+export type CreditBasis = "eigene Historie" | "Peers";
+
+export interface CreditMetricReading {
+  value: number | null;
+  asOf: string | null;
+  /** Grund, wenn value null ist. */
+  unavailable: string | null;
+  /** Mid-Rank 0..1 gegen die gewählte Referenz. null = Stichprobe zu klein. */
+  percentile: number | null;
+  zScore: number | null;
+  sampleSize: number;
+  basis: CreditBasis | null;
+  stance: CreditStance | null;
+}
+
+export interface CreditFundamentalsResponse {
+  ticker: string;
+  /** z. B. "FMP ratios" */
+  source: string;
+  debtToEquity: CreditMetricReading;
+  interestCoverage: CreditMetricReading;
+  note: string | null;
+}
+
 /** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
 export interface CreditOverlayPoint {
   date: string;
