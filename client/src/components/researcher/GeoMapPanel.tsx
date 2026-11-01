@@ -24,11 +24,12 @@ import {
   metricPercentiles,
   radiusForPercentile,
   sectorColor,
+  sectorLegendShares,
   type GeoMapCountry,
   type GeoMapMinerResponse,
   type GeoMapResponse,
 } from "@shared/geo-map";
-import type { GoldMapResponse, ValueChainMapResponse } from "@shared/geo-map-layers";
+import { goldCountryHasProduction, type GoldMapCountry, type GoldMapResponse, type ValueChainMapResponse } from "@shared/geo-map-layers";
 
 type Metric = "capex" | "yoy";
 type LayerId = "capex" | "sector" | "miner" | "gold" | "valuechain";
@@ -58,6 +59,12 @@ function fmtPct(v: number | null | undefined): string {
 function fmtNum(v: number | null | undefined, digits: number, unit: string): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
   return `${v.toFixed(digits)} ${unit}`;
+}
+function goldBubbleTitle(c: GoldMapCountry): string {
+  const bits: string[] = [];
+  if (typeof c.countrySharePct === "number" && c.countrySharePct > 0) bits.push(`${c.countrySharePct} %`);
+  if (typeof c.productionOz === "number" && c.productionOz > 0) bits.push(`${c.productionOz} oz`);
+  return bits.length > 0 ? `${c.name}: ${bits.join(" · ")}` : c.name;
 }
 
 export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportunity?: () => void } = {}) {
@@ -153,11 +160,22 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
     const value = (c: GeoMapCountry) => (layer === "capex" && metric === "yoy" ? c.yoyPct : c.capexUsd);
     return rows.sort((a, b) => (value(b) ?? -Infinity) - (value(a) ?? -Infinity));
   }, [capexData, layer, metric]);
-  const sectorsPresent = useMemo(() => {
-    const names = new Set<string>();
-    for (const c of capexData?.countries || []) if (c.dominantSector) names.add(c.dominantSector);
-    return Array.from(names).sort((a, b) => a.localeCompare(b, "de"));
-  }, [capexData]);
+  const sectorLegend = useMemo(() => sectorLegendShares(capexData?.countries || []), [capexData]);
+  const goldBubbles = useMemo(
+    () => (goldData?.countries ?? []).filter(goldCountryHasProduction),
+    [goldData],
+  );
+  const goldPercentiles = useMemo(() => {
+    const values = goldBubbles.map(c => (
+      typeof c.countrySharePct === "number" && c.countrySharePct > 0 ? c.countrySharePct
+      : typeof c.productionOz === "number" && c.productionOz > 0 ? c.productionOz
+      : null
+    ));
+    const pcts = metricPercentiles(values);
+    const m = new Map<string, number | null>();
+    goldBubbles.forEach((c, i) => m.set(c.iso2, pcts[i] ?? null));
+    return m;
+  }, [goldBubbles]);
   const sel = capexData?.countries.find(c => c.iso2 === selected) || null;
 
   const sizePercentile = (c: GeoMapCountry) => (
@@ -189,7 +207,10 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
           )}
           {goldData && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
-              {goldData.coverage.withData}/{goldData.coverage.total} Länder mit Produktionsanteil · Stand {new Date(goldData.asOf).toLocaleDateString("de-DE")}
+              {goldData.coverage.total > 0
+                ? `${goldData.coverage.withData}/${goldData.coverage.total} Länder mit Produktionsanteil · `
+                : ""}
+              Stand {new Date(goldData.asOf).toLocaleDateString("de-DE")}
             </div>
           )}
           {chainData && (
@@ -288,10 +309,11 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
             </div>
             {layer === "sector" && (
               <div className="px-2 pb-2 flex flex-wrap gap-1" data-testid="geo-sector-legend">
-                {sectorsPresent.length === 0 && <span className="text-[10px] text-foreground/45">n/a — keine Sektoren in der Auswahl</span>}
-                {sectorsPresent.map(name => (
-                  <span key={name} className="inline-flex items-center gap-1 text-[10px] text-foreground/70">
-                    <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(name) }} /> {name}
+                {sectorLegend.length === 0 && <span className="text-[10px] text-foreground/45">n/a — keine Sektoren in der Auswahl</span>}
+                {sectorLegend.map(item => (
+                  <span key={item.sector} className="inline-flex items-center gap-1 text-[10px] text-foreground/70" data-testid={`geo-legend-${item.sector}`}>
+                    <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(item.sector) }} />
+                    {item.sector} {item.pct.toFixed(1)} %
                   </span>
                 ))}
               </div>
@@ -369,7 +391,31 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
 
       {goldData && (
         <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-1" data-testid="geo-gold-panel">
-          <div className="text-foreground/55">AISC ist ein Firmenwert. Produktion in Unzen und Länderanteil: n/a.</div>
+          {goldBubbles.length === 0 && (
+            <div className="text-foreground/55 italic" data-testid="geo-gold-na">{goldData.note || "n/a — keine Produktions-Unzen und kein Länderanteil"}</div>
+          )}
+          {goldBubbles.length > 0 && (
+            <div className="rounded-md border border-border/30 bg-background/40 overflow-hidden">
+              <ComposableMap projection="geoEqualEarth" projectionConfig={{ scale: 160 }} width={800} height={400} style={{ width: "100%", height: "auto" }}>
+                <Geographies geography={worldUrl}>
+                  {({ geographies }) => geographies.map(geo => (
+                    <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
+                  ))}
+                </Geographies>
+                {goldBubbles.map(c => {
+                  const pct = goldPercentiles.get(c.iso2) ?? null;
+                  return (
+                    <Marker key={c.iso2} coordinates={[c.lon, c.lat]}>
+                      <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
+                        data-testid={`geo-gold-bubble-${c.iso2}`}>
+                        <title>{goldBubbleTitle(c)}</title>
+                      </circle>
+                    </Marker>
+                  );
+                })}
+              </ComposableMap>
+            </div>
+          )}
           {goldData.goldCompanies.map(co => (
             <div key={co.symbol} className="border-t border-border/20 py-1" data-testid={`geo-gold-${co.symbol}`}>
               <div className="flex justify-between gap-2">

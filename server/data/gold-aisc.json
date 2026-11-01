@@ -12,6 +12,7 @@
     "B": {
       "name": "Barrick",
       "ticker": "B",
+      "aliases": ["GOLD"],
       "metric": "Gold AISC ($/oz), by-product, je verkaufter Unze (Barrick-Anteil)"
     },
     "AEM": {
