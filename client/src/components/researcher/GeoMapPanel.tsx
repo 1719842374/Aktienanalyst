@@ -10,7 +10,7 @@
  * Nur Anzeige, kein Score.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "react-simple-maps";
 import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Globe2, Loader2, RefreshCw, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -35,7 +35,7 @@ import {
   type SectorBand,
 } from "@shared/geo-map";
 import { goldCountryHasProduction, type GoldMapCountry, type GoldMapResponse, type ValueChainMapResponse } from "@shared/geo-map-layers";
-import { type MinerMapBubble, type MinerMapSite } from "@shared/miner-map";
+import { MINER_MAP_RADIUS, spreadMarkerOffsets, type MarkerPixel, type MinerMapBubble, type MinerMapSite } from "@shared/miner-map";
 
 type Metric = "capex" | "yoy";
 type LayerId = "capex" | "sector" | "miner" | "gold" | "valuechain";
@@ -55,10 +55,58 @@ type MinerLayerData = GeoMapMinerResponse & {
   countryShareNote?: string;
 };
 
-/** Radius nur aus decorateMinerSites. null bleibt ohne Blase, kein Ersatzwert. */
-function minerBubbleRadius(site: MinerLayerSite): number | null {
+/** Datenradius aus decorateMinerSites. Ohne MW der benannte naPx-Punkt, kein literaler Pixelwert. */
+function minerBubbleRadius(site: MinerLayerSite): number {
   const radiusPx = site.bubble?.radiusPx;
-  return typeof radiusPx === "number" && Number.isFinite(radiusPx) ? radiusPx : null;
+  if (typeof radiusPx === "number" && Number.isFinite(radiusPx)) return radiusPx;
+  return MINER_MAP_RADIUS.naPx;
+}
+
+/** Dieselbe Pixelebenen-Trennung wie die BTC-Miner-Karte, auf der Projektion dieser Karte. */
+function GeoMinerBubbles({ minerSites, selected, onSelect, onOffset }: {
+  minerSites: MinerLayerSite[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+  onOffset: (active: boolean) => void;
+}) {
+  const { projection } = useMapContext();
+  const placed = useMemo(() => {
+    const points: MarkerPixel[] = [];
+    for (const site of minerSites) {
+      const xy = projection([site.lon, site.lat]);
+      if (!xy) continue;
+      points.push({ id: site.id, x: xy[0], y: xy[1], radiusPx: minerBubbleRadius(site) });
+    }
+    const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
+    return minerSites.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
+  }, [projection, minerSites]);
+  const shifted = placed.some(item => item.dx !== 0 || item.dy !== 0);
+  useEffect(() => { onOffset(shifted); }, [shifted, onOffset]);
+  return (
+    <>
+      {placed.map(({ site, dx, dy }) => {
+        const radiusPx = minerBubbleRadius(site);
+        const mw = site.capacityMw ? `${site.capacityMw.value} MW` : (site.bubble.note ?? "n/a");
+        return (
+          <Marker key={site.id} coordinates={[site.lon, site.lat]} onClick={() => onSelect(site.id)}>
+            <g transform={`translate(${dx}, ${dy})`}>
+              <circle
+                r={radiusPx}
+                fill={site.bubble.color}
+                fillOpacity={site.bubble.radiusPx == null ? 0.45 : 0.85}
+                stroke={site.id === selected ? "#fff" : "rgba(15,23,42,0.6)"}
+                strokeWidth={site.id === selected ? 1.5 : 0.6}
+                style={{ cursor: "pointer" }}
+                data-testid={`geo-miner-${site.id}`}
+              >
+                <title>{`${site.name}: ${mw}`}</title>
+              </circle>
+            </g>
+          </Marker>
+        );
+      })}
+    </>
+  );
 }
 
 function isMiner(d: MapPayload): d is MinerLayerData {
@@ -116,6 +164,8 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
   const [metric, setMetric] = useState<Metric>("capex");
   const [layer, setLayer] = useState<LayerId>("capex");
   const [selected, setSelected] = useState<string | null>(null);
+  const [minerOffsetHint, setMinerOffsetHint] = useState(false);
+  const onMinerOffset = useCallback((active: boolean) => setMinerOffsetHint(active), []);
   const retries = useRef(0);
 
   const load = useCallback(async (refresh = false) => {
@@ -531,24 +581,14 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                   <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
                 ))}
               </Geographies>
-              {minerSites.map(site => {
-                const radiusPx = minerBubbleRadius(site);
-                if (radiusPx == null) return null;
-                const mw = site.capacityMw ? `${site.capacityMw.value} MW` : (site.bubble.note ?? "n/a");
-                return (
-                  <Marker key={site.id} coordinates={[site.lon, site.lat]} onClick={() => setSelected(site.id)}>
-                    <circle r={radiusPx} fill={site.bubble.color} fillOpacity={0.85}
-                      stroke={site.id === selected ? "#fff" : "rgba(15,23,42,0.6)"}
-                      strokeWidth={site.id === selected ? 1.5 : 0.6}
-                      style={{ cursor: "pointer" }}
-                      data-testid={`geo-miner-${site.id}`}>
-                      <title>{`${site.name}: ${mw}`}</title>
-                    </circle>
-                  </Marker>
-                );
-              })}
+              <GeoMinerBubbles minerSites={minerSites} selected={selected} onSelect={setSelected} onOffset={onMinerOffset} />
             </ComposableMap>
-            <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Blasenradius aus den Standortdaten. Länder-Hashrate-Anteil bleibt n/a, bis CBECI oder IR-Daten angebunden sind.</div>
+            <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Blasenradius aus den Standortdaten. Ohne MW grau, kein Wert 0. Länder-Hashrate-Anteil bleibt n/a, bis CBECI oder IR-Daten angebunden sind.</div>
+            {minerOffsetHint && (
+              <div className="px-2 pb-1.5 text-[10px] text-amber-200/80" data-testid="geo-miner-offset-hint">
+                Überlappende Pins sind zur Lesbarkeit versetzt. Die Standortkoordinate bleibt unverändert.
+              </div>
+            )}
           </div>
           <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-2" data-testid="geo-side-panel">
             <div className="text-foreground/70 leading-relaxed" data-testid="geo-miner-note">{minerData.countryShareNote || minerData.locationNote || MINER_LOCATION_NOTE}</div>
