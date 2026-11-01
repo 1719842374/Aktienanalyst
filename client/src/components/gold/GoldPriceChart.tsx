@@ -20,6 +20,7 @@ import {
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
 import { aiscBands, aiscStressRuns, attachAiscToChart, GOLD_AISC_OFFLINE_LABEL, goldAiscAvailability, goldAiscStepAt, goldAiscStress } from "../../../../shared/gold-aisc";
+import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -61,6 +62,8 @@ const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
 
 // Future_10 §5 (B1): AISC-Linie der Minen (Quartals-AISC NEM/B/AEM aus /api/analyze-gold `aiscLine`), Preisachse.
+const QE_FILL: Record<QeQtRegime, string> = { expansion: "#22c55e", contraction: "#ef4444", neutral: "#94a3b8" };
+const QE_LABEL: Record<QeQtRegime, string> = { expansion: "Ausweitung", contraction: "Abbau", neutral: "neutral" };
 const AISC_COLOR = "#2dd4bf";
 const AISC_NAME = "AISC Ø Minen (NEM/B/AEM)";
 const AISC_STRESS_TEXT: Record<string, string> = {
@@ -81,6 +84,8 @@ export function GoldPriceChart({ data }: Props) {
   const [showVolume, setShowVolume] = useState(true);
   // AISC staucht die Preisachse (Kurs ≈ 2,5× AISC), deshalb wie die übrigen Overlays standardmäßig aus.
   const [showAisc, setShowAisc] = useState(false);
+  const [showQeQt, setShowQeQt] = useState(false);
+  const [showGoldWalcl, setShowGoldWalcl] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
@@ -165,6 +170,10 @@ export function GoldPriceChart({ data }: Props) {
   const hasAisc = chartDataWithVol.some(d => d.aisc != null);
   const aiscAvail = goldAiscAvailability(data.aiscLine, hasAisc);
   const aiscOn = showAisc && hasAisc;
+  const qeQt = useMemo(() => goldQeQtView(
+    rangeTech.points.map(p => ({ date: p.date, price: p.price, walcl: p.walcl })),
+    chartData.map(d => d.date),
+  ), [rangeTech, chartData]);
   const aiscBandList = useMemo(() => (aiscOn ? aiscBands(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
   const aiscStressList = useMemo(() => (aiscOn ? aiscStressRuns(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
   const aiscStressLow = data.aiscLine?.stressLow ?? 1.10;
@@ -493,6 +502,36 @@ export function GoldPriceChart({ data }: Props) {
         </div>
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
           <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Bilanz:</span>
+          {qeQt.unavailableReason ? (
+            <span className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`} title={qeQt.unavailableReason} data-testid="gold-qe-qt-na">QE/QT n/a</span>
+          ) : (
+            <button
+              onClick={() => setShowQeQt(v => !v)}
+              className={`${chipCls} font-mono ${showQeQt ? "border-emerald-500 text-emerald-400" : "border-border text-muted-foreground opacity-50"}`}
+              title="Hintergrund nach dem Perzentil der eigenen 91-Tage-WALCL-Änderung. Grün Ausweitung, rot Abbau, grau dazwischen. Kein Gate, kein GIS."
+              data-testid="toggle-gold-qe-qt"
+            >
+              {showQeQt ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              QE/QT-Bänder
+            </button>
+          )}
+          {qeQt.ratios.length === 0 ? (
+            <span className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`} title={qeQt.ratioReason ?? "n/a"} data-testid="gold-walcl-ratio-na">Gold/WALCL n/a</span>
+          ) : (
+            <button
+              onClick={() => setShowGoldWalcl(v => !v)}
+              className={`${chipCls} font-mono ${showGoldWalcl ? "border-slate-300 text-slate-200" : "border-border text-muted-foreground opacity-50"}`}
+              title="Unterchart Goldkurs geteilt durch die Fed-Bilanz (WALCL). Kein Score."
+              data-testid="toggle-gold-walcl-ratio"
+            >
+              {showGoldWalcl ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              Gold/WALCL
+            </button>
+          )}
+        </div>
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
           <button
             onClick={() => { setIsMeasuring(!isMeasuring); setMeasureStart(null); setMeasureEnd(null); }}
             className={`${chipCls} ${isMeasuring ? "border-amber-500 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground opacity-60 hover:opacity-80"}`}
@@ -638,6 +677,17 @@ export function GoldPriceChart({ data }: Props) {
               ))}
               {aiscStressList.map(r => (
                 <ReferenceArea key={`aisc-stress-${r.x1}`} x1={r.x1} x2={r.x2} fill="#ef4444" fillOpacity={0.08} stroke="#ef4444" strokeOpacity={0.25} ifOverflow="hidden" />
+              ))}
+              {showQeQt && qeQt.bands.map(b => (
+                <ReferenceArea
+                  key={`qe-${b.x1}-${b.regime}`}
+                  x1={b.x1}
+                  x2={b.x2}
+                  fill={QE_FILL[b.regime]}
+                  fillOpacity={b.regime === "neutral" ? 0.05 : 0.14}
+                  stroke="none"
+                  ifOverflow="hidden"
+                />
               ))}
 
               {showVolume && hasVolume && !narrow && (
@@ -855,6 +905,26 @@ export function GoldPriceChart({ data }: Props) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+
+        {showGoldWalcl && qeQt.ratios.length > 0 && (
+          <div className="mt-3" data-testid="gold-walcl-ratio-chart">
+            <div className="mb-1 text-[10px] font-medium text-muted-foreground">Gold / WALCL · Unterchart · nur Anzeige, kein Gate</div>
+            <div className="h-[120px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={qeQt.ratios.filter(r => chartData.some(d => d.date === r.date))} margin={narrow ? { top: 4, right: 8, left: 0, bottom: 4 } : { top: 4, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+                  <XAxis dataKey="date" tickFormatter={formatDate} tick={xTick} {...xInterval} axisLine={{ stroke: "var(--border)" }} />
+                  <YAxis tick={xTick} width={55} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(0)} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+                    formatter={(value: number) => [Number(value).toFixed(1), "Gold/WALCL"]}
+                  />
+                  <Line type="monotone" dataKey="ratio" name="Gold/WALCL" stroke="#e2e8f0" strokeWidth={1.4} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
       </TaPlotScroll>
 
       {/* Legende: Fair Value + #201-Cross-Marker */}
@@ -865,6 +935,11 @@ export function GoldPriceChart({ data }: Props) {
         </span>
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
+        </span>
+        <span className="min-w-0 break-words" data-testid="gold-qe-qt-status">
+          {qeQt.unavailableReason
+            ? qeQt.unavailableReason
+            : `Bilanz ${qeQt.asOf ?? "n/a"}: ${qeQt.regime ? QE_LABEL[qeQt.regime] : "n/a"}${qeQt.changePercentile == null ? "" : ` · Perzentil ${qeQt.changePercentile.toFixed(0)} %`}${qeQt.ratio == null ? "" : ` · Gold/WALCL ${qeQt.ratio.toFixed(1)}`}${qeQt.ratioReason ? ` · ${qeQt.ratioReason}` : ""} · kein Gate`}
         </span>
         <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-status">
           <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: AISC_COLOR }} />
