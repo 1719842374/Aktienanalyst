@@ -3,7 +3,8 @@
  * Gewichte sind die benannten Spec-Vorschläge. Fehlende Signale werden aus der
  * Summe herausgenommen und die übrigen Gewichte neu normiert — fehlend ist nicht 0.
  * Phasen über Quartile der Peer-Position (Q1/Q3), nicht über eine feste σ-Schwelle.
- * News, Guidance und LLM-Narrativ haben hier keine Datenquelle und bleiben n/a.
+ * Aktiv sind nur drei FMP-Signale: KGV gegen den eigenen 5-Jahres-Median,
+ * Capex-Intensität und EPS-Revision. Suchvolumen/Trends wird nicht abgefragt.
  */
 
 import { peerPercentile, quartileBand, zScore, type QuartileBand } from "./distribution";
@@ -22,7 +23,7 @@ export const HYPE_WEIGHTS = {
 export const HYPE_HISTORY_YEARS = 5;
 
 export const HYPE_UNAVAILABLE: Record<"newsVolume" | "guidanceStrength" | "narrative", string> = {
-  newsVolume: "n/a — keine News- oder Suchvolumen-Zeitreihe (keine neue Quelle)",
+  newsVolume: "n/a — Suchvolumen/Trends wird nicht abgefragt",
   guidanceStrength: "n/a — kein strukturiertes Guidance-Feld",
   narrative: "n/a — kein LLM-Call (kein zusätzlicher Kostenpfad)",
 };
@@ -90,16 +91,18 @@ function revisionGap(estimates: readonly (number | null)[]): { gap: number | nul
   return { gap: (next - prev) / Math.abs(prev), reason: null };
 }
 
+/** Phasen nur aus den drei FMP-Signalen, über die Quartile der Peer-Menge. */
 const PHASE_RULES: { phase: string; test: (s: Record<string, QuartileBand | null>) => boolean }[] = [
-  { phase: "Innovation Trigger", test: s => s.newsVolume === "high" && s.valuationVsHistory === "low" },
-  { phase: "Peak of Inflated Expectations", test: s => s.newsVolume === "high" && s.valuationVsHistory === "high" },
-  { phase: "Trough of Disillusionment", test: s => s.newsVolume === "low" && s.analystRevisions === "low" },
+  { phase: "Peak of Inflated Expectations", test: s => s.valuationVsHistory === "high" && s.analystRevisions === "high" },
+  { phase: "Trough of Disillusionment", test: s => s.valuationVsHistory === "low" && s.analystRevisions === "low" },
   { phase: "Slope of Enlightenment", test: s => s.capexMaterial === "high" && s.analystRevisions === "mid" },
+  { phase: "Innovation Trigger", test: s => s.valuationVsHistory === "low" && s.analystRevisions === "high" },
   { phase: "Plateau of Productivity", test: s => s.valuationVsHistory === "mid" && s.capexMaterial === "mid" },
 ];
 
 export function assessHypeCycle(companies: readonly HypeCompanyInput[]): HypeAssessment {
   const notes = [
+    "FMP-Proxy: KGV gegen den eigenen 5-Jahres-Median, Capex-Intensität, EPS-Revision.",
     HYPE_UNAVAILABLE.newsVolume,
     HYPE_UNAVAILABLE.guidanceStrength,
     HYPE_UNAVAILABLE.narrative,
@@ -139,7 +142,7 @@ export function assessHypeCycle(companies: readonly HypeCompanyInput[]): HypeAss
     const hit = PHASE_RULES.find(r => r.test(bands));
     const phaseReason = hit
       ? `${hit.phase} aus der Quartil-Lage der vorhandenen Signale`
-      : "n/a — die vorhandenen Signale treffen keine Phasenregel (News, Guidance und Narrativ fehlen)";
+      : "n/a — KGV, Capex-Intensität und EPS-Revision treffen keine Phasenregel";
     return {
       ticker: g.ticker,
       signals,

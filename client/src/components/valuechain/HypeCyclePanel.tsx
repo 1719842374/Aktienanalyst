@@ -40,7 +40,7 @@ export function HypeCyclePanel({ tickers }: { tickers: string[] }) {
         </button>
       </div>
       <p className="mt-1 text-[10px] text-slate-400">
-        Gewichte: News {HYPE_WEIGHTS.newsVolume}, CAPEX {HYPE_WEIGHTS.capexMaterial}, Bewertung {HYPE_WEIGHTS.valuationVsHistory}, Revisionen {HYPE_WEIGHTS.analystRevisions}, Guidance {HYPE_WEIGHTS.guidanceStrength}, Narrativ {HYPE_WEIGHTS.narrative}. Fehlende Signale zählen nicht als 0.
+        FMP-Proxy: KGV gegen den eigenen 5-Jahres-Median ({HYPE_WEIGHTS.valuationVsHistory}), Capex-Intensität ({HYPE_WEIGHTS.capexMaterial}), EPS-Revision ({HYPE_WEIGHTS.analystRevisions}). Suchvolumen wird nicht abgefragt. News, Guidance und Narrativ bleiben n/a und zählen nicht als 0.
       </p>
       {tickers.length === 0 && <p className="mt-2 text-[11px] text-slate-400">n/a — keine Firmen in der Kette</p>}
       {error && <p className="mt-2 text-[11px] text-amber-300">{error}</p>}

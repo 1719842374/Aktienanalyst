@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { RevenueSegment } from "@shared/schema";
 import type { SegmentSupplement } from "@shared/segment-supplement";
+import { ESTIMATE_LABEL } from "@shared/segment-estimate";
 
 /**
  * Unterposten und Wachstumsschätzung unter den gemeldeten Segmenten.
@@ -19,7 +20,7 @@ export function SegmentSupplementView({ ticker, segments }: { ticker: string; se
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/segment-supplement", { ticker, segments: official });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json() as Promise<SegmentSupplement>;
+      return res.json() as Promise<SegmentSupplement & { estimateNote?: string | null }>;
     },
   });
   if (official.length === 0) return null;
@@ -28,6 +29,7 @@ export function SegmentSupplementView({ ticker, segments }: { ticker: string; se
     <div className="mt-2 space-y-1 min-w-0" data-testid="segment-supplement">
       {q.isError && <p className="text-[10px] text-muted-foreground">n/a — Segment-Ergänzung nicht erreichbar</p>}
       {data && <p className="text-[10px] text-muted-foreground">{data.undisclosedNote}</p>}
+      {data?.estimateNote && <p className="text-[10px] text-muted-foreground" data-testid="segment-estimate-note">{data.estimateNote}</p>}
       {data?.growth.map(g => (
         <div key={g.name} className="pl-4 text-[10px]" data-testid={`segment-growth-${g.name}`}>
           <span className="text-muted-foreground">{g.name}, nächstes Jahr: </span>
@@ -43,8 +45,10 @@ export function SegmentSupplementView({ ticker, segments }: { ticker: string; se
       {data?.subItems.map(item => (
         <div key={`${item.parent}:${item.name}`} className="pl-8 text-[10px]" data-testid="segment-subitem">
           <span className="text-muted-foreground">└ {item.parent} / {item.name}: </span>
-          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1" title={item.label}>
-            {item.shareOfParentPct == null ? item.label : `Override ${item.shareOfParentPct.toFixed(1)} % vom Elternsegment`}
+          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1" title={item.note ?? item.label} data-testid={item.source === "estimate" ? "segment-estimate-label" : "segment-reported-label"}>
+            {item.source === "estimate" ? ESTIMATE_LABEL : item.label}
+            {item.shareOfParentPct == null ? "" : ` ${item.shareOfParentPct.toFixed(1)} % vom Elternsegment`}
+            {item.source === "estimate" && item.shareOfParentPct == null && item.note ? ` · ${item.note}` : ""}
           </span>
         </div>
       ))}

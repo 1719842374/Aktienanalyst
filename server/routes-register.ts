@@ -74,4 +74,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerSegmentSupplementRoute(app);
   const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
   registerAttraktivNotifyRoute(app);
+  // Podcast-Transkript im bestehenden Disk-Cache. Kein Supabase, kein neuer Store.
+  const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");
+  registerPodcastTranscriptRoute(app);
 }

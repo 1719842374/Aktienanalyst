@@ -18,6 +18,8 @@ const { waccRoicSignal } = await import("../shared/wacc-roic-signal.ts");
 const { assessHypeCycle, HYPE_WEIGHTS, HYPE_HISTORY_YEARS } = await import("../shared/hype-cycle.ts");
 const { decideCustomScreen, emptyCriteria } = await import("../shared/custom-screen.ts");
 const { attraktivEmailStatus, buildAttraktivMail } = await import("../shared/attraktiv-notify.ts");
+const { attachSubItemEstimates, ESTIMATE_LABEL, ESTIMATE_REASON } = await import("../shared/segment-estimate.ts");
+const { readPodcastTranscript, writePodcastTranscript } = await import("../server/podcast-transcript-route.ts");
 const { pushChatSession, sessionTitle, CHAT_SESSION_CHAR_BUDGET } = await import("../shared/chat-sessions.ts");
 const { StatementSankey } = await import("../client/src/components/sections/StatementSankey.tsx");
 const { WaccRoicBadge } = await import("../client/src/components/sections/WaccRoicBadge.tsx");
@@ -139,6 +141,34 @@ assert.equal(noKids.subItems.length, 0);
 assert.match(noKids.undisclosedNote, /n\/a/);
 assert.match(noKids.undisclosedNote, /kein neues Top-Level/i);
 
+const noKey = attachSubItemEstimates(noKids, [{ name: "Automotive", percentage: 100, growthPct: null }], { available: false, data: null });
+assert.equal(noKey.estimateNote, ESTIMATE_REASON.noKey);
+assert.equal(noKey.subItems.length, 0);
+const noAnswer = attachSubItemEstimates(noKids, [{ name: "Automotive", percentage: 100, growthPct: null }], { available: true, data: null });
+assert.equal(noAnswer.estimateNote, ESTIMATE_REASON.noAnswer);
+const estimated = attachSubItemEstimates(noKids, [{ name: "Automotive", percentage: 100, growthPct: null }], {
+  available: true,
+  data: { items: [
+    { parent: "Automotive", name: "Software", shareOfParentPct: 12, note: "nicht separat ausgewiesen" },
+    { parent: "Neue Sparte", name: "Robotik", shareOfParentPct: 5 },
+    { parent: "Automotive", name: "Unbekannt", shareOfParentPct: 0, note: "nicht bezifferbar" },
+  ] },
+});
+assert.equal(estimated.estimateNote, null);
+assert.equal(estimated.subItems.length, 2);
+assert.equal(estimated.subItems[0].label, ESTIMATE_LABEL);
+assert.equal(estimated.subItems[0].shareOfParentPct, 12);
+assert.equal(estimated.subItems[1].shareOfParentPct, null);
+assert.match(estimated.subItems[1].note ?? "", /nicht bezifferbar/);
+assert.equal(estimated.subItems.some(s => s.name === "Robotik"), false);
+const keptReported = attachSubItemEstimates(supplement, [
+  { name: "Automotive", percentage: 73.3, growthPct: -9.8 },
+  { name: "Energy", percentage: 13.5, growthPct: 26.6 },
+], { available: true, data: { items: [{ parent: "Automotive", name: "Software", shareOfParentPct: 99 }] } });
+assert.equal(keptReported.subItems.length, 1);
+assert.equal(keptReported.subItems[0].source, "reported");
+assert.equal(keptReported.subItems[0].shareOfParentPct, 10);
+
 const create = waccRoicSignal(18, 8);
 assert.equal(create.tone, "create");
 assert.equal(create.spreadPp, 10);
@@ -188,6 +218,22 @@ assert.equal(mailOff.flag, false);
 assert.match(mailOff.reason, /n\/a/);
 const mailOn = attraktivEmailStatus({ ATTRAKTIV_EMAIL_ENABLED: "true" });
 assert.equal(mailOn.send, false);
+assert.match(mailOn.reason, /kein Versand-Adapter/);
+assert.doesNotMatch(readFileSync("server/hype-cycle-route.ts", "utf8") + readFileSync("shared/hype-cycle.ts", "utf8"), /serpapi|google trends|trends\.google/i);
+
+const mem = new Map<string, { data: unknown; storedAt: number }>();
+const deps = {
+  read: (key: string) => mem.get(key) ?? null,
+  write: (key: string, data: unknown) => { mem.set(key, { data, storedAt: Date.now() }); },
+};
+assert.match(readPodcastTranscript("MSFT", deps).reason ?? "", /n\/a — kein Transkript/);
+const saved = writePodcastTranscript("MSFT", "Erster Absatz.\n\nZweiter Absatz.", deps);
+assert.equal(saved.text?.includes("Erster Absatz"), true);
+assert.equal(readPodcastTranscript("MSFT", deps).text, saved.text);
+const tooLong = writePodcastTranscript("MSFT", "x".repeat(20_001), deps);
+assert.equal(tooLong.text, null);
+assert.match(tooLong.reason ?? "", /nicht gespeichert/);
+assert.equal(readPodcastTranscript("MSFT", deps).text, saved.text);
 const payload = buildAttraktivMail({ to: "a@b.c", ticker: "MSFT", status: "ATTRAKTIV", score: 4.058138, reason: "DCF", link: "/?ticker=MSFT" });
 assert.equal(payload.mail?.score, 4.058138);
 const notAttr = buildAttraktivMail({ to: "a@b.c", ticker: "MSFT", status: "NEUTRAL", score: 0, reason: null, link: null });

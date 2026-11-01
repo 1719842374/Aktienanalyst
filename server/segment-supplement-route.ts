@@ -4,7 +4,17 @@
  */
 import type { Express, Request, Response } from "express";
 import { fmpProductSegmentationRaw } from "./fmp";
+import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { attachSubItemEstimates } from "../shared/segment-estimate";
 import { buildSegmentSupplement, type OfficialSegment, type SegmentYearPoint } from "../shared/segment-supplement";
+
+const ESTIMATE_SYSTEM = [
+  "Du ergänzt nur nicht ausgewiesene Unterposten unter einem gemeldeten Segment.",
+  "Antworte nur mit JSON: {\"items\":[{\"parent\":string,\"name\":string,\"shareOfParentPct\":number|null,\"note\":string}]}.",
+  "shareOfParentPct ist der Anteil am Elternsegment in Prozent, nicht am Gesamtumsatz.",
+  "Wenn du den Anteil nicht beziffern kannst, setze shareOfParentPct auf null und schreibe den Grund in note. Fülle die Lücke nicht mit einer gerundeten Zahl.",
+  "Erfinde keine neue Top-Level-Sparte. Höchstens ein Unterposten je Elternsegment.",
+].join(" ");
 
 const TICKER_RE = /^[A-Z0-9.\-^=]{1,32}$/;
 
@@ -31,24 +41,49 @@ export function historyFromRaw(raw: unknown[]): { history: SegmentYearPoint[]; l
   return { history, latest };
 }
 
+type LlmResult = { data: unknown; modelUsed: string } | null;
+
 export async function loadSegmentSupplement(
   ticker: string,
   official: OfficialSegment[],
-  deps: { raw: (t: string) => Promise<unknown[]> } = { raw: fmpProductSegmentationRaw },
+  deps: {
+    raw: (t: string) => Promise<unknown[]>;
+    llmAvailable: () => boolean;
+    llm: (prompt: string) => Promise<LlmResult>;
+  } = {
+    raw: fmpProductSegmentationRaw,
+    llmAvailable: isLLMAvailable,
+    llm: (prompt) => callLLMJson({ prompt, systemPrompt: ESTIMATE_SYSTEM, maxTokens: 700, temperature: 0.2 }),
+  },
 ) {
+  let base;
   try {
     const raw = await deps.raw(ticker);
     const { history, latest } = historyFromRaw(raw);
-    return { ticker, ...buildSegmentSupplement(official, history, latest), source: "fmp" as const };
+    base = buildSegmentSupplement(official, history, latest);
   } catch (err: any) {
     const empty = buildSegmentSupplement(official, [], []);
-    return {
-      ticker,
+    base = {
       ...empty,
-      source: "fmp" as const,
       undisclosedNote: `n/a — Segmenthistorie nicht erreichbar${err?.fmpStatus ? ` (HTTP ${err.fmpStatus})` : ""}. ${empty.undisclosedNote}`,
     };
   }
+  const normName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const covered = new Set(base.subItems.map(i => normName(i.parent)));
+  const open = official.some(s => !covered.has(normName(s.name)));
+  if (!open) return { ticker, ...attachSubItemEstimates(base, official, { available: true, data: { items: [] } }), source: "fmp" as const };
+  if (!deps.llmAvailable()) {
+    return { ticker, ...attachSubItemEstimates(base, official, { available: false, data: null }), source: "fmp" as const };
+  }
+  let data: unknown | null = null;
+  try {
+    const lines = official.map(s => `${s.name}: Anteil ${s.percentage ?? "n/a"} %, YoY ${s.growthPct ?? "n/a"}`).join("\n");
+    const res = await deps.llm(`Ticker ${ticker}. Gemeldete Segmente, Summe der Anteile bleibt unverändert:\n${lines}\nNur Unterposten ohne eigene ausgewiesene Zeile.`);
+    data = res?.data ?? null;
+  } catch {
+    data = null;
+  }
+  return { ticker, ...attachSubItemEstimates(base, official, { available: true, data }), source: "fmp" as const };
 }
 
 export function registerSegmentSupplementRoute(app: Express): void {

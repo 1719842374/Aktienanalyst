@@ -31,10 +31,13 @@ export interface SegmentGrowthOverride {
 export interface SegmentSubItem {
   parent: string;
   name: string;
-  /** Anteil am Elternumsatz, 0–100. */
+  /** Anteil am Elternumsatz, 0–100. null = nicht beziffert. */
   shareOfParentPct: number | null;
   label: string;
   override: true;
+  /** reported = feinere gelieferte Zeile. estimate = OpenRouter, ohne Primärquelle. */
+  source?: "reported" | "estimate";
+  note?: string | null;
 }
 
 export interface SegmentSupplement {
@@ -112,6 +115,8 @@ export function nestSubItems(
       name: row.name,
       shareOfParentPct: share,
       override: true,
+      source: "reported",
+      note: null,
       label: share == null
         ? "Override: nicht separat ausgewiesen — Anteil am Elternsegment n/a (keine Umsatzbasis)"
         : "Override: Anteil innerhalb des Elternsegments, nicht vom Gesamtumsatz",

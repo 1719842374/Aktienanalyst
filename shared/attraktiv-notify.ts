@@ -53,7 +53,7 @@ export function attraktivEmailStatus(env: Record<string, string | undefined>): A
     };
   }
   return {
-    flag: true,
+    flag,
     send: false,
     schemaReady: false,
     reason: `${staysOff} Flag ist an, aber es gibt keinen Versand-Adapter und kein Supabase-Schema in diesem Lauf. Philip schaltet Provider und Konto.`,
