@@ -15,6 +15,7 @@ import { DollarReserveShareCard } from "@/components/recession/DollarReserveShar
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
+import { RecessionAdaptiveWeightsCard } from "@/components/recession/RecessionAdaptiveWeightsCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -182,6 +183,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <SectionCard number={7} title="Prozentschätzungen">
         <ProbabilityEstimates subgroups={data.subgroups} />
       </SectionCard>
+      <RecessionAdaptiveWeightsCard view={data.adaptiveWeights} />
       {regions && (
         <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
           <RegionalCatalogSection catalogs={regions} />

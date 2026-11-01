@@ -918,6 +918,7 @@ export interface LiquidityBriefing {
 }
 
 export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
+export type { RecessionAdaptiveView, RecessionAdaptiveLayerView, RecessionAdaptiveShadow } from "./recession-adaptive";
 
 // ─── Credit-Overlay Stufe 1 (JOB A1): Markt-Spread Baa, FRED BAA10Y ─────────────
 // GET /api/credit-spread/market. Markt-Aggregat (alle US-Unternehmen), keine Anleihe
