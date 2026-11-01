@@ -80,6 +80,15 @@ export interface ChatRequestBody {
   messages: ChatMessage[];
 }
 
+/** Faktart, die das Budget gekürzt oder entfernt hat. */
+export type ChatTrimKind = "notes" | "facts" | "rationale" | "wachstumsthese";
+
+export interface ChatContextTrimEntry {
+  kind: ChatTrimKind;
+  /** Zeichen, die bei dieser Faktart gekürzt oder gelöscht wurden. */
+  removedChars: number;
+}
+
 export interface ChatResponseBody {
   ok: boolean;
   answer: string | null;
@@ -89,16 +98,49 @@ export interface ChatResponseBody {
   /** "ok" | "no-key" | "timeout" | "llm-error" | "invalid" */
   status: "ok" | "no-key" | "timeout" | "llm-error" | "invalid";
   error: string | null;
+  /** Fehlt, wenn nichts gekürzt wurde. Sonst je Faktart die entfernten Zeichen. */
+  contextTrimmed?: ChatContextTrimEntry[];
 }
 
-/** Grenzen, serverseitig erzwungen (Client kürzt vorab gleich). */
+/** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */
+export const CHAT_CONTEXT_BUDGET = 36_000;
+
+/**
+ * Relative Priorität beim Behalten von Text: Wachstumsthese > Rationale > Notes.
+ * Das sind Ränge, keine Zeichenzahl. Gewicht = Rang / Summe.
+ * allowedChars = floor(CHAT_CONTEXT_BUDGET * Gewicht).
+ */
+export const CHAT_FACT_PRIORITY = {
+  wachstumsthese: 3,
+  rationale: 2,
+  notes: 1,
+} as const;
+
+export type ChatFactKind = keyof typeof CHAT_FACT_PRIORITY;
+
+function chatFactPrioritySum(): number {
+  return CHAT_FACT_PRIORITY.wachstumsthese + CHAT_FACT_PRIORITY.rationale + CHAT_FACT_PRIORITY.notes;
+}
+
+export function chatFactWeight(kind: ChatFactKind): number {
+  return CHAT_FACT_PRIORITY[kind] / chatFactPrioritySum();
+}
+
+/** allowedChars = floor(totalBudget * weight[factType]), ganzzahlig ohne Rundungsrest. */
+export function chatFactAllowedChars(kind: ChatFactKind): number {
+  return Math.floor((CHAT_CONTEXT_BUDGET * CHAT_FACT_PRIORITY[kind]) / chatFactPrioritySum());
+}
+
+/** Grenzen. Textlängen von Fakten, Rationale und Notes hängen am Budget, nicht an einem festen 400/1000. */
 export const CHAT_LIMITS = {
   maxMessages: 12,
   maxMessageChars: 2000,
   maxSections: 30,
   maxFactsPerSection: 40,
   maxFactKeyChars: 60,
-  maxFactValueChars: 400,
+  maxFactValueChars: chatFactAllowedChars("wachstumsthese"),
+  maxRationaleChars: chatFactAllowedChars("rationale"),
+  maxNoteChars: chatFactAllowedChars("notes"),
   maxGates: 20,
   maxNotes: 10,
   maxContextChars: 40_000,
@@ -163,7 +205,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       thesisStrengthScore: num(d.thesisStrengthScore, 1),
     }),
     s(3, {
-      wachstumsthese: str(d.growthThesis, 1200), strukturelleTrends: list(d.structuralTrends),
+      wachstumsthese: str(d.growthThesis), strukturelleTrends: list(d.structuralTrends),
       lynchKlasse: str(d.lynchClass), moatRating: str(d.moatRating),
       warumInteressant: str(d.catalystReasoning?.whyInteresting),
     }),
@@ -245,7 +287,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
   ];
 
   const gates: ChatGate[] = (sc?.gates ?? []).slice(0, CHAT_LIMITS.maxGates).map(g => ({
-    id: String(g.id), active: !!g.active, cap: num(g.cap, 1), severity: String(g.severity ?? ""), rationale: str(g.rationale) ?? "",
+    id: String(g.id), active: !!g.active, cap: num(g.cap, 1), severity: String(g.severity ?? ""), rationale: str(g.rationale, CHAT_LIMITS.maxRationaleChars) ?? "",
   }));
 
   const notes: string[] = [];
@@ -280,7 +322,7 @@ function sec(id: number, label: string, facts: Record<string, ChatFactValue>): C
 function gatesFrom(list: any): ChatGate[] {
   return (Array.isArray(list) ? list : []).slice(0, CHAT_LIMITS.maxGates).map((g: any) => ({
     id: String(g?.id ?? "n/a").slice(0, 60), active: !!g?.active, cap: num(g?.cap, 1),
-    severity: String(g?.severity ?? "").slice(0, 30), rationale: str(g?.rationale) ?? "",
+    severity: String(g?.severity ?? "").slice(0, 30), rationale: str(g?.rationale, CHAT_LIMITS.maxRationaleChars) ?? "",
   }));
 }
 
@@ -443,15 +485,14 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
 //   - aktive Gates (in der Gate-Sektion des Dashboards),
 //   - fehlende Werte (n/a-Felder) und nicht geladene Selbstlade-Sektionen.
 //
-// Kontext-Budget (dokumentiert, geprüft in script/test-chat-context-full.ts):
-//   Server-Limit CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Client-Ziel CHAT_CONTEXT_BUDGET
-//   = 36 000 Zeichen (10 % Reserve). Je Fakt ≤ 400 Zeichen, ≤ 40 Fakten je Sektion, Auffälligkeiten
-//   ≤ 400 Zeichen. Wird das Ziel überschritten, kürzt fitChatContextBudget zuerst die längsten
-//   Textwerte (auf min. 80 Zeichen), danach die letzten Fakten der größten Sektion — Zahlen,
-//   Gates und "auffaelligkeiten" bleiben bis zuletzt erhalten.
+// Kontext-Budget (geprüft in script/test-chat-context-full.ts und script/test-chat-fact-limit.ts):
+//   Server-Decke CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Ziel CHAT_CONTEXT_BUDGET = 36 000.
+//   allowedChars = floor(Budget * Priorität / Summe). Priorität: wachstumsthese > rationale > notes.
+//   Kein festes 400- oder 1000-Zeichen-Limit. Liegt der Payload darüber, kürzt fitChatContextBudget
+//   proportional: zuerst Notes, dann übrige Fakten (längste zuerst, ab 80 Zeichen halbiert,
+//   Auffälligkeiten ausgenommen), dann Rationale, die Wachstumsthese zuletzt.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const CHAT_CONTEXT_BUDGET = 36_000;
 export const CHAT_WEAKNESS_KEY = "auffaelligkeiten";
 /** Schlüssel, unter dem Publisher angezeigte Warn-Flags liefern (wird in `auffaelligkeiten` überführt). */
 export const CHAT_LIVE_FLAGS_KEY = "_auffaelligkeiten";
@@ -508,22 +549,158 @@ export function enrichChatContext(
   return fitChatContextBudget({ ...ctx, sections, notes: notes.slice(0, CHAT_LIMITS.maxNotes) });
 }
 
-/** Hält den Kontext unter `budget` Zeichen (JSON). Reine Funktion. */
+const CHAT_TRIM_LABEL: Record<ChatTrimKind, string> = {
+  notes: "Notizen",
+  facts: "Fakten",
+  rationale: "Rationale",
+  wachstumsthese: "Wachstumsthese",
+};
+
+function chatTrimChars(ctx: ChatContext): Record<ChatTrimKind, number> {
+  const out: Record<ChatTrimKind, number> = { notes: 0, facts: 0, rationale: 0, wachstumsthese: 0 };
+  for (const n of ctx.notes ?? []) if (typeof n === "string") out.notes += n.length;
+  for (const g of ctx.gates ?? []) if (typeof g?.rationale === "string") out.rationale += g.rationale.length;
+  for (const s of ctx.sections ?? []) for (const [k, v] of Object.entries(s.facts ?? {})) {
+    if (typeof v !== "string") continue;
+    if (k === "wachstumsthese") out.wachstumsthese += v.length;
+    else out.facts += v.length;
+  }
+  return out;
+}
+
+/** Differenz der Textlängen. `undefined`, wenn nichts gekürzt oder gelöscht wurde. */
+export function chatContextTrimReport(before: ChatContext, after: ChatContext): ChatContextTrimEntry[] | undefined {
+  const a = chatTrimChars(before);
+  const b = chatTrimChars(after);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = a[kind] - b[kind];
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+const trimByContext = new WeakMap<ChatContext, ChatContextTrimEntry[]>();
+
+/** Kürzung, die `fitChatContextBudget` an diesem Kontext-Objekt hinterlegt hat. */
+export function chatContextTrimOf(ctx: ChatContext | null | undefined): ChatContextTrimEntry[] | undefined {
+  if (!ctx) return undefined;
+  const found = trimByContext.get(ctx);
+  return found?.length ? found : undefined;
+}
+
+export function mergeChatContextTrim(
+  a: ChatContextTrimEntry[] | undefined,
+  b: ChatContextTrimEntry[] | undefined,
+): ChatContextTrimEntry[] | undefined {
+  const sums = new Map<ChatTrimKind, number>();
+  for (const e of [...(a ?? []), ...(b ?? [])]) sums.set(e.kind, (sums.get(e.kind) ?? 0) + e.removedChars);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = sums.get(kind) ?? 0;
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+function groupedInt(n: number): string {
+  return String(Math.abs(Math.trunc(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+/** Hinweiszeile, z. B. „Kontext gekürzt: Notizen −2.140 Zeichen“. `null`, wenn nichts gekürzt wurde. */
+export function formatChatContextTrim(entries: ChatContextTrimEntry[] | undefined): string | null {
+  if (!entries?.length) return null;
+  const parts = entries.map(e => `${CHAT_TRIM_LABEL[e.kind]} −${groupedInt(e.removedChars)} Zeichen`);
+  return `Kontext gekürzt: ${parts.join(", ")}`;
+}
+
+function clipTo(text: string, max: number): string {
+  if (text.length <= max) return text;
+  if (max <= 1) return "…";
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function overTypeCap(ctx: ChatContext): boolean {
+  const factMax = CHAT_LIMITS.maxFactValueChars;
+  const ratMax = CHAT_LIMITS.maxRationaleChars;
+  const noteMax = CHAT_LIMITS.maxNoteChars;
+  if (ctx.notes.some(n => typeof n === "string" && n.length > noteMax)) return true;
+  if (ctx.gates.some(g => typeof g.rationale === "string" && g.rationale.length > ratMax)) return true;
+  return ctx.sections.some(s => Object.values(s.facts).some(v => typeof v === "string" && v.length > factMax));
+}
+
+function cappedCopy(ctx: ChatContext): ChatContext {
+  const factMax = CHAT_LIMITS.maxFactValueChars;
+  const ratMax = CHAT_LIMITS.maxRationaleChars;
+  const noteMax = CHAT_LIMITS.maxNoteChars;
+  return {
+    ...ctx,
+    sections: ctx.sections.map(s => ({
+      ...s,
+      facts: Object.fromEntries(Object.entries(s.facts).map(([k, v]) => [k, typeof v === "string" ? clipTo(v, factMax) : v])),
+    })),
+    gates: ctx.gates.map(g => ({ ...g, rationale: typeof g.rationale === "string" ? clipTo(g.rationale, ratMax) : g.rationale })),
+    notes: ctx.notes.map(n => (typeof n === "string" ? clipTo(n, noteMax) : n)),
+  };
+}
+
+/** Kürzt jede Zeichenkette im Bucket um denselben Anteil, bis `overflow` Zeichen weg sind. */
+function shrinkProportionally(values: string[], overflow: number): string[] | null {
+  if (overflow <= 0) return null;
+  const flexible = values.map((s, i) => ({ i, len: s.length })).filter(x => x.len > 1);
+  if (!flexible.length) return null;
+  const total = flexible.reduce((a, x) => a + x.len, 0);
+  const remove = Math.min(total - flexible.length, overflow);
+  if (remove <= 0) return null;
+  const keepRatio = (total - remove) / total;
+  const next = values.slice();
+  let changed = false;
+  for (const x of flexible) {
+    const target = Math.max(1, Math.floor(x.len * keepRatio));
+    if (target < x.len) {
+      next[x.i] = clipTo(values[x.i], target);
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** Hält den Kontext unter `budget` Zeichen (JSON). Kürzt weich, lehnt nicht ab. Reine Funktion. */
 export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CONTEXT_BUDGET): ChatContext {
   const size = (c: ChatContext) => JSON.stringify(c).length;
-  if (size(ctx) <= budget) return ctx;
-  const out: ChatContext = { ...ctx, sections: ctx.sections.map(s => ({ ...s, facts: { ...s.facts } })) };
+  if (size(ctx) <= budget && !overTypeCap(ctx)) return ctx;
+  const out = cappedCopy(ctx);
   for (let guard = 0; guard < 6000 && size(out) > budget; guard++) {
+    const overflow = size(out) - budget;
+    if (out.notes.every(n => typeof n === "string")) {
+      const notesNext = shrinkProportionally(out.notes, overflow);
+      if (notesNext) { out.notes = notesNext; continue; }
+    }
     let best: { s: ChatSection; k: string; len: number } | null = null;
     for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
-      if (k === CHAT_WEAKNESS_KEY || typeof v !== "string" || v.length <= 80) continue;
+      if (k === CHAT_WEAKNESS_KEY || k === "wachstumsthese" || typeof v !== "string" || v.length <= 80) continue;
       if (!best || v.length > best.len) best = { s, k, len: v.length };
     }
     if (best) { const v = best.s.facts[best.k] as string; best.s.facts[best.k] = `${v.slice(0, Math.max(80, Math.floor(v.length / 2)) - 1)}…`; continue; }
+    if (out.gates.every(g => typeof g.rationale === "string")) {
+      const ratNext = shrinkProportionally(out.gates.map(g => g.rationale), overflow);
+      if (ratNext) { out.gates.forEach((g, i) => { g.rationale = ratNext[i]; }); continue; }
+    }
+    const thesisLoc: Array<{ s: ChatSection; k: string }> = [];
+    const theses: string[] = [];
+    for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
+      if (k === "wachstumsthese" && typeof v === "string" && v.length > 1) { thesisLoc.push({ s, k }); theses.push(v); }
+    }
+    const thesisNext = shrinkProportionally(theses, overflow);
+    if (thesisNext) { thesisLoc.forEach((loc, i) => { loc.s.facts[loc.k] = thesisNext[i]; }); continue; }
+    if (!out.sections.length) break;
     const big = out.sections.reduce((a, b) => (Object.keys(b.facts).length > Object.keys(a.facts).length ? b : a));
-    const keys = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
+    const plain = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY && k !== "wachstumsthese");
+    const keys = plain.length ? plain : Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
     if (!keys.length) break;
     delete big.facts[keys[keys.length - 1]];
   }
+  const report = chatContextTrimReport(ctx, out);
+  if (report) trimByContext.set(out, report);
   return out;
 }
