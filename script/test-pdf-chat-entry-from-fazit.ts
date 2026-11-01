@@ -98,7 +98,10 @@ for (const [label, data, expLabel] of [["SHEL.L", shel, "£31.33"], ["MSFT", msf
   });
   await check(`${label}: PDF-Diff zu main nur S6/Faktoren/Urteil`, () => {
     const a = stripDates(htmlOld).split("\n"), b = stripDates(htmlNew).split("\n");
-    const changed = b.filter(x => !a.includes(x));
+    // Symboltausch $ → Listing-/Statement-Symbol (£ € ¥) ist der PDF-Währungsfix.
+    // Die Zeile bleibt im Diff, sobald sich außer dem Symbol noch etwas ändert.
+    const normSym = (s: string) => s.replace(/[£€¥]/g, "$");
+    const changed = b.filter(x => !a.includes(x) && !a.includes(normSym(x)));
     for (const line of changed) assert.ok(/pdf-s5-|pdf-s6-|Max-Entry|Gleicher Wert wie das Fazit|CRV|verdict|Signal-Score|Faktoren|factor|<li|border: 2px solid|color: #|^- /.test(line), line.slice(0, 160));
   });
   await check(`${label}: data.scoring/Analyse unverändert (keine Mutation)`, () => assert.equal(JSON.stringify(d), before));
