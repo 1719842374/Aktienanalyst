@@ -11,6 +11,8 @@ import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
 import { fazitEntryForExport, type FazitEntryExport } from '../shared/fazit-entry';
 import { currencySymbol, statementCurrency, formatCurrency } from '../shared/currency-format';
+// Gleiche Basis-Auswahl wie die UI (CatalystsSection/Section2/Section6/SummarySection via Re-Export in client/src/lib/calculations.ts).
+import { selectCatalystBase } from '../shared/catalyst-base';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -134,6 +136,28 @@ export function pdfMaxEntryRow(fe: FazitEntryExport | null): string {
     ? `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">${esc(fe.label)}</span></div>
 <div class="para" style="font-size:7px;color:#7a8296">Gleicher Wert wie das Fazit (S17): (Entscheidungsbasis + 2 × Worst Case) / 3.</div>`
     : `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">n/a — Fazit-Wert nicht berechenbar</span></div>`;
+}
+
+/** S5: negativer DCF-Szenariowert → n/a mit Grund. Grund wie API/UI: data.dcfNaReason (#326), sonst UI-Bedingung fcfTTM < 0 („Negativer FCF“, Section5). */
+export function pdfDcfNa(data: any, v: number): string | null {
+  if (!(typeof v === 'number' && Number.isFinite(v) && v < 0)) return null;
+  const reason = data?.dcfNaReason || (Number(data?.fcfTTM) < 0 ? 'negativer FCF' : 'negativer DCF-Wert');
+  return `n/a — ${reason}`;
+}
+
+/**
+ * S5 „Katalysatoren-adj. Zielwert“ wie S17 in der UI (CatalystsSection.tsx): Entscheidungsbasis des Fazits
+ * (fazitEntryForExport.fairValue = bias.decisionPerShare bzw. konservatives FCFF-DCF) → selectCatalystBase → × (1 + Σ GB).
+ * Währung wie UI: DCF-Basis → Statement-Währung, Fallback Analyst-PT/Kurs → Listing-Währung. null → n/a.
+ */
+export function pdfCatalystTarget(data: any, fe: FazitEntryExport | null, totalGB: number): { target: number; base: number; baseLabel: string; label: string } | null {
+  if (!fe || !Number.isFinite(fe.fairValue) || !Number.isFinite(data?.currentPrice)) return null;
+  const info = selectCatalystBase(fe.fairValue, totalGB, data.currentPrice, data.analystPT?.median || 0);
+  const ccy = info.source === 'dcf' ? fe.currency : data.currency;
+  const target = info.base * (1 + totalGB / 100);
+  if (!Number.isFinite(target)) return null;
+  const baseLabel = info.source === 'dcf' ? 'Fazit-Entscheidungsbasis' : info.source === 'analyst-pt' ? 'Analyst PT' : 'Kurs';
+  return { target, base: info.base, baseLabel, label: formatCurrency(target, 2, ccy) + ` (${baseLabel} ${formatCurrency(info.base, 2, ccy)} × (1 + ${f(totalGB,2)}%))` };
 }
 
 // ===== Normalize data (fill computed fields the frontend calculates) =====
@@ -382,6 +406,8 @@ export async function generateAnalysisHTML(rawData: any, sectionImages: PdfSecti
   const konsFV = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
   const baseFV = wS ? dcfCalc(data, wS.avg, g) : 0;
   const optFV = wS ? dcfCalc(data, wS.opt, g * 1.2) : 0;
+  // S5 Kat.-Ziel aus derselben Quelle wie UI-S17 (Fazit-Entscheidungsbasis), nicht aus dem PDF-eigenen dcfCalc.
+  const catTarget = pdfCatalystTarget(data, fazitEntry, fazit.totalGB);
 
   // CRITICAL: 'UNATTRAKTIV' and 'STARK UNATTRAKTIV' must be RED, not green
   const verdictColor = (fazit.verdict === 'ATTRAKTIV' || fazit.verdict === 'LEICHT ATTRAKTIV') ? '#22c55e' : fazit.verdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
@@ -507,12 +533,10 @@ ${wS ? `<table><tr><th>Szenario</th><th>WACC</th><th>Kommentar</th></tr>
 </table>
 ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</div>
 <table><tr><th>Szenario</th><th>WACC</th><th>Wachstum</th><th>Fair Value/Aktie</th><th>vs. Kurs</th></tr>
-<tr><td>Konservativ</td><td>${wS.kons}%</td><td>${f(g*0.7)}%</td><td>$${f(konsFV,2)}</td><td>${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)}</td></tr>
-<tr><td>Base Case</td><td>${wS.avg}%</td><td>${f(g)}%</td><td>$${f(baseFV,2)}</td><td>${pct(data.currentPrice ? (baseFV/data.currentPrice-1)*100 : null)}</td></tr>
-<tr><td>Optimistisch</td><td>${wS.opt}%</td><td>${f(g*1.2)}%</td><td>$${f(optFV,2)}</td><td>${pct(data.currentPrice ? (optFV/data.currentPrice-1)*100 : null)}</td></tr>
+${([['Konservativ', wS.kons, g*0.7, konsFV], ['Base Case', wS.avg, g, baseFV], ['Optimistisch', wS.opt, g*1.2, optFV]] as Array<[string, number, number, number]>).map(([n, w, gr, fv]) => { const na = pdfDcfNa(data, fv); return `<tr data-testid="pdf-s5-scen"><td>${n}</td><td>${w}%</td><td>${f(gr)}%</td><td>${na ? esc(na) : `$${f(fv,2)}`}</td><td>${na ? 'n/a' : pct(data.currentPrice ? (fv/data.currentPrice-1)*100 : null)}</td></tr>`; }).join('\n')}
 </table>
-<div class="row"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">$${f(konsFV * (1 + fazit.totalGB/100), 2)} (Kons. DCF × (1 + ${f(fazit.totalGB,1)}%))</span></div>
-<div class="row"><span class="row-label">DCF vs Kurs</span><span class="row-val">${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)} ${data.currentPrice && konsFV < data.currentPrice * 0.9 ? '→ Überbewertet' : data.currentPrice && konsFV > data.currentPrice * 1.1 ? '→ Unterbewertet' : '→ Fair'}</span></div>` : ''}
+<div class="row" data-testid="pdf-s5-cat-target"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">${catTarget ? esc(catTarget.label) : 'n/a — Fazit-Wert nicht berechenbar'}</span></div>
+<div class="row" data-testid="pdf-s5-dcf-vs-kurs"><span class="row-label">DCF vs Kurs</span><span class="row-val">${pdfDcfNa(data, konsFV) ? esc(pdfDcfNa(data, konsFV)!) : `${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)} ${data.currentPrice && konsFV < data.currentPrice * 0.9 ? '→ Überbewertet' : data.currentPrice && konsFV > data.currentPrice * 1.1 ? '→ Unterbewertet' : '→ Fair'}`}</span></div>` : ''}
 
 <!-- S6: CRV -->
 <div class="sec-header"><span>6 &nbsp; RISIKOADJUSTIERTES CRV</span></div>
