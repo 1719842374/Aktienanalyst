@@ -37,6 +37,10 @@
 
 ## 3. KI-generierte Antworten sichtbar machen
 
+**Status:** offen.  
+**Soll:** §3, KI-Antworten pro Sektion.  
+**Ist:** nur die Catalyst-kiAntwort (`shared/chat-context.ts:347`).
+
 Wenn der lila Button (KI-Analyse) gedrückt wird, soll der Chat alle KI-generierten Antworten der Sektionen sehen.
 
 | Was | Wie |
