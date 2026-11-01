@@ -151,6 +151,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const companies = latest ? companyLine(latest) : null;
   const chartRows = view.points.map(point => ({
     ...point,
+    minerAisc: point.aisc,
     marginUp: point.marginPct != null && point.marginPct >= 0 ? point.marginPct * 100 : null,
     marginDown: point.marginPct != null && point.marginPct < 0 ? point.marginPct * 100 : null,
   }));
@@ -268,7 +269,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                     <ReferenceArea key={`${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
                   ))}
                   <Line type="monotone" dataKey="spot" name="Gold Spot ($/oz)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls />
-                  <Line type="stepAfter" dataKey="aisc" name="AISC Ø Minen ($/oz)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" connectNulls={false} />
+                  <Line type="stepAfter" dataKey="minerAisc" name="AISC Ø Minen ($/oz)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" connectNulls={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
