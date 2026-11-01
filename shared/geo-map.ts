@@ -2,7 +2,34 @@
  * Offen_WORK_CAPEX_SECTOR_MAP.md — Slice 1 (Capex-Layer). Gemeinsame Typen + Länderliste für
  * GET /api/researcher/geo-map und GeoMapPanel. Nur Anzeige, kein Score.
  */
-export type GeoMapLayer = "capex";
+export type GeoMapLayer = "capex" | "sector";
+
+/**
+ * Frischefenster des Capex-Karten-Caches. Danach gilt die Antwort als veraltet
+ * und wird weiter ausgeliefert, während im Hintergrund neu gebaut wird.
+ */
+export const GEO_MAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Zusätzliche Zeit nach GEO_MAP_CACHE_TTL_MS, in der eine veraltete Antwort
+ * noch gilt (Stale-While-Revalidate). Danach wird sie verworfen.
+ */
+export const GEO_MAP_STALE_WHILE_REVALIDATE_MS = 6 * 24 * 60 * 60 * 1000;
+
+/**
+ * Wie lange ein HTTP-Request auf den Kaltstart wartet. Der serielle FMP-Lauf
+ * liegt darüber (Prod-Kaltstart 58 s). Länger warten liefert am Gateway HTML
+ * statt JSON; das Budget bleibt darunter und antwortet mit n/a.
+ */
+export const GEO_MAP_RESPONSE_BUDGET_MS = 12_000;
+
+/** Client bricht vorher ab und zeigt n/a, statt die Gateway-HTML-Seite zu parsen. */
+export const GEO_MAP_CLIENT_TIMEOUT_MS = 20_000;
+
+/** Abstand, in dem die Oberfläche eine pending-Antwort erneut abfragt. */
+export const GEO_MAP_PENDING_RETRY_MS = 15_000;
+
+export const GEO_MAP_PENDING_RETRY_LIMIT = 4;
 
 export interface GeoMapCountryDef {
   iso2: string;
@@ -64,6 +91,8 @@ export interface GeoMapCountry extends GeoMapCountryDef {
   companies: GeoMapCompany[];
   /** Sektor-Anteil am erfassten Capex in % (Summe = 100) */
   sectorShares: { sector: string; pct: number }[];
+  /** Sektor mit dem höchsten Capex-Anteil, „n/a“ zählt nicht. null = keins erfasst. */
+  dominantSector: string | null;
   note?: string;
 }
 
@@ -74,15 +103,64 @@ export interface GeoMapResponse {
   attribution: string;
   coverage: { withData: number; total: number };
   countries: GeoMapCountry[];
+  /** true, solange der Kaltstart das Antwortbudget überschreitet. */
+  pending?: boolean;
   _cached?: boolean;
   _cacheAge?: number;
+  _stale?: boolean;
+  _refreshThrottled?: boolean;
 }
+
+export interface GeoMapMinerNetwork {
+  hashrateEH: number | null;
+  hashpriceBtcPerThDay: number | null;
+  breakevenUsd: number | null;
+  source: string | null;
+  note: string | null;
+}
+
+export interface GeoMapMinerRegion {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  /** Anteil an der globalen Hashrate in %. null = n/a */
+  hashrateSharePct: number | null;
+  note?: string;
+}
+
+export interface GeoMapMinerResponse {
+  layer: "miner";
+  asOf: string;
+  source: string;
+  attribution: string;
+  /** Leer, solange keine Standortquelle ohne Captcha/IR-Feed existiert. */
+  regions: GeoMapMinerRegion[];
+  locationNote: string;
+  /** Namen aus der Spec. Keine gemessenen EH/s- oder MW-Werte. */
+  namedOperators: { symbol: string; hashrateEH: null; powerMw: null }[];
+  network: GeoMapMinerNetwork;
+  pending?: boolean;
+  _cached?: boolean;
+  _stale?: boolean;
+}
+
+/**
+ * Cambridge CBECI mining_map, geprüft 01.11.2026: api.cbeci.org löst nicht auf,
+ * https://ccaf.io/cbeci/api/charts/mining_map_countries antwortet HTTP 400
+ * „Invalid recaptcha response“. btc-miner.ts hat keine Farm-Koordinaten.
+ */
+export const MINER_LOCATION_NOTE =
+  "n/a — keine Farm-Standorte. Cambridge CBECI (mining_map) liefert ohne Captcha HTTP 400 „Invalid recaptcha response“. Die Miner-Pipeline hat Hashrate, Hashprice und Breakeven nur für das Gesamtnetz, ohne Land, Farm oder MW je Betreiber.";
+
+/** Beispielnamen aus Offen_WORK_BITCOIN_MINER_MAP.md. Keine IR-Zahlen dahinter. */
+export const MINER_NAMES_UNSOURCED = ["MARA", "RIOT", "CLSK", "BITF", "IREN", "HUT", "CIFR"] as const;
 
 /** Summe/YoY/Sektor-Anteile aus Firmenwerten. Rein, ohne Netz. */
 export function aggregateCountry(def: GeoMapCountryDef, companies: GeoMapCompany[], prevByCompany: Map<string, number>): GeoMapCountry {
   const withCapex = companies.filter(c => c.capexUsd != null && c.capexUsd > 0);
   if (withCapex.length === 0) {
-    return { ...def, status: "n/a", capexUsd: null, yoyPct: null, companies, sectorShares: [], note: "Keine Capex-Daten verfügbar" };
+    return { ...def, status: "n/a", capexUsd: null, yoyPct: null, companies, sectorShares: [], dominantSector: null, note: "Keine Capex-Daten verfügbar" };
   }
   const total = withCapex.reduce((s, c) => s + (c.capexUsd as number), 0);
   let cur = 0, prev = 0;
@@ -97,5 +175,98 @@ export function aggregateCountry(def: GeoMapCountryDef, companies: GeoMapCompany
     .map(([sector, v]) => ({ sector, pct: +((v / total) * 100).toFixed(1) }))
     .sort((a, b) => b.pct - a.pct);
   const sorted = [...companies].sort((a, b) => (b.capexUsd ?? -1) - (a.capexUsd ?? -1));
-  return { ...def, status: "ok", capexUsd: total, yoyPct, companies: sorted, sectorShares };
+  return { ...def, status: "ok", capexUsd: total, yoyPct, companies: sorted, sectorShares, dominantSector: dominantSectorOf(sectorShares) };
+}
+
+export function dominantSectorOf(sectorShares: { sector: string; pct: number }[]): string | null {
+  const top = sectorShares.find(s => s.sector && s.sector !== "n/a");
+  return top?.sector ?? null;
+}
+
+/** Mid-Rank (#{v < x} + 0.5 · #{v = x}) / n. Gleiche Konvention wie die Sektor-Ampel. */
+const MIDRANK_TIE_WEIGHT = 0.5;
+
+export function midrankPercentile(value: number, population: readonly number[]): number | null {
+  if (!Number.isFinite(value)) return null;
+  const finite = population.filter(v => Number.isFinite(v));
+  if (finite.length === 0) return null;
+  let less = 0;
+  let equal = 0;
+  for (const v of finite) {
+    if (v < value) less += 1;
+    else if (v === value) equal += 1;
+  }
+  return (less + MIDRANK_TIE_WEIGHT * equal) / finite.length;
+}
+
+export function metricPercentiles(values: ReadonlyArray<number | null | undefined>): Array<number | null> {
+  const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  return values.map(v => (typeof v === "number" && Number.isFinite(v) ? midrankPercentile(v, finite) : null));
+}
+
+/**
+ * Marker-Geometrie der 800×400-Karte. Die Spanne ist die Zeichenfläche,
+ * die Lage darin ist allein das Perzentil der Verteilung.
+ */
+export const GEO_BUBBLE_GEOMETRY = {
+  minPx: 4,
+  maxPx: 26,
+} as const;
+
+export function radiusForPercentile(percentile: number | null): number {
+  if (percentile == null || !Number.isFinite(percentile)) return GEO_BUBBLE_GEOMETRY.minPx;
+  const t = Math.min(1, Math.max(0, percentile));
+  return GEO_BUBBLE_GEOMETRY.minPx + (GEO_BUBBLE_GEOMETRY.maxPx - GEO_BUBBLE_GEOMETRY.minPx) * t;
+}
+
+/** Endpunkte der Farbskala. Die Mischung folgt dem Perzentil, nicht einer festen YoY-Schwelle. */
+export const GEO_SCALE_COLORS = {
+  na: "#64748b",
+  low: "#e11d48",
+  mid: "#94a3b8",
+  high: "#059669",
+  capexLow: "#4c1d95",
+  capexHigh: "#c4b5fd",
+} as const;
+
+const PERCENTILE_MID = 0.5;
+
+export function mixHex(a: string, b: string, t: number): string {
+  const u = Math.min(1, Math.max(0, t));
+  const parse = (hex: string) => {
+    const h = hex.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  };
+  const [ar, ag, ab] = parse(a);
+  const [br, bg, bb] = parse(b);
+  const c = (n: number) => Math.round(n).toString(16).padStart(2, "0");
+  return `#${c(ar + (br - ar) * u)}${c(ag + (bg - ag) * u)}${c(ab + (bb - ab) * u)}`;
+}
+
+export function colorForPercentile(percentile: number | null, mode: "capex" | "yoy"): string {
+  if (percentile == null || !Number.isFinite(percentile)) return GEO_SCALE_COLORS.na;
+  const t = Math.min(1, Math.max(0, percentile));
+  if (mode === "capex") return mixHex(GEO_SCALE_COLORS.capexLow, GEO_SCALE_COLORS.capexHigh, t);
+  if (t <= PERCENTILE_MID) return mixHex(GEO_SCALE_COLORS.low, GEO_SCALE_COLORS.mid, t / PERCENTILE_MID);
+  return mixHex(GEO_SCALE_COLORS.mid, GEO_SCALE_COLORS.high, (t - PERCENTILE_MID) / PERCENTILE_MID);
+}
+
+/** FMP-Sektoren, je eine Farbe. Unbekannt bleibt n/a-grau — keine Schwelle, eine Legende. */
+export const SECTOR_COLORS: Record<string, string> = {
+  Technology: "#38bdf8",
+  Healthcare: "#34d399",
+  "Financial Services": "#fbbf24",
+  "Consumer Cyclical": "#fb7185",
+  "Consumer Defensive": "#a3e635",
+  Industrials: "#94a3b8",
+  Energy: "#f97316",
+  "Basic Materials": "#c084fc",
+  Utilities: "#22d3ee",
+  "Real Estate": "#e879f9",
+  "Communication Services": "#818cf8",
+};
+
+export function sectorColor(sector: string | null | undefined): string {
+  if (!sector || sector === "n/a") return GEO_SCALE_COLORS.na;
+  return SECTOR_COLORS[sector] ?? GEO_SCALE_COLORS.na;
 }
