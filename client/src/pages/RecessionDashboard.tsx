@@ -15,6 +15,7 @@ import { DollarReserveShareCard } from "@/components/recession/DollarReserveShar
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
+import { BuffettRealzinsCard } from "@/components/recession/BuffettRealzinsCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -193,6 +194,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
         <BuffettRatioPanel />
         <DollarReserveShareCard />
+        <BuffettRealzinsCard />
       </SectionCard>
       <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
         <Summary data={data} />

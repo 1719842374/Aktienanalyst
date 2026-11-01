@@ -18,6 +18,7 @@ import {
   type RecessionTaResponse,
 } from "@shared/recession-ta";
 import { bannerProbabilities, recessionTaAsStock } from "@/lib/recessionTaModel";
+import { RecessionGrowthPanel } from "@/components/recession/RecessionGrowthPanel";
 import type { IndicatorResult, SubgroupResult } from "./recessionDashboardShared";
 import { getProbColor } from "./recessionDashboardShared";
 
@@ -165,6 +166,7 @@ export function RecessionTaSection({
           ))}
         </div>
       </div>
+      <RecessionGrowthPanel region={region} volPoints={seriesById.get("vol")?.points ?? []} />
     </div>
   );
 
