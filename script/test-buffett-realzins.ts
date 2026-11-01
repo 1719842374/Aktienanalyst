@@ -51,6 +51,10 @@ const body = src.split("export function adjustBuffettForRealYield")[1] ?? "";
 check("Rechenfunktion ohne −0.10 und ohne 1.5", !body.includes("-0.10") && !body.includes("-0.1") && !body.includes("1.5"));
 const card = readFileSync("client/src/components/recession/BuffettRealzinsCard.tsx", "utf8");
 check("Karte nutzt die bestehenden Routen", card.includes("/api/analyze-recession/buffett?region=US") && card.includes("/api/analyze-btc/real10y-history"));
+check(
+  "Titel grenzt die Realzins-Karte von der φ-Variante ab",
+  card.includes("Buffett realzinsbereinigt (10Y real, DFII10)") && card.includes("Globalisierungsbereinigt") && card.includes("(1 − φ) / BIP"),
+);
 const panel = readFileSync("client/src/components/recession/BuffettRatioPanel.tsx", "utf8");
 check("BuffettRatioPanel unverändert gegenüber diesem Test: Datei existiert weiter", panel.includes("function") || panel.includes("export"));
 const dash = readFileSync("client/src/pages/RecessionDashboard.tsx", "utf8");

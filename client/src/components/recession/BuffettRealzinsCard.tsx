@@ -60,9 +60,12 @@ export function BuffettRealzinsCard() {
   return (
     <div className="mt-3 min-w-0 rounded-md border border-border bg-muted/20 p-3" data-testid="buffett-realzins">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold">Realzins-Adjustierung (DFII10)</span>
+        <span className="min-w-0 break-words text-xs font-semibold" data-testid="buffett-realzins-title">Buffett realzinsbereinigt (10Y real, DFII10)</span>
         <span className="text-[9px] text-muted-foreground">kein Score-Einfluss</span>
       </div>
+      <p className="mb-2 text-[11px] leading-snug break-words text-muted-foreground" data-testid="buffett-realzins-explainer">
+        Diese Quote verschiebt den rohen Buffett mit dem 10-jährigen Realzins (DFII10). Die φ-Variante „Globalisierungsbereinigt“ rechnet Marktwert × (1 − φ) / BIP und ist eine andere Kennzahl.
+      </p>
       {pending ? (
         <p className="text-xs text-muted-foreground" data-testid="buffett-realzins-loading">wird geladen …</p>
       ) : failed ? (
