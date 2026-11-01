@@ -2,14 +2,24 @@
  * Baut das Zusatzobjekt für das Rezessionsdashboard.
  * Die Live-P der Untergruppen wird nur kopiert. Die Schatten-P nutzt
  * dieselben Formeln mit den angepassten Gewichten und ersetzt nichts.
+ * Der KI-Abruf hat eine Zeitgrenze. Danach stehen die quantitativen Gewichte
+ * und n/a mit Grund. Die Live-P ist zu diesem Zeitpunkt schon gesetzt.
  */
-import type { RecessionAdaptiveLayerView, RecessionAdaptiveShadow, RecessionAdaptiveView } from "../shared/recession-adaptive";
-import { getAIWeightSuggestion, type AiSignal, type AiWeightSuggestion } from "./recession-adaptive-ai";
+import type { RecessionAdaptiveLayerView, RecessionAdaptiveShadow, RecessionAdaptiveView, WeightPrior } from "../shared/recession-adaptive-weights-view";
+import {
+  aiWeightPriors,
+  getAIWeightSuggestion,
+  RECESSION_AI_WEIGHT_TIMEOUT_MS,
+  type AiSignal,
+  type AiWeightSuggestion,
+} from "./recession-adaptive-ai";
 import {
   ADAPTIVE_WEIGHT_FORMULA,
   bookTotals,
   calculateAdaptiveWeights,
+  CONCENTRATION_ABSENT,
   dimensionMultiplier,
+  macroWeightPriors,
   regimeFromRealYield,
   strengthFromIndicator,
   type AdaptiveIndicator,
@@ -23,15 +33,37 @@ export interface AdaptiveGroupInput {
   liveProbability: number;
 }
 
+export function weightPriors(): WeightPrior[] {
+  return [...macroWeightPriors(), ...aiWeightPriors()];
+}
+
+export function unavailableAdaptiveView(reason: string, now = new Date().toISOString()): RecessionAdaptiveView {
+  return {
+    liveUnchanged: true,
+    source: "quantitativ",
+    reason,
+    riskFlag: null,
+    cached: false,
+    regime: null,
+    regimeDetail: "n/a — Schicht nicht gebaut",
+    concentration: null,
+    concentrationLimit: null,
+    concentrationDetail: CONCENTRATION_ABSENT,
+    formula: ADAPTIVE_WEIGHT_FORMULA,
+    priors: weightPriors(),
+    layers: [],
+    shadow: [],
+    generatedAt: now,
+  };
+}
+
 export async function loadRecessionAdaptiveView(input: {
   indicators: AdaptiveIndicator[];
   groups: AdaptiveGroupInput[];
   zReal: number | null;
   rateTight: boolean;
-  concentration: number | null;
-  concentrationHistory: number[] | null;
-  concentrationMissing?: string;
   now?: string;
+  timeoutMs?: number;
   suggest?: typeof getAIWeightSuggestion;
   probability: (groupName: string, net: number, max: number, nyFed: number | null) => number | null;
 }): Promise<RecessionAdaptiveView> {
@@ -43,9 +75,6 @@ export async function loadRecessionAdaptiveView(input: {
   const quantitative = calculateAdaptiveWeights({
     regime: regime.regime,
     regimeDetail: regime.detail,
-    concentration: input.concentration,
-    concentrationHistory: input.concentrationHistory,
-    concentrationMissing: input.concentrationMissing,
   }, signals);
 
   const currentWeights = Object.fromEntries(quantitative.layers.map(layer => [layer.id, layer.quantitativeWeight]));
@@ -55,16 +84,20 @@ export async function loadRecessionAdaptiveView(input: {
     strength: strengthFromIndicator(indicator),
     direction: directionOf(indicator),
   }));
-  const suggestion = await suggestWeights(input.suggest, {
-    habitat: {
-      regime: regime.regime,
-      concentration: quantitative.concentration,
-      concentrationLimit: quantitative.concentrationLimit,
-      growthMomentum: null,
-    },
-    signals: aiSignals,
+  const suggestion = await suggestionWithin(
+    suggestWeights(input.suggest, {
+      habitat: {
+        regime: regime.regime,
+        concentration: null,
+        concentrationLimit: null,
+        growthMomentum: null,
+      },
+      signals: aiSignals,
+      currentWeights,
+    }),
+    input.timeoutMs ?? RECESSION_AI_WEIGHT_TIMEOUT_MS,
     currentWeights,
-  });
+  );
 
   const layers = quantitative.layers.map(layer => applySuggestion(layer, suggestion));
   const shadow = input.groups.map(group => shadowOf(group, layers, input.probability));
@@ -77,10 +110,11 @@ export async function loadRecessionAdaptiveView(input: {
     cached: suggestion.cached,
     regime: quantitative.regime,
     regimeDetail: quantitative.regimeDetail,
-    concentration: quantitative.concentration,
-    concentrationLimit: quantitative.concentrationLimit,
+    concentration: null,
+    concentrationLimit: null,
     concentrationDetail: quantitative.concentrationDetail,
     formula: ADAPTIVE_WEIGHT_FORMULA,
+    priors: weightPriors(),
     layers,
     shadow,
     generatedAt: input.now ?? new Date().toISOString(),
@@ -94,6 +128,34 @@ function directionOf(indicator: AdaptiveIndicator): string | null {
   return "neutral";
 }
 
+function quantitativeSuggestion(weights: Record<string, number>, reason: string): AiWeightSuggestion {
+  return { source: "quantitativ", weights: { ...weights }, reason, riskFlag: null, cached: false };
+}
+
+/** Löst spätestens nach ms auf. Ein hängender KI-Abruf wird nicht weiter awaited. */
+export function suggestionWithin(
+  work: Promise<AiWeightSuggestion>,
+  ms: number,
+  weights: Record<string, number>,
+): Promise<AiWeightSuggestion> {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (value: AiWeightSuggestion) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      finish(quantitativeSuggestion(weights, "n/a — KI-Abruf über der Zeitgrenze, quantitative Gewichte"));
+    }, ms);
+    work.then(
+      value => finish(value),
+      () => finish(quantitativeSuggestion(weights, "n/a — KI-Vorschlag fehlgeschlagen, quantitative Gewichte")),
+    );
+  });
+}
+
 async function suggestWeights(
   suggest: typeof getAIWeightSuggestion | undefined,
   args: Parameters<typeof getAIWeightSuggestion>[0],
@@ -104,13 +166,7 @@ async function suggestWeights(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[RECESSION] KI-Gewichte nicht geladen: ${message.slice(0, 200)}`);
-    return {
-      source: "quantitativ",
-      weights: { ...args.currentWeights },
-      reason: "n/a — KI-Vorschlag fehlgeschlagen, quantitative Gewichte",
-      riskFlag: null,
-      cached: false,
-    };
+    return quantitativeSuggestion(args.currentWeights, "n/a — KI-Vorschlag fehlgeschlagen, quantitative Gewichte");
   }
 }
 

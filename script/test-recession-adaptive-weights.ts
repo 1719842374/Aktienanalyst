@@ -10,17 +10,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { execFileSync } from "node:child_process";
 import {
   ADAPTIVE_WEIGHT_FORMULA,
-  CONCENTRATION_HISTORY_MIN,
-  CONCENTRATION_LIMIT_PERCENTILE,
-  RECESSION_CONCENTRATION_BEWERTUNG,
+  CONCENTRATION_ABSENT,
   RECESSION_HABITAT_RESTRICTIVE,
   RECESSION_MACRO_BASE_WEIGHTS,
   RECESSION_MACRO_DIMENSIONS,
   RECESSION_STRENGTH_LAYER,
   bookTotals,
   calculateAdaptiveWeights,
-  concentrationLimitFromHistory,
   dimensionMultiplier,
+  macroWeightPriors,
   strengthFromIndicator,
   type AdaptiveIndicator,
 } from "../server/recession-adaptive-weights";
@@ -29,12 +27,13 @@ import {
   RECESSION_AI_WEIGHT_CACHE_MAX_MS,
   RECESSION_AI_WEIGHT_CACHE_MIN_MS,
   RECESSION_AI_WEIGHT_CACHE_MS,
+  RECESSION_AI_WEIGHT_TIMEOUT_MS,
   getAIWeightSuggestion,
   resetRecessionAiWeightCache,
 } from "../server/recession-adaptive-ai";
 import { loadRecessionAdaptiveView } from "../server/recession-adaptive";
 import { RecessionAdaptiveWeightsCard } from "../client/src/components/recession/RecessionAdaptiveWeightsCard";
-import type { RecessionAdaptiveView } from "../shared/recession-adaptive";
+import { PRIOR_KIND_LABEL, type RecessionAdaptiveView } from "../shared/recession-adaptive-weights-view";
 import {
   anchoredRecessionProbability,
   buffettReading,
@@ -51,7 +50,7 @@ function check(name: string, cond: boolean, detail?: string) {
   }
 }
 
-function layer(id: string, result = calculateAdaptiveWeights({ regime: null, concentration: null, concentrationHistory: null }, [])) {
+function layer(id: string, result = calculateAdaptiveWeights({ regime: null }, [])) {
   return result.layers.find(item => item.id === id)!;
 }
 
@@ -67,18 +66,20 @@ console.log("\nBasisgewichte und benannte Parameter");
   check("restriktiv Bewertung 1.3", RECESSION_HABITAT_RESTRICTIVE.bewertung === 1.3);
   check("restriktiv Managing 1.2", RECESSION_HABITAT_RESTRICTIVE.managing === 1.2);
   check("restriktiv Geldpolitik 1.2", RECESSION_HABITAT_RESTRICTIVE.geldpolitik === 1.2);
-  check("Konzentrationsaufschlag 1.15", RECESSION_CONCENTRATION_BEWERTUNG === 1.15);
   check("Stärke-Layer 0.7 + 0.6", RECESSION_STRENGTH_LAYER.FLOOR === 0.7 && RECESSION_STRENGTH_LAYER.SPAN === 0.6);
-  check("Konzentrationsparameter ist ein Perzentil", CONCENTRATION_LIMIT_PERCENTILE === 75);
   check("Cache liegt in 6–12 h", RECESSION_AI_WEIGHT_CACHE_MS >= RECESSION_AI_WEIGHT_CACHE_MIN_MS && RECESSION_AI_WEIGHT_CACHE_MS <= RECESSION_AI_WEIGHT_CACHE_MAX_MS);
+  check("KI-Zeitgrenze liegt unter der 24s-Proxy-Wache", RECESSION_AI_WEIGHT_TIMEOUT_MS > 0 && RECESSION_AI_WEIGHT_TIMEOUT_MS < 24_000);
   check("KI-Band ±25 %", AI_WEIGHT_MAX_SHARE === 0.25);
   const src = readFileSync(new URL("../server/recession-adaptive-weights.ts", import.meta.url), "utf8");
   check("Gewichtedatei enthält kein festes Level 0,4", !src.includes("0.4"));
+  check("P75-Pfad ist entfernt", !src.includes("concentrationLimitFromHistory") && !src.includes("CONCENTRATION_LIMIT_PERCENTILE"));
+  const priors = macroWeightPriors();
+  check("Basis, Habitat und Stärke sind als Prior benannt", priors.length === 3 && priors.every(item => item.kind === "prior"));
 }
 
-console.log("\nHabitat restrictive, Stärke, Konzentrationsgrenze aus der Reihe");
+console.log("\nHabitat restrictive, Stärke, Konzentration ohne Reihe");
 {
-  const hot = calculateAdaptiveWeights({ regime: "restrictive", concentration: null, concentrationHistory: null }, []);
+  const hot = calculateAdaptiveWeights({ regime: "restrictive" }, []);
   check("restriktiv hebt Bewertung", Math.abs(layer("bewertung", hot).quantitativeWeight - 1.8 * 1.3) < 1e-12);
   check("restriktiv hebt Managing", Math.abs(layer("managing", hot).quantitativeWeight - 1.5 * 1.2) < 1e-12);
   check("restriktiv hebt Geldpolitik", Math.abs(layer("geldpolitik", hot).quantitativeWeight - 1.2) < 1e-12);
@@ -87,8 +88,10 @@ console.log("\nHabitat restrictive, Stärke, Konzentrationsgrenze aus der Reihe"
   check("Managing ohne Quelle ist n/a", layer("managing", hot).detail.includes("n/a — Managing-Score"));
   check("Widersprüche ohne Definition sind n/a", layer("widersprueche", hot).detail.includes("n/a — Makro-Bilanzwidersprüche"));
 
+  check("Konzentrationsaufschlag entfällt mit Grund", hot.concentrationDetail === CONCENTRATION_ABSENT && hot.concentrationLimit === null);
+  check("restriktiv hebt Bewertung nur um den Habitat-Prior", Math.abs(layer("bewertung", hot).habitatMultiplier - 1.3) < 1e-12);
   const strong = calculateAdaptiveWeights(
-    { regime: null, concentration: null, concentrationHistory: null },
+    { regime: null },
     [{ indicator: "Buffett Indikator (TMC/GDP)", strength: 1 }],
   );
   check(
@@ -96,7 +99,7 @@ console.log("\nHabitat restrictive, Stärke, Konzentrationsgrenze aus der Reihe"
     Math.abs(layer("bewertung", strong).quantitativeWeight - 1.8 * (0.7 + 0.6)) < 1e-12,
   );
   const mixed = calculateAdaptiveWeights(
-    { regime: null, concentration: null, concentrationHistory: null },
+    { regime: null },
     [
       { indicator: "Buffett Indikator (TMC/GDP)", strength: 0 },
       { indicator: "Shiller CAPE", strength: 1 },
@@ -104,34 +107,6 @@ console.log("\nHabitat restrictive, Stärke, Konzentrationsgrenze aus der Reihe"
   );
   check("zwei Signale: Mittel der Stärke, ein Layer", Math.abs((layer("bewertung", mixed).strength ?? -1) - 0.5) < 1e-12);
   check("Mittel 0,5 lässt das Basisgewicht stehen", Math.abs(layer("bewertung", mixed).quantitativeWeight - 1.8) < 1e-12);
-
-  const flat = Array.from({ length: CONCENTRATION_HISTORY_MIN }, () => 0.1);
-  const lowLimit = concentrationLimitFromHistory(flat);
-  check("Grenze der flachen Reihe ist der Wert selbst, nicht 0,4", lowLimit === 0.1);
-  const aboveSmall = calculateAdaptiveWeights({
-    regime: "neutral",
-    concentration: 0.2,
-    concentrationHistory: flat,
-  }, []);
-  check(
-    "0,2 über der eigenen Grenze hebt Bewertung, obwohl 0,2 unter 0,4 liegt",
-    Math.abs(layer("bewertung", aboveSmall).habitatMultiplier - RECESSION_CONCENTRATION_BEWERTUNG) < 1e-12,
-  );
-
-  const high = Array.from({ length: CONCENTRATION_HISTORY_MIN }, () => 0.9);
-  const underHigh = calculateAdaptiveWeights({
-    regime: "neutral",
-    concentration: 0.5,
-    concentrationHistory: high,
-  }, []);
-  check("0,5 über 0,4 hebt nicht, wenn die Reihe bei 0,9 liegt", layer("bewertung", underHigh).habitatMultiplier === 1);
-  check("kurze Reihe bleibt n/a", concentrationLimitFromHistory([0.2, 0.3]) === null);
-  check("fehlende Reihe bleibt n/a", concentrationLimitFromHistory(null) === null);
-  check("fehlender Druck ist n/a und kein Aufschlag", calculateAdaptiveWeights({
-    regime: "neutral",
-    concentration: null,
-    concentrationHistory: flat,
-  }, []).concentrationDetail.startsWith("n/a —"));
 }
 
 console.log("\nKI: ±25 %, Fehler → quantitativ, Cache 8 h");
@@ -220,8 +195,6 @@ console.log("\nLive-P wird kopiert, Schatten rechnet daneben");
     }],
     zReal: null,
     rateTight: false,
-    concentration: null,
-    concentrationHistory: null,
     suggest: async (args) => ({
       source: "quantitativ",
       weights: args.currentWeights,
@@ -236,12 +209,40 @@ console.log("\nLive-P wird kopiert, Schatten rechnet daneben");
   check("liveUnchanged", view.liveUnchanged === true);
   check("Formel nennt die Live-P", view.formula === ADAPTIVE_WEIGHT_FORMULA);
 
-  const quiet = calculateAdaptiveWeights({ regime: null, concentration: null, concentrationHistory: null }, [
+  const quiet = calculateAdaptiveWeights({ regime: null }, [
     { indicator: indicator.name, strength: 0.5 },
   ]);
   const same = bookTotals([indicator], name => dimensionMultiplier(name, quiet.layers));
   const plain = bookTotals([indicator], () => 1);
   check("Stärke 0,5 skaliert Netto und Max gleich", Math.abs(same.net / same.max - plain.net / plain.max) < 1e-12);
+  check("Karte trägt die Priors", view.priors.some(item => item.kind === "prior" && item.id === "base"));
+}
+
+console.log("\nKI-Abruf über der Zeitgrenze wird nicht awaited");
+{
+  const indicator: AdaptiveIndicator = {
+    name: "VIX",
+    rawScore: 4,
+    weight: 1,
+    weightedScore: 4,
+    maxWeighted: 4,
+  };
+  const started = Date.now();
+  const view = await loadRecessionAdaptiveView({
+    indicators: [indicator],
+    groups: [{ name: "correction_sentiment", label: "Korrektur Sentiment", indicators: [indicator], nyFed: null, liveProbability: 33 }],
+    zReal: null,
+    rateTight: false,
+    timeoutMs: 30,
+    suggest: () => new Promise(() => {}),
+    probability: (_name, net, max) => anchoredRecessionProbability(net, max, null).probability,
+  });
+  const elapsed = Date.now() - started;
+  check("Await endet an der Zeitgrenze", elapsed < 500, `${elapsed} ms`);
+  check("Zeitgrenze ist n/a mit Grund", view.reason.startsWith("n/a — KI-Abruf über der Zeitgrenze"));
+  check("Quelle bleibt quantitativ", view.source === "quantitativ");
+  check("Live-P bleibt die übergebene 33", view.shadow[0]?.pAlt === 33);
+  check("quantitative Gewichte bleiben gesetzt", view.layers.find(item => item.id === "sentiment")?.quantitativeWeight != null);
 }
 
 console.log("\nHistorische Validierung 2000 / 2008 / 2022 — P alt gegen P neu");
@@ -269,9 +270,6 @@ console.log("\nHistorische Validierung 2000 / 2008 / 2022 — P alt gegen P neu"
     const weights = calculateAdaptiveWeights({
       regime: null,
       regimeDetail: "n/a — kein DFII10-z in Future_7, restriktiver Aufschlag nicht angewendet",
-      concentration: null,
-      concentrationHistory: null,
-      concentrationMissing: "n/a — keine Cap-Equal-RSL-Reihe in Future_7",
     }, year.indicators.map(item => ({ indicator: item.name, strength: strengthFromIndicator(item) })));
     const alt = bookTotals(year.indicators, () => 1);
     const neu = bookTotals(year.indicators, name => dimensionMultiplier(name, weights.layers));
@@ -305,9 +303,10 @@ console.log("\nKarte");
     regimeDetail: "Habitat restriktiv",
     concentration: null,
     concentrationLimit: null,
-    concentrationDetail: "n/a — Konzentrationsreihe fehlt",
+    concentrationDetail: CONCENTRATION_ABSENT,
     formula: ADAPTIVE_WEIGHT_FORMULA,
-    layers: calculateAdaptiveWeights({ regime: "restrictive", concentration: null, concentrationHistory: null }, []).layers.map(item => (
+    priors: macroWeightPriors(),
+    layers: calculateAdaptiveWeights({ regime: "restrictive" }, []).layers.map(item => (
       item.id === "bewertung" ? { ...item, adjustedWeight: item.quantitativeWeight * 1.1, detail: `${item.detail} · KI +10.0 %` } : item
     )),
     shadow: [{ name: "recession_full", label: "Rezession Vollständig", pAlt: 40, pNeu: 45, detail: "Schatten" }],
@@ -316,7 +315,8 @@ console.log("\nKarte");
   const html = renderToStaticMarkup(React.createElement(RecessionAdaptiveWeightsCard, { view: sample }));
   check("Quelle KI", html.includes("Quelle KI") && html.includes("recession-adaptive-source"));
   check("Basis und angepasst stehen in der Zeile", html.includes("1.80") && html.includes("recession-adaptive-adjusted-bewertung"));
-  check("Konzentration n/a mit Grund", html.includes("n/a — Konzentrationsreihe fehlt"));
+  check("Konzentration n/a mit Grund", html.includes("Perzentil-Aufschlag ist entfernt"));
+  check("Prior steht in der Karte", html.includes(PRIOR_KIND_LABEL) && html.includes("recession-adaptive-prior-base"));
   check("Schatten zeigt P alt und P neu", html.includes("P alt 40%") && html.includes("P neu 45%"));
   check("keine Gewichtszelle 0 für eine fehlende Stärke", !html.includes(">0.00<") && !html.includes(">0<"));
 

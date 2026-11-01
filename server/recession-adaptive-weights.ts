@@ -1,25 +1,26 @@
 /**
  * Future_9 §4 — calculateAdaptiveWeights für den Rezessions-Makro-Layer.
  *
- * Basisgewichte, Habitat „restrictive“ und der Stärke-Layer sind benannte
- * Parameter (dieselbe Form wie GOLD_ADAPTIVE_BASE_WEIGHTS / GOLD_HABITAT /
- * GOLD_EFFECTIVE_WEIGHT). Die Konzentrationsgrenze ist kein festes Level.
- * Sie ist das Perzentil der eigenen Konzentrationsreihe. Fehlt die Reihe
- * oder der aktuelle Druck, bleibt der Aufschlag aus und der Text sagt n/a.
+ * Basis, Habitat-Faktoren und der Stärke-Layer (Boden, Spanne) sind Priors
+ * aus der Spec. Im Payload liegt keine ergebnisgelabelte Historie, aus der
+ * eine Trefferquote je Dimension schätzbar wäre. Sie bleiben benannt und
+ * werden als „Prior (nicht datenbasiert)“ ausgewiesen.
  *
- * Der Stärke-Layer gilt einmal je Dimension (Mittel der Stärken), wie der
- * Gold-Layer effectiveWeight. Ein Produkt über jeden Indikator würde die
- * Gewichte mit der Indikatorzahl schrumpfen.
+ * Ob das Habitat restriktiv ist, kommt aus dem Realzins-z der Brücke.
+ * Die Stärke ist |Rohwert| / eigener Maximalrohwert des Indikators.
  *
- * Diese Gewichte ändern die Live-P nicht. Die Schatten-P rechnet dieselbe
- * Formel nur zum Vergleich.
+ * Der Perzentil-Aufschlag auf die Konzentration ist entfernt. Cap-Weight-RSL
+ * minus Equal-Weight-RSL wird im Rezessionslauf nicht geladen (RSP fehlt
+ * in den Chart-Büchern). Ein P75, der immer null bekommt, lief nie.
+ *
+ * Diese Gewichte ändern die Live-P nicht.
  */
-import { percentile } from "../shared/recession-rest-overlays";
 import type {
   RecessionAdaptiveLayerView,
   RecessionHabitatRegime,
   RecessionMacroDimension,
-} from "../shared/recession-adaptive";
+  WeightPrior,
+} from "../shared/recession-adaptive-weights-view";
 
 export const RECESSION_MACRO_BASE_WEIGHTS = {
   bewertung: 1.8,
@@ -38,24 +39,20 @@ export const RECESSION_HABITAT_RESTRICTIVE = {
   geldpolitik: 1.2,
 } as const;
 
-/** Aufschlag auf Bewertung, wenn die Konzentration über ihrer eigenen Grenze liegt. */
-export const RECESSION_CONCENTRATION_BEWERTUNG = 1.15;
-
 /** effective = Basis × Habitat × (FLOOR + Stärke × SPAN), Stärke in [0, 1]. */
 export const RECESSION_STRENGTH_LAYER = { FLOOR: 0.7, SPAN: 0.6 } as const;
 
-/**
- * Perzentil der eigenen Reihe (0–100, gleiche Skala wie percentile()
- * in shared/recession-rest-overlays.ts). Das ist der benannte Parameter.
- * Das Level selbst kommt aus den Daten.
- */
-export const CONCENTRATION_LIMIT_PERCENTILE = 75;
+export const CONCENTRATION_ABSENT =
+  "n/a — Cap-Weight-RSL minus Equal-Weight-RSL liegt nicht im Rezessionspfad. Equal-Weight (RSP) wird dort nicht geladen. Der Perzentil-Aufschlag ist entfernt, weil er ohne Reihe nie lief.";
 
-/**
- * Unter dieser Länge setzt ein Perzentil keine Grenze.
- * Dieselbe Untergrenze wie der adaptive z-Score (Z_HISTORY_MIN im Gold-Layer).
- */
-export const CONCENTRATION_HISTORY_MIN = 30;
+const PRIOR_REASON_BASE =
+  "Future_9 §4 setzt diese Startwerte. Eine Trefferquote je Dimension bräuchte eine ergebnisgelabelte Historie. Die liegt im Rezessionspayload nicht. Drei Dokumentationspunkte sind keine Schätzung.";
+
+const PRIOR_REASON_HABITAT =
+  "Die Faktoren stehen in Future_9 §4. Ob das Habitat restriktiv ist, kommt aus dem Realzins-z der Brücke. Die Faktoren selbst sind nicht aus einer Elastizität geschätzt.";
+
+const PRIOR_REASON_STRENGTH =
+  "Die Abbildung steht in Future_9 §4. Die Stärke ist der Betrag des Rohwerts geteilt durch den eigenen Maximalrohwert. Boden und Spanne sind nicht aus einer Verteilung geschätzt.";
 
 export const RECESSION_MACRO_LABELS: Record<RecessionMacroDimension, string> = {
   bewertung: "Bewertung",
@@ -114,18 +111,42 @@ export interface StrengthSignal {
 export interface RecessionHabitatInput {
   regime: RecessionHabitatRegime | null;
   regimeDetail?: string;
-  concentration: number | null;
-  concentrationHistory: number[] | null;
-  concentrationMissing?: string;
 }
 
 export interface AdaptiveWeightResult {
   layers: RecessionAdaptiveLayerView[];
   regime: RecessionHabitatRegime | null;
   regimeDetail: string;
-  concentration: number | null;
-  concentrationLimit: number | null;
+  concentration: null;
+  concentrationLimit: null;
   concentrationDetail: string;
+}
+
+export function macroWeightPriors(): WeightPrior[] {
+  const base = RECESSION_MACRO_BASE_WEIGHTS;
+  return [
+    {
+      id: "base",
+      label: "Basisgewichte",
+      value: `Bewertung ${base.bewertung} · Kredit ${base.kredit} · Realwirtschaft ${base.realwirtschaft} · Geldpolitik ${base.geldpolitik} · Sentiment ${base.sentiment} · Managing ${base.managing} · Widersprüche ${base.widersprueche}`,
+      kind: "prior",
+      reason: PRIOR_REASON_BASE,
+    },
+    {
+      id: "habitat",
+      label: "Habitat restriktiv",
+      value: `Bewertung ×${RECESSION_HABITAT_RESTRICTIVE.bewertung} · Managing ×${RECESSION_HABITAT_RESTRICTIVE.managing} · Geldpolitik ×${RECESSION_HABITAT_RESTRICTIVE.geldpolitik}`,
+      kind: "prior",
+      reason: PRIOR_REASON_HABITAT,
+    },
+    {
+      id: "strength",
+      label: "Stärke-Layer",
+      value: `${RECESSION_STRENGTH_LAYER.FLOOR} + Stärke × ${RECESSION_STRENGTH_LAYER.SPAN}`,
+      kind: "prior",
+      reason: PRIOR_REASON_STRENGTH,
+    },
+  ];
 }
 
 export function strengthFromIndicator(indicator: AdaptiveIndicator): number | null {
@@ -148,16 +169,6 @@ export function regimeFromRealYield(zReal: number | null, rateTight: boolean): {
   return { regime: "neutral", detail: `Habitat nicht restriktiv: Realzins-z ${zReal.toFixed(2)}` };
 }
 
-/** Perzentil der Reihe. null, wenn die Reihe die Mindestlänge nicht erreicht. Kein Ersatzlevel. */
-export function concentrationLimitFromHistory(history: number[] | null | undefined): number | null {
-  if (!history) return null;
-  const sample = history.filter(value => Number.isFinite(value));
-  if (sample.length < CONCENTRATION_HISTORY_MIN) return null;
-  const sorted = [...sample].sort((a, b) => a - b);
-  const limit = percentile(sorted, CONCENTRATION_LIMIT_PERCENTILE);
-  return Number.isFinite(limit) ? limit : null;
-}
-
 export function dimensionOf(indicator: string): RecessionMacroDimension | null {
   return RECESSION_INDICATOR_DIMENSION[indicator] ?? null;
 }
@@ -177,46 +188,15 @@ function strengthFactor(strength: number): number {
   return RECESSION_STRENGTH_LAYER.FLOOR + strength * RECESSION_STRENGTH_LAYER.SPAN;
 }
 
-function concentrationReading(input: RecessionHabitatInput): { limit: number | null; detail: string; boost: boolean } {
-  const history = input.concentrationHistory;
-  const sample = (history ?? []).filter(value => Number.isFinite(value));
-  if (!history || sample.length === 0) {
-    return {
-      limit: null,
-      boost: false,
-      detail: input.concentrationMissing ?? "n/a — Konzentrationsreihe fehlt",
-    };
-  }
-  if (sample.length < CONCENTRATION_HISTORY_MIN) {
-    return {
-      limit: null,
-      boost: false,
-      detail: `n/a — Konzentrationsreihe hat ${sample.length} Punkte, Perzentil braucht mindestens ${CONCENTRATION_HISTORY_MIN}`,
-    };
-  }
-  const limit = concentrationLimitFromHistory(sample);
-  if (limit == null) {
-    return { limit: null, boost: false, detail: "n/a — Perzentil der Konzentrationsreihe nicht bestimmbar" };
-  }
-  if (input.concentration == null || !Number.isFinite(input.concentration)) {
-    return {
-      limit,
-      boost: false,
-      detail: `n/a — aktueller Konzentrationsdruck fehlt, P${CONCENTRATION_LIMIT_PERCENTILE} der Reihe liegt bei ${limit.toFixed(2)}`,
-    };
-  }
-  const above = input.concentration > limit;
-  return {
-    limit,
-    boost: above,
-    detail: above
-      ? `Konzentration ${input.concentration.toFixed(2)} über P${CONCENTRATION_LIMIT_PERCENTILE} der Reihe (${limit.toFixed(2)}): Bewertung ×${RECESSION_CONCENTRATION_BEWERTUNG}`
-      : `Konzentration ${input.concentration.toFixed(2)} nicht über P${CONCENTRATION_LIMIT_PERCENTILE} der Reihe (${limit.toFixed(2)})`,
-  };
+function restrictiveFactor(id: RecessionMacroDimension, regime: RecessionHabitatRegime | null): number {
+  if (regime !== "restrictive") return 1;
+  if (id === "bewertung") return RECESSION_HABITAT_RESTRICTIVE.bewertung;
+  if (id === "managing") return RECESSION_HABITAT_RESTRICTIVE.managing;
+  if (id === "geldpolitik") return RECESSION_HABITAT_RESTRICTIVE.geldpolitik;
+  return 1;
 }
 
 export function calculateAdaptiveWeights(habitat: RecessionHabitatInput, signals: StrengthSignal[]): AdaptiveWeightResult {
-  const concentration = concentrationReading(habitat);
   const regimeDetail = habitat.regimeDetail
     ?? (habitat.regime === "restrictive"
       ? "Habitat restriktiv"
@@ -226,27 +206,23 @@ export function calculateAdaptiveWeights(habitat: RecessionHabitatInput, signals
 
   const layers = RECESSION_MACRO_DIMENSIONS.map((id): RecessionAdaptiveLayerView => {
     const baseWeight = RECESSION_MACRO_BASE_WEIGHTS[id];
-    const restrictive = habitat.regime === "restrictive"
-      ? (RECESSION_HABITAT_RESTRICTIVE[id as keyof typeof RECESSION_HABITAT_RESTRICTIVE] ?? 1)
-      : 1;
-    const concentrationBoost = id === "bewertung" && concentration.boost ? RECESSION_CONCENTRATION_BEWERTUNG : 1;
-    const habitatMultiplier = restrictive * concentrationBoost;
+    const restrictive = restrictiveFactor(id, habitat.regime);
     const strength = meanStrength(signals, id);
     const quantitativeWeight = strength == null
-      ? baseWeight * habitatMultiplier
-      : baseWeight * habitatMultiplier * strengthFactor(strength);
+      ? baseWeight * restrictive
+      : baseWeight * restrictive * strengthFactor(strength);
     const notes: string[] = [];
     if (habitat.regime == null) notes.push("Habitat n/a, Aufschlag nicht angewendet");
-    else if (restrictive !== 1) notes.push(`Habitat restriktiv ×${restrictive}`);
+    else if (restrictive !== 1) notes.push(`Habitat restriktiv ×${restrictive}, Prior`);
     else notes.push("Habitat ohne Aufschlag");
-    if (id === "bewertung") notes.push(concentration.detail);
+    if (id === "bewertung") notes.push(CONCENTRATION_ABSENT);
     if (strength == null) notes.push(MISSING_STRENGTH[id]);
     else notes.push(`Stärke ${strength.toFixed(2)} → ×${strengthFactor(strength).toFixed(2)}`);
     return {
       id,
       label: RECESSION_MACRO_LABELS[id],
       baseWeight,
-      habitatMultiplier,
+      habitatMultiplier: restrictive,
       strength,
       quantitativeWeight,
       adjustedWeight: quantitativeWeight,
@@ -258,15 +234,10 @@ export function calculateAdaptiveWeights(habitat: RecessionHabitatInput, signals
     layers,
     regime: habitat.regime,
     regimeDetail,
-    concentration: inputConcentration(habitat),
-    concentrationLimit: concentration.limit,
-    concentrationDetail: concentration.detail,
+    concentration: null,
+    concentrationLimit: null,
+    concentrationDetail: CONCENTRATION_ABSENT,
   };
-}
-
-function inputConcentration(habitat: RecessionHabitatInput): number | null {
-  if (habitat.concentration == null || !Number.isFinite(habitat.concentration)) return null;
-  return habitat.concentration;
 }
 
 export function dimensionMultiplier(indicator: string, layers: RecessionAdaptiveLayerView[]): number {
@@ -297,4 +268,4 @@ export function bookTotals(
 }
 
 export const ADAPTIVE_WEIGHT_FORMULA =
-  "Basis × Habitat × (0,7 + Stärke × 0,6). Konzentrationsgrenze = Perzentil der eigenen Reihe. Live-P unverändert.";
+  "Basis × Habitat × (0,7 + Stärke × 0,6). Die festen Faktoren sind Priors aus Future_9 §4. Live-P unverändert.";

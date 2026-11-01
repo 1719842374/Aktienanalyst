@@ -30,8 +30,9 @@ import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlot
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
 import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
-import { loadRecessionAdaptiveView } from "./recession-adaptive";
-import type { RecessionAdaptiveView } from "../shared/recession-adaptive";
+import { loadRecessionAdaptiveView, unavailableAdaptiveView } from "./recession-adaptive";
+import { RECESSION_AI_WEIGHT_TIMEOUT_MS } from "./recession-adaptive-ai";
+import type { RecessionAdaptiveView } from "../shared/recession-adaptive-weights-view";
 
 // ============================================================
 // Generic Data Helpers
@@ -1609,6 +1610,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
 
+  // Live-P steht schon in den Untergruppen. Dieser Await ist der KI-Abruf
+  // und endet nach RECESSION_AI_WEIGHT_TIMEOUT_MS mit n/a und den quantitativen Gewichten.
   const adaptiveWeights = await loadRecessionAdaptiveView({
     indicators,
     groups: [
@@ -1626,9 +1629,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     ],
     zReal: bridge.rates.zReal,
     rateTight: bridge.flags.rateTight,
-    concentration: null,
-    concentrationHistory: null,
-    concentrationMissing: "n/a — Cap-Weight-RSL minus Equal-Weight-RSL liegt nicht im Rezessionspfad",
+    timeoutMs: RECESSION_AI_WEIGHT_TIMEOUT_MS,
     probability: (name, net, max, nyFed) => {
       if (!(max > 0) || !Number.isFinite(net)) return null;
       if (name === "recession_full") return anchoredRecessionProbability(net, max, nyFed).probability;
@@ -1637,7 +1638,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   }).catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[RECESSION] Adaptive Gewichte nicht gebaut: ${message.slice(0, 200)}`);
-    return undefined;
+    return unavailableAdaptiveView(`n/a — adaptive Schicht nicht gebaut (${message.slice(0, 120)}), Live-P unverändert`);
   });
   console.log(`[RECESSION] Adaptive Gewichte Quelle=${adaptiveWeights?.source ?? "n/a"}, Live-P unverändert`);
 

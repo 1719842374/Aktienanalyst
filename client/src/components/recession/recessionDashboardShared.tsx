@@ -1,6 +1,6 @@
 // Types matching the backend response
 import type { RegionalCatalogs } from "@shared/recession-regions";
-import type { RecessionAdaptiveView } from "@shared/recession-adaptive";
+import type { RecessionAdaptiveView } from "@shared/recession-adaptive-weights-view";
 
 export interface IndicatorResult {
   name: string;

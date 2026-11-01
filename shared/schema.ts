@@ -918,7 +918,6 @@ export interface LiquidityBriefing {
 }
 
 export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
-export type { RecessionAdaptiveView, RecessionAdaptiveLayerView, RecessionAdaptiveShadow } from "./recession-adaptive";
 
 // ─── Credit-Overlay Stufe 1 (JOB A1): Markt-Spread Baa, FRED BAA10Y ─────────────
 // GET /api/credit-spread/market. Markt-Aggregat (alle US-Unternehmen), keine Anleihe
@@ -1103,3 +1102,11 @@ export interface BtcLiquidityResponse {
   fetchedAt: string;
   sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
 }
+
+/** Future_9 Makro-Gewichte. Nicht shared/recession-adaptive.ts (das sind die Schwellen aus #375). */
+export type {
+  RecessionAdaptiveView,
+  RecessionAdaptiveLayerView,
+  RecessionAdaptiveShadow,
+  WeightPrior,
+} from "./recession-adaptive-weights-view";

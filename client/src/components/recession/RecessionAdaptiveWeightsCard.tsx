@@ -1,5 +1,5 @@
 import React from "react";
-import type { RecessionAdaptiveView } from "@shared/recession-adaptive";
+import { PRIOR_KIND_LABEL, type RecessionAdaptiveView } from "@shared/recession-adaptive-weights-view";
 
 function plain(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "n/a";
@@ -45,6 +45,14 @@ export function RecessionAdaptiveWeightsCard({ view }: { view: RecessionAdaptive
             <div className="text-[11px] text-muted-foreground" data-testid="recession-adaptive-regime">{view.regimeDetail}</div>
             <div className="text-[11px] text-muted-foreground" data-testid="recession-adaptive-concentration">{view.concentrationDetail}</div>
             <div className="text-[11px] text-muted-foreground" data-testid="recession-adaptive-reason">{view.reason}</div>
+            <div className="text-[11px] text-muted-foreground space-y-1" data-testid="recession-adaptive-priors">
+              <div className="font-medium text-foreground">{PRIOR_KIND_LABEL}</div>
+              {view.priors.map(prior => (
+                <div key={prior.id} data-testid={`recession-adaptive-prior-${prior.id}`}>
+                  {prior.label}: {prior.value}. {prior.reason}
+                </div>
+              ))}
+            </div>
             <div className="sm:hidden space-y-3">
               {view.layers.map(layer => (
                 <div key={layer.id} className="border-b border-border/50 pb-2" data-testid={`recession-adaptive-layer-${layer.id}`}>

@@ -1,7 +1,9 @@
 /**
- * Future_9 §4 und §8 — adaptive Makro-Gewichte neben der Live-P.
+ * Future_9 §4 und §8 — Ansicht der adaptiven Makro-Gewichte.
+ *
+ * Eigene Datei, nicht shared/recession-adaptive.ts. Die gehört zu den
+ * z-Score-/Perzentil-Schwellen (Draft #375) und wird davor gemergt.
  * Die fünf Untergruppen-Wahrscheinlichkeiten bleiben die Live-P.
- * Dieses Objekt ist nur Anzeige und Schattenrechnung.
  */
 
 export type RecessionMacroDimension =
@@ -17,11 +19,22 @@ export type RecessionAdaptiveSource = "ki" | "quantitativ";
 
 export type RecessionHabitatRegime = "restrictive" | "neutral";
 
+/** Fester Spec-Wert, der nicht aus einer Reihe geschätzt ist. */
+export interface WeightPrior {
+  id: string;
+  label: string;
+  value: string;
+  kind: "prior";
+  reason: string;
+}
+
+export const PRIOR_KIND_LABEL = "Prior (nicht datenbasiert)" as const;
+
 export interface RecessionAdaptiveLayerView {
   id: RecessionMacroDimension;
   label: string;
   baseWeight: number;
-  /** Habitat inkl. Konzentrationsaufschlag. 1, wenn kein Aufschlag bestimmt ist. */
+  /** Habitat-Faktor. 1, wenn kein Aufschlag bestimmt ist. */
   habitatMultiplier: number;
   /** Mittel der Signale dieser Dimension. null, wenn keines eine Stärke hat. */
   strength: number | null;
@@ -48,10 +61,13 @@ export interface RecessionAdaptiveView {
   cached: boolean;
   regime: RecessionHabitatRegime | null;
   regimeDetail: string;
-  concentration: number | null;
-  concentrationLimit: number | null;
+  /** Immer null. Die Reihe liegt nicht im Rezessionspfad. */
+  concentration: null;
+  /** Immer null. Der Perzentil-Pfad ist entfernt. */
+  concentrationLimit: null;
   concentrationDetail: string;
   formula: string;
+  priors: WeightPrior[];
   layers: RecessionAdaptiveLayerView[];
   shadow: RecessionAdaptiveShadow[];
   generatedAt: string;

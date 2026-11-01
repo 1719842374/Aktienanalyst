@@ -8,15 +8,46 @@
  * Gewichte. Erfolgreiche Antworten liegen 8 h im Speicher (Fenster 6–12 h).
  */
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
-import type { RecessionHabitatRegime } from "../shared/recession-adaptive";
+import type { RecessionHabitatRegime, WeightPrior } from "../shared/recession-adaptive-weights-view";
 
 /** Spec-Fenster 6–12 h. Der gespeicherte TTL-Wert liegt darin. */
 export const RECESSION_AI_WEIGHT_CACHE_MIN_MS = 6 * 60 * 60 * 1000;
 export const RECESSION_AI_WEIGHT_CACHE_MAX_MS = 12 * 60 * 60 * 1000;
 export const RECESSION_AI_WEIGHT_CACHE_MS = 8 * 60 * 60 * 1000;
 
-/** Maximale relative Abweichung vom quantitativen Gewicht. */
+/** Maximale relative Abweichung vom quantitativen Gewicht. Prior aus Future_9 §9, keine geschätzte Schwankung. */
 export const AI_WEIGHT_MAX_SHARE = 0.25;
+
+/**
+ * Unter der Proxy-Wache von 24 s in registerRecessionRoutes.
+ * Kein aus Daten geschätzter Wert. Bei Überschreitung gilt n/a mit Grund.
+ */
+export const RECESSION_AI_WEIGHT_TIMEOUT_MS = 4_000;
+
+const PRIOR_REASON_AI_BAND =
+  "Future_9 §9 begrenzt die KI auf ±25 % der quantitativen Gewichte. Das ist eine Kappung, keine geschätzte Schwankung.";
+
+const PRIOR_REASON_AI_TIMEOUT =
+  "Liegt unter der Proxy-Wache von 24 s in registerRecessionRoutes, damit die Live-P nicht auf den KI-Abruf wartet. Kein aus Daten geschätzter Wert.";
+
+export function aiWeightPriors(): WeightPrior[] {
+  return [
+    {
+      id: "ai-band",
+      label: "KI-Band",
+      value: `±${AI_WEIGHT_MAX_SHARE * 100} %`,
+      kind: "prior",
+      reason: PRIOR_REASON_AI_BAND,
+    },
+    {
+      id: "ai-timeout",
+      label: "KI-Zeitgrenze",
+      value: `${RECESSION_AI_WEIGHT_TIMEOUT_MS / 1000} s`,
+      kind: "prior",
+      reason: PRIOR_REASON_AI_TIMEOUT,
+    },
+  ];
+}
 
 export interface AiHabitat {
   regime: RecessionHabitatRegime | null;
