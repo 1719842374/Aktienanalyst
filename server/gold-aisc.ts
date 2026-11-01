@@ -4,7 +4,8 @@
  * Kette: server/data/gold-aisc.json -> loadGoldAiscSeries() -> gold-routes.ts buildGoldAnalysis
  * -> Response-Feld `aiscLine` (GET /api/analyze-gold) -> GoldDashboard useQuery -> GoldPriceChart.
  *
- * Nur Anzeige. `aisc: null` an scoreGoldAdaptive, GIS und getTechnicalScore bleiben unverändert (B2).
+ * Chart-Linie. GIS und getTechnicalScore bleiben ohne AISC.
+ * Die Zusatzschicht liest dieselben Quartale über aiscStepsForAdaptive (point-in-time, sourceDate).
  * Ungültige oder fehlende Datei: null (Chart zeigt „AISC n/a“), nie Ersatzwerte.
  *
  * Prod: Die JSON-Datei wird importiert, esbuild bündelt sie in dist/index.cjs. Damit hängt die Linie

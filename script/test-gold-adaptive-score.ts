@@ -9,16 +9,24 @@ import {
   GOLD_ADAPTIVE_BASE_WEIGHTS,
   GOLD_EFFECTIVE_WEIGHT,
   GOLD_HABITAT,
+  ATR_WINDOW,
+  BOLLINGER_WINDOW,
+  FISCAL_GROWTH_LAG,
+  FISCAL_SERIES_ID,
   VOLUME_SPIKE_MULTIPLE,
   adaptiveZ,
   aggregateAdaptiveLayers,
+  aiscStepsForAdaptive,
   effectiveWeight,
   habitatMultipliers,
   goldScoreDelta,
+  percentileRank,
   scoreGoldAdaptive,
   volumeReadingsAreReal,
   type GoldAdaptiveInput,
 } from "../server/gold-adaptive-score";
+import { loadGoldAiscSeries } from "../server/gold-aisc";
+import type { GoldAiscQuarterStep, GoldAiscSeries } from "../shared/schema";
 import {
   FED_GOLD_PATTERN,
   GOLD_NEWS_CACHE_HOURS,
@@ -44,6 +52,12 @@ function check(name: string, cond: boolean, detail?: string) {
 function day(index: number): string {
   const date = new Date(Date.UTC(2020, 0, 1));
   date.setUTCDate(date.getUTCDate() + index);
+  return date.toISOString().slice(0, 10);
+}
+
+function month(index: number): string {
+  const date = new Date(Date.UTC(2018, 0, 1));
+  date.setUTCMonth(date.getUTCMonth() + index);
   return date.toISOString().slice(0, 10);
 }
 
@@ -137,6 +151,10 @@ console.log("\nFehlende Quellen bleiben N/A");
   check("Null-Volumen ist nicht echt", volumeReadingsAreReal(Array.from({ length: 40 }, () => 0)) === false);
   check("Null-Volumen wird nicht als Signal gewertet", signal(zeros, "technical", "technical.volumeSpike")?.available === false);
   check("Null-Volumen ist keine Divergenz-0", signal(zeros, "technical", "technical.volumeDivergence")?.direction == null);
+  check("Volumen-Trend ohne echte Prints ist n/a", signal(zeros, "technical", "technical.volumeTrend")?.available === false);
+  check("Bollinger ohne Schlüsse ist n/a", signal(empty, "technical", "technical.bollinger")?.available === false);
+  check("ATR ohne High/Low ist n/a", (signal(empty, "technical", "technical.atr")?.detail ?? "").includes("High/Low"));
+  check("Fiskal ohne Reihe ist n/a und nicht 0", signal(empty, "policy", "policy.fiscal")?.available === false && signal(empty, "policy", "policy.fiscal")?.direction == null);
   const withFlag = scoreGoldAdaptive(baseInput({ newsFlag: 1 }));
   const withoutFlag = scoreGoldAdaptive(baseInput({ newsFlag: null }));
   check("Flag +1 lässt den Score unverändert", withFlag.score === withoutFlag.score);
@@ -162,6 +180,17 @@ console.log("\nVolumen-Spike nur bei echter Reihe");
   check("Spike in steigendem Preis ist bullisch", (spike?.direction ?? 0) > 0, String(spike?.direction));
   check("Detail nennt die 1,5×-Marke", (spike?.detail ?? "").includes(String(VOLUME_SPIKE_MULTIPLE)));
   check("Volumenquelle steht am Score", scored.volumeSource === "Yahoo GC=F");
+  const trend = signal(scored, "technical", "technical.volumeTrend");
+  check("steigendes Volumen in der Aufwärtsbewegung ist bullisch", trend?.available === true && (trend?.direction ?? 0) > 0, trend?.detail);
+  check("die Schwelle ist der Volumen-z, kein festes Vielfaches", (trend?.detail ?? "").includes("Schwelle = Volumen-z") && !(trend?.detail ?? "").includes("×"));
+  const falling = bars.map((bar, i) => ({ ...bar, close: 2200 - i }));
+  const down = scoreGoldAdaptive(baseInput({
+    closes: falling.map(bar => ({ date: bar.date, close: bar.close })),
+    volumes: falling.map(bar => ({ date: bar.date, volume: bar.volume })),
+    volumeSource: "Yahoo GC=F",
+  }));
+  const downTrend = signal(down, "technical", "technical.volumeTrend");
+  check("ohne Aufwärtsbewegung bleibt der Trend n/a", downTrend?.available === false && (downTrend?.detail ?? "").includes("Aufwärtsbewegung"), downTrend?.detail);
 }
 
 console.log("\nGates: Policy-Mismatch und Death Cross");
@@ -331,6 +360,7 @@ console.log("\nUI zeigt Gewicht, Stärke, Beitrag, Gates und News");
   });
   check("Spalten Gewicht, Stärke, Beitrag", html.includes("Gewicht") && html.includes("Stärke") && html.includes("Beitrag"));
   check("Makro-Zeile ist gerendert", html.includes("gold-adaptive-layer-macro"));
+  check("fehlende neue Signale stehen als n/a auf der Karte", html.includes("gold-adaptive-signal-policy.fiscal") && html.includes("gold-adaptive-signal-technical.bollinger") && html.includes("gold-adaptive-signal-technical.atr") && html.includes("n/a —"));
   check("Score-Delta steht auf der Layer-Karte", html.includes("gold-score-delta") && html.includes("Δ GIS"));
   check("bestehendes AISC-Gate bleibt sichtbar", html.includes("GOLD_AISC_STRESS"));
   check("Death-Cross-Gate ist sichtbar", html.includes("GOLD_DEATH_CROSS_ACTIVE"));
@@ -351,6 +381,117 @@ console.log("\nUI zeigt Gewicht, Stärke, Beitrag, Gates und News");
   check("ohne Wurzel-Feld bleiben Modell-Gates sichtbar", fromModels.includes("GOLD_AISC_STRESS") && fromModels.includes("GOLD_DEATH_CROSS_ACTIVE"));
 }
 
+console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
+{
+  check("Fenster sind benannte Parameter", BOLLINGER_WINDOW === 20 && ATR_WINDOW === 14);
+  check("Fiskalreihe ist FRED MTSDS133FMS, Lag 12", FISCAL_SERIES_ID === "MTSDS133FMS" && FISCAL_GROWTH_LAG === 12);
+  const calm = Array.from({ length: 420 }, (_, i) => ({ date: day(i), close: 2000 + Math.sin(i / 6) * 4 }));
+  const stretched = calm.map((point, i) => i < 400 ? point : { ...point, close: calm[399].close * Math.pow(1.012, i - 399) });
+  const dropped = calm.map((point, i) => i < 400 ? point : { ...point, close: calm[399].close * Math.pow(0.988, i - 399) });
+  const highBand = signal(scoreGoldAdaptive(baseInput({ closes: stretched })), "technical", "technical.bollinger");
+  const lowBand = signal(scoreGoldAdaptive(baseInput({ closes: dropped })), "technical", "technical.bollinger");
+  check("Bollinger über der eigenen Historie ist bärisch", highBand?.available === true && (highBand?.direction ?? 0) < 0, highBand?.detail);
+  check("Bollinger unter der eigenen Historie ist bullisch", lowBand?.available === true && (lowBand?.direction ?? 0) > 0, lowBand?.detail);
+  check("Bollinger-Detail nennt das Fenster", (highBand?.detail ?? "").includes(String(BOLLINGER_WINDOW)));
+  const ranges = calm.map((point, i) => {
+    const width = i < 360 ? 0.004 : 0.05;
+    return { date: point.date, high: point.close * (1 + width), low: point.close * (1 - width) };
+  });
+  const atr = signal(scoreGoldAdaptive(baseInput({ closes: calm, ranges })), "technical", "technical.atr");
+  check("ATR aus High/Low ist verfügbar", atr?.available === true, atr?.detail);
+  check("ATR ist kein Richtungs-Summand", atr?.direction == null && atr?.strength == null, atr?.detail);
+  check("ATR-Detail nennt das Fenster", (atr?.detail ?? "").includes(String(ATR_WINDOW)));
+  const atrMissing = signal(scoreGoldAdaptive(baseInput({ closes: calm })), "technical", "technical.atr");
+  check("ohne High/Low kein erfundener ATR", atrMissing?.available === false && atrMissing?.direction == null && (atrMissing?.detail ?? "").includes("nicht aus dem Schluss"));
+
+  const widening = Array.from({ length: 90 }, (_, i) => ({ date: month(i), value: i < 70 ? -120000 : -120000 - (i - 69) * 8000 }));
+  const narrowing = Array.from({ length: 90 }, (_, i) => ({ date: month(i), value: i < 70 ? -240000 : -240000 + (i - 69) * 8000 }));
+  const fiscalUp = signal(scoreGoldAdaptive(baseInput({ fiscal: widening })), "policy", "policy.fiscal");
+  const fiscalDown = signal(scoreGoldAdaptive(baseInput({ fiscal: narrowing })), "policy", "policy.fiscal");
+  check("wachsendes Defizit ist bullisch", fiscalUp?.available === true && (fiscalUp?.direction ?? 0) > 0, fiscalUp?.detail);
+  check("schrumpfendes Defizit ist bärisch", fiscalDown?.available === true && (fiscalDown?.direction ?? 0) < 0, fiscalDown?.detail);
+  check("Perzentil steht im Detail", (fiscalUp?.detail ?? "").includes("Perzentil") && (fiscalUp?.detail ?? "").includes(FISCAL_SERIES_ID));
+  const fiscalShort = signal(scoreGoldAdaptive(baseInput({
+    fiscal: Array.from({ length: 10 }, (_, i) => ({ date: month(i), value: -1000 - i })),
+  })), "policy", "policy.fiscal");
+  check("kurze Fiskalreihe ist n/a, nicht 0", fiscalShort?.available === false && fiscalShort?.direction == null && (fiscalShort?.detail ?? "").includes("zu kurz"));
+  check("Perzentil braucht Historie", percentileRank(5, [1, 2, 3]) === null);
+  check("höchstes Wachstum liegt über dem Median", (percentileRank(100, Array.from({ length: 40 }, (_, i) => i)) ?? 0) > 0.9);
+
+  const quarter = (name: string, aisc: number | null, sourceDates: string[]): GoldAiscQuarterStep => ({
+    quarter: name,
+    periodEnd: "2024-03-31",
+    availableFrom: "2024-05-30",
+    aisc,
+    count: sourceDates.length,
+    values: sourceDates.map((sourceDate, index) => ({
+      company: (["NEM", "B", "AEM"] as const)[index],
+      quarter: name,
+      aisc: aisc ?? 1,
+      sourceUrl: "https://example.com/q",
+      sourceTitle: "Quelle",
+      sourceDate,
+    })),
+  });
+  const series: GoldAiscSeries = {
+    unit: "USD/oz",
+    basis: "by-product",
+    method: "mean",
+    minCompanies: 2,
+    lagDays: 60,
+    stressLow: 1.1,
+    stressHigh: 1.15,
+    companies: {
+      NEM: { name: "Newmont", ticker: "NEM", metric: "AISC" },
+      B: { name: "Barrick", ticker: "B", metric: "AISC" },
+      AEM: { name: "Agnico Eagle", ticker: "AEM", metric: "AISC" },
+    },
+    quarters: [
+      quarter("2024-Q1", null, []),
+      quarter("2024-Q2", 1400, ["2024-08-01"]),
+      quarter("2024-Q3", 1500, ["2024-08-15", "2024-11-01"]),
+      quarter("2024-Q4", 1550, ["2024-11-01", "2025-02-20"]),
+      quarter("2025-Q1", 1600, ["2025-02-20", "2025-02-20"]),
+    ],
+    gaps: [],
+    retrievedAt: "2026-10-18",
+    source: "server/data/gold-aisc.json",
+    inScore: false,
+  };
+  const steps = aiscStepsForAdaptive(series);
+  check("n/a-Quartal und einzelne Quelle fallen weg", JSON.stringify(steps) === JSON.stringify([
+    { date: "2024-11-01", aisc: 1500 },
+    { date: "2025-02-20", aisc: 1600 },
+  ]), JSON.stringify(steps));
+  check("fehlende Datei bleibt null", aiscStepsForAdaptive(null) === null);
+  const closes = Array.from({ length: 80 }, (_, i) => ({ date: day(i), close: 1600 + i * 4 }));
+  const supplied = signal(scoreGoldAdaptive(baseInput({
+    closes,
+    aisc: [{ date: day(4), aisc: 1100 }],
+  })), "supply", "supply.aisc");
+  check("Quartals-AISC mit genug Schlüssen ist verfügbar", supplied?.available === true, supplied?.detail);
+  check("weitere Marge ist bullisch", (supplied?.direction ?? 0) > 0, String(supplied?.direction));
+  const loaded = aiscStepsForAdaptive(loadGoldAiscSeries());
+  check("Repo-Datei liefert positive PIT-Stufen", loaded != null && loaded.length > 0 && loaded.every(step => step.aisc > 0 && /^\d{4}-\d{2}-\d{2}$/.test(step.date)), JSON.stringify(loaded));
+
+  const gis = 0.42;
+  const before = scoreGoldAdaptive(baseInput({ gis, closes: calm }));
+  const after = scoreGoldAdaptive(baseInput({
+    gis,
+    closes: calm,
+    ranges,
+    fiscal: widening,
+    aisc: [{ date: day(4), aisc: 1100 }],
+    volumes: calm.map((bar, i) => ({ date: bar.date, volume: 80 + (i % 5) + (i > 390 ? 40 : 0) })),
+    volumeSource: "Test",
+  }));
+  check("GIS vorher = GIS nachher", before.score != null && after.score != null && before.scoreDelta != null && after.scoreDelta != null);
+  check("Delta vorher ist Schicht minus GIS", Math.abs((before.score as number) - gis - (before.scoreDelta as number)) < 1e-9);
+  check("Delta nachher ist Schicht minus GIS", Math.abs((after.score as number) - gis - (after.scoreDelta as number)) < 1e-9);
+  console.log(`  GIS vorher ${gis.toFixed(6)} nachher ${gis.toFixed(6)}`);
+  console.log(`  Schicht vorher ${before.score?.toFixed(6)} nachher ${after.score?.toFixed(6)}`);
+}
+
 console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
 {
   const routes = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf8");
@@ -363,7 +504,11 @@ console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
   check("Multi-Faktor bleibt angebunden", routes.includes("runMultiFactorGoldModel("));
   check("Monte Carlo bleibt angebunden", routes.includes("runMonteCarlo("));
   check("adaptive Schicht ist angebunden", routes.includes("scoreGoldAdaptive("));
-  check("AISC wird nicht erfunden", /aisc:\s*null/.test(routes));
+  check("Quartals-AISC geht an die Zusatzschicht", /aisc:\s*aiscStepsForAdaptive\(loadGoldAiscSeries\(\)\)/.test(routes));
+  check("Fiskalreihe wird aus FRED geholt", routes.includes("fredHistory.get(FISCAL_SERIES_ID, startDate)"));
+  check("High/Low gehen nur an die Schicht", routes.includes("ranges: rangeBars.length > 0 ? rangeBars : null"));
+  check("GIS-Formel bleibt die Indikatorsumme", /const gis = indicators\.reduce\(\(sum, ind\) => sum \+ ind\.score \* ind\.weight, 0\);/.test(routes));
+  check("gisRounded wird nicht aus der Schicht überschrieben", /const gisRounded = Math\.round\(gis \* 100\) \/ 100;/.test(routes) && !/gisRounded\s*=\s*adaptive/.test(routes));
   check("Yahoo GC=F ist die Volumen-Reserve", routes.includes('yahooFetch("GC=F"'));
   check("GIS fließt nur ins Score-Delta", routes.includes("gis: gisRounded"));
   check("Response liefert scoreDelta, gates und technicalSignals", /scoreDelta,\s*gates,\s*technicalSignals,/.test(routes));

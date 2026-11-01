@@ -9,7 +9,8 @@
  * `minCompanies` Firmenwerten, sonst n/a (null). Eine n/a-Stufe beendet die Linie, bis
  * wieder ein belegtes Quartal kommt. Die Stufe beginnt `lagDays` nach Quartalsende
  * (Berichtsverzug: Q4-Berichte erscheinen bis ~52 Tage nach Quartalsende).
- * Kein Score: GIS, getTechnicalScore und gold-adaptive-score bleiben unberührt (B2).
+ * Dieser Modulteil zeichnet nur. Der GIS liest die Reihe nicht.
+ * Die Zusatzschicht mappt die Quartale in server/gold-adaptive-score.ts (aiscStepsForAdaptive).
  */
 import type {
   GoldAiscCompanyCode,

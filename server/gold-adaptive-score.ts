@@ -13,6 +13,7 @@
  */
 import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import type { GoldAdaptiveLayer, GoldAdaptiveScore, GoldAdaptiveSignal, GoldModelGate } from "../shared/gold-schema";
+import type { GoldAiscSeries } from "../shared/schema";
 
 export const GOLD_ADAPTIVE_BASE_WEIGHTS = {
   realYield: 1.8,
@@ -53,6 +54,18 @@ export const WALCL_CHANGE_LAG = 13;
 export const OLS_WINDOW = 252;
 export const MA_FAST = 50;
 export const MA_SLOW = 200;
+/** Future_10 Z.103. Fenster der Bollinger-Lage (Schluss gegen das Fenster-Mittel). Keine feste k-Kante. */
+export const BOLLINGER_WINDOW = 20;
+/** Future_10 Z.104. Wilder-Fenster der True Range aus High/Low. */
+export const ATR_WINDOW = 14;
+/**
+ * Future_10 Z.162. FRED Monthly Treasury Statement: Federal Surplus or Deficit, Mio. USD.
+ * Negativ = Defizit. Kostenlos über fredgraph.csv, kein API-Key. FYFSD ist die Jahresreihe;
+ * die Monatsreihe trägt das Perzentil.
+ */
+export const FISCAL_SERIES_ID = "MTSDS133FMS";
+/** Abstand des Defizitwachstums in Beobachtungen. 12 = ein Jahr bei Monatswerten. */
+export const FISCAL_GROWTH_LAG = 12;
 /** FRED RRPONTSYD ist in Mrd. USD, WALCL und WTREGEN in Mio. USD. */
 export const RRP_BILLIONS_TO_WALCL_MILLIONS = 1000;
 
@@ -75,6 +88,10 @@ export interface GoldAdaptiveInput {
   breakeven: DatedNumber[];
   dxy: DatedNumber[];
   aisc: { date: string; aisc: number }[] | null;
+  /** High/Low je Datum für ATR. Fehlt die Spanne, bleibt ATR n/a (kein Close-Ersatz). */
+  ranges?: { date: string; high: number; low: number }[] | null;
+  /** FRED FISCAL_SERIES_ID. null oder leer = n/a, nicht 0. */
+  fiscal?: DatedNumber[] | null;
   regime: "stress" | "tailwind" | "neutral" | null;
   newsFlag: number | null;
   /** Bereits gerundeter GIS. Nur für scoreDelta, nicht für die Schicht. */
@@ -125,6 +142,19 @@ export function adaptiveZ(current: number, history: number[]): number | null {
   const z = (current - mean) / sigma;
   if (!Number.isFinite(z)) return null;
   return Math.max(-Z_CAP, Math.min(Z_CAP, z));
+}
+
+/** Mid-Rank der eigenen Historie: (Anzahl kleiner + halbe Anzahl gleicher) / n. Zu kurz → null. */
+export function percentileRank(current: number, history: number[]): number | null {
+  const sample = history.filter(value => Number.isFinite(value));
+  if (!Number.isFinite(current) || sample.length < Z_HISTORY_MIN) return null;
+  let less = 0;
+  let equal = 0;
+  for (const value of sample) {
+    if (value < current) less += 1;
+    else if (value === current) equal += 1;
+  }
+  return (less + 0.5 * equal) / sample.length;
 }
 
 /** Adaptiver Score minus GIS. null, wenn eine Seite fehlt. */
@@ -350,7 +380,11 @@ function realYieldSignals(closes: { date: string; close: number }[], real10Y: Da
   return [premium, trend];
 }
 
-function policySignals(real10Y: DatedNumber[], fedFunds: DatedNumber[]): GoldAdaptiveSignal[] {
+function policySignals(
+  real10Y: DatedNumber[],
+  fedFunds: DatedNumber[],
+  fiscal: DatedNumber[] | null | undefined,
+): GoldAdaptiveSignal[] {
   const funds = valuesOf(fedFunds);
   const fundsZ = levelChangeZ(funds, FED_FUNDS_LAG);
   const fundsSignal = fromZ(
@@ -368,7 +402,47 @@ function policySignals(real10Y: DatedNumber[], fedFunds: DatedNumber[]): GoldAda
     "DFII10-Historie fehlt",
     "fallend = bullisch",
   );
-  return [fundsSignal, realSignal];
+  return [fundsSignal, realSignal, fiscalSignal(fiscal)];
+}
+
+function fiscalSignal(points: DatedNumber[] | null | undefined): GoldAdaptiveSignal {
+  const surplus = valuesOf(points ?? []);
+  if (surplus.length === 0) {
+    return fromZ("policy.fiscal", "Fiskaldefizit", null, `n/a — FRED ${FISCAL_SERIES_ID} fehlt`);
+  }
+  const growths: number[] = [];
+  for (let i = FISCAL_GROWTH_LAG; i < surplus.length; i++) {
+    const growth = (-surplus[i]) - (-surplus[i - FISCAL_GROWTH_LAG]);
+    if (Number.isFinite(growth)) growths.push(growth);
+  }
+  if (growths.length < Z_HISTORY_MIN + 1) {
+    return fromZ("policy.fiscal", "Fiskaldefizit", null, "n/a — Fiskalreihe zu kurz für ein Perzentil");
+  }
+  const current = growths[growths.length - 1];
+  const rank = percentileRank(current, growths.slice(0, -1));
+  const billions = current / 1000;
+  return fromPercentile(
+    "policy.fiscal",
+    "Fiskaldefizit",
+    rank,
+    "n/a — Fiskalreihe ohne Lage",
+    `YoY ${billions >= 0 ? "+" : ""}${billions.toFixed(1)} Mrd. USD, steigendes Defizit = bullisch, ${FISCAL_SERIES_ID}`,
+  );
+}
+
+function fromPercentile(id: string, label: string, rank: number | null, missing: string, note?: string): GoldAdaptiveSignal {
+  if (rank == null || !Number.isFinite(rank)) return fromZ(id, label, null, missing);
+  const direction = (rank - 0.5) * 2;
+  const strength = Math.abs(direction);
+  const extra = note ? `, ${note}` : "";
+  return {
+    id,
+    available: true,
+    z: null,
+    strength,
+    direction,
+    detail: `${label}: Perzentil ${(rank * 100).toFixed(0)} %, Richtung ${direction >= 0 ? "+" : ""}${direction.toFixed(2)}${extra}`,
+  };
 }
 
 function liquiditySignals(
@@ -463,14 +537,39 @@ function supplySignal(
     "AISC-Margin",
     adaptiveZ(margins[margins.length - 1], margins.slice(0, -1)),
     "AISC-Margin ohne Streuung",
-    "enge Margin = Stress",
+    `enge Margin = Stress, bekannt ab ${steps[steps.length - 1].date}`,
   );
+}
+
+/**
+ * Quartals-AISC für die Zusatzschicht, point-in-time: eine Stufe gilt ab dem spätesten
+ * sourceDate der Firmen, die den Mittelwert tragen. availableFrom der Chart-Linie kann
+ * davor liegen (Lookahead in der Datei) und wird hier nicht benutzt. GIS liest das nicht.
+ */
+export function aiscStepsForAdaptive(series: GoldAiscSeries | null | undefined): { date: string; aisc: number }[] | null {
+  if (!series) return null;
+  const dated: { date: string; aisc: number; quarter: string }[] = [];
+  for (const quarter of series.quarters) {
+    if (quarter.aisc == null || !(quarter.aisc > 0)) continue;
+    const sourceDates = (quarter.values ?? [])
+      .map(value => String(value?.sourceDate ?? "").slice(0, 10))
+      .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date));
+    if (sourceDates.length < series.minCompanies) continue;
+    const knownFrom = sourceDates.reduce((later, date) => date > later ? date : later);
+    dated.push({ date: knownFrom, aisc: quarter.aisc, quarter: quarter.quarter });
+  }
+  if (dated.length === 0) return null;
+  dated.sort((a, b) => a.quarter.localeCompare(b.quarter) || a.date.localeCompare(b.date));
+  const byDate = new Map<string, { date: string; aisc: number }>();
+  for (const step of dated) byDate.set(step.date, { date: step.date, aisc: step.aisc });
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function technicalSignals(
   closes: { date: string; close: number }[],
   volumes: { date: string; volume: number }[] | null,
   volumeSource: string | null,
+  ranges: { date: string; high: number; low: number }[] | null | undefined,
 ): GoldAdaptiveSignal[] {
   const closeValues = closes.map(point => point.close);
   return [
@@ -479,6 +578,8 @@ function technicalSignals(
     crossSignal(closeValues),
     macdSignal(closeValues),
     ...volumeSignals(closes, volumes, volumeSource),
+    bollingerSignal(closeValues),
+    atrSignal(closes, ranges),
   ];
 }
 
@@ -558,10 +659,7 @@ function volumeSignals(
     const why = volumes == null
       ? "Volumenquelle fehlt"
       : "Volumenreihe ohne echte positive Prints";
-    return [
-      fromZ("technical.volumeSpike", "Volumen-Spike", null, why),
-      fromZ("technical.volumeDivergence", "Volumen-Divergenz", null, why),
-    ];
+    return volumeUnavailable(why);
   }
   const volByDate = new Map<string, number>();
   for (const point of raw) {
@@ -572,14 +670,18 @@ function volumeSignals(
     .filter(point => volByDate.has(point.date))
     .map(point => ({ close: point.close, volume: volByDate.get(point.date) as number }));
   if (!volumeReadingsAreReal(bars.map(bar => bar.volume))) {
-    const why = "Volumen nicht auf die Gold-Schlüsse datierbar";
-    return [
-      fromZ("technical.volumeSpike", "Volumen-Spike", null, why),
-      fromZ("technical.volumeDivergence", "Volumen-Divergenz", null, why),
-    ];
+    return volumeUnavailable("Volumen nicht auf die Gold-Schlüsse datierbar");
   }
   const source = volumeSource ? `Quelle ${volumeSource}` : "Quelle ohne Namen";
-  return [volumeSpikeSignal(bars, source), volumeDivergenceSignal(bars, source)];
+  return [volumeSpikeSignal(bars, source), volumeDivergenceSignal(bars, source), volumeTrendSignal(bars, source)];
+}
+
+function volumeUnavailable(why: string): GoldAdaptiveSignal[] {
+  return [
+    fromZ("technical.volumeSpike", "Volumen-Spike", null, why),
+    fromZ("technical.volumeDivergence", "Volumen-Divergenz", null, why),
+    fromZ("technical.volumeTrend", "Volumen-Trend", null, why),
+  ];
 }
 
 function volumeSpikeSignal(bars: { close: number; volume: number }[], source: string): GoldAdaptiveSignal {
@@ -635,6 +737,122 @@ function volumeDivergenceSignal(bars: { close: number; volume: number }[], sourc
     "Volumen-Divergenz ohne Streuung",
     `${source}, Preis steigt und Volumen fällt = negativ`,
   );
+}
+
+function volumeTrendSignal(bars: { close: number; volume: number }[], source: string): GoldAdaptiveSignal {
+  const changes: number[] = [];
+  const up: boolean[] = [];
+  const lag = VOLUME_AVERAGE_DAYS;
+  const volumes = bars.map(bar => bar.volume);
+  for (let i = lag; i < bars.length; i++) {
+    const avg = trailingMean(volumes, i - 1, lag);
+    const priorClose = bars[i - lag].close;
+    if (avg == null || !(avg > 0) || !(priorClose > 0)) continue;
+    changes.push(bars[i].volume / avg - 1);
+    up.push(bars[i].close / priorClose - 1 > 0);
+  }
+  if (changes.length < Z_HISTORY_MIN + 1) {
+    return fromZ("technical.volumeTrend", "Volumen-Trend", null, "n/a — zu wenig Volumistage");
+  }
+  const z = adaptiveZ(changes[changes.length - 1], changes.slice(0, -1));
+  if (z == null) return fromZ("technical.volumeTrend", "Volumen-Trend", null, "n/a — Volumen ohne Streuung");
+  if (!up[up.length - 1]) {
+    return fromZ("technical.volumeTrend", "Volumen-Trend", null, "n/a — keine Aufwärtsbewegung");
+  }
+  if (!(z > 0)) {
+    return fromZ("technical.volumeTrend", "Volumen-Trend", null, `n/a — Volumen-z ${z.toFixed(2)} liegt nicht über dem eigenen Mittel`);
+  }
+  return fromZ(
+    "technical.volumeTrend",
+    "Volumen-Trend",
+    z,
+    "n/a — Volumen ohne Streuung",
+    `${source}, Aufwärtsbewegung, Schwelle = Volumen-z`,
+  );
+}
+
+function bollingerSignal(closes: number[]): GoldAdaptiveSignal {
+  const positions: number[] = [];
+  for (let i = BOLLINGER_WINDOW - 1; i < closes.length; i++) {
+    const mean = trailingMean(closes, i, BOLLINGER_WINDOW);
+    if (mean == null || BOLLINGER_WINDOW < 2) continue;
+    let acc = 0;
+    for (let j = i - BOLLINGER_WINDOW + 1; j <= i; j++) acc += (closes[j] - mean) ** 2;
+    const sigma = Math.sqrt(acc / (BOLLINGER_WINDOW - 1));
+    if (!(sigma > 0)) continue;
+    positions.push((closes[i] - mean) / sigma);
+  }
+  if (positions.length < Z_HISTORY_MIN + 1) {
+    return fromZ("technical.bollinger", "Bollinger", null, `n/a — weniger als ${Z_HISTORY_MIN} Lagen, Fenster ${BOLLINGER_WINDOW}`);
+  }
+  const current = positions[positions.length - 1];
+  const z = adaptiveZ(current, positions.slice(0, -1));
+  return fromZ(
+    "technical.bollinger",
+    "Bollinger",
+    z == null ? null : -z,
+    "n/a — Bollinger ohne Streuung",
+    `Fenster ${BOLLINGER_WINDOW}, Lage ${current.toFixed(2)} σ, oberhalb der eigenen Historie = bärisch`,
+  );
+}
+
+function atrSignal(
+  closes: { date: string; close: number }[],
+  ranges: { date: string; high: number; low: number }[] | null | undefined,
+): GoldAdaptiveSignal {
+  const id = "technical.atr";
+  const label = "ATR";
+  if (!ranges || ranges.length === 0) {
+    return fromZ(id, label, null, "n/a — High/Low fehlt, ATR wird nicht aus dem Schluss geschätzt");
+  }
+  const byDate = new Map<string, { high: number; low: number }>();
+  for (const bar of ranges) {
+    const date = String(bar?.date ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    if (!Number.isFinite(bar.high) || !Number.isFinite(bar.low) || !(bar.low > 0) || !(bar.high >= bar.low)) continue;
+    byDate.set(date, { high: bar.high, low: bar.low });
+  }
+  const seq: { high: number; low: number; close: number }[] = [];
+  for (const bar of closes) {
+    const range = byDate.get(bar.date);
+    if (!range) continue;
+    seq.push({ high: range.high, low: range.low, close: bar.close });
+  }
+  if (seq.length < ATR_WINDOW + 1) {
+    return fromZ(id, label, null, `n/a — zu wenig High/Low für Fenster ${ATR_WINDOW}`);
+  }
+  const trs: number[] = [];
+  for (let i = 1; i < seq.length; i++) {
+    const prev = seq[i - 1].close;
+    const tr = Math.max(seq[i].high - seq[i].low, Math.abs(seq[i].high - prev), Math.abs(seq[i].low - prev));
+    if (Number.isFinite(tr)) trs.push(tr);
+  }
+  if (trs.length < ATR_WINDOW) {
+    return fromZ(id, label, null, `n/a — zu wenig True-Range für Fenster ${ATR_WINDOW}`);
+  }
+  const atrs: number[] = [];
+  let atr = 0;
+  for (let i = 0; i < ATR_WINDOW; i++) atr += trs[i];
+  atr /= ATR_WINDOW;
+  atrs.push(atr);
+  for (let i = ATR_WINDOW; i < trs.length; i++) {
+    atr = (atr * (ATR_WINDOW - 1) + trs[i]) / ATR_WINDOW;
+    atrs.push(atr);
+  }
+  if (atrs.length < Z_HISTORY_MIN + 1) {
+    return fromZ(id, label, null, `n/a — ATR-Historie kürzer als ${Z_HISTORY_MIN}`);
+  }
+  const current = atrs[atrs.length - 1];
+  const z = adaptiveZ(current, atrs.slice(0, -1));
+  if (z == null) return fromZ(id, label, null, "n/a — ATR ohne Streuung");
+  return {
+    id,
+    available: true,
+    z,
+    strength: null,
+    direction: null,
+    detail: `ATR: z=${z.toFixed(2)}, Fenster ${ATR_WINDOW}, letzter Wert ${current.toFixed(2)} USD — Volatilität für Stops, kein Richtungs-Summand`,
+  };
 }
 
 function macroSignal(dxy: DatedNumber[]): GoldAdaptiveSignal {
@@ -730,11 +948,11 @@ export function scoreGoldAdaptive(input: GoldAdaptiveInput): GoldAdaptiveScore {
   });
   const layers: GoldAdaptiveLayer[] = [
     layerFrom("realYield", "Real Yield", habitat.realYield, realYieldSignals(closes, input.real10Y)),
-    layerFrom("policy", "Policy", habitat.policy, policySignals(input.real10Y, input.fedFunds)),
+    layerFrom("policy", "Policy", habitat.policy, policySignals(input.real10Y, input.fedFunds, input.fiscal)),
     layerFrom("liquidity", "Liquidität", habitat.liquidity, liquidity.signals),
     layerFrom("inflation", "Inflation", habitat.inflation, [inflationSignal(input.breakeven, input.real10Y)]),
     layerFrom("supply", "Angebot", habitat.supply, [supplySignal(closes, input.aisc)]),
-    layerFrom("technical", "Technik", habitat.technical, technicalSignals(closes, input.volumes, input.volumeSource)),
+    layerFrom("technical", "Technik", habitat.technical, technicalSignals(closes, input.volumes, input.volumeSource, input.ranges)),
     layerFrom("macro", "Makro", habitat.macro, [macroSignal(input.dxy)]),
   ];
   const habitatNotes: string[] = [];

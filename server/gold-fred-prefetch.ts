@@ -7,6 +7,7 @@
  * oder fuer ein frueheres Start-Datum) laeuft wie bisher synchron ueber `fallback`.
  */
 import type { FredHistoryFetcher, FredHistoryPoint } from "./gold-fred-memo";
+import { FISCAL_SERIES_ID } from "./gold-adaptive-score";
 
 export type FredPrefetchKey = `${string}@${string}`;
 export const prefetchKey = (seriesId: string, startDate: string): FredPrefetchKey => `${seriesId}@${startDate}`;
@@ -19,6 +20,7 @@ export function analyzeGoldHistoryPlan(startDate: string, m2Start: string): Arra
   return [
     ["DFII10", startDate], ["DTWEXBGS", startDate], ["T10YIE", startDate], ["WALCL", startDate],
     ["M2SL", m2Start], ["FEDFUNDS", startDate], ["WTREGEN", startDate], ["RRPONTSYD", startDate],
+    [FISCAL_SERIES_ID, startDate],
   ];
 }
 
