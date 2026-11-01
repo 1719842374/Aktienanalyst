@@ -32,7 +32,7 @@ Ist-SHA vor dieser Arbeit: main `d9b70685bc20e782e2268619e807fe0ae6e0b72a`.
 | S3 | Karten Multiple / AISC Ø NEM/B/AEM / Marge / Kapitulations-Score | Multiple nur im Tooltip | fehlt (Prompt 3) | ❌ |
 | S4 | RSI eigenes Pane | `GoldPriceChart.tsx` RSI(14) eigenes Pane | unverändert | ✅ |
 | S5 | Schwellen adaptiv (Perzentil der eigenen Historie) | feste 1,10/1,15 in `shared/gold-aisc.ts` | `shared/gold-miner-zone.ts`: P20/P50 expanding window, keine 1,10/1,15. Die festen Stressfaktoren im Overlay-Modul bleiben bis Prompt 4 liegen (nicht gelöscht). | 🟡 |
-| S6 | Datenkette server-seitig, Response-Feld `aiscZone` | `aiscLine` vorhanden, `aiscZone` fehlt | Typ `GoldMinerZone` in `shared/schema.ts`, Feld `GoldAnalysis.aiscZone` in `shared/gold-schema.ts`. Server schreibt das Feld noch nicht (Prompt 2). | 🟡 |
+| S6 | Datenkette server-seitig, Response-Feld `aiscZone` | `aiscLine` vorhanden, `aiscZone` fehlt | `GET /api/analyze-gold` setzt `aiscZone: buildGoldMinerZone(historicalPrices, aiscSeries)` neben `aiscLine`. `aisc: null` an `scoreGoldAdaptive` unverändert. Fallback ohne Feld. | ✅ |
 | S7 | States Offline/n/a/375/1440 | Overlay-Chips; Block fehlt | fehlt (Prompt 3) | ❌ |
 | S8 | BTC unverändert | Section 13, `minerMetrics.ts` | nicht angefasst | ✅ |
 | S9 | #374 QE/QT-Bänder + Gold/WALCL bleiben | vorhanden seit `d9b70685` | nicht angefasst | ✅ |
