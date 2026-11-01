@@ -37,6 +37,7 @@
 ### Soll-Ist 25.10.2026 (HEAD `09750838`)
 - Soll: Karte bei S12 mit Std-Dev/Zone, ohne GuruFocus, N/A-Fallback.
 - Ist: ✅ #319 `4eaf1115` (Karte S12) auf Basis #274 `99a06d1b` (robust, Grund statt 502); EU/CN-Erweiterung ✅ #320 `09750838`; Asia-Benchmark (^TPX) **offen**.
+- Nachtrag 01.11.2026, Tip `3baef0e5` (Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHA per GitHub-API): **#355** `597953dfc4b7ba41388b132bd0dd8dfa241beab6` PASS Soft. `Dashboard.tsx` (+1/−2) mountet `BuffettMacroCard` nicht mehr unter Aktien-Sektion 12. `client/src/components/sections/BuffettMacroCard.tsx` bleibt im Baum und ist in der UI ungenutzt (Import nur in `script/test-buffett-stock-card.ts`). Rezession behält `BuffettRatioPanel` und `GET /api/analyze-recession/buffett`. §1 „Karte in der Aktienanalyse“ ist damit **nicht mehr erfüllt**. Datei bleibt `Offen_` (§2 offen, Asia ^TPX offen).
 
 **Priorität:** Hoch  
 **Aufwand:** 0,5–1 Tag
