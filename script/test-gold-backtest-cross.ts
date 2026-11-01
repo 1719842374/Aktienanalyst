@@ -11,6 +11,10 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import {
+  goldCrossBacktestHttpFailure,
+  goldCrossBacktestTransportFailure,
+} from "../shared/gold-backtest-cross";
+import {
   GOLD_CROSS_BACKTEST_PARAMS,
   backtestGoldMaCross,
   registerGoldBacktestCrossRoute,
@@ -200,6 +204,17 @@ console.log("\nRoute /api/gold/backtest-cross");
   }
 }
 
+console.log("\nHTTP-Fehler ist n/a, nicht „lädt …“");
+{
+  const http = goldCrossBacktestHttpFailure(500, JSON.stringify({ error: "Internal error" }));
+  check("500 ist nicht verfügbar", http.available === false && http.inScore === false);
+  check("500 nennt Status und Grund", http.unavailableReason === "HTTP 500: Internal error");
+  check("HTML-Fehlerseite bleibt beim Status", goldCrossBacktestHttpFailure(500, "<html>gateway</html>").unavailableReason === "HTTP 500");
+  const transport = goldCrossBacktestTransportFailure("Timeout: Server hat nicht geantwortet");
+  check("Transportfehler ist ebenfalls n/a", transport.available === false && transport.unavailableReason === "Timeout: Server hat nicht geantwortet");
+  check("Fehlerkörper nutzt die benannten Fenster", http.fastWindow === GOLD_CROSS_BACKTEST_PARAMS.fastWindow && http.slowWindow === GOLD_CROSS_BACKTEST_PARAMS.slowWindow && http.symbol === "GC=F");
+}
+
 console.log("\nVerdrahtung ohne Score-Dateien");
 {
   const routes = readFileSync(new URL("../server/routes.ts", import.meta.url), "utf8");
@@ -217,6 +232,11 @@ console.log("\nVerdrahtung ohne Score-Dateien");
   check("Info-Karte hängt am Gold-Dashboard", dashboard.includes("<GoldCrossBacktestCard />"));
   const card = readFileSync(new URL("../client/src/components/gold/GoldCrossBacktestCard.tsx", import.meta.url), "utf8");
   check("Karte fragt /api/gold/backtest-cross", card.includes('"/api/gold/backtest-cross"'));
+  check("HTTP-Fehler wird nicht als null geladen", card.includes("goldCrossBacktestHttpFailure") && !card.includes("if (!res.ok) return null"));
+  const detail = readFileSync(new URL("../Offen_FUTURE_SOLL_IST_DETAIL.md", import.meta.url), "utf8").split("\n");
+  const f1033 = detail[309] ?? "";
+  check("nur Zeile 310 von F10-33 ist auf erledigt gesetzt", f1033.startsWith("| F10-33 |") && f1033.includes("8362b797") && f1033.includes("✅") && f1033.includes("#401"));
+  check("die Nachbarzeile F10-34 bleibt offen", (detail[310] ?? "").includes("| F10-34 |") && (detail[310] ?? "").includes("❌"));
   check("Karte sagt, dass sie den Score nicht verändert", card.includes("kein Score"));
   check("Karte importiert weder Score noch TechnicalChart", !card.includes("gold-adaptive-score") && !card.includes("TechnicalChart"));
   const priceChart = readFileSync(new URL("../client/src/components/gold/GoldPriceChart.tsx", import.meta.url), "utf8");

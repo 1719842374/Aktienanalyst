@@ -13,41 +13,29 @@
  */
 import type { Express } from "express";
 import { yahooFetch } from "./history-fallback";
+import {
+  GOLD_CROSS_BACKTEST_PARAMS,
+  type GoldCrossBacktest,
+  type GoldCrossBacktestParams,
+  type GoldCrossSideResult,
+} from "../shared/gold-backtest-cross";
+
+export {
+  GOLD_CROSS_BACKTEST_PARAMS,
+  goldCrossBacktestHttpFailure,
+  goldCrossBacktestTransportFailure,
+} from "../shared/gold-backtest-cross";
+export type {
+  GoldCrossBacktest,
+  GoldCrossBacktestParams,
+  GoldCrossHorizonResult,
+  GoldCrossSideResult,
+} from "../shared/gold-backtest-cross";
 
 export interface CloseBar {
   date: string;
   close: number;
 }
-
-export interface GoldCrossBacktestParams {
-  symbol: string;
-  fastWindow: number;
-  slowWindow: number;
-  horizons: Readonly<Record<string, number>>;
-  historyFrom: string;
-  cacheTtlMs: number;
-  percentScale: number;
-}
-
-/**
- * 50/200 aus Future_10 Z.84–85. Die Horizonte sind Handelstage
- * (etwa ein Monat, ein Quartal, ein Jahr), keine Signifikanz-Schwellen.
- * percentScale legt nur die Einheit des Perzentils fest. cacheTtlMs ist
- * die Haltedauer einer vollständigen Antwort, analog zur Chart-Historie.
- */
-export const GOLD_CROSS_BACKTEST_PARAMS: GoldCrossBacktestParams = {
-  symbol: "GC=F",
-  fastWindow: 50,
-  slowWindow: 200,
-  horizons: {
-    oneMonth: 21,
-    oneQuarter: 63,
-    oneYear: 252,
-  },
-  historyFrom: "1970-01-01",
-  cacheTtlMs: 6 * 60 * 60 * 1000,
-  percentScale: 100,
-};
 
 export interface ForwardReturnSummary {
   observations: number;
@@ -58,33 +46,6 @@ export interface ForwardReturnSummary {
   unconditionalObservations: number;
   zScore: number | null;
   percentile: number | null;
-}
-
-export interface GoldCrossHorizonResult extends ForwardReturnSummary {
-  name: string;
-  sessions: number;
-}
-
-export interface GoldCrossSideResult {
-  events: number;
-  lastDate: string | null;
-  dates: string[];
-  horizons: GoldCrossHorizonResult[];
-}
-
-export interface GoldCrossBacktest {
-  available: boolean;
-  symbol: string;
-  source: string;
-  from: string | null;
-  to: string | null;
-  bars: number;
-  fastWindow: number;
-  slowWindow: number;
-  inScore: false;
-  unavailableReason: string | null;
-  golden: GoldCrossSideResult;
-  death: GoldCrossSideResult;
 }
 
 export type FetchCloseBars = (symbol: string, from: string, to: string) => Promise<readonly CloseBar[]>;
