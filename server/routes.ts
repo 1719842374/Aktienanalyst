@@ -10,6 +10,7 @@
  * Module map:
  *  /api/analyze, /api/fmp-budget   → server/analyze-route.ts
  *  /api/btc-miner                  → server/btc-miner.ts (GET + POST)
+ *  /api/btc/miner-map              → server/miner-map.ts (GET, nur Anzeige)
  *  /api/analyze-btc/macro-history  → server/btc-routes.ts
  *  /api/analyze-gold               → server/gold-routes.ts
  *
@@ -79,6 +80,7 @@ import { registerOhlcvRoute } from "./ohlcv-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { registerBTCRoutes } from "./btc-routes";
 import { fetchMinerData, minerUnavailableBody } from "./btc-miner";
+import { buildMinerMap } from "./miner-map";
 import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
@@ -160,6 +162,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(minerData);
     } catch (err: any) {
       console.error("[POST /api/btc-miner]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // 3c. GET /api/btc/miner-map — Standort-Layer (Filings) plus Live-Kontext aus
+  //     fetchMinerData. Nur Anzeige, kein Score. Fehlende Pipeline bleibt n/a.
+  app.get("/api/btc/miner-map", async (_req, res) => {
+    try {
+      res.json(await buildMinerMap());
+    } catch (err: any) {
+      console.error("[GET /api/btc/miner-map]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });
