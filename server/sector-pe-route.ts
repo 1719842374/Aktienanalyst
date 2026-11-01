@@ -8,6 +8,7 @@ import type { SectorPeResponse } from "../shared/schema";
 import { canStopHoldingsFetch, composeSectorPeDisplay, type HoldingWeight } from "../shared/sector-pe-display";
 import { ETF_PROXY_MAP } from "./sector-rotation-math";
 import { fmpEtfHoldings, fmpRatios, isFmpAvailable } from "./fmp";
+import { loadYahooEtfTrailingPe, type YahooTrailingPe } from "./yahoo-fundamental-fallback";
 
 /** Wanduhr-Budget, analog PE_BUDGET_MS im Score-Pfad. Die Anzeige bricht ab, der Score-Pfad läuft separat. */
 export const SECTOR_PE_FETCH_BUDGET_MS = 20_000;
@@ -17,12 +18,15 @@ export interface SectorPeDeps {
   ratios: (symbol: string, limit: number) => Promise<unknown>;
   holdings: (symbol: string) => Promise<unknown>;
   now: () => number;
+  /** Trailing PE des ETFs selbst, wenn Holdings und Ratios nichts liefern. */
+  etfTrailingPe?: (symbol: string) => Promise<YahooTrailingPe>;
 }
 
 const defaultDeps: SectorPeDeps = {
   ratios: (symbol, limit) => fmpRatios(symbol, limit),
   holdings: symbol => fmpEtfHoldings(symbol),
   now: () => Date.now(),
+  etfTrailingPe: symbol => loadYahooEtfTrailingPe(symbol),
 };
 
 let cache: { at: number; body: SectorPeResponse } | null = null;
@@ -130,6 +134,31 @@ export async function loadSectorPeDisplay(deps: SectorPeDeps = defaultDeps): Pro
         holdings = null;
       }
     }
+    let historyOrigin: "etf-ratios" | "yahoo-trailing-pe" | undefined;
+    let sourceLabel: string | null = null;
+    const draft = composeSectorPeDisplay({
+      id: proxy.id,
+      etf: proxy.etf,
+      label: proxy.label,
+      holdings,
+      etfHistory: history,
+      holdingsNote,
+    });
+    if (draft.current == null && deps.now() - started <= SECTOR_PE_FETCH_BUDGET_MS) {
+      try {
+        const trailing = await (deps.etfTrailingPe ?? defaultDeps.etfTrailingPe)?.(proxy.etf);
+        if (trailing?.pe != null) {
+          history = [{ date: new Date(deps.now()).toISOString().slice(0, 10), pe: trailing.pe }];
+          historyOrigin = "yahoo-trailing-pe";
+          sourceLabel = trailing.source;
+        } else if (trailing?.note) {
+          holdingsNote = [holdingsNote, trailing.note].filter((n): n is string => !!n).join(" · ");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message.slice(0, 80) : "Fehler";
+        holdingsNote = [holdingsNote, `n/a — ETF-KGV nicht geladen (${msg})`].filter((n): n is string => !!n).join(" · ");
+      }
+    }
     sectors.push(composeSectorPeDisplay({
       id: proxy.id,
       etf: proxy.etf,
@@ -137,6 +166,8 @@ export async function loadSectorPeDisplay(deps: SectorPeDeps = defaultDeps): Pro
       holdings,
       etfHistory: history,
       holdingsNote,
+      historyOrigin,
+      sourceLabel,
     }));
   }
   const body: SectorPeResponse = {

@@ -737,7 +737,7 @@ export function TechnicalChart({
               Szenario-Kegel
             </button>
             <button type="button" onClick={() => setShowEy(v => !v)} data-testid="button-earnings-yield" aria-pressed={showEy}
-              title="Earnings Yield (EBIT/EV), rechte %-Achse, kein Score-Einfluss."
+              title={`Earnings Yield (EBIT/EV), rechte %-Achse, kein Score-Einfluss.${eyQuery.data?.source ? ` Quelle: ${eyQuery.data.source}.` : ""}`}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showEy ? "border-sky-500 text-sky-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
@@ -745,7 +745,7 @@ export function TechnicalChart({
               Earnings Yield
             </button>
             <button type="button" onClick={() => setShowRoic(v => !v)} data-testid="button-roic-5y" aria-pressed={showRoic}
-              title="ROIC der letzten Geschäftsjahre, rechte %-Achse, kein Score-Einfluss."
+              title={`ROIC der letzten Geschäftsjahre, rechte %-Achse, kein Score-Einfluss.${roicQuery.data?.source ? ` Quelle: ${roicQuery.data.source}.` : ""}`}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showRoic ? "border-lime-500 text-lime-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
@@ -1132,6 +1132,9 @@ export function TechnicalChart({
           peerLoading={peerMode === "roic" ? peerRoicQuery.isLoading : peerPriceQuery.isLoading}
           eyNote={eyQuery.data?.note ?? null}
           roicNote={roicQuery.data?.note ?? null}
+          eySource={eyQuery.data?.source ?? null}
+          roicSource={roicQuery.data?.source ?? null}
+          peerRoicSource={peerRoicQuery.data?.source ?? null}
           eyLatest={latestFinite(eyQuery.data?.points)}
           roicLatest={latestFinite(roicQuery.data?.points)}
           peerRoicLatest={latestFinite(peerRoicQuery.data?.points)}
@@ -2108,7 +2111,7 @@ function FundTooltipRows({ p }: { p: FundFields }) {
 }
 
 function FundamentalOverlayStatus({
-  showEy, showRoic, showPeer, peerMode, peerTicker, eyLoading, roicLoading, peerLoading, eyNote, roicNote, eyLatest, roicLatest, peerRoicLatest, peerPriceNote,
+  showEy, showRoic, showPeer, peerMode, peerTicker, eyLoading, roicLoading, peerLoading, eyNote, roicNote, eySource, roicSource, peerRoicSource, eyLatest, roicLatest, peerRoicLatest, peerPriceNote,
 }: {
   showEy: boolean;
   showRoic: boolean;
@@ -2120,6 +2123,9 @@ function FundamentalOverlayStatus({
   peerLoading: boolean;
   eyNote: string | null;
   roicNote: string | null;
+  eySource: string | null;
+  roicSource: string | null;
+  peerRoicSource: string | null;
   eyLatest: { value: number | null; note: string | null };
   roicLatest: { value: number | null; note: string | null };
   peerRoicLatest: { value: number | null; note: string | null };
@@ -2135,11 +2141,12 @@ function FundamentalOverlayStatus({
     else if (peerMode === "roic") peer = peerRoicLatest.value != null ? `${peerTicker} ROIC ${peerRoicLatest.value.toFixed(1)} %` : (peerRoicLatest.note ?? `n/a — kein ROIC für ${peerTicker}`);
     else peer = peerPriceNote ?? `${peerTicker} Kurs als Median-Index auf der linken Achse`;
   }
+  const sourceText = (source: string | null) => source ? ` Quelle: ${source}.` : "";
   return (
     <div className={base} data-testid="fundamental-overlay-status">
-      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Kein Score-Einfluss.</div>}
-      {roic != null && <div data-testid="status-roic">ROIC 5Y: {roic}. Kein Score-Einfluss.</div>}
-      {peer != null && <div data-testid="status-fund-peer">Peer: {peer}. Kein Score-Einfluss.</div>}
+      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}.{sourceText(eySource)} Kein Score-Einfluss.</div>}
+      {roic != null && <div data-testid="status-roic">ROIC 5Y: {roic}.{sourceText(roicSource)} Kein Score-Einfluss.</div>}
+      {peer != null && <div data-testid="status-fund-peer">Peer: {peer}.{sourceText(peerMode === "roic" ? peerRoicSource : null)} Kein Score-Einfluss.</div>}
     </div>
   );
 }
