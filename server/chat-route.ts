@@ -14,6 +14,7 @@ import {
   CHAT_DASHBOARDS, CHAT_LIMITS, chatContextTrimReport, fitChatContextBudget,
   type ChatContext, type ChatContextTrimEntry, type ChatRequestBody, type ChatResponseBody,
 } from "../shared/chat-context";
+import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 
 /** Eigenes Zeitlimit für den Chat-Call (liegt unter dem apiRequest-Client-Timeout von 90 s). */
 export const CHAT_LLM_TIMEOUT_MS = 30_000;
@@ -158,7 +159,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (!v.ok) return { http: 400, body: reply("invalid", { error: v.error }) };
   const trim = v.contextTrimmed?.length ? { contextTrimmed: v.contextTrimmed } : {};
   if (!deps.llmAvailable()) {
-    return { http: 200, body: reply("no-key", { error: "KI nicht verfügbar: Auf diesem Server ist kein OpenRouter-Key konfiguriert. Es wird keine Antwort erzeugt.", ...trim }) };
+    return { http: 200, body: reply("no-key", { error: OPENROUTER_NO_KEY_MESSAGE, ...trim }) };
   }
   const body = v.body;
   const timeoutMs = deps.timeoutMs ?? CHAT_LLM_TIMEOUT_MS;

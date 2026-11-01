@@ -11,8 +11,9 @@ import { PODCAST_DRIVER_PARAMS, changeScaleFromSeries, rankPodcastDrivers, type 
 import { PODCAST_STRUCTURE, podcastStructurePrinciples } from "../server/podcast-structure";
 import { buildPodcastPrompt, podcastScriptFromLlm } from "../server/podcast-prompt";
 import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "../server/podcast-audio";
-import { EARNINGS_BRIEF_UNAVAILABLE, PODCAST_EARNINGS_ENDPOINT, collectPodcastInputs, collectPodcastSymbols, earningsBriefFromEndpoint, symbolsFromResearcherCache, yoyRatePoints } from "../server/podcast-sources";
+import { EARNINGS_BRIEF_UNAVAILABLE, PODCAST_EARNINGS_ENDPOINT, YOY_GAP_DISTANCE_SENTINEL, YOY_MAX_MONTH_GAP, YOY_MIN_MONTH_GAP, YOY_TARGET_MONTHS, collectPodcastInputs, collectPodcastSymbols, earningsBriefFromEndpoint, symbolsFromResearcherCache, yoyRatePoints } from "../server/podcast-sources";
 import { PODCAST_NO_KEY_MESSAGE, runPodcastProbe } from "../server/podcast-pipeline";
+import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import { callPodcastLlm, podcastLlmCall } from "../server/podcast-route";
 import { PodcastProbePanel } from "../client/src/components/researcher/PodcastProbePanel";
 
@@ -193,8 +194,21 @@ async function main() {
   assert.equal(cpi.points.some(point => point.value === indexNow), false);
   const cpiRank = rankPodcastDrivers([cpi]);
   assert.equal(cpiRank.drivers[0]?.label, "Inflation Rate");
+  assert.equal(cpiRank.drivers[0]?.reading, "yoy");
   assert.ok(cpiRank.drivers[0] != null && cpiRank.drivers[0].value < 20);
   assert.ok(Math.abs((cpiRank.drivers[0]?.value ?? 0) - expectedYoy) < 1e-6);
+  const yoyReason = cpiRank.drivers[0]?.reason ?? "";
+  const relativePct = (cpiRank.drivers[0]?.components.changeRate ?? 0) * 100;
+  assert.match(yoyReason, /YoY /);
+  assert.match(yoyReason, /Relative Änderung dieser YoY-Rate/);
+  assert.match(yoyReason, /nicht die Inflationsrate/);
+  assert.ok(Math.abs(relativePct - expectedYoy) > 0.5, `relativ ${relativePct} yoY ${expectedYoy}`);
+  assert.equal(yoyReason.includes("Änderungsrate"), false);
+  assert.equal(YOY_TARGET_MONTHS, 12);
+  assert.equal(YOY_MIN_MONTH_GAP, 11);
+  assert.equal(YOY_MAX_MONTH_GAP, 13);
+  assert.equal(YOY_GAP_DISTANCE_SENTINEL, 99);
+  assert.equal(PODCAST_NO_KEY_MESSAGE, OPENROUTER_NO_KEY_MESSAGE);
   ok("Inflation Rate zeigt die YoY-Prozentänderung, nicht den CPI-Indexstand");
 
   const asked: string[] = [];
@@ -398,7 +412,8 @@ async function main() {
     assert.ok(html.includes("n/a —"));
     assert.equal(html.includes("whitespace-nowrap"), false);
     assert.ok(html.includes("bg-card"));
-    assert.ok(html.includes("text-muted-foreground"));
+    assert.ok(html.includes("text-foreground"));
+    assert.equal(html.includes("text-muted-foreground"), false);
     assert.ok(html.includes("border-border"));
     assert.equal(html.includes("text-amber-200"), false);
     assert.equal(html.includes("text-rose-300"), false);

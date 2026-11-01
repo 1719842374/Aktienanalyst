@@ -6,6 +6,7 @@ import { rankPodcastDrivers, type PodcastGap, type RankedDriver } from "./podcas
 import { podcastScriptFromLlm, type PodcastNote, type PodcastScript } from "./podcast-prompt";
 import { buildPodcastPrompt } from "./podcast-prompt";
 import type { PodcastCollected } from "./podcast-sources";
+import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 
 export interface PodcastProgressStep {
   step: string;
@@ -30,9 +31,8 @@ export interface PodcastCacheWrite {
   reason: string | null;
 }
 
-/** Gleicher Wortlaut wie der Chat, wenn kein OpenRouter-Key gesetzt ist. */
-export const PODCAST_NO_KEY_MESSAGE =
-  "KI nicht verfügbar: Auf diesem Server ist kein OpenRouter-Key konfiguriert. Es wird keine Antwort erzeugt.";
+/** Derselbe Satz wie im Chat, Quelle shared/openrouter-no-key.ts. */
+export const PODCAST_NO_KEY_MESSAGE = OPENROUTER_NO_KEY_MESSAGE;
 
 function llmDetailOf(
   llm: { data: unknown; modelUsed?: string } | null,

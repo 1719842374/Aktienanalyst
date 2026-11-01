@@ -36,6 +36,24 @@ const PODCAST_SYMBOL = /^[A-Za-z0-9.\-]{1,24}$/;
  */
 export const PODCAST_YOY_INDEX_SERIES = new Set(["CPIAUCSL", "CPILFESL", "PCEPILFE"]);
 
+/** Zwölf Kalendermonate. Das ist der Abstand einer YoY-Rate. */
+export const YOY_TARGET_MONTHS = 12;
+/**
+ * Ein Monat unter dem Ziel. Ein fehlender Monatsdruck bleibt ein Jahresvergleich.
+ * Dasselbe Fenster nutzt measureInflation in recession-drivers (11–13 Monate).
+ */
+export const YOY_MIN_MONTH_GAP = 11;
+/**
+ * Ein Monat über dem Ziel. Ein zusätzlicher Monat bleibt ein Jahresvergleich.
+ * Darüber bricht die Suche ab, weil der Abstand kein YoY mehr ist.
+ */
+export const YOY_MAX_MONTH_GAP = 13;
+/**
+ * Noch kein Treffer. Größer als jeder Abstand im Fenster 11–13 zum Ziel 12
+ * (dort höchstens 1), damit der erste passende Punkt den Platz einnimmt.
+ */
+export const YOY_GAP_DISTANCE_SENTINEL = 99;
+
 /** Dieselbe Keyword-Liste wie buildMacroPulse in server/researcher.ts. Nur die Abfrage, nicht das Ranking. */
 export const PODCAST_MACRO_KEYWORDS = [
   "interest rate",
@@ -154,14 +172,14 @@ export function yoyRatePoints(points: PodcastPoint[]): PodcastPoint[] {
     const now = monthIndex(current.date);
     if (now == null) continue;
     let prior: PodcastPoint | null = null;
-    let best = 99;
+    let best = YOY_GAP_DISTANCE_SENTINEL;
     for (let j = i - 1; j >= 0; j--) {
       const then = monthIndex(sorted[j]!.date);
       if (then == null) continue;
       const gap = now - then;
-      if (gap > 13) break;
-      if (gap < 11) continue;
-      const dist = Math.abs(gap - 12);
+      if (gap > YOY_MAX_MONTH_GAP) break;
+      if (gap < YOY_MIN_MONTH_GAP) continue;
+      const dist = Math.abs(gap - YOY_TARGET_MONTHS);
       if (dist < best) {
         best = dist;
         prior = sorted[j]!;
@@ -364,6 +382,7 @@ export async function collectPodcastInputs(deps: PodcastSourceDeps): Promise<Pod
       return;
     }
     let unit: string | null = null;
+    let reading: "yoy" | undefined;
     if (PODCAST_YOY_INDEX_SERIES.has(item.id)) {
       const rates = yoyRatePoints(points);
       if (rates.length < 2) {
@@ -376,6 +395,7 @@ export async function collectPodcastInputs(deps: PodcastSourceDeps): Promise<Pod
       }
       points = rates;
       unit = "%";
+      reading = "yoy";
     }
     series.push({
       id: item.id,
@@ -385,6 +405,7 @@ export async function collectPodcastInputs(deps: PodcastSourceDeps): Promise<Pod
       unit,
       points,
       citation: `https://fred.stlouisfed.org/series/${item.id}`,
+      ...(reading ? { reading } : {}),
     });
   }));
 

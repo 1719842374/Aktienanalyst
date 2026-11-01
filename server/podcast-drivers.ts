@@ -18,6 +18,8 @@ export interface PodcastSeriesInput {
   unit: string | null;
   points: PodcastPoint[];
   citation: string | null;
+  /** Die Punkte sind schon die YoY-Rate in Prozent. Der Indexstand steht hier nicht. */
+  reading?: "yoy";
 }
 
 export interface PodcastGap {
@@ -42,6 +44,8 @@ export interface RankedDriver {
   unit: string | null;
   asOf: string;
   citation: string | null;
+  /** Übernommen von der Reihe. `yoy`: `value` ist die YoY-Rate in Prozent. */
+  reading?: "yoy";
   relevance: number;
   reason: string;
   components: PodcastDriverComponents;
@@ -262,7 +266,14 @@ export function rankPodcastDrivers(
     else reason.push(`z-Score n/a — Historie ${points.length} Punkte, braucht ${params.minHistoryForZ}`);
     if (percentile != null) reason.push(`Perzentil ${formatNum(percentile * 100)} der eigenen Historie`);
     else reason.push(`Perzentil n/a — Historie ${points.length} Punkte, braucht ${params.minHistoryForPercentile}`);
-    if (change != null && volatility.scale != null) {
+    if (series.reading === "yoy") {
+      reason.push(`YoY ${formatNum(latest.value)} % zum Stand ${latest.date}`);
+      if (change != null && volatility.scale != null) {
+        reason.push(`Relative Änderung dieser YoY-Rate gegen den vorherigen Punkt: ${formatNum(change * 100)} Prozent des vorherigen YoY-Werts, gerechnet als (aktueller YoY − vorheriger YoY) / |vorheriger YoY|. Das ist nicht die Inflationsrate. Skala Median ${formatNum(volatility.scale * 100)} Prozent aus ${volatility.sample} früheren Änderungen`);
+      } else if (previous.value === 0) reason.push("Relative Änderung dieser YoY-Rate n/a — Vorwert ist 0");
+      else if (change != null) reason.push("Relative Änderung dieser YoY-Rate n/a — eigene Volatilität nicht bestimmbar");
+      else reason.push("Relative Änderung dieser YoY-Rate n/a — Vorwert fehlt");
+    } else if (change != null && volatility.scale != null) {
       reason.push(`Änderungsrate ${formatNum(change * 100)} Prozent gegen den vorherigen Punkt, Skala Median ${formatNum(volatility.scale * 100)} Prozent aus ${volatility.sample} früheren Änderungen`);
     } else if (previous.value === 0) reason.push("Änderungsrate n/a — Vorwert ist 0");
     else if (change != null) reason.push("Änderungsrate n/a — eigene Volatilität nicht bestimmbar");
@@ -278,6 +289,7 @@ export function rankPodcastDrivers(
       value: latest.value,
       unit: series.unit,
       asOf: latest.date,
+      reading: series.reading,
       citation: series.citation,
       relevance,
       reason: reason.join(". "),
