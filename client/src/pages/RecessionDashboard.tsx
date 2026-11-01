@@ -3,7 +3,7 @@ import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout, recessionSectionNumbers } from "@shared/chat-context";
 import { useChatSectionData } from "@/lib/chatSectionData";
-import type { RegionalCatalogs } from "@shared/recession-regions";
+import type { RegionId, RegionalCatalogs } from "@shared/recession-regions";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -22,6 +22,7 @@ import { showRecessionStand, type RecessionAnalysis } from "@/components/recessi
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
 import { useRecessionCatalog } from "@/hooks/useRecessionCatalog";
 import { RegionGaugeSwitch } from "@/components/recession/RegionGaugeSwitch";
+import { RegionProbabilityList, RegionScoreTable, RegionSubgroupPanel } from "@/components/recession/RegionScorePanels";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
   NYFedReference, ScoringRules, ScoringZones,
@@ -158,10 +159,12 @@ export default function RecessionDashboard() {
  */
 export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalysis; regions: RegionalCatalogs | null }) {
   const nr = recessionSectionNumbers(!!regions, !!data.fazit);
+  const [regionId, setRegionId] = useState<RegionId>("US");
+  const regional = regionId === "US" ? null : regions?.regions.find(region => region.id === regionId) ?? null;
   return (
     <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
       <SectionCard number={1} title={`Aktuelle Bewertung zum ${data.date}`}>
-        <RegionGaugeSwitch data={data} regions={regions} />
+        <RegionGaugeSwitch data={data} regions={regions} onSelect={setRegionId} />
       </SectionCard>
       <SectionCard number={2} title="NY Fed / FRED Referenz">
         <NYFedReference data={data} />
@@ -173,14 +176,14 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
         <ScoringZones />
       </SectionCard>
       <SectionCard number={5} title="Indikatoren-Tabelle">
-        <IndicatorTable indicators={data.indicators} />
+        {regional ? <RegionScoreTable region={regional} /> : <IndicatorTable indicators={data.indicators} />}
         <SahmRegions regions={data.sahmRegions} />
       </SectionCard>
       <SectionCard number={6} title="Score-Übersicht (5 Untergruppen)">
-        <SubgroupOverview subgroups={data.subgroups} />
+        {regional ? <RegionSubgroupPanel region={regional} /> : <SubgroupOverview subgroups={data.subgroups} />}
       </SectionCard>
       <SectionCard number={7} title="Prozentschätzungen">
-        <ProbabilityEstimates subgroups={data.subgroups} />
+        {regional ? <RegionProbabilityList region={regional} /> : <ProbabilityEstimates subgroups={data.subgroups} />}
       </SectionCard>
       {regions && (
         <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">

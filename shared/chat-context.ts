@@ -439,6 +439,9 @@ function regionFacts(cat: any): Record<string, ChatFactValue> {
   for (const r of cat.regions.slice(0, 6)) {
     const id = String(r?.id ?? "n/a").slice(0, 8);
     out[`region_${id}`] = str(`${r?.label ?? id}: Katalog Rez. ${pct(r?.recessionProbability)}, Katalog Korr. ${pct(r?.correctionProbability)}, Gewicht ×${num(r?.weight, 2)?.toFixed(2) ?? "n/a"}`);
+    if (Array.isArray(r?.subgroups)) {
+      out[`untergruppen_${id}`] = list(r.subgroups.map((sg: any) => `${sg.label ?? sg.name}: ${typeof sg.probability === "number" ? `${sg.probability}%` : `n/a — ${sg.missing?.[0]?.reason ?? sg.formula ?? "kein gewerteter Slot"}`}`), 8);
+    }
     out[`slots_${id}`] = list((r?.slots ?? []).map((sl: any) => `${sl.name}: ${sl.value} | ${sl.zone} | Score ${sl.available ? `${sl.weightedScore > 0 ? "+" : ""}${sl.weightedScore}` : "—"}/${sl.available ? sl.maxWeighted : 0}`), 12);
   }
   out.gewichteteRezession12MPct = num(cat.blendedRecession12m, 1);
