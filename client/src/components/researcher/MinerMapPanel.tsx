@@ -3,11 +3,11 @@
  * Bubble = Perzentil der genannten MW. Fehlende Zahlen bleiben „n/a — Grund“.
  */
 import { useMemo, useState } from "react";
-import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "react-simple-maps";
 import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Loader2, Pickaxe } from "lucide-react";
 import { useMinerMap } from "@/hooks/useMinerMap";
-import { MINER_MAP_RADIUS, type MinerMapResponse, type MinerMapSite, type MinerMapBubble } from "@shared/miner-map";
+import { MINER_MAP_RADIUS, formatMinerCoverage, spreadMarkerOffsets, type MarkerPixel, type MinerMapResponse, type MinerMapSite, type MinerMapBubble } from "@shared/miner-map";
 
 type SiteView = MinerMapSite & { bubble: MinerMapBubble };
 
@@ -29,6 +29,47 @@ function fmtCt(value: number | null, note: string | null): string {
 function fmtPipeline(value: number | null, note: string | null, digits: number, unit: string): string {
   if (value == null) return note ?? "n/a";
   return `${value.toLocaleString("de-DE", { maximumFractionDigits: digits })} ${unit}`;
+}
+
+function drawnRadius(site: SiteView): number {
+  return site.bubble.radiusPx ?? MINER_MAP_RADIUS.naPx;
+}
+
+/** Versatz in der Pixelebene der gerade gezeichneten Projektion, also relativ zu deren Maßstab. */
+function MinerBubbles({ sites, selected, onSelect }: { sites: SiteView[]; selected: string | null; onSelect: (id: string) => void }) {
+  const { projection } = useMapContext();
+  const placed = useMemo(() => {
+    const points: MarkerPixel[] = [];
+    for (const site of sites) {
+      const xy = projection([site.lon, site.lat]);
+      if (!xy) continue;
+      points.push({ id: site.id, x: xy[0], y: xy[1], radiusPx: drawnRadius(site) });
+    }
+    const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
+    return sites.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
+  }, [projection, sites]);
+
+  return (
+    <>
+      {placed.map(({ site, dx, dy }) => (
+        <Marker key={site.id} coordinates={[site.lon, site.lat]} onClick={() => onSelect(site.id)}>
+          <g transform={`translate(${dx}, ${dy})`}>
+            <circle
+              r={drawnRadius(site)}
+              fill={site.bubble.color}
+              fillOpacity={site.bubble.radiusPx == null ? 0.45 : 0.8}
+              stroke={site.id === selected ? "#fff" : "rgba(15,23,42,0.65)"}
+              strokeWidth={site.id === selected ? 1.5 : 0.6}
+              style={{ cursor: "pointer" }}
+              data-testid={`miner-bubble-${site.id}`}
+            >
+              <title>{`${site.name}: ${fmtMw(site)}`}</title>
+            </circle>
+          </g>
+        </Marker>
+      ))}
+    </>
+  );
 }
 
 export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean }) {
@@ -57,7 +98,7 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
           </div>
           {data && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
-              {data.coverage.withFigure}/{data.coverage.total} Standorte mit Zahl · Stand {new Date(data.asOf).toLocaleDateString("de-DE")}
+              {formatMinerCoverage(data.coverage)} · Stand {new Date(data.asOf).toLocaleDateString("de-DE")}
               {data.pipeline.stale ? " · Pipeline veraltet" : ""}
             </div>
           )}
@@ -102,21 +143,7 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
                   );
                 })}
               </Geographies>
-              {sites.map(s => (
-                <Marker key={s.id} coordinates={[s.lon, s.lat]} onClick={() => setSelected(s.id)}>
-                  <circle
-                    r={s.bubble.radiusPx ?? MINER_MAP_RADIUS.naPx}
-                    fill={s.bubble.color}
-                    fillOpacity={s.bubble.radiusPx == null ? 0.45 : 0.8}
-                    stroke={s.id === selected ? "#fff" : "rgba(15,23,42,0.65)"}
-                    strokeWidth={s.id === selected ? 1.5 : 0.6}
-                    style={{ cursor: "pointer" }}
-                    data-testid={`miner-bubble-${s.id}`}
-                  >
-                    <title>{`${s.name}: ${fmtMw(s)}`}</title>
-                  </circle>
-                </Marker>
-              ))}
+              <MinerBubbles sites={sites} selected={selected} onSelect={setSelected} />
             </ComposableMap>
             <div className="px-2 pb-1.5 text-[10px] text-foreground/40 leading-relaxed">
               Größe und Farbe = Perzentil der genannten MW (developed, nameplate, available). Grau = keine MW in der Stichprobe, kein Wert 0.

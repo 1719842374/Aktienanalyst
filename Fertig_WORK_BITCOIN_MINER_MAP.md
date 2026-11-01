@@ -1,4 +1,4 @@
-# Offen_WORK_BITCOIN_MINER_MAP.md — Bitcoin-Miner-Lokalisierung auf der Weltkarte
+# Fertig_WORK_BITCOIN_MINER_MAP.md — Bitcoin-Miner-Lokalisierung auf der Weltkarte
 
 > **Stand: 18.10.2026**  
 > Dedizierte Spec für den Bitcoin-Miner-Layer auf einer 2D-Weltkarte im Researcher- oder BTC-Dashboard.  
