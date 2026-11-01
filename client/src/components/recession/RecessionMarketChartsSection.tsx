@@ -44,6 +44,18 @@ import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import { oldestOhlcvDate, real10yOverlaySeries, type Real10YOverlayPoint } from "@/components/sections/TechnicalChart";
 import { creditOverlaySeries, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
+import {
+  BUFFETT_REGION_LABEL,
+  REST_OVERLAYS,
+  REST_OVERLAY_PARAMS,
+  marketBuffettRegion,
+  overlayZOnBars,
+  restOverlayStatusText,
+  zAxisDomain,
+  type RestOverlayId,
+  type RestOverlaySpec,
+} from "@shared/recession-rest-overlays";
+import { buffettSourceIds, useRecessionBuffettOverlay, type BuffettOverlayBody } from "@/hooks/useRecessionRestOverlays";
 
 // F1-43/F1-45 (ohne F1-41): Overlays Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y) im Preis-Pane.
 // Bestehende Endpoints /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
@@ -52,6 +64,20 @@ const CREDIT_COLOR = "#f43f5e";
 const T10Y_COLOR = "#6366f1";
 export const RECESSION_CREDIT_LABEL = "Markt-Spread Baa (FRED BAA10Y, US)";
 export const RECESSION_T10Y_LABEL = "Real 10J (DFII10)";
+
+/** F1-45: welche Rest-Overlays der Schalterleiste schon verdrahtet sind. Ein Eintrag pro Overlay. */
+const REST_WIRED: RestOverlayId[] = ["buffett"];
+
+export interface RestOverlayToggle {
+  spec: RestOverlaySpec;
+  on: boolean;
+  loading: boolean;
+  failed: boolean;
+  raw: { date: string; value: number }[] | null;
+  source: string;
+  note: string | null;
+  label: string;
+}
 
 export interface MacroOverlayState<T> {
   on: boolean;
@@ -237,17 +263,30 @@ function MarketPanes({
   onPickDate,
   credit,
   t10y,
+  rest = [],
 }: {
   market: MarketChart;
   logScale: boolean;
   onPickDate: (date: string) => void;
   credit?: MacroOverlayState<CreditSpreadResponse>;
   t10y?: MacroOverlayState<Real10YMacroHistory>;
+  rest?: RestOverlayToggle[];
 }) {
   const price = market.ohlcv;
   const creditOn = !!credit?.on;
   const t10yOn = !!t10y?.on;
-  const priceData = withRecessionMacroOverlays(price, creditOn ? credit?.data : null, t10yOn ? t10y?.data : null);
+  const restDrawn = rest.map(t => {
+    const placed = t.on ? overlayZOnBars(price, t.raw, t.spec.frequency) : { window: null, zByIndex: price.map(() => null) };
+    const show = t.on && !!placed.window && placed.zByIndex.some(v => v != null);
+    return { t, ...placed, show };
+  });
+  let priceData: Array<(typeof price)[number] & { _credit?: number | null; _t10y?: number | null; [key: string]: unknown }> =
+    withRecessionMacroOverlays(price, creditOn ? credit?.data : null, t10yOn ? t10y?.data : null);
+  for (const d of restDrawn) {
+    if (!d.show) continue;
+    priceData = priceData.map((b, i) => ({ ...b, [d.t.spec.field]: d.zByIndex[i] }));
+  }
+  const anyRestLine = restDrawn.some(d => d.show);
   const creditSeries = creditOn && credit?.data && credit.data.points.length > 0 ? creditOverlaySeries(price, credit.data.points) : null;
   const t10ySeries = t10yOn ? real10yOverlaySeries(price, t10y?.data) : null;
   const showCreditLine = !!creditSeries?.some(p => p.spreadPct != null);
@@ -312,7 +351,7 @@ function MarketPanes({
             <ResponsiveContainer>
               <LineChart
                 data={priceData}
-                margin={{ top: 8, right: showCreditLine || showT10yLine ? 0 : 12, left: 0, bottom: 0 }}
+                margin={{ top: 8, right: showCreditLine || showT10yLine || anyRestLine ? 0 : 12, left: 0, bottom: 0 }}
                 onClick={(state) => {
                   const date = chartClickDate(state);
                   if (date) onPickDate(date);
@@ -333,12 +372,20 @@ function MarketPanes({
                 {showT10yLine && (
                   <YAxis yAxisId="t10y" orientation="right" domain={real10yDomain(t10ySeries ? t10ySeries.map(p => p.real10y) : [])} width={36} tick={{ fontSize: 9, fill: T10Y_COLOR }} axisLine={{ stroke: T10Y_COLOR }} tickLine={false} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
                 )}
+                {restDrawn.filter(d => d.show && d.window).map(d => (
+                  <YAxis key={d.t.spec.axisId} yAxisId={d.t.spec.axisId} orientation="right" domain={zAxisDomain(d.window!)} width={REST_OVERLAY_PARAMS.axisWidth} tick={{ fontSize: 9, fill: d.t.spec.color }} axisLine={{ stroke: d.t.spec.color }} tickLine={false} tickFormatter={(v: number) => v.toFixed(1)} />
+                ))}
                 <Tooltip
                   content={({ active, label, payload }) => {
-                    const row = payload?.[0]?.payload as { close?: number; _credit?: number | null; _t10y?: number | null } | undefined;
+                    const row = payload?.[0]?.payload as { close?: number; _credit?: number | null; _t10y?: number | null; [key: string]: unknown } | undefined;
                     const rows = [{ name: "Close", value: fmt(row?.close, 2) }];
                     if (creditOn) rows.push({ name: "Baa-Spread", value: row?._credit == null ? "n/a" : `${fmt(row._credit, 2)} %` });
                     if (t10yOn) rows.push({ name: RECESSION_T10Y_LABEL, value: row?._t10y == null ? "n/a" : `${fmt(row._t10y, 2)} %` });
+                    for (const d of restDrawn) {
+                      if (!d.t.on) continue;
+                      const v = row?.[d.t.spec.field];
+                      rows.push({ name: d.t.label, value: typeof v === "number" ? fmt(v, 2) : "n/a" });
+                    }
                     return (
                       <DayTooltip
                         active={active}
@@ -355,6 +402,9 @@ function MarketPanes({
                 {showT10yLine && (
                   <Line yAxisId="t10y" type="monotone" dataKey="_t10y" name={RECESSION_T10Y_LABEL} stroke={T10Y_COLOR} strokeDasharray="2 2" dot={false} strokeWidth={1.3} connectNulls={false} isAnimationActive={false} />
                 )}
+                {restDrawn.filter(d => d.show && d.window).map(d => (
+                  <Line key={d.t.spec.field} yAxisId={d.t.spec.axisId} type={d.t.spec.frequency === "monthly" ? "stepAfter" : "monotone"} dataKey={d.t.spec.field} name={d.t.label} stroke={d.t.spec.color} strokeDasharray={d.t.spec.dash} dot={false} strokeWidth={REST_OVERLAY_PARAMS.strokeWidth} connectNulls={false} isAnimationActive={false} />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -371,6 +421,20 @@ function MarketPanes({
             <span style={{ color: T10Y_COLOR }}>■</span> {real10yStatusText(t10y, t10ySeries)}
           </p>
         )}
+        {restDrawn.filter(d => d.t.on).map(d => (
+          <p key={d.t.spec.statusTestId} className="text-[10px] text-muted-foreground break-words mt-1" data-testid={d.t.spec.statusTestId}>
+            <span style={{ color: d.t.spec.color }}>■</span>{" "}
+            {restOverlayStatusText({
+              label: d.t.label,
+              loading: d.t.loading,
+              failed: d.t.failed,
+              source: d.t.source,
+              note: d.t.note,
+              window: d.window,
+              rawUnit: d.t.spec.rawUnit,
+            })}
+          </p>
+        ))}
       </div>
 
       {price.length > 0 && (
@@ -521,6 +585,26 @@ function BarChartSafe({
   );
 }
 
+function restOverlayToggles(input: {
+  buffettOn: boolean;
+  buffettRegion: "US" | "EU" | "CN";
+  buffett: { data?: BuffettOverlayBody | null; isLoading: boolean; isError: boolean };
+}): RestOverlayToggle[] {
+  const body = input.buffett.data;
+  const ids = buffettSourceIds(body);
+  const where = BUFFETT_REGION_LABEL[input.buffettRegion];
+  return [{
+    spec: REST_OVERLAYS.buffett,
+    on: input.buffettOn,
+    loading: input.buffettOn && input.buffett.isLoading,
+    failed: input.buffett.isError || !!body?.error,
+    raw: (body?.points ?? []).flatMap(p => Number.isFinite(p.ratio) ? [{ date: p.date, value: p.ratio }] : []),
+    source: ids ? `${ids} (${where})` : where,
+    note: body?.error ?? body?.note ?? null,
+    label: `Buffett (${where})`,
+  }];
+}
+
 function ChartsBody() {
   const [tab, setTab] = useState<ChartMarketId>("SPY");
   const [window, setWindow] = useState<MarketWindow>("5Y");
@@ -529,12 +613,16 @@ function ChartsBody() {
   // F1-43/F1-45: Overlay-Schalter, Default aus (Anzeige wie bisher). Abruf nur, solange der Schalter an ist.
   const [showCredit, setShowCredit] = useState(false);
   const [showT10y, setShowT10y] = useState(false);
+  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false });
   const creditQ = useMarketCreditSpread(showCredit);
   const q = useRecessionMarketCharts(window);
   // Real 10J: bestehende DFII10-Route aus #267 (useMarketReal10Y), Start = ältester Kurstag des aktiven Markts.
   const real10yStart = oldestOhlcvDate(q.data?.markets.find((m) => m.id === tab)?.ohlcv);
   const t10yQ = useMarketReal10Y(real10yStart, showT10y);
+  const buffettRegion = marketBuffettRegion(tab);
+  const buffettQ = useRecessionBuffettOverlay(buffettRegion, restOn.buffett);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
+  const restToggles = restOverlayToggles({ buffettOn: restOn.buffett, buffettRegion, buffett: buffettQ });
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
 
   // PR 3 (Chat-Kontext): Snapshot-Zeilen aller vier bereits geladenen Märkte veröffentlichen.
@@ -626,6 +714,25 @@ function ChartsBody() {
         >
           Real 10J
         </button>
+        {REST_WIRED.map((id) => {
+          const spec = REST_OVERLAYS[id];
+          const on = restOn[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              data-testid={spec.testId}
+              aria-pressed={on}
+              title={`${spec.label}. Nur Anzeige, kein Score-Einfluss.`}
+              onClick={() => setRestOn((s) => ({ ...s, [id]: !s[id] }))}
+              className={`px-2 py-1 text-[11px] rounded-md border ${
+                on ? spec.onClass : "border-border text-muted-foreground hover:bg-muted/40"
+              }`}
+            >
+              {spec.chip}
+            </button>
+          );
+        })}
       </div>
 
       {q.isLoading && <p className="text-xs text-muted-foreground">Vier Märkte, Vol und OHLCV …</p>}
@@ -654,6 +761,7 @@ function ChartsBody() {
             onPickDate={setClickDate}
             credit={{ on: showCredit, data: creditQ.data, loading: creditQ.isLoading, failed: creditQ.isError }}
             t10y={{ on: showT10y, data: t10yQ.data, loading: t10yQ.isLoading, failed: t10yQ.isError }}
+            rest={restToggles}
           />
         </>
       )}
