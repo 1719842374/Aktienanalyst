@@ -928,7 +928,7 @@ export function GoldPriceChart({ data }: Props) {
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
-        AISC (Minen): Ø der berichteten Quartals-AISC (by-product) von Newmont, Barrick, Agnico Eagle aus den Quartalsberichten (Quelle je Wert in server/data/gold-aisc.json), Stufe ab Quartalsende + {data.aiscLine?.lagDays ?? 60} Tage, Ø erst ab {data.aiscLine?.minCompanies ?? 2} Werten, fehlende Quartale n/a.
+        AISC (Minen): Ø der berichteten Quartals-AISC (by-product) von Newmont, Barrick, Agnico Eagle aus den Quartalsberichten (Quelle je Wert in server/data/gold-aisc.json), Stufe ab Quartalsende + {data.aiscLine?.lagDays != null ? `${data.aiscLine.lagDays} Tage (Median sourceDate − periodEnd)` : "n/a — Verzug nicht ableitbar"}, Ø erst ab {data.aiscLine?.minCompanies ?? 2} Werten, fehlende Quartale n/a.
         Stresszone: Kurs &lt; AISC × {aiscStressLow.toFixed(2).replace(".", ",")}–{aiscStressHigh.toFixed(2).replace(".", ",")}. Kein Einfluss auf GIS/Score. „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten.
       </div>
       </div>

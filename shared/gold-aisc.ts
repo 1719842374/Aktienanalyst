@@ -7,8 +7,9 @@
  *
  * Regeln: nur belegte Werte, nichts geschätzt oder interpoliert. Ø je Quartal nur ab
  * `minCompanies` Firmenwerten, sonst n/a (null). Eine n/a-Stufe beendet die Linie, bis
- * wieder ein belegtes Quartal kommt. Die Stufe beginnt `lagDays` nach Quartalsende
- * (Berichtsverzug: Q4-Berichte erscheinen bis ~52 Tage nach Quartalsende).
+ * wieder ein belegtes Quartal kommt. Die Stufe beginnt `lagDays` nach Quartalsende.
+ * `lagDays` ist der Median von sourceDate − periodEnd der Meldungen in der Datei,
+ * nicht ein fester Verzug.
  * Dieser Modulteil zeichnet nur. Der GIS liest die Reihe nicht.
  * Die Zusatzschicht mappt die Quartale in server/gold-adaptive-score.ts (aiscStepsForAdaptive).
  */
@@ -21,7 +22,6 @@ import type {
 
 export const GOLD_AISC_COMPANY_CODES: readonly GoldAiscCompanyCode[] = ["NEM", "B", "AEM"];
 export const GOLD_AISC_MIN_COMPANIES = 2;
-export const GOLD_AISC_LAG_DAYS = 60;
 export const GOLD_AISC_STRESS_LOW = 1.10;
 export const GOLD_AISC_STRESS_HIGH = 1.15;
 
@@ -44,6 +44,31 @@ export function quarterPeriodEnd(quarter: string): string {
 
 function addDays(isoDate: string, days: number): string {
   return new Date(Date.parse(`${isoDate}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * Berichtsverzug in Tagen: Median von sourceDate − periodEnd der vorhandenen Meldungen.
+ * Gerade Anzahl: Mittel der beiden mittleren Verzüge, auf einen Tag gerundet.
+ * Zu wenig datierte Meldungen → null, kein Ersatzwert.
+ */
+export function goldAiscReportLagDays(values: readonly { quarter: string; sourceDate: string }[]): number | null {
+  const lags: number[] = [];
+  for (const value of values) {
+    if (!QUARTER_RE.test(String(value?.quarter ?? ""))) continue;
+    const source = String(value?.sourceDate ?? "").slice(0, 10);
+    if (!DATE_RE.test(source)) continue;
+    let end: string;
+    try { end = quarterPeriodEnd(value.quarter); } catch { continue; }
+    const lag = Math.round((Date.parse(`${source}T00:00:00Z`) - Date.parse(`${end}T00:00:00Z`)) / 86400000);
+    if (Number.isFinite(lag) && lag > 0) lags.push(lag);
+  }
+  if (lags.length === 0) return null;
+  lags.sort((a, b) => a - b);
+  const mid = (lags.length - 1) / 2;
+  const lo = Math.floor(mid);
+  const hi = Math.ceil(mid);
+  const median = lo === hi ? lags[lo] : (lags[lo] + lags[hi]) / 2;
+  return Math.round(median);
 }
 
 function nextQuarter(quarter: string): string {
@@ -89,7 +114,29 @@ export function buildGoldAiscSeries(
   opts: { minCompanies?: number; lagDays?: number } = {},
 ): GoldAiscSeries {
   const minCompanies = opts.minCompanies ?? GOLD_AISC_MIN_COMPANIES;
-  const lagDays = opts.lagDays ?? GOLD_AISC_LAG_DAYS;
+  const derivedLag = goldAiscReportLagDays(file.values);
+  const lagDays = opts.lagDays ?? derivedLag;
+  if (lagDays == null) {
+    return {
+      unit: "USD/oz",
+      basis: "by-product",
+      method: "mean",
+      minCompanies,
+      lagDays: null,
+      stressLow: GOLD_AISC_STRESS_LOW,
+      stressHigh: GOLD_AISC_STRESS_HIGH,
+      companies: {
+        NEM: file.companies.NEM,
+        B: file.companies.B,
+        AEM: file.companies.AEM,
+      },
+      quarters: [],
+      gaps: ["Verzug nicht ableitbar"],
+      retrievedAt: file.retrievedAt,
+      source: "server/data/gold-aisc.json",
+      inScore: false,
+    };
+  }
   const values = [...file.values].sort((a, b) => a.quarter.localeCompare(b.quarter) || a.company.localeCompare(b.company));
   const quarters: GoldAiscQuarterStep[] = [];
   const gaps: string[] = [];

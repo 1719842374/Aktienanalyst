@@ -1028,7 +1028,8 @@ export interface GoldAiscSeries {
   /** Mittelwert der belegten Firmenwerte je Quartal */
   method: "mean";
   minCompanies: number;
-  lagDays: number;
+  /** Median von sourceDate − periodEnd der Meldungen, in Tagen. null, wenn keine Meldung datiert ist. */
+  lagDays: number | null;
   /** Stresszone: Preis < AISC × stressLow (Stress) bzw. < AISC × stressHigh (Vorwarnung) */
   stressLow: number;
   stressHigh: number;

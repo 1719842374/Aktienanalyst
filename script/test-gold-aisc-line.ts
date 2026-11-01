@@ -14,6 +14,7 @@ import {
   aiscStressRuns,
   attachAiscToChart,
   buildGoldAiscSeries,
+  goldAiscReportLagDays,
   goldAiscStepAt,
   goldAiscStress,
   quarterPeriodEnd,
@@ -51,7 +52,8 @@ console.log("\nDatei server/data/gold-aisc.json ist belegt");
 
 console.log("\nLookahead-Kennzeichnung (Quelle nach der Chart-Stufe eingereicht)");
 {
-  const LAG = 60;
+  const LAG = goldAiscReportLagDays(file.values);
+  check("Verzug ist der Median sourceDate − periodEnd, nicht 60", LAG === 96, String(LAG));
   const addDays = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
   const late = file.values.filter(v => v.sourceDate > addDays(quarterPeriodEnd(v.quarter), LAG));
   const ids = late.map(v => `${v.company} ${v.quarter}`).sort();
@@ -65,7 +67,7 @@ console.log("\nLookahead-Kennzeichnung (Quelle nach der Chart-Stufe eingereicht)
   check("_comment nennt 15 von 30", /15 von 30 Werten/.test((file as any)._comment ?? ""));
 }
 
-console.log("\nØ-Stufen und Verfügbarkeit (Quartalsende + 60 Tage)");
+console.log("\nØ-Stufen und Verfügbarkeit (Quartalsende + Median-Verzug)");
 const series = buildGoldAiscSeries(file);
 {
   const expected: Record<string, number> = {
@@ -77,10 +79,11 @@ const series = buildGoldAiscSeries(file);
   check("keine Lücken im Bereich", series.gaps.length === 0, series.gaps.join(","));
   for (const q of series.quarters) check(`${q.quarter} Ø ${q.aisc} (n=${q.count})`, q.aisc === expected[q.quarter] && q.count === 3, `erwartet ${expected[q.quarter]}`);
   const q4 = series.quarters.find(q => q.quarter === "2025-Q4")!;
-  check("2025-Q4 periodEnd 2025-12-31, availableFrom 2026-03-01", q4.periodEnd === "2025-12-31" && q4.availableFrom === "2026-03-01", `${q4.periodEnd} ${q4.availableFrom}`);
+  check("2025-Q4 periodEnd 2025-12-31, availableFrom 2026-04-06", q4.periodEnd === "2025-12-31" && q4.availableFrom === "2026-04-06" && series.lagDays === 96, `${q4.periodEnd} ${q4.availableFrom} lag ${series.lagDays}`);
+  check("explizites lagDays 60 bleibt der Vergleichswert", buildGoldAiscSeries(file, { lagDays: 60 }).quarters.find(q => q.quarter === "2025-Q4")?.availableFrom === "2026-03-01");
   check("inScore=false", series.inScore === false);
-  check("vor erster Stufe → null", goldAiscStepAt(series, "2024-05-29") === null);
-  check("2024-05-30 → 2024-Q1", goldAiscStepAt(series, "2024-05-30")?.quarter === "2024-Q1");
+  check("vor erster Stufe → null", goldAiscStepAt(series, "2024-07-04") === null);
+  check("2024-07-05 → 2024-Q1", goldAiscStepAt(series, "2024-07-05")?.quarter === "2024-Q1");
   check("2026-10-18 → 2026-Q2 (Q3 erst ab 2026-11-29)", goldAiscStepAt(series, "2026-10-18")?.quarter === "2026-Q2");
   check("kein Lookahead: 2026-08-28 → 2026-Q1", goldAiscStepAt(series, "2026-08-28")?.quarter === "2026-Q1");
 }
@@ -92,7 +95,7 @@ console.log("\nn/a statt Schätzung bei < 2 Firmen");
   const q = s.quarters.find(x => x.quarter === "2025-Q2")!;
   check("2025-Q2 nur NEM → aisc null, count 1", q.aisc === null && q.count === 1);
   check("Lücken gelistet", s.gaps.includes("B 2025-Q2") && s.gaps.includes("AEM 2025-Q2"), s.gaps.join(","));
-  check("Datum in n/a-Stufe → null", goldAiscStepAt(s, "2025-09-15") === null);
+  check("Datum in n/a-Stufe → null", q.aisc === null && goldAiscStepAt(s, q.availableFrom) === null);
   const two = buildGoldAiscSeries({ ...file, values: file.values.filter(v => !(v.quarter === "2025-Q2" && v.company === "AEM")) });
   check("2 Firmen → Ø aus 2", two.quarters.find(x => x.quarter === "2025-Q2")!.aisc === Math.round((1375 + 1684) / 2));
 }
@@ -105,20 +108,20 @@ console.log("\nStresszone AISC × 1,10–1,15");
   check("≥ 1150 → ok", goldAiscStress(1150, 1000) === "ok");
   check("keine AISC → na", goldAiscStress(1000, null) === "na");
   const pts = [
-    { date: "2026-03-02", price: 4000 },
-    { date: "2026-03-03", price: 1500 },
-    { date: "2026-03-04", price: 1600 },
-    { date: "2026-03-05", price: 3000 },
-    { date: "2026-06-01", price: 1400 },
+    { date: "2026-04-06", price: 4000 },
+    { date: "2026-04-07", price: 1500 },
+    { date: "2026-04-08", price: 1600 },
+    { date: "2026-04-09", price: 3000 },
+    { date: "2026-07-05", price: 1400 },
   ];
   const withA = attachAiscToChart(pts, series);
   check("Punkte erhalten aisc der gültigen Stufe", withA[0].aisc === 1467 && withA[0].aiscQuarter === "2025-Q4" && withA[4].aiscQuarter === "2026-Q1");
   check("Originalfelder bleiben", withA.every((p, i) => p.price === pts[i].price && p.date === pts[i].date));
   check("Stress-Flag", withA.map(p => p.aiscStress).join() === "false,true,true,false,true");
   const bands = aiscBands(withA);
-  check("Bänder je Stufe", bands.length === 2 && bands[0].x1 === "2026-03-02" && bands[0].x2 === "2026-03-05" && bands[1].quarter === "2026-Q1");
+  check("Bänder je Stufe", bands.length === 2 && bands[0].x1 === "2026-04-06" && bands[0].x2 === "2026-04-09" && bands[1].quarter === "2026-Q1");
   const runs = aiscStressRuns(withA);
-  check("Stress-Läufe", runs.length === 2 && runs[0].x1 === "2026-03-03" && runs[0].x2 === "2026-03-04", JSON.stringify(runs));
+  check("Stress-Läufe", runs.length === 2 && runs[0].x1 === "2026-04-07" && runs[0].x2 === "2026-04-08", JSON.stringify(runs));
   check("ohne Serie → aisc null, kein Stress", attachAiscToChart(pts, null).every(p => p.aisc === null && !p.aiscStress));
 }
 
