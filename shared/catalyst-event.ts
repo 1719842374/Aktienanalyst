@@ -79,3 +79,17 @@ export function isUserEvent(c: { tags?: string[] } | null | undefined): boolean 
 export function isDownsideEventBelowThreshold(c: Pick<Catalyst, "bruttoUpside" | "pos">): boolean {
   return c.bruttoUpside < 0 && !(c.pos > DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE);
 }
+
+/** S17-Polish (a): einheitliche Event-Kennung für ▲ und ▼ in S17, S6 (Katalysator-Tabelle) und S20. */
+export const USER_EVENT_SUFFIX = " (Event)";
+export function catalystDisplayName(c: { name: string; tags?: string[] }): string {
+  return isUserEvent(c) ? `${c.name}${USER_EVENT_SUFFIX}` : c.name;
+}
+
+/** S17-Polish (b): Prozent mit genau einem Vorzeichen (+15.0% / -15.0% / 0.0%), kein „+-“. */
+export function formatSignedPct(v: number, decimals = 1): string {
+  if (!Number.isFinite(v)) return "n/a";
+  const s = Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  const rounded = Number(Math.abs(v).toFixed(decimals));
+  return rounded === 0 ? `${s}%` : `${v < 0 ? "-" : "+"}${s}%`;
+}

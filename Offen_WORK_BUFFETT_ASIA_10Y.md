@@ -15,7 +15,8 @@
 - Referenz-Screenshot (currentmarketvaluation.com): Stand 30.06.2026 bei **+2,6 Standardabweichungen** über dem historischen Trend → stark überbewertet.
 
 ### Soll-Zustand
-- Kompakter Makro-Indikator in der Aktienanalyse-Sektion (z. B. neben Sektion 12 Technische Analyse oder als eigener kleiner Filter/Karte).
+- nur Rezessionsdashboard (`RecessionDashboard.tsx:194` `BuffettRatioPanel`).
+- Vermerk: Entscheidung Philip 01.11.2026 15:20, von Stabschef übermittelt: „In der Aktienanalyse kommt kein Buffett-Indikator, nur im Rezessionsdashboard.“
 - Anzeige:
   - Aktueller Wert (Std-Dev vom historischen Trend oder Percentile).
   - Kurze Einordnung (stark überbewertet / überbewertet / fair / unterbewertet).
@@ -33,6 +34,11 @@
 - Einordnung (Std-Dev oder Zone) ist sichtbar und korrekt.
 - Keine Abhängigkeit von bezahlten GuruFocus-Daten.
 - Ladezeit und Fehlerbehandlung (N/A-Fallback) sauber.
+
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: Karte bei S12 mit Std-Dev/Zone, ohne GuruFocus, N/A-Fallback.
+- Ist: ✅ #319 `4eaf1115` (Karte S12) auf Basis #274 `99a06d1b` (robust, Grund statt 502); EU/CN-Erweiterung ✅ #320 `09750838`; Asia-Benchmark (^TPX) **offen**.
+- Nachtrag 01.11.2026, Tip `aa0b6f2a` (SHA per GitHub-API, #355 `597953dfc4b7ba41388b132bd0dd8dfa241beab6` PASS Soft): Bis zur Entscheidung 15:20 stand in Zeile 18: „Kompakter Makro-Indikator in der Aktienanalyse-Sektion (z. B. neben Sektion 12 Technische Analyse oder als eigener kleiner Filter/Karte).“ Vor #355 (`597953df^`) stand der Import in `client/src/pages/Dashboard.tsx:52` und der Render in `:686` (`<TechnicalChart data={data} /><BuffettMacroCard />` in Sektion 12). Auf main `aa0b6f2a` hat `Dashboard.tsx` keinen Treffer auf `BuffettMacroCard`. Der Import der Sektion ist nur `TechnicalChart` (`Dashboard.tsx:51`). Sektion 12 rendert nur `<TechnicalChart data={data} />` (`Dashboard.tsx:685`). `export function BuffettMacroCard` bleibt `client/src/components/sections/BuffettMacroCard.tsx:20`. Aufruf nur im Test `script/test-buffett-stock-card.ts:49`, Negativprüfung `:84` (`Aktien-Dashboard importiert und mountet BuffettMacroCard nicht`). `RecessionDashboard.tsx:13` importiert `BuffettRatioPanel`, `:194` rendert es. Der Satz „§1 seit #355 nicht erfüllt“ (Zeile 18 verlangte die Aktienanalyse-Sektion, das Panel liegt auf der Rezessionsseite) ist überholt. Entscheidung Philip 01.11.2026 15:20, von Stabschef übermittelt: „In der Aktienanalyse kommt kein Buffett-Indikator, nur im Rezessionsdashboard.“ Soll Zeile 18: nur Rezessionsdashboard (`RecessionDashboard.tsx:194` `BuffettRatioPanel`). Ampel §1: ✅ erfüllt. Beleg #355 `597953dfc4b7ba41388b132bd0dd8dfa241beab6` und `script/test-buffett-stock-card.ts:84`. Datei bleibt `Offen_` (§2 offen, Asia ^TPX offen).
 
 **Priorität:** Hoch  
 **Aufwand:** 0,5–1 Tag
@@ -67,6 +73,11 @@
 - Keine Regression bei US- und Europa-Katalogen.
 - N/A-Slots sauber behandelt.
 
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: Label „Asien“, Aggregation mind. Japan + China, Score/Treiber aggregiert.
+- Ist: kein Commit dazu gemeldet oder geprüft → **OFFEN**.
+- Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §2 Asien-Aggregation: OFFEN. Vorgabe Philip 17:11 (von Stabschef übermittelt): dritter Markt China über ASHR. Ob §2 damit erfüllt ist, klärt Stabschef. Datei bleibt **Offen_**, bis §2 geklärt ist.
+
 **Priorität:** Hoch (konkreter Fix, den Philip angesprochen hat)  
 **Aufwand:** 1–1,5 Tage
 
@@ -93,6 +104,11 @@
 - Toggle oder klare Sichtbarkeit.
 - Keine Performance-Probleme durch den Overlay.
 - Sauberer Fallback bei fehlenden Daten.
+
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: 10Y-Treasury-Linie als Overlay/Toggle in `TechnicalChart`.
+- Ist: #267 (Squash vor `4820aaa3`) bringt ein Real10Y-Overlay (FRED DFII10, real) in `TechnicalChart.tsx`; nominaler 10Y laut Spec nicht belegt → **🟡 Teil**, Entscheidung „DFII10 reicht?“ offen.
+- Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §3 10Y-Overlay S12: ✅ über #267 Real10Y (DFII10) in `TechnicalChart.tsx`. Grund: Entscheidung Philip 19:33, dass Real 10Y reicht (von Stabschef übermittelt). Status jetzt ✅ (nicht mehr 🟡).
 
 **Priorität:** Mittel (optional, aber sauber und relativ wenig Aufwand)  
 **Aufwand:** 2–4 Stunden

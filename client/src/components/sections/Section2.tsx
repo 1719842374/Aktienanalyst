@@ -5,6 +5,7 @@ import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selec
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useMemo } from "react";
+import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 
 interface Props { data: StockAnalysis }
@@ -468,7 +469,7 @@ export function Section2({ data }: Props) {
                   <td className="py-1.5 px-2">
                     <div className="flex items-center gap-1.5">
                       {sentIcon && <span className={`text-[10px] ${sentColor}`} title={`News: ${c.newsSentiment} (${c.newsCount} Meldung${(c.newsCount||0) > 1 ? 'en' : ''})`}>{sentIcon}</span>}
-                      <span className="font-medium">{c.name}</span>
+                      <span className="font-medium">{catalystDisplayName(c)}</span>
                       {c.newsCount && c.newsCount > 0 && (
                         <span className={`text-[9px] px-1 py-px rounded ${sentColor} ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15' : c.newsSentiment === 'bearish' ? 'bg-red-500/15' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15' : 'bg-foreground/5'}`}>
                           {c.newsCount}📰
@@ -511,9 +512,9 @@ export function Section2({ data }: Props) {
                       )}
                     </div>
                   </td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.bruttoUpside, 1)}%</td>
+                  <td className={`py-1.5 px-1 text-right font-mono tabular-nums ${c.bruttoUpside < 0 ? "text-red-500" : "text-emerald-500"}`}>{formatSignedPct(c.bruttoUpside, 1)}</td>
                   <td className="py-1.5 px-1 text-right font-mono tabular-nums">{c.einpreisungsgrad}%</td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.nettoUpside, 2)}%</td>
+                  <td className={`py-1.5 px-1 text-right font-mono tabular-nums ${c.nettoUpside < 0 ? "text-red-500" : "text-emerald-500"}`}>{formatSignedPct(c.nettoUpside, 2)}</td>
                   <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{formatNumber(c.gb, 2)}%</td>
                 </tr>
               );

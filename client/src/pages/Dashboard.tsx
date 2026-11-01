@@ -28,7 +28,6 @@ import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/l
 import { TickerSearch } from "@/components/TickerSearch";
 import { formatCurrency } from "@/lib/formatters";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { ExecSummaryCard } from "@/components/ExecSummaryCard";
 import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
@@ -55,7 +54,9 @@ import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
+import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
@@ -112,6 +113,10 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // PDF-Export läuft ~30–60 s (Sektionsaufnahme + Server-Render): sichtbarer Zustand statt scheinbar nichts.
+  const [pdfBusy, setPdfBusy] = useState(false);
+  // iOS: fertiges PDF wartet auf eine frische Geste („PDF öffnen/teilen“), weil die Klick-Activation nach ~1 min abgelaufen ist.
+  const [pdfReady, setPdfReady] = useState<{ blob: Blob; filename: string; download: (b: Blob, f: string) => void } | null>(null);
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
@@ -395,7 +400,7 @@ export default function Dashboard() {
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(buildStockChatContext(data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
@@ -458,15 +463,30 @@ export default function Dashboard() {
           {data && !isEtfOrFund(data) && (
             <button
               onClick={async () => {
-                const { exportAnalysisPdf } = await import('../lib/exportPdf');
-                exportAnalysisPdf(data);
+                if (pdfBusy) return;
+                setPdfBusy(true);
+                setPdfReady(null);
+                try {
+                  const { exportAnalysisPdf, triggerDownload } = await import('../lib/exportPdf');
+                  // iOS: Die Klick-Activation ist nach dem 54–75-s-Export abgelaufen, deshalb kein Auto-Download, sondern Übergabe an den
+                  // Knopf „PDF öffnen/teilen“ (frische Geste). Desktop/Android: triggerDownload wie bisher.
+                  const deliver = (blob: Blob, filename: string) => needsGestureHandoff(navigator as any) ? setPdfReady({ blob, filename, download: triggerDownload }) : triggerDownload(blob, filename);
+                  // Alle gerenderten Sektionen (inkl. S3) als Bild ins PDF; Fehler meldet exportAnalysisPdf sichtbar.
+                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })), deliver);
+                } catch (err: any) {
+                  alert(`PDF-Export fehlgeschlagen: ${err?.message || err}`);
+                } finally {
+                  setPdfBusy(false);
+                }
               }}
+              disabled={pdfBusy}
+              aria-busy={pdfBusy}
               className="h-8 px-2 text-[11px] font-medium rounded-md text-foreground/40 border border-border/50 hover:bg-muted/50 hover:text-foreground/60 transition-all flex items-center gap-1"
               title="Analyse als PDF exportieren"
               data-testid="button-pdf-export"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span className="hidden sm:inline">PDF</span>
+              <span className="hidden sm:inline">{pdfBusy ? 'PDF wird erstellt…' : 'PDF'}</span>
             </button>
           )}
           {/* KI-Katalysatoren Toggle */}
@@ -596,7 +616,6 @@ export default function Dashboard() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -611,7 +630,7 @@ export default function Dashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
           data-testid="main-content"
         >
           {analyzeMutation.isError && !data && !analyzeMutation.isPending &&
@@ -650,7 +669,7 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} />}</div>
+              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} sharedMonteCarlo={sharedMonteCarlo} />}</div>
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
@@ -711,6 +730,25 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      {/* < 640 px ist das Button-Label versteckt: eigener Status-Hinweis während des Exports (Desktop: Button-Text wie bisher). */}
+      {pdfBusy && <PdfBusyBanner />}
+      {pdfReady && (
+        <div className="fixed bottom-20 left-3 right-3 sm:left-auto sm:right-4 sm:w-80 z-50 rounded-lg border border-primary/40 bg-card shadow-lg p-3 text-xs flex items-center gap-2" role="status" data-testid="pdf-ready-banner">
+          <span className="flex-1 min-w-0 truncate">PDF fertig: {pdfReady.filename}</span>
+          <button
+            onClick={() => {
+              // Synchron im Tap (keine awaits davor): frische User-Activation für navigator.share / Download.
+              deliverPdfOnGesture(pdfReady.blob, pdfReady.filename, navigator as any, pdfReady.download);
+              setPdfReady(null);
+            }}
+            className="h-8 px-3 rounded-md bg-primary text-primary-foreground font-medium shrink-0"
+            data-testid="button-pdf-open-share"
+          >
+            PDF öffnen/teilen
+          </button>
+          <button onClick={() => setPdfReady(null)} className="p-1 text-muted-foreground shrink-0" aria-label="Schließen" data-testid="button-pdf-ready-close"><X className="w-4 h-4" /></button>
+        </div>
+      )}
       <ChatWidget
         dashboard="stock"
         context={chatContext}
@@ -719,6 +757,22 @@ export default function Dashboard() {
         onJumpToSection={scrollToSection}
         suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
       />
+    </div>
+  );
+}
+
+/** Status während des PDF-Exports, nur < 640 px (dort zeigt der Header-Button nur ein Icon). Sekundenzähler als Fortschritt. */
+function PdfBusyBanner() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = setInterval(() => setSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="sm:hidden fixed top-[5.75rem] left-3 right-3 z-50 rounded-lg border border-primary/40 bg-card/95 backdrop-blur shadow-lg px-3 py-2 text-xs flex items-center gap-2" role="status" aria-live="polite" data-testid="pdf-export-status-mobile">
+      <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
+      <span className="flex-1">PDF wird erstellt… {sec} s <span className="text-muted-foreground">(dauert ca. 1 Min.)</span></span>
     </div>
   );
 }

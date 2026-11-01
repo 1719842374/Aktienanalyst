@@ -2,15 +2,16 @@ import { Fragment, useState, useRef, useCallback, useMemo } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
-import { useChatSectionData } from "@/lib/chatSectionData";
+import { useChatSectionData, usePublishChatSection } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
+import { AssetConflictSummary } from "@/components/sections/AssetConflictSummary";
+import { btcConflictMatrix } from "@shared/asset-conflict-matrix";
 import {
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   calcBreakevenPrice, DEFAULT_FLEET, blockRewardForDate,
@@ -2504,7 +2505,7 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
 }
 
 // === Section 12: Umfassendes Gesamt-Fazit ===
-function Section12Fazit({ data }: { data: BTCAnalysis }) {
+export function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const bc = data.bullConditions;
   const bullCount = [bc.priceAboveMA200, bc.ma50AboveMA200, bc.macdAboveZero, bc.macdRising].filter(Boolean).length;
   const msh = data.monthsSinceHalving;
@@ -2651,9 +2652,22 @@ function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const overallScore = bullCount <= 1 ? "Bearish" : bullCount === 2 ? "Neutral-Bearish" : bullCount === 3 ? "Neutral-Bullish" : "Bullish";
   const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
+  // Chat-Kontext: genau die angezeigten Fazit-Werte (keine neue Berechnung).
+  usePublishChatSection("btc", "14", {
+    gesamtbewertung: overallScore,
+    technischeBedingungen: `${bullCount}/4`,
+    kopfzeile: `${bullCount}/4 technische Bedingungen | F&G: ${fgi} (${data.fearGreedLabel}) | Zyklus: Monat ${msh} | Power-Law: ${plDev > 0 ? "+" : ""}${plDev.toFixed(0)}%`,
+    ...Object.fromEntries(blocks.map(b => [b.title, b.lines.join(" ")])),
+    regime: isBearMarket ? "Bärenmarkt" : isCorrection ? "Korrektur" : isStrongBull ? "starker Bullenmarkt" : "gemischte Signale",
+    _auffaelligkeiten: deathCrossImminent ? `Drohendes Death Cross (MA50-MA200-Abstand ${maGapPct.toFixed(1)}%)` : null,
+  });
+
   return (
     <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
+        {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert die Gesamtbewertung nicht */}
+        <AssetConflictSummary matrix={btcConflictMatrix(data, { fallback: data.timestamp === BTC_FALLBACK_DATA.timestamp })} />
+
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${
           bullCount <= 1 ? "bg-red-500/10 border-red-500/30" :
@@ -2853,7 +2867,6 @@ export default function BTCDashboard() {
             ))}
           </nav>
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -2866,7 +2879,7 @@ export default function BTCDashboard() {
         )}
 
         {/* Main content */}
-        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
           {!data && !analyzeMutation.isPending ? (
             <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
           ) : analyzeMutation.isPending ? (

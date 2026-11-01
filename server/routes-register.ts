@@ -12,6 +12,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRegulatoryRisksRoute(app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);
+  // GET /api/researcher/geo-map?layer=capex (Offen_WORK_CAPEX_SECTOR_MAP Slice 1, nur Anzeige, kein Score)
+  const { registerGeoMapRoute } = await import("./researcher-geo-map-route");
+  registerGeoMapRoute(app);
   const { registerLiquidityRoute } = await import("./researcher-liquidity-route");
   registerLiquidityRoute(app);
   const { registerLiquidityBriefingRoute } = await import("./liquidity-briefing-route");
@@ -20,8 +23,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
   registerRecessionMarketRoutes(app);
+  const { registerRecessionTaRoute } = await import("./recession-ta-route");
+  registerRecessionTaRoute(app);
   const { registerBuffettRatioRoute } = await import("./buffett-route");
   registerBuffettRatioRoute(app);
+  // GET /api/analyze-recession/cape (F1-45, Multpl Shiller PE, nur Anzeige, kein Score)
+  const { registerCapeRoute } = await import("./recession-cape-route");
+  registerCapeRoute(app);
+  // GET /api/analyze-recession/fred-history (F1-45, FRED über fred-csv, nur Anzeige, kein Score)
+  const { registerFredHistoryRoute } = await import("./recession-fred-history-route");
+  registerFredHistoryRoute(app);
+  // GET /api/analyze-recession/google-trends (F1-45, nur Cache-Lesen, kein SerpApi, kein Score)
+  const { registerGoogleTrendsOverlayRoute } = await import("./recession-trends-route");
+  registerGoogleTrendsOverlayRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");

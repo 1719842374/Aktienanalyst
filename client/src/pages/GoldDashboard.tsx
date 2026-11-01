@@ -7,7 +7,6 @@ import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
 import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
 import { GoldIndicatorsSection } from "@/components/gold/GoldIndicatorsSection";
 import { GoldFairValueSection } from "@/components/gold/GoldFairValueSection";
@@ -85,7 +84,8 @@ export default function GoldDashboard() {
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Gold-Daten.
   // PR 3: Auffälligkeiten je Sektion (aus vorhandenen Daten/Gates); Gold hat keine Selbstlade-Sektionen.
   const chatContext = useMemo(() => (data ? enrichChatContext(buildGoldChatContext(data), null, { gatesSectionId: 8 }) : null), [data]);
-  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  // Gold-News trägt intern die ID 100 und auf der Seite keine Nummer → in der Auswahl das Badge statt "100.".
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label, badge }) => (id === NEWS_SECTION_ID ? { id, label, display: badge ?? "📰" } : { id, label })), []);
   const getActiveSectionId = useCallback((): number | null => {
     const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
@@ -183,7 +183,6 @@ export default function GoldDashboard() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -198,7 +197,7 @@ export default function GoldDashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
         >
           {isLoading ? (
             <GoldLoadingScreen />
@@ -206,6 +205,12 @@ export default function GoldDashboard() {
             <GoldErrorScreen error={error as Error} onRetry={() => refetch()} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+              {/* Offline-Fallback sichtbar machen: gebündelte Build-Daten statt Live-API, Werte unverändert */}
+              {data.timestamp === GOLD_FALLBACK_DATA.timestamp && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-offline-note">
+                  Offline-Daten vom {data.analysisDate.split(",")[0]} – Live-API nicht erreichbar, Werte nicht aktuell
+                </div>
+              )}
               {/* JOB 16: Teilausfall sichtbar machen (Antwort enthält interne Ersatzwerte) */}
               {data.partial && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-partial-note">

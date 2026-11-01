@@ -30,7 +30,6 @@ import { ArrowLeft, Info, Menu, X, SlidersHorizontal, BarChart3, Table2, LayoutD
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../shared/schema";
 import {
@@ -402,7 +401,6 @@ export default function PortfolioPage() {
             ))}
           </nav>
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 

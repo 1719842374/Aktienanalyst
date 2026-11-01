@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Scale } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
 import type { StockAnalysis } from "../../../../shared/schema";
@@ -16,6 +16,8 @@ interface Cached {
 
 /**
  * Liest Disk-Cache (24h) — kein LLM. Füllt sich nach POST /api/regulatory.
+ * Miss ist { cached:false } und kein Fehler. queryKey dedupt jeden Mount
+ * (Moat, PESTEL und Sektion 10).
  * variant "risk-inversion" (FW-36): dieselben Daten in Sektion 10, reine Anzeige — fließt nicht in
  * Total Expected Damage, Risk-Adjusted Target, Score oder Rating. initialCached nur für SSR-Tests.
  */
@@ -24,36 +26,18 @@ export function RegulatoryPestelRisks({ data, variant = "pestel", initialCached 
   variant?: "pestel" | "risk-inversion";
   initialCached?: Cached | null;
 }) {
-  const [cached, setCached] = useState<Cached | null>(initialCached);
   const inS10 = variant === "risk-inversion";
-
-  useEffect(() => {
-    let n = 0;
-    let stop = false;
-    const load = async () => {
-      try {
-        const res = await apiRequest("GET", `/api/regulatory/cached/${encodeURIComponent(data.ticker)}`);
-        if (!res.ok) return;
-        const json = (await res.json()) as Cached;
-        if (!stop) setCached(json);
-      } catch {
-        /* 404 = noch kein Cache */
-      }
-    };
-    load();
-    const id = setInterval(() => {
-      n += 1;
-      if (n > 15) {
-        clearInterval(id);
-        return;
-      }
-      if (!stop) load();
-    }, 8000);
-    return () => {
-      stop = true;
-      clearInterval(id);
-    };
-  }, [data.ticker]);
+  const q = useQuery({
+    queryKey: ["regulatory-cached", data.ticker],
+    queryFn: async (): Promise<Cached | null> => {
+      const res = await apiRequest("GET", `/api/regulatory/cached/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) return null;
+      const json = (await res.json()) as Cached & { cached?: boolean };
+      if (json?.cached === false) return null;
+      return json;
+    },
+  });
+  const cached = q.data ?? initialCached;
 
   const risks = cached?.pestelRisks;
   const empty =

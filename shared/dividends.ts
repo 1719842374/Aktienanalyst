@@ -279,3 +279,22 @@ export function dividendMarkerLines(
   }
   return out;
 }
+
+// ─── F1-14 (Future_1_Work.md:299): attractive-yield band on the TA dividend axis ───
+
+/** „>4 % attraktiv“ (Future_1_Work.md:299). Display only: no score, no rating, no Fazit factor. */
+export const DIV_ATTRACTIVE_YIELD_PCT = 4;
+
+/** True when a TTM yield is in the attractive range (≥ 4 %). null/NaN → false (n/a, nothing marked). */
+export function isAttractiveDividendYield(yieldPct: number | null | undefined): boolean {
+  return typeof yieldPct === "number" && Number.isFinite(yieldPct) && yieldPct >= DIV_ATTRACTIVE_YIELD_PCT;
+}
+
+/**
+ * Band from 4 % up to the top of the dividend axis. The axis is NOT stretched to reach 4 %:
+ * axis top ≤ 4 % → null (no band, the line never gets there in this window).
+ */
+export function attractiveYieldBand(axisMax: number): { y1: number; y2: number } | null {
+  if (!Number.isFinite(axisMax) || axisMax <= DIV_ATTRACTIVE_YIELD_PCT) return null;
+  return { y1: DIV_ATTRACTIVE_YIELD_PCT, y2: axisMax };
+}

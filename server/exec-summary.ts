@@ -283,7 +283,9 @@ export function buildCrvLine(input: ExecSummaryInput): string {
   }
   const baseBit = crvBase != null ? crvBase.toFixed(1) : "n/v";
   const raBit = crvRA != null ? crvRA.toFixed(1) : "n/v";
-  const entryBit = entry != null ? fmtPx(entry) : "n/v";
+  // Währungswort wie im Fazit-Satz "Nachkaufen erst unter … <Währung>" (Max-Entry = Statement-Währung, JOB D).
+  const entryCcy = currencyWord(input.statementCurrency ?? input.currency);
+  const entryBit = entry != null ? `${fmtPx(entry)} ${entryCcy}` : "n/v";
   return `3 zu 1 ist am Kurs nicht erfüllt (jetzt ${baseBit}:1, risikoadjustiert ${raBit}:1). Dafür erst unter ${entryBit}.`;
 }
 

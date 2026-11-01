@@ -112,7 +112,7 @@ async function main() {
   const failing = await fetchPeerComparisonFromTickers(...args, map);
   globalThis.fetch = realFetch;
   setPeerIndustryDepsForTests(null);
-  const strip = (ps: any[]) => JSON.stringify(ps.map(({ industry: _i, sector: _s, ...rest }) => rest));
+  const strip = (ps: any[]) => JSON.stringify(ps.map(({ industry: _i, sector: _s, forwardPe: _f, ...rest }) => rest));
   check("Peers (ohne industry/sector) bitgleich zum Altpfad", strip(withFill!.peers) === JSON.stringify(legacy!.peers));
   check("Peer-Reihenfolge unverändert", withFill!.peers.map(p => p.ticker).join() === legacy!.peers.map(p => p.ticker).join());
   check("peerAvg bitgleich (mit Fill / ohne Profil / Altpfad)", [withFill, noFill, failing].every(r => JSON.stringify(r?.peerAvg) === JSON.stringify(legacy?.peerAvg)));

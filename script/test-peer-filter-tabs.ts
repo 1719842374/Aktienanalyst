@@ -92,8 +92,10 @@ async function main() {
   let fmpCalls = 0;
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any) => {
-    fmpCalls++;
     const url = new URL(String(input));
+    // Peer-Variante A (#peer-variants-ab): analyst-estimates je Peer im Profil-Pfad separat zählen.
+    if (url.pathname.endsWith("/analyst-estimates")) { estimateCalls++; return new Response("[]", { status: 200, headers: { "content-type": "application/json" } }); }
+    fmpCalls++;
     const sym = url.searchParams.get("symbol") ?? "";
     const f = fixtures[sym];
     let body: any = [];
@@ -102,6 +104,7 @@ async function main() {
     else if (url.pathname.endsWith("/key-metrics")) body = [];
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
+  let estimateCalls = 0;
   const args = ["NVO", ["LLY", "AZN", "ADD"], 20, 1.5, 40e9, 400e9, 10, 8, { pb: 10, epsGrowth1Y: 12 }] as const;
   const without = await fetchPeerComparisonFromTickers(...args);
   const callsWithout = fmpCalls; fmpCalls = 0;
@@ -117,7 +120,8 @@ async function main() {
   check("mit Map: nur 1 Profil-Call für den Peer ohne Map-Eintrag (H1), sonst keine", callsWith === callsWithout + 1, `${callsWith} vs ${callsWithout}`);
   check("peerAvg bitgleich mit/ohne Map", JSON.stringify(withMap?.peerAvg) === JSON.stringify(without?.peerAvg), `${JSON.stringify(withMap?.peerAvg)} vs ${JSON.stringify(without?.peerAvg)}`);
   check("subject bitgleich mit/ohne Map", JSON.stringify(withMap?.subject) === JSON.stringify(without?.subject));
-  const strip = (ps: any[]) => JSON.stringify(ps.map(({ industry: _i, sector: _s, ...rest }) => rest));
+  check("Variante A: genau 1 analyst-estimates-Call je Peer nur mit Map", estimateCalls === 3 * 2, `${estimateCalls}`);
+  const strip = (ps: any[]) => JSON.stringify(ps.map(({ industry: _i, sector: _s, forwardPe: _f, ...rest }) => rest));
   check("Peers ohne industry/sector bitgleich", strip(withMap!.peers) === JSON.stringify(without!.peers));
   const fullAvg = viewAverage(without!.peers as PeerCompany[]);
   check("Ansichts-Ø auf vollem Set = Server-peerAvg (gleiche Grenzen)", ["pe", "peg", "ps", "pb", "epsGrowth1Y", "epsGrowth5Y", "roic", "roic5Y"].every(k => fullAvg[k] === (without!.peerAvg as any)[k]), `${JSON.stringify(fullAvg)} vs ${JSON.stringify(without!.peerAvg)}`);

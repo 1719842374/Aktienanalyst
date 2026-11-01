@@ -78,8 +78,8 @@ for (const t of TICKERS) {
   body[t] = r.body;
   const tam = r.body?.tamAnalysis ?? {};
   check(`${t}: HTTP 200, dataSource yahoo, isYahooOnly`, r.status === 200 && r.body?.dataSource === "yahoo" && isYahooOnly(r.body), `${r.status} ${r.body?.dataSource}`);
-  // Payload unverändert (kein Server-Change): die S9-Felder sind weiterhin der Sektor-Default.
-  check(`${t}: Payload tamAnalysis = Sektor-Default (Server unverändert)`, tam.companyGrowth === 0 && tam.companyRevenue === 0 && tam.marketShare === 0 && tam.tamTotal > 0,
+  // Follow-up #271 (fix/tam-analysis-server): Server liefert ohne Umsatz null + companyDataMissing statt 0/Sektor-Default.
+  check(`${t}: Payload tamAnalysis = n/a (null) statt 0/Sektor-Default`, tam.companyGrowth === null && tam.companyRevenue === null && tam.marketShare === null && tam.tamTotal === null && tam.companyDataMissing === "no-revenue",
     `companyGrowth ${tam.companyGrowth} companyRevenue ${tam.companyRevenue} marketShare ${tam.marketShare} tamTotal ${tam.tamTotal} tamCAGR ${tam.tamCAGR} outperforming ${tam.outperforming}`);
   check(`${t}: forwardPE null (#261)`, r.body?.forwardPE === null, String(r.body?.forwardPE));
 }

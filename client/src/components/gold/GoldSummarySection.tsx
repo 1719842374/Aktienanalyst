@@ -1,5 +1,8 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { ExternalLink } from "lucide-react";
+import { AssetConflictSummary } from "../sections/AssetConflictSummary";
+import { goldConflictMatrix } from "../../../../shared/asset-conflict-matrix";
+import { GOLD_FALLBACK_DATA } from "../../lib/goldFallbackData";
 
 interface Props { data: GoldAnalysis }
 
@@ -26,6 +29,9 @@ export function GoldSummarySection({ data }: Props) {
             </tbody>
           </table>
         </div>
+
+        {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert Sentiment und GIS nicht */}
+        <AssetConflictSummary matrix={goldConflictMatrix(data, { fallback: data.timestamp === GOLD_FALLBACK_DATA.timestamp })} />
 
         {/* Final Assessment */}
         <div className="space-y-2">
