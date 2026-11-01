@@ -80,7 +80,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-amber-400">Offline-Daten (Cache)</span>
               {onRefresh && (
-                <button onClick={onRefresh} className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">
+                <button onClick={onRefresh} title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)" className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">
                   <RefreshCw className="w-3 h-3" /> Aktualisieren
                 </button>
               )}
@@ -99,7 +99,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <Clock className="w-3 h-3" />
           <span>Gespeicherte Analyse — vor {fmtAge(data._cacheAge!)} erstellt{data._cachedAt ? ` (${new Date(data._cachedAt).toLocaleString("de-DE")})` : ""} · 0 Credits</span>
           {onRefresh && (
-            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Live-Daten neu laden (verbraucht Credits)">
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)">
               <RefreshCw className="w-3 h-3" /><span className="text-[10px]">Aktualisieren</span>
             </button>
           )}
@@ -111,7 +111,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <Clock className="w-3 h-3" />
           <span>Live-Daten vom {new Date(data.dataTimestamp).toLocaleString("de-DE")}</span>
           {onRefresh && (
-            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Daten neu laden">
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)">
               <RefreshCw className="w-3 h-3" />
             </button>
           )}

@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
+import { guardModule, invalidateCrossModuleQueries, useCrossModuleHandler, writeResearcherScope } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
@@ -59,6 +62,11 @@ export default function Researcher() {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [fiscalBridgeCount, setFiscalBridgeCount] = useState<number | null>(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const regionRef = useRef(region);
+  regionRef.current = region;
 
   async function runBriefing(force = false) {
     setBriefingOpen(true);
@@ -100,6 +108,10 @@ export default function Researcher() {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+          }
           const json = await res.json();
           if (json?.__error) throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           return json;
@@ -130,6 +142,36 @@ export default function Researcher() {
       }
       setError(friendly);
     },
+  });
+
+  useEffect(() => {
+    writeResearcherScope(activeTab, region);
+  }, [activeTab, region]);
+
+  useCrossModuleHandler("researcher", async () => {
+    const tab = activeTabRef.current;
+    const reg = regionRef.current;
+    await guardModule(tab, () => mutation.mutateAsync({ tab, force: true, region: reg }));
+    if (tab !== "capex") {
+      await guardModule("capex", async () => {
+        const res = await apiRequest("POST", "/api/researcher/capex", { region: reg, force: true }, 120000);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+        }
+        const json = await res.json();
+        setData((prev) => ({ ...prev, [`capex_${reg}`]: json }));
+      });
+    }
+    await guardModule("fiscal", async () => {
+      const fiscalRes = await apiRequest("GET", "/api/researcher/fiscal-programs");
+      if (!fiscalRes.ok) {
+        const text = await fiscalRes.text();
+          throw new Error(`HTTP ${fiscalRes.status}: ${text.slice(0, 180)}`);
+        }
+        const body = await fiscalRes.json();
+      setFiscalBridgeCount(typeof body?.count === "number" ? body.count : null);
+    });
   });
 
   const cacheKey = `${activeTab}_${region}`;
@@ -197,6 +239,7 @@ export default function Researcher() {
               <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
               <span className="text-[10px] text-foreground/40 hidden md:inline truncate">Hedge-Fund-Style Macro & Stock Discovery</span>
             </div>
+            <CrossModuleRefreshButton className="h-8 px-2 text-[11px] font-medium text-foreground/70 hover:bg-muted/40 rounded-md transition-colors flex items-center gap-1 border border-border/40 shrink-0" label="Refresh" />
             <button
               onClick={() => runBriefing(false)}
               className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30 shrink-0"
@@ -291,8 +334,14 @@ export default function Researcher() {
                 Gecachte Analyse ohne KI-Inhalt — bitte „Aktualisieren“ klicken
               </div>
             )}
+            {fiscalBridgeCount != null && (
+              <div className="text-[10px] text-foreground/50 mt-1" data-testid="fiscal-bridge-count">
+                Fiskal-Bridge: {fiscalBridgeCount} Programme aus der Discovery (kein Score)
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
             {!currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(false)}
@@ -304,13 +353,13 @@ export default function Researcher() {
             )}
             {currentData && !loadingForCurrentView && (
               <button
-                onClick={() => runAnalysis(true)}
+                onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
                 className={
                   isStale
                     ? "px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-400/60 text-amber-200 text-[11px] font-semibold flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(251,191,36,0.35)] hover:bg-amber-500/25"
                     : "px-2 py-1.5 rounded-md text-foreground/50 hover:text-foreground hover:bg-muted/40 text-[10px] flex items-center gap-1 transition-colors"
                 }
-                title={isStale ? "KI-Inhalt fehlt — neu generieren" : "Neue Analyse erzwingen (verbraucht Credits)"}
+                title={isStale ? "KI-Inhalt fehlt — Analyse, Researcher und Portfolio neu laden" : "Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)"}
                 data-testid="button-refresh-analysis"
               >
                 <RefreshCw className={isStale ? "w-3.5 h-3.5" : "w-3 h-3"} /> Aktualisieren
@@ -321,6 +370,8 @@ export default function Researcher() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysiere…
               </div>
             )}
+            </div>
+            <CrossModuleRefreshNotice />
           </div>
         </div>
 
