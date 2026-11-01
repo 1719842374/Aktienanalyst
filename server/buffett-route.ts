@@ -570,6 +570,62 @@ async function buildBenchmarkRegion(region: Exclude<RegionId, "US">): Promise<{
   };
 }
 
+interface LoadedBuffett {
+  region: RegionId;
+  asOf: string | null;
+  latest: TrendPoint | null;
+  note: string;
+  sources: { id: string; role: string }[];
+  fallback: BuffettFallbackInfo | null;
+  points: TrendPoint[];
+  benchmark?: BenchmarkInfo | null;
+  benchmarkUnavailable?: string | null;
+}
+
+/** Dieselbe Antwort wie GET /api/analyze-recession/buffett, inklusive Cache und TTL. */
+async function loadRegion(region: RegionId): Promise<LoadedBuffett> {
+  const hit = cache.get(region);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.body as LoadedBuffett;
+  const built: {
+    points: TrendPoint[];
+    note: string;
+    sources: { id: string; role: string }[];
+    fallback?: BuffettFallbackInfo | null;
+    benchmark?: BenchmarkInfo | null;
+    benchmarkUnavailable?: string | null;
+  } = region === "US"
+    ? await buildUnitedStates()
+    : await buildBenchmarkRegion(region);
+  const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
+  const body: LoadedBuffett = {
+    region,
+    asOf: latest?.date ?? null,
+    latest,
+    note: built.note,
+    sources: built.sources,
+    fallback: built.fallback ?? null,
+    points: built.points,
+    // F1-71/F1-74: nur EU/CN; die US-Antwort bleibt unverändert.
+    ...(region === "US" ? {} : { benchmark: built.benchmark ?? null, benchmarkUnavailable: built.benchmarkUnavailable ?? null }),
+  };
+  if (built.points.length > 0) {
+    const short = !!built.fallback || !!built.benchmarkUnavailable;
+    cache.set(region, { at: Date.now(), ttl: short ? FALLBACK_CACHE_MS : CACHE_MS, body });
+  }
+  return body;
+}
+
+/** US-Chartreihe für den Fazit-Satz. Ein Fehler ist eine leere Reihe, kein benannter Peak. */
+export async function loadUsBuffettRatios(): Promise<{ date: string; ratio: number }[]> {
+  try {
+    const body = await loadRegion("US");
+    return body.points.map(point => ({ date: point.date, ratio: point.ratio }));
+  } catch (err: any) {
+    console.error("[buffett] US series", err?.message?.substring(0, 200));
+    return [];
+  }
+}
+
 export function registerBuffettRatioRoute(app: Express): void {
   // F1-38: Handelsbilanz/BIP (FRED BOPGSTB ÷ GDP) als eigene Route neben der Buffett-Route — die Buffett-Antwort bleibt unverändert.
   registerTradeBalanceRoute(app);
@@ -580,36 +636,8 @@ export function registerBuffettRatioRoute(app: Express): void {
     if (!isRegion(region)) {
       return res.status(400).json({ error: "Region muss US, EU oder CN sein" });
     }
-    const hit = cache.get(region);
-    if (hit && Date.now() - hit.at < hit.ttl) return res.json(hit.body);
     try {
-      const built: {
-        points: TrendPoint[];
-        note: string;
-        sources: { id: string; role: string }[];
-        fallback?: BuffettFallbackInfo | null;
-        benchmark?: BenchmarkInfo | null;
-        benchmarkUnavailable?: string | null;
-      } = region === "US"
-        ? await buildUnitedStates()
-        : await buildBenchmarkRegion(region);
-      const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
-      const body = {
-        region,
-        asOf: latest?.date ?? null,
-        latest,
-        note: built.note,
-        sources: built.sources,
-        fallback: built.fallback ?? null,
-        points: built.points,
-        // F1-71/F1-74: nur EU/CN; die US-Antwort bleibt unverändert.
-        ...(region === "US" ? {} : { benchmark: built.benchmark ?? null, benchmarkUnavailable: built.benchmarkUnavailable ?? null }),
-      };
-      if (built.points.length > 0) {
-        const short = !!built.fallback || !!built.benchmarkUnavailable;
-        cache.set(region, { at: Date.now(), ttl: short ? FALLBACK_CACHE_MS : CACHE_MS, body });
-      }
-      res.json(body);
+      res.json(await loadRegion(region));
     } catch (err: any) {
       console.error("[GET /api/analyze-recession/buffett]", err?.message?.substring(0, 200));
       // F1-34: konkreter Grund (Timeout, zu wenige Bars, BIP leer …) statt generischem Text.
