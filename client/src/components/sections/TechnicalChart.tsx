@@ -28,6 +28,9 @@ import {
   CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis, separateLabelYs,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
+import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
+import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
+import { joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -226,6 +229,24 @@ export function TechnicalChart({
   // Szenario-Kegel: nur Anzeige. Default aus, Reset je Ticker — aus = keine Serie und keine Achsenänderung.
   const [showCone, setShowCone] = useState(false);
   useEffect(() => { setShowCone(false); }, [data.ticker]);
+  // Earnings Yield und ROIC 5Y: nur Anzeige, Default aus, Reset je Ticker. Kein Score.
+  const [showEy, setShowEy] = useState(false);
+  const [showRoic, setShowRoic] = useState(false);
+  const [showPeerFund, setShowPeerFund] = useState(false);
+  const [peerMode, setPeerMode] = useState<"price" | "roic">("roic");
+  const [peerDraft, setPeerDraft] = useState("");
+  const [peerQuery, setPeerQuery] = useState("");
+  useEffect(() => {
+    setShowEy(false);
+    setShowRoic(false);
+    setShowPeerFund(false);
+    setPeerDraft("");
+    setPeerQuery("");
+  }, [data.ticker]);
+  const eyQuery = useEarningsYield(data.ticker, showEy);
+  const roicQuery = useRoicSeries(data.ticker, showRoic);
+  const peerRoicQuery = useRoicSeries(peerQuery, showPeerFund && peerMode === "roic");
+  const peerPriceQuery = usePeerPriceBars(peerQuery, showPeerFund && peerMode === "price");
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -453,6 +474,20 @@ export function TechnicalChart({
     [showReal10y, real10yQuery.data, aBuilt.points],
   );
   const real10yOverlay = real10ySeries && real10ySeries.some(p => p.real10y != null) ? real10ySeries : null;
+  const fundOverlay = useMemo<FundJoinPoint[] | null>(() => {
+    if (!showEy && !showRoic && !(showPeerFund && peerQuery)) return null;
+    return joinFundamentalsOntoPrices(aBuilt.points.map(p => p.date), {
+      earningsYield: eyQuery.data?.points ?? null,
+      roic: roicQuery.data?.points ?? null,
+      peerRoic: peerRoicQuery.data?.points ?? null,
+      peerBars: peerPriceQuery.data?.bars ?? null,
+      subjectCloses: aBuilt.points.map(p => p.close),
+      showEarningsYield: showEy,
+      showRoic,
+      showPeerRoic: showPeerFund && peerMode === "roic",
+      showPeerPrice: showPeerFund && peerMode === "price",
+    });
+  }, [showEy, showRoic, showPeerFund, peerMode, peerQuery, eyQuery.data, roicQuery.data, peerRoicQuery.data, peerPriceQuery.data, aBuilt.points]);
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -701,6 +736,30 @@ export function TechnicalChart({
               {showCone ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Szenario-Kegel
             </button>
+            <button type="button" onClick={() => setShowEy(v => !v)} data-testid="button-earnings-yield" aria-pressed={showEy}
+              title="Earnings Yield (EBIT/EV), rechte %-Achse, kein Score-Einfluss."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showEy ? "border-sky-500 text-sky-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showEy ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Earnings Yield
+            </button>
+            <button type="button" onClick={() => setShowRoic(v => !v)} data-testid="button-roic-5y" aria-pressed={showRoic}
+              title="ROIC der letzten Geschäftsjahre, rechte %-Achse, kein Score-Einfluss."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showRoic ? "border-lime-500 text-lime-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showRoic ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              ROIC 5Y
+            </button>
+            <button type="button" onClick={() => setShowPeerFund(v => !v)} data-testid="button-fund-peer" aria-pressed={showPeerFund}
+              title="Peer als Kurs (Median-Index, linke Achse) oder ROIC (rechte Achse). Kein Score-Einfluss."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showPeerFund ? "border-orange-400 text-orange-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showPeerFund ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Peer
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -710,6 +769,34 @@ export function TechnicalChart({
             </button>
             {extraChips}
           </div>
+          {showPeerFund && (
+            <div className={FUNDAMENTAL_PEER_ROW_CLASS} data-testid="row-fund-peer">
+              <input
+                type="text"
+                value={peerDraft}
+                onChange={e => setPeerDraft(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === "Enter") setPeerQuery(peerDraft.trim().toUpperCase()); }}
+                placeholder="Peer-Ticker"
+                aria-label="Peer-Ticker"
+                data-testid="input-fund-peer"
+                className="h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-[11px] sm:h-7 sm:w-28"
+              />
+              <button type="button" data-testid="button-fund-peer-add" onClick={() => setPeerQuery(peerDraft.trim().toUpperCase())}
+                className="h-9 shrink-0 rounded border border-border px-2 text-[11px] sm:h-7">
+                Übernehmen
+              </button>
+              <div className="flex min-w-0 gap-1">
+                <button type="button" data-testid="button-fund-peer-roic" aria-pressed={peerMode === "roic"} onClick={() => setPeerMode("roic")}
+                  className={`h-9 flex-1 rounded border px-2 text-[11px] sm:h-7 sm:flex-none ${peerMode === "roic" ? "border-lime-500 text-lime-500" : "border-border text-muted-foreground"}`}>
+                  ROIC
+                </button>
+                <button type="button" data-testid="button-fund-peer-price" aria-pressed={peerMode === "price"} onClick={() => setPeerMode("price")}
+                  className={`h-9 flex-1 rounded border px-2 text-[11px] sm:h-7 sm:flex-none ${peerMode === "price" ? "border-orange-400 text-orange-400" : "border-border text-muted-foreground"}`}>
+                  Kurs
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* WORK_DATA_PROVIDERS.md §4: Hinweis wenn weniger Historie geladen wurde
@@ -866,6 +953,7 @@ export function TechnicalChart({
                 real10y={real10yOverlay}
                 ccy={ccy}
                 cone={scenarioCone}
+                fund={fundOverlay}
               />
             </div>
             {narrow && showVolume && (
@@ -914,6 +1002,7 @@ export function TechnicalChart({
               creditLabel={creditLabel}
               t10y={t10yOverlay}
               real10y={real10yOverlay}
+              fund={fundOverlay}
               measureMode={measureMode}
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
@@ -1028,6 +1117,25 @@ export function TechnicalChart({
           loading={real10yQuery.isLoading}
           failed={real10yQuery.isError}
           formatDateFull={formatDateFull}
+        />
+      )}
+
+      {(showEy || showRoic || showPeerFund) && showKursA && !chartEmpty && (
+        <FundamentalOverlayStatus
+          showEy={showEy}
+          showRoic={showRoic}
+          showPeer={showPeerFund}
+          peerMode={peerMode}
+          peerTicker={peerQuery}
+          eyLoading={eyQuery.isLoading}
+          roicLoading={roicQuery.isLoading}
+          peerLoading={peerMode === "roic" ? peerRoicQuery.isLoading : peerPriceQuery.isLoading}
+          eyNote={eyQuery.data?.note ?? null}
+          roicNote={roicQuery.data?.note ?? null}
+          eyLatest={latestFinite(eyQuery.data?.points)}
+          roicLatest={latestFinite(roicQuery.data?.points)}
+          peerRoicLatest={latestFinite(peerRoicQuery.data?.points)}
+          peerPriceNote={peerPriceQuery.data?.note ?? null}
         />
       )}
 
@@ -1305,7 +1413,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
-  cone = null,
+  cone = null, fund = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1333,18 +1441,23 @@ function PricePane({
   ccy?: string;
   /** Szenario-Kegel. null = Chart-Daten und Preisdomäne unverändert. */
   cone?: ScenarioCone | null;
+  /** Earnings Yield / ROIC / Peer, nur Anzeige. null = keine zusätzliche Serie. */
+  fund?: FundJoinPoint[] | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
-  const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger, conePrices);
+  const peerIndexed = (fund ?? []).map(p => p.peerPriceIndexed).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const domainExtra = [...(conePrices ?? []), ...peerIndexed];
+  const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger, domainExtra.length ? domainExtra : undefined);
   const chartData = useMemo(() => {
-    const base = withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y);
+    const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
-  }, [points, dividend, credit, t10y, real10y, cone]);
+  }, [points, dividend, credit, t10y, real10y, cone, fund]);
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
-  const rightAxis = !!dividend || !!credit || !!t10y || !!real10y;
+  const rightAxis = !!dividend || !!credit || !!t10y || !!real10y || !!fund;
+  const fundDomain = percentAxisDomain((fund ?? []).flatMap(p => [p.earningsYieldPct, p.roicPct, p.peerRoicPct]));
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
@@ -1426,6 +1539,19 @@ function PricePane({
             {...(narrow ? { tickCount: 4 } : {})}
           />
         )}
+        {fund && (
+          <YAxis
+            yAxisId="fund"
+            orientation="right"
+            domain={fundDomain}
+            width={40}
+            tick={{ fontSize: narrow ? 10 : 9, fill: "#0ea5e9" }}
+            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            axisLine={{ stroke: "#0ea5e9" }}
+            tickLine={false}
+            tickCount={narrow ? 4 : 5}
+          />
+        )}
         <Tooltip content={({ active, payload }) => {
           if (!active || !payload?.length) return null;
           const dp = payload[0]?.payload as WindowPoint | undefined;
@@ -1462,7 +1588,8 @@ function PricePane({
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
               {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} ccy={ccy} />}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
+              {fund && <FundTooltipRows p={dp as WindowPoint & FundFields} />}
+              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
                   <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
@@ -1565,6 +1692,18 @@ function PricePane({
             connectNulls
             isAnimationActive={false}
           />
+        )}
+        {fund && (
+          <Line yAxisId="fund" type="stepAfter" dataKey="_ey" name="Earnings Yield" stroke="#0ea5e9" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {fund && (
+          <Line yAxisId="fund" type="stepAfter" dataKey="_roic" name="ROIC" stroke="#84cc16" strokeWidth={1.5} strokeDasharray="4 2" dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {fund && (
+          <Line yAxisId="fund" type="stepAfter" dataKey="_peerRoic" name="Peer-ROIC" stroke="#84cc16" strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {fund && (
+          <Line yAxisId="price" type="monotone" dataKey="_peerPx" name="Peer-Kurs (Median-Index)" stroke="#fb923c" strokeWidth={1.25} strokeDasharray="5 3" dot={false} connectNulls={false} isAnimationActive={false} />
         )}
         {showSignals && signals.map((s, i) => (
           <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
@@ -1749,7 +1888,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, fund, ccy,
   cone = null, widthScale = 1, alignedPoints,
 }: {
   label: string;
@@ -1779,6 +1918,7 @@ function BandStack({
   creditLabel?: string;
   t10y?: Treasury10YOverlayPoint[] | null;
   real10y?: Real10YOverlayPoint[] | null;
+  fund?: FundJoinPoint[] | null;
   ccy?: string;
   cone?: ScenarioCone | null;
   widthScale?: number;
@@ -1819,6 +1959,7 @@ function BandStack({
               creditLabel={creditLabel}
               t10y={t10y}
               real10y={real10y}
+              fund={fund}
               ccy={ccy}
               cone={cone}
             />
@@ -1932,6 +2073,76 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
 }
 
 // ─── Credit overlay helpers (JOB A1) ───
+
+type FundFields = { _ey?: number | null; _roic?: number | null; _peerRoic?: number | null; _peerPx?: number | null; _peerPxRaw?: number | null };
+
+function withFundOverlay<T extends WindowPoint>(points: T[], series: FundJoinPoint[] | null | undefined): Array<T & FundFields> {
+  if (!series) return points;
+  const byDate = new Map(series.map(p => [p.date, p]));
+  return points.map(pt => {
+    const f = byDate.get(pt.date);
+    return {
+      ...pt,
+      _ey: f?.earningsYieldPct ?? null,
+      _roic: f?.roicPct ?? null,
+      _peerRoic: f?.peerRoicPct ?? null,
+      _peerPx: f?.peerPriceIndexed ?? null,
+      _peerPxRaw: f?.peerPriceRaw ?? null,
+    };
+  });
+}
+
+function fmtPct(v: number | null | undefined): string {
+  return v != null && Number.isFinite(v) ? `${v.toFixed(1)} %` : "n/a";
+}
+
+function FundTooltipRows({ p }: { p: FundFields }) {
+  return (
+    <div className="mt-1 pt-1 border-t border-border max-w-[260px] whitespace-normal">
+      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPct(p._ey)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPct(p._roic)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPct(p._peerRoic)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-orange-400">Peer-Kurs</span><span className="font-mono">{p._peerPxRaw != null ? p._peerPxRaw.toFixed(2) : "n/a"}</span></div>
+    </div>
+  );
+}
+
+function FundamentalOverlayStatus({
+  showEy, showRoic, showPeer, peerMode, peerTicker, eyLoading, roicLoading, peerLoading, eyNote, roicNote, eyLatest, roicLatest, peerRoicLatest, peerPriceNote,
+}: {
+  showEy: boolean;
+  showRoic: boolean;
+  showPeer: boolean;
+  peerMode: "price" | "roic";
+  peerTicker: string;
+  eyLoading: boolean;
+  roicLoading: boolean;
+  peerLoading: boolean;
+  eyNote: string | null;
+  roicNote: string | null;
+  eyLatest: { value: number | null; note: string | null };
+  roicLatest: { value: number | null; note: string | null };
+  peerRoicLatest: { value: number | null; note: string | null };
+  peerPriceNote: string | null;
+}) {
+  const base = "mt-1 text-[10px] text-muted-foreground break-words";
+  const ey = !showEy ? null : eyLoading ? "wird geladen …" : eyLatest.value != null ? `${eyLatest.value.toFixed(1)} %` : (eyLatest.note ?? eyNote ?? "n/a — keine Earnings-Yield-Punkte");
+  const roic = !showRoic ? null : roicLoading ? "wird geladen …" : roicLatest.value != null ? `${roicLatest.value.toFixed(1)} %` : (roicLatest.note ?? roicNote ?? "n/a — keine ROIC-Punkte");
+  let peer: string | null = null;
+  if (showPeer) {
+    if (!peerTicker) peer = "n/a — Peer-Ticker fehlt";
+    else if (peerLoading) peer = "wird geladen …";
+    else if (peerMode === "roic") peer = peerRoicLatest.value != null ? `${peerTicker} ROIC ${peerRoicLatest.value.toFixed(1)} %` : (peerRoicLatest.note ?? `n/a — kein ROIC für ${peerTicker}`);
+    else peer = peerPriceNote ?? `${peerTicker} Kurs als Median-Index auf der linken Achse`;
+  }
+  return (
+    <div className={base} data-testid="fundamental-overlay-status">
+      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Kein Score-Einfluss.</div>}
+      {roic != null && <div data-testid="status-roic">ROIC 5Y: {roic}. Kein Score-Einfluss.</div>}
+      {peer != null && <div data-testid="status-fund-peer">Peer: {peer}. Kein Score-Einfluss.</div>}
+    </div>
+  );
+}
 
 const CREDIT_COLOR = "#f43f5e";
 const CREDIT_AXIS_W = 40;

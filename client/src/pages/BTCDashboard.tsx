@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useCallback, useMemo } from "react";
+import { Fragment, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
@@ -9,6 +9,7 @@ import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
+import { MinerMapPanel } from "@/components/researcher/MinerMapPanel";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
 import { AssetConflictSummary } from "@/components/sections/AssetConflictSummary";
 import { btcConflictMatrix } from "@shared/asset-conflict-matrix";
@@ -2773,6 +2774,13 @@ export default function BTCDashboard() {
     setSidebarOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (!data) return;
+    const hash = window.location.hash;
+    const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+    if (new URLSearchParams(q).get("section") === "13") scrollToSection(13);
+  }, [data, scrollToSection]);
+
   const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
     sectionRefs.current[id] = el;
   }, []);
@@ -2881,7 +2889,10 @@ export default function BTCDashboard() {
         {/* Main content */}
         <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
           {!data && !analyzeMutation.isPending ? (
-            <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
+            <div>
+              <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
+              <div className="max-w-5xl mx-auto p-3 sm:p-4"><MinerMapPanel showBtcLink={false} /></div>
+            </div>
           ) : analyzeMutation.isPending ? (
             <BTCLoadingScreen />
           ) : analyzeMutation.isError ? (
@@ -2900,7 +2911,10 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(10)}><Section9FinalEstimate data={data} /></div>
               <div ref={setSectionRef(11)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div ref={setSectionRef(12)}><Section11FearGreed data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(13)}>
+                <Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} />
+                <div className="mt-3"><MinerMapPanel showBtcLink={false} /></div>
+              </div>
               <div ref={setSectionRef(14)}><Section12Fazit data={data} /></div>
               <div className="pb-8" />
             </div>
