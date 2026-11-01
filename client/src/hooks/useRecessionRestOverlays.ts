@@ -74,6 +74,7 @@ export interface GoogleTrendsOverlayBody {
   note: string | null;
   ageHours: number | null;
   isStale: boolean;
+  unavailableReason?: string | null;
 }
 
 export function useRecessionGoogleTrends(enabled: boolean) {

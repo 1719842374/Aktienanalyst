@@ -20,6 +20,10 @@ export interface IndicatorResult {
   ageHours?: number;
   /** True when the Google Trends print is over 24h. Zone weights stay unchanged. */
   isStale?: boolean;
+  /** Closed slot. Text is „n/a — Grund“. Not a score. */
+  unavailableReason?: string;
+  /** Failed refresh that kept the last print. Zone weight stays unchanged. */
+  fetchNote?: string;
 }
 
 export interface SubgroupResult {
