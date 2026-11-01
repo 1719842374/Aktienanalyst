@@ -545,4 +545,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 20. Sektor-KGV (Anzeige). Getrennt vom Score-Pfad der Sektorrotation.
   const { registerSectorPeRoute } = await import("./sector-pe-route");
   registerSectorPeRoute(app);
+
+  // 21. GET /api/gold/backtest-cross — F10-33, MA-Cross-Backtest auf Yahoo GC=F, nur Anzeige, kein Score.
+  (await import("./gold-backtest-cross")).registerGoldBacktestCrossRoute(app);
 }
