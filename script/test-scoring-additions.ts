@@ -206,7 +206,8 @@ console.log("\n=== Route: Flag AUS exakt, Flag AN gemessen (VOW3/SAP/MSFT) ===")
   }) as typeof fetch;
 
   const express = (await import("express")).default;
-  const { registerAnalyzeRoute } = await import("../server/analyze-route.ts");
+  const { registerAnalyzeRoute, readAnalyzeCacheResult } = await import("../server/analyze-route.ts");
+  const { buildAnalyzeCacheKey } = await import("../server/peer-cache-key.ts");
   const { buildFazitSignal, prepareFazitMetrics } = await import("../client/src/lib/fazit-signal.ts");
   const app = express();
   app.use(express.json());
@@ -214,10 +215,10 @@ console.log("\n=== Route: Flag AUS exakt, Flag AN gemessen (VOW3/SAP/MSFT) ===")
   registerAnalyzeRoute(server, app);
   await new Promise(r => server.once("listening", r));
   const port = (server.address() as any).port;
-  const ask = async (ticker: string, scoringAdditions: boolean) => {
+  const ask = async (ticker: string, scoringAdditions: boolean, force = true) => {
     const r = await realFetch(`http://127.0.0.1:${port}/api/analyze`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ticker, useLLM: false, force: true, scoringAdditions }),
+      body: JSON.stringify({ ticker, useLLM: false, force, scoringAdditions }),
     });
     return r.json();
   };
@@ -240,6 +241,15 @@ console.log("\n=== Route: Flag AUS exakt, Flag AN gemessen (VOW3/SAP/MSFT) ===")
       const factor = on?.biasFix?.scoringAdditions?.moatRivalry?.factor;
       return typeof factor === "number" && Math.abs(on.biasFix.overallScore - scoreOff * factor) < 1e-9;
     })(), `${on?.biasFix?.overallScore} / ${scoreOff}`);
+
+    const cacheKey = buildAnalyzeCacheKey(t, false, [], []);
+    const cached = readAnalyzeCacheResult(cacheKey);
+    check(`${LABELS[t]} Cache nach Flag AN: Gesamtscore bleibt der Pin`, cached?.biasFix?.overallScore === pinned, String(cached?.biasFix?.overallScore));
+    check(`${LABELS[t]} Cache nach Flag AN: scoringAdditions nicht gesetzt`, cached?.scoringAdditions !== true && cached?.biasFix?.scoringAdditions == null);
+    const again = await ask(t, false, false);
+    check(`${LABELS[t]} Flag AUS nach Flag AN: exakt der Pin`, again?.biasFix?.overallScore === pinned && again?.biasFix?.overallRating === fixture.expectOldHead[t].overallRating, `${again?.biasFix?.overallScore} ${again?.biasFix?.overallRating}`);
+    const cachedAfter = readAnalyzeCacheResult(cacheKey);
+    check(`${LABELS[t]} Cache-Objekt unverändert`, cachedAfter === cached && cachedAfter?.biasFix?.overallScore === pinned, String(cachedAfter?.biasFix?.overallScore));
   }
   server.close();
 }

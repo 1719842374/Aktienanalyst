@@ -47,8 +47,17 @@ export const SCORING_ADDITIONS_ENV = "SCORING_ADDITIONS";
  * Porter-Spanne (WORK_SECTORAL_MOAT_DAMPING §2.2: „max ~50 %“). Benannter Parameter.
  */
 export const MOAT_RIVALRY_DAMPING_SPAN = 0.5;
+/** Moat-Skala von scoreMoat (Cap). Stärke = 1 − Score / Skala. */
+export const MOAT_SCORE_SCALE = 10;
 /** Moat-Lagen, die als schwach gelten (Spec §2.1). Wide und Moderate dämpfen nicht. */
 export const MOAT_RIVALRY_WEAK_BUCKETS = ["none", "narrow"] as const;
+/** Mindestens zwei Segmente, sonst kein Klassen-Median. */
+export const HYBRID_MIN_SEGMENTS = 2;
+/**
+ * Eine einzelne Nebenklasse ist sichtbar, wenn sie mehr als diesen Anteil der
+ * übrigen Masse hält. Ab zwei Nebenklassen entscheidet stattdessen deren Median.
+ */
+export const HYBRID_LONE_SECONDARY_SHARE = 0.5;
 /** Heritage-/Brand-Wörter, analog zu den bestehenden Brand-Keywords in scoreMoat. */
 export const HERITAGE_MOAT_TERMS = ["heritage", "brand heritage", "premium brand"] as const;
 /** Accruals-Quote: |Net Income − Operating Cash Flow| / |Net Income|. */
@@ -59,7 +68,7 @@ export interface DistributionStats {
   median: number | null;
   /** 0–1: Anteil der Werte ≤ reference. */
   percentile: number | null;
-  /** (reference − Median) / Streuung. Streuung 0 → null. */
+  /** (reference − Mittelwert) / Streuung. Streuung 0 → null. */
   zScore: number | null;
 }
 
@@ -200,11 +209,11 @@ export function classifyHybrid(input: {
   if (!fallback) {
     return { available: false, reason: "n/a — Lynch-Klasse fehlt", dominant: null, secondary: null, shares: [], shareMedian: null, label: null };
   }
-  if (rows.length < 2) {
+  if (rows.length < HYBRID_MIN_SEGMENTS) {
     return { available: false, reason: "n/a — weniger als zwei Umsatzsegmente", dominant: null, secondary: null, shares: [], shareMedian: null, label: null };
   }
   const growths = rows.map(s => s.growth).filter((g): g is number => finite(g));
-  const growthMedian = growths.length >= 2 ? median(growths) : null;
+  const growthMedian = growths.length >= HYBRID_MIN_SEGMENTS ? median(growths) : null;
   const totals = new Map<string, number>();
   let weight = 0;
   for (const row of rows) {
@@ -226,9 +235,9 @@ export function classifyHybrid(input: {
   const lesser = shares.slice(1);
   const lesserMedian = median(lesser.map(s => s.share));
   const restShare = lesser.reduce((s, x) => s + x.share, 0);
-  const visible = second != null && (lesser.length >= 2
+  const visible = second != null && (lesser.length >= HYBRID_MIN_SEGMENTS
     ? lesserMedian != null && second.share > lesserMedian
-    : restShare > 0 && second.share / restShare > 0.5);
+    : restShare > 0 && second.share / restShare > HYBRID_LONE_SECONDARY_SHARE);
   const secondary = visible ? second : null;
   const label = dominant ? (secondary ? `${dominant.label} / ${secondary.label}` : dominant.label) : null;
   return { available: true, reason: null, dominant, secondary, shares, shareMedian, label };
@@ -274,7 +283,7 @@ export function evaluateMoatRivalryDamping(input: {
   const rivalryHigh = rivalry.score > stats.median;
   const text = String(input.description ?? "").toLowerCase();
   const heritageNoted = HERITAGE_MOAT_TERMS.some(term => text.includes(term));
-  const moatStrength = finite(input.moatScore) ? Math.max(0, Math.min(1, 1 - input.moatScore / 10)) : null;
+  const moatStrength = finite(input.moatScore) ? Math.max(0, Math.min(1, 1 - input.moatScore / MOAT_SCORE_SCALE)) : null;
   const span = Math.max(...others) - Math.min(...others);
   const rivalryStrength = span > 0 ? Math.max(0, Math.min(1, (rivalry.score - stats.median) / span)) : null;
   const active = moatWeak && rivalryHigh && moatStrength != null && rivalryStrength != null && rivalryStrength > 0;

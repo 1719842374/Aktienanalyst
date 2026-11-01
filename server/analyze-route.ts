@@ -191,6 +191,25 @@ interface CachedAnalysis {
 const analysisCache = new Map<string, CachedAnalysis>();
 const CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
 
+/** Nur für Tests: die gecachte Analyse, ohne Kopie. */
+export function readAnalyzeCacheResult(cacheKey: string): StockAnalysis | undefined {
+  return analysisCache.get(cacheKey)?.result;
+}
+
+/**
+ * Flag AN nur für die Response. Der Cache behält die Flag-AUS-Analyse.
+ * Flache Kopie: applyBiasFix ersetzt catalysts, catalystsSource und biasFix,
+ * attachExecSummary setzt execSummary. Verschachtelte Felder (Kurshistorie,
+ * Porter, Statements) werden nur gelesen — die Kurshistorie wird vor dem
+ * Sortieren kopiert. An analysis-VOW3.DE-negfcf.json bleibt das JSON des
+ * Originals gleich, structuredClone ist deshalb nicht nötig.
+ */
+function responseWithScoringAdditions(analysis: StockAnalysis): StockAnalysis {
+  const copy = { ...analysis, scoringAdditions: true } as StockAnalysis;
+  applyBiasFix(copy);
+  return attachExecSummary(copy);
+}
+
 // ─── RSI + MA helpers ─────────────────────────────────────────────────────────
 function calculateRSI(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
@@ -520,8 +539,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Betraf jeden Client-Request und jeden Cron-Precache-Call mit
       // force=true, nicht nur diese Verifikation.
       const { ticker, useLLM = false, force: forceRefresh = false, peerOverrides, scoringAdditions = false } = parsed.data;
-      // Flag liegt NICHT im Cache-Key. Ein Treffer bekommt ihn erst auf der Kopie vor applyBiasFix,
-      // sonst würde ein Flag-AN-Lauf den Flag-AUS-Cache überschreiben.
+      // Flag liegt NICHT im Cache-Key. Gespeichert wird immer die Flag-AUS-Analyse.
+      // Flag AN rechnet applyBiasFix und attachExecSummary nur auf einer Kopie für die Response.
       const upperTicker = ticker.toUpperCase();
 
       // Auftrag 09.08.2026 / gehaertet 10.08.2026 ("Peer-Add/Remove zuverlaessig"):
@@ -555,8 +574,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         if (cacheHit) {
           console.log(`[ANALYZE] Cache hit for ${upperTicker}`);
           const hit = cached!.result;
-          if (!scoringAdditions || hit.scoringAdditions === true) return res.json(hit);
-          return res.json(applyBiasFix({ ...hit, scoringAdditions: true }));
+          if (!scoringAdditions) return res.json(hit);
+          return res.json(responseWithScoringAdditions(hit));
         }
         // RAM-Miss: 7-Tage-Disk (gleicher Key). KI-Blöcke bleiben, kurze HP wird einmal nachgeladen.
         const diskHit = diskCacheGet(cacheKey);
@@ -601,8 +620,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             usedLLM: !!(served.llmMode ?? served._useLLM ?? useLLM),
           });
           console.log(`[ANALYZE] Disk cache hit for ${upperTicker} (age=${_cacheAge}min)`);
-          if (!scoringAdditions || served.scoringAdditions === true) return res.json(served);
-          return res.json(applyBiasFix({ ...served, scoringAdditions: true }));
+          if (!scoringAdditions) return res.json(served);
+          return res.json(responseWithScoringAdditions(served));
         }
       }
 
@@ -2391,12 +2410,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       if (!yahooOnly) {
-        if (scoringAdditions) (analysis as { scoringAdditions?: boolean }).scoringAdditions = true;
         applyBiasFix(analysis);
         attachExecSummary(analysis);
       }
-      // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
+      // Nach Assemble (CRV-Felder + ExecSummary): L1 und L2 halten die Flag-AUS-Analyse.
+      // Flag AN geht nur auf die Kopie, sonst schreibt der Lauf den veränderten Score unter den normalen Key.
       diskCacheSet(cacheKey, analysis);
+      if (scoringAdditions && !yahooOnly) return res.json(responseWithScoringAdditions(analysis));
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
