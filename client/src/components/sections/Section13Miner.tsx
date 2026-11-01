@@ -29,6 +29,7 @@ import {
   ResponsiveContainer, ReferenceLine, ReferenceArea, Legend, Area,
 } from "recharts";
 import { RefreshCw, AlertTriangle } from "lucide-react";
+import { describeMinerMeasures, type MinerZoneName } from "@shared/miner-measure-names";
 
 // ─── Backend-Antwort (server/btc-miner.ts MinerData, relevante Felder) ────────
 export interface MinerApiData {
@@ -45,6 +46,8 @@ export interface MinerApiData {
   difficultyRibbonCompression: number;
   lastUpdated: string;
   hashrateSource?: "mempool.space" | "blockchain.info";
+  /** Server-Feld classifyMinerZone. Getrennt von inCapitulation (nur MA30 < MA60). */
+  minerZone?: { zone: MinerZoneName; score: number; flags: string[] } | null;
 }
 
 /**
@@ -136,6 +139,30 @@ const FLAG_TEXT: Record<string, string> = {
   MINER_DISTRIBUTION: "MPI hoch — Miner verkaufen (Zwangsverkäufe)",
   MINER_ACCUMULATION: "MPI niedrig — Miner akkumulieren",
 };
+
+export function MinerMeasureNote(props: {
+  inCapitulation: boolean | null;
+  crossoverSignal: boolean | null;
+  minerZone: MinerZoneName | null;
+}) {
+  const measures = describeMinerMeasures(props);
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs space-y-1" data-testid="miner-measure-note">
+      <div className="font-semibold text-foreground">Zwei Maße, zwei Namen</div>
+      <div className="flex flex-wrap gap-x-2" data-testid="miner-hash-ribbon-name">
+        <span className="text-muted-foreground">{measures.hashRibbonLabel}:</span>
+        <span className="text-foreground">{measures.hashRibbonValue}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-2" data-testid="miner-zone-name">
+        <span className="text-muted-foreground">{measures.minerZoneLabel}:</span>
+        <span className="text-foreground">{measures.minerZoneValue}</span>
+      </div>
+      <div className="text-muted-foreground" data-testid="miner-measure-diverge">
+        {measures.note} Die Plakette oben nutzt die Flottenannahmen dieser Seite und kann von der API-Miner-Zone abweichen.
+      </div>
+    </div>
+  );
+}
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 /** Gemeinsame Timeframe-Optionen, identisch zu Section10TechnicalChart (BTCDashboard.tsx). */
@@ -263,7 +290,7 @@ export function Section13Miner({
     stand: minerData.lastUpdated ?? null, quelle: minerData.hashrateSource ?? null, zeitraum: timeRange,
     _auffaelligkeiten: [
       ...latest.flags,
-      minerData.inCapitulation ? "Miner-Kapitulation aktiv" : "",
+      minerData.inCapitulation ? "Hash-Ribbon-Kapitulation aktiv (nur MA30 < MA60)" : "",
       Number.isFinite(data.btcPrice) && data.btcPrice < breakevenNow ? "Spot unter Breakeven" : "",
     ].filter(Boolean).join("; ") || null,
   } : null);
@@ -292,10 +319,10 @@ export function Section13Miner({
   }
 
   const ribbonStatus = minerData.crossoverSignal
-    ? { text: "BUY (Golden Cross)", color: "text-emerald-500" }
+    ? { text: "Kaufsignal", color: "text-emerald-500" }
     : minerData.inCapitulation
-      ? { text: "Kapitulation", color: "text-red-500" }
-      : { text: "Expansion", color: "text-emerald-500" };
+      ? { text: "MA30 unter MA60", color: "text-red-500" }
+      : { text: "MA30 nicht unter MA60", color: "text-emerald-500" };
 
   return (
     <SectionCard number={13} title="Miner-Zone: Profitabilität & Kapitulation">
@@ -352,10 +379,16 @@ export function Section13Miner({
         <MinerMetricCard
           label="Hash Ribbon"
           value={ribbonStatus.text}
-          subValue={`Hashrate ${minerData.currentHashrateEH.toFixed(0)} EH/s`}
+          subValue={`Hashrate ${minerData.currentHashrateEH.toFixed(0)} EH/s · nicht die Miner-Zone`}
           color={ribbonStatus.color}
         />
       </div>
+
+      <MinerMeasureNote
+        inCapitulation={minerData.inCapitulation}
+        crossoverSignal={minerData.crossoverSignal}
+        minerZone={minerData.minerZone?.zone ?? null}
+      />
 
       {/* Fleet-Annahmen (konfigurierbar, WORK_BTC_MINER §7) */}
       <div className="flex flex-wrap items-end gap-4 bg-muted/20 border border-border rounded-lg p-3">
