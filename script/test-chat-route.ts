@@ -58,7 +58,7 @@ async function main() {
   const noKey = await handleChat(body, { llmAvailable: () => false, llm: async () => { called++; return null; } });
   assert.equal(noKey.body.status, "no-key"); assert.equal(noKey.body.answer, null); assert.equal(noKey.body.error, OPENROUTER_NO_KEY_MESSAGE); assert.equal(called, 0); ok("kein Key → no-key, keine Antwort, kein LLM-Call");
   const good = await handleChat(body, { llmAvailable: () => true, llm: async () => ({ data: { answer: "Antwort", sectionRefs: [7, 99, 7, "x"] }, modelUsed: "m" }) });
-  assert.equal(good.body.status, "ok"); assert.equal(good.body.answer, "Antwort"); assert.deepEqual(good.body.sectionRefs, [7]); ok("ok-Antwort, sectionRefs auf bekannte Sektionen gefiltert");
+  assert.equal(good.body.status, "ok"); assert.match(good.body.answer ?? "", /^Antwort\n\nQuelle: geladene Dashboard-Daten /); assert.deepEqual(good.body.sectionRefs, [7]); ok("ok-Antwort mit angehängter Quellzeile, sectionRefs auf bekannte Sektionen gefiltert");
   const nul = await handleChat(body, { llmAvailable: () => true, llm: async () => null });
   assert.equal(nul.body.status, "llm-error"); assert.equal(nul.body.answer, null); ok("LLM null → llm-error, keine Fake-Antwort");
   const emptyAns = await handleChat(body, { llmAvailable: () => true, llm: async () => ({ data: { answer: "  " }, modelUsed: "m" }) });
@@ -75,14 +75,15 @@ async function main() {
   assert.equal(rl, 1); assert.equal(chatRateLimited("t", 1000 + CHAT_RATE_LIMIT.windowMs + 1), false); ok("Rate-Limit pro Client");
 
   assert.equal(CHAT_MODEL_ENV, "OPENROUTER_CHAT_MODEL");
-  assert.deepEqual(chatLlmModels({}), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
-  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "   " }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
-  assert.deepEqual(chatLlmModels({ OPENROUTER_MODEL: "deepseek/deepseek-v3.2" }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
-  ok(`leere ${CHAT_MODEL_ENV}: Code-Default ${CHAT_LLM_DEFAULT_MODEL}, OPENROUTER_MODEL (Analyse) wirkt nicht auf den Chat`);
+  assert.equal(CHAT_LLM_DEFAULT_MODEL, "anthropic/claude-haiku-4.5");
+  assert.deepEqual(chatLlmModels({}), [CHAT_LLM_DEFAULT_MODEL]);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "   " }), [CHAT_LLM_DEFAULT_MODEL]);
+  assert.deepEqual(chatLlmModels({ OPENROUTER_MODEL: "deepseek/deepseek-v3.2" }), [CHAT_LLM_DEFAULT_MODEL]);
+  ok(`leere ${CHAT_MODEL_ENV}: Code-Default ${CHAT_LLM_DEFAULT_MODEL} (Haiku), OPENROUTER_MODEL (Analyse) wirkt nicht auf den Chat`);
   assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: " openai/gpt-5.1 " }), ["openai/gpt-5.1", CHAT_LLM_FALLBACK_MODEL]);
   assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: CHAT_LLM_FALLBACK_MODEL }), [CHAT_LLM_FALLBACK_MODEL]);
   ok(`${CHAT_MODEL_ENV} hat Vorrang, ${CHAT_LLM_FALLBACK_MODEL} bleibt Fallback`);
-  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "claude opus 5.5" }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "claude opus 5.5" }), [CHAT_LLM_DEFAULT_MODEL]);
   ok("ungültige Modell-ID in der Env: Code-Default statt OpenRouter-400");
 
   const prevEnv = process.env[CHAT_MODEL_ENV];

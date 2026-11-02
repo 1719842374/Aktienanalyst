@@ -149,7 +149,7 @@ async function main() {
   });
   assert.equal(llm.http, 200);
   assert.equal(llm.body.status, "ok");
-  assert.equal(llm.body.answer, "ok");
+  assert.match(llm.body.answer ?? "", /^ok\n\nQuelle: geladene Dashboard-Daten /);
   assert.deepEqual(llm.body.sectionRefs, [3]);
   assert.ok(seen.includes(repeat("W", 1200)));
   assert.ok(!seen.includes(repeat("N", noteLen)));
