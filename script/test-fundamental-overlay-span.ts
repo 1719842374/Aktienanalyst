@@ -235,10 +235,11 @@ const vowJoined = vowBar ? joinFundamentalsOntoPrices([vowBar.date], {
 }) : [];
 const vowLine = `VOW3.DE ${vowDate} Kurs ${vowBar?.close?.toFixed(2) ?? "n/a"} Quartal ${vowQuarter?.eps ?? "n/a"} Summe ${vowSum.eps ?? "n/a"} trailing ${vowTrail.eps ?? "n/a"} EY ${vowYield.value?.toFixed(2) ?? "n/a"} ${vowJoined[0]?.earningsYieldNote ?? vowNumerator.note ?? ""}`;
 console.log(vowLine);
-const vowLossOpen = vowQuarter != null && vowQuarter.eps < 0 && (vowSum.eps == null || vowSum.eps < 0) && vowTrail.eps != null && vowTrail.eps > 0;
+const vowLossOpen = vowQuarter != null && vowQuarter.eps < 0 && (vowSum.eps == null || vowSum.eps < 0) && vowTrail.eps != null && vowTrail.eps > 0 && vowQuarter.asOf >= vowTrail.asOf;
+const vowQuarterYield = vowBar ? (vowQuarter!.eps / vowBar.close) * 100 : null;
 check(
-  "VOW3.DE: negatives Quartal ergibt kein stilles Plus",
-  vowLossOpen && (vowYield.value == null || vowYield.value < 0) && vowJoined[0]?.earningsYieldNote?.includes("trailing EPS · Quelle: Yahoo") === true && vowJoined[0]?.earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true,
+  "VOW3.DE: negatives Quartal wird als negativer Yield gezeichnet",
+  vowLossOpen && vowYield.value != null && vowYield.value < 0 && vowQuarterYield != null && Math.abs(vowYield.value - vowQuarterYield) < 1e-6 && vowJoined[0]?.earningsYieldEps === vowQuarter?.eps && vowJoined[0]?.earningsYieldEpsDate === vowQuarter?.asOf && vowJoined[0]?.earningsYieldSource === "Yahoo" && vowJoined[0]?.earningsYieldBadge === "Schätzung / TTM unvollständig" && vowJoined[0]?.earningsYieldNote?.includes("Quelle: Yahoo") === true && vowJoined[0]?.earningsYieldNote?.includes("Formel:") === true,
   vowLine,
 );
 

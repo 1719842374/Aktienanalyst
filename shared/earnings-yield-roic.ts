@@ -125,6 +125,12 @@ export interface FundJoinPoint {
   peerPriceIndexed: number | null;
   peerPriceRaw: number | null;
   peerPriceNote: string | null;
+  /** Zähler des Earnings Yield an dieser Kerze. */
+  earningsYieldEps: number | null;
+  earningsYieldEpsDate: string | null;
+  earningsYieldSource: string | null;
+  /** Gesetzt, wenn das TTM unvollständig oder geschätzt ist. */
+  earningsYieldBadge: string | null;
 }
 
 export function finiteNumber(v: unknown): number | null {
@@ -257,10 +263,29 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
   return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: sources.length ? `Quelle: ${sources.join(" + ")}` : null, maxAbs };
 }
 
-/** Sichtbarer Kurztext, wenn das trailing EPS die Stelle füllt oder ein positives Fallback sperrt. */
+/** Sichtbarer Kurztext, wenn das trailing EPS die Stelle füllt. */
 export function trailingEpsLabel(source: string | null | undefined): string {
   const src = source?.trim();
   return src ? `trailing EPS · Quelle: ${src}` : "trailing EPS";
+}
+
+/** Badge, wenn das Fenster nicht vollständig ist oder ein Quartal aus dem Jahres-EPS geschätzt wird. */
+export const TTM_INCOMPLETE_BADGE = "Schätzung / TTM unvollständig";
+/** Formel, wenn das jüngste Quartal den Zähler stellt, weil kein vollständiges TTM bis dahin reicht. */
+export const QUARTER_EPS_FORMULA = "jüngstes Quartals-EPS / Kurs";
+/** Herkunft eines Quartals, das als Rest aus Jahres-EPS und den bekannten Quartalen steht. */
+export const ANNUAL_RESIDUAL_SOURCE = "Schätzung: Jahres-EPS minus bekannte Quartale";
+
+export interface EpsNumerator {
+  eps: number | null;
+  currency: string | null;
+  note: string | null;
+  /** Stichtag des Zählers. */
+  asOf: string | null;
+  source: string | null;
+  formula: string;
+  /** true, wenn das Fenster nicht voll ist oder ein Quartal geschätzt wurde. */
+  incomplete: boolean;
 }
 
 function latestQuarterAt(quarters: EpsQuarter[], asOf: string): EpsQuarter | null {
@@ -272,56 +297,178 @@ function latestQuarterAt(quarters: EpsQuarter[], asOf: string): EpsQuarter | nul
   return hit;
 }
 
-/**
- * Positives trailing oder Jahres-EPS darf das zuletzt berichtete negative Quartal nicht als stilles Plus zeichnen.
- * Eine gebildete negative Quartalssumme bleibt der Zähler. Null ist kein Verlust.
- */
-export function positiveEpsFallbackBlocked(latestQuarterEps: number | null, candidateEps: number | null, quarterSum: number | null): boolean {
-  if (latestQuarterEps == null || !(latestQuarterEps < 0)) return false;
-  if (candidateEps == null || !(candidateEps > 0)) return false;
-  if (quarterSum != null && quarterSum < 0) return false;
-  return true;
+function addIsoDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Math.round(days));
+  return d.toISOString().slice(0, 10);
 }
 
-/** Quartals-TTM, sonst trailing EPS, sonst Jahres-EPS. Der Ersatz steht im note. */
+function knownQuarters(quarters: EpsQuarter[], asOf: string): EpsQuarter[] {
+  const known = new Map<string, EpsQuarter>();
+  for (const quarter of quarters) {
+    if (!quarter || quarter.asOf > asOf || !Number.isFinite(quarter.eps)) continue;
+    const prev = known.get(quarter.periodEnd);
+    if (!prev || quarter.asOf >= prev.asOf) known.set(quarter.periodEnd, quarter);
+  }
+  return Array.from(known.values()).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+}
+
+/** Ein erwartetes Quartalsende gilt als getroffen, solange es höchstens einen halben Schritt daneben liegt. */
+function quarterEndMatches(periodEnd: string, expected: string, stepDays: number): boolean {
+  return Math.abs(isoDayNumber(periodEnd) - isoDayNumber(expected)) <= stepDays / 2;
+}
+
+function singleMissingPeriodEnd(ordered: EpsQuarter[], yearEnd: string, count: number, stepDays: number): string | null {
+  const expected: string[] = [];
+  for (let i = count - 1; i >= 0; i--) expected.push(addIsoDays(yearEnd, -Math.round(stepDays * i)));
+  const used = new Set<string>();
+  const missing: string[] = [];
+  for (const stamp of expected) {
+    const hit = ordered.find(q => !used.has(q.periodEnd) && quarterEndMatches(q.periodEnd, stamp, stepDays));
+    if (hit) used.add(hit.periodEnd);
+    else missing.push(stamp);
+  }
+  if (missing.length !== 1) return null;
+  if (ordered.some(q => q.periodEnd === missing[0])) return null;
+  return missing[0];
+}
+
+/**
+ * Fehlt in einem Geschäftsjahr genau ein Quartal, ist der Rest Jahres-EPS minus die bekannten Quartale.
+ * Zwei fehlende Quartale werden nicht aufgeteilt. Der Rest gilt erst ab dem Jahres-Stichtag.
+ */
+export function fillSingleGapFromAnnual(quarters: EpsQuarter[], annual: TtmPrint[], asOf: string): EpsQuarter[] {
+  const known = knownQuarters(quarters, asOf);
+  const years = annual
+    .filter(row => row && row.asOf <= asOf && Number.isFinite(row.eps))
+    .sort((a, b) => a.asOf.localeCompare(b.asOf));
+  const spacing = derivedQuarterWindow(known.map(q => q.periodEnd));
+  const count = spacing?.count ?? TTM_QUARTER_COUNT;
+  const stepDays = spacing && spacing.count > 0 ? FISCAL_YEAR_DAYS / spacing.count : FISCAL_YEAR_DAYS / TTM_QUARTER_COUNT;
+  const added: EpsQuarter[] = [];
+  for (let i = 0; i < years.length; i++) {
+    const year = years[i];
+    const start = i > 0 ? years[i - 1].asOf : addIsoDays(year.asOf, -Math.round(FISCAL_YEAR_DAYS));
+    const inYear = known.filter(q => q.periodEnd > start && q.periodEnd <= year.asOf);
+    if (inYear.length !== count - 1) continue;
+    const ordered = [...inYear].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+    const missing = singleMissingPeriodEnd(ordered, year.asOf, count, stepDays);
+    if (!missing || known.some(q => q.periodEnd === missing) || added.some(q => q.periodEnd === missing)) continue;
+    const yearCode = year.currency?.trim().toUpperCase() ?? "";
+    const quarterCodes = new Set(ordered.map(q => q.currency?.trim().toUpperCase()).filter((c): c is string => !!c));
+    if (yearCode && quarterCodes.size > 0 && !quarterCodes.has(yearCode)) continue;
+    const residual = year.eps - ordered.reduce((sum, q) => sum + q.eps, 0);
+    if (!Number.isFinite(residual)) continue;
+    added.push({
+      periodEnd: missing,
+      asOf: year.asOf,
+      eps: residual,
+      currency: year.currency ?? ordered.find(q => q.currency)?.currency ?? null,
+      source: year.source ? `${ANNUAL_RESIDUAL_SOURCE} · ${year.source}` : ANNUAL_RESIDUAL_SOURCE,
+    });
+  }
+  return [...known, ...added].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd) || a.asOf.localeCompare(b.asOf));
+}
+
+/** Jüngstes lückenloses Fenster. Eine Lücke am rechten Rand lässt ein älteres vollständiges Fenster stehen. */
+export function latestCompleteQuarterSum(quarters: EpsQuarter[], asOf: string): {
+  eps: number;
+  currency: string | null;
+  note: string | null;
+  periodEnd: string;
+  asOf: string;
+  source: string | null;
+  incomplete: boolean;
+  maxAbs: number;
+} | null {
+  const ordered = knownQuarters(quarters, asOf);
+  const window = derivedQuarterWindow(ordered.map(q => q.periodEnd));
+  if (!window || ordered.length < window.count) return null;
+  for (let end = ordered.length - 1; end >= window.count - 1; end--) {
+    const slice = ordered.slice(end - window.count + 1, end + 1);
+    let open = false;
+    for (let i = 1; i < slice.length; i++) {
+      const gap = isoDayNumber(slice[i].periodEnd) - isoDayNumber(slice[i - 1].periodEnd);
+      if (!(gap > 0 && gap <= window.maxGapDays)) open = true;
+    }
+    if (open) continue;
+    const currencies = new Set(slice.map(q => q.currency?.trim().toUpperCase()).filter((c): c is string => !!c));
+    if (currencies.size > 1) continue;
+    const eps = slice.reduce((sum, quarter) => sum + quarter.eps, 0);
+    if (!Number.isFinite(eps)) continue;
+    const sources = Array.from(new Set(slice.map(q => q.source).filter((s): s is string => !!s && s.trim() !== "")));
+    const maxAbs = slice.reduce((max, quarter) => Math.max(max, Math.abs(quarter.eps)), 0);
+    return {
+      eps,
+      currency: slice.find(q => q.currency)?.currency ?? null,
+      note: sources.length ? `Quelle: ${sources.join(" + ")}` : null,
+      periodEnd: slice[slice.length - 1].periodEnd,
+      asOf: slice[slice.length - 1].asOf,
+      source: sources.join(" + ") || null,
+      incomplete: slice.some(q => (q.source ?? "").includes("Schätzung")),
+      maxAbs,
+    };
+  }
+  return null;
+}
+
+function numeratorFrom(eps: number | null, currency: string | null, asOf: string | null, source: string | null, formula: string, incomplete: boolean, note: string | null): EpsNumerator {
+  return { eps, currency, asOf, source, formula, incomplete, note };
+}
+
+/**
+ * Zähler je Kerze. Zuerst ein aufgefülltes Quartalsfenster, sonst das jüngste vollständige Fenster.
+ * Ein positives trailing EPS verdeckt kein jüngeres negatives Quartal: das jüngere Datum hat Vorrang.
+ */
 export function epsNumeratorAt(
   quarters: EpsQuarter[],
   trailing: TtmPrint[],
   annual: TtmPrint[],
   asOf: string,
-): { eps: number | null; currency: string | null; note: string | null } {
-  const ttm = ttmEpsAt(quarters, asOf);
+): EpsNumerator {
+  const filled = fillSingleGapFromAnnual(quarters, annual, asOf);
+  const complete = latestCompleteQuarterSum(filled, asOf);
   const trail = ttmPrintAt(trailing, asOf);
+  const trailPrint = trailing.filter(row => row && row.asOf <= asOf && Number.isFinite(row.eps)).sort((a, b) => a.asOf.localeCompare(b.asOf)).pop() ?? null;
   const latest = latestQuarterAt(quarters, asOf);
-  const sumAgrees = ttm.eps == null || trail.eps == null || ttm.maxAbs == null || Math.abs(ttm.eps - trail.eps) <= ttm.maxAbs;
-  if (ttm.eps != null && ttm.eps < 0) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
-  if (ttm.eps != null && sumAgrees) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
-  if (trail.eps != null && !positiveEpsFallbackBlocked(latest?.eps ?? null, trail.eps, ttm.eps)) {
-    const why = ttm.eps != null
-      ? `Quartalssumme ${ttm.eps} weicht vom berichteten TTM ab`
-      : (ttm.note ?? "Quartalsfenster nicht gebildet");
-    return { eps: trail.eps, currency: trail.currency, note: `Fallback: ${trailingEpsLabel(trail.source)} (${why})` };
+  const reported = ttmEpsAt(quarters, asOf);
+  const agrees = complete == null || trail.eps == null || Math.abs(complete.eps - trail.eps) <= complete.maxAbs;
+  const endsAtLatest = complete != null && latest != null && complete.periodEnd === latest.periodEnd;
+  if (complete && endsAtLatest && (agrees || complete.eps < 0 || complete.incomplete)) {
+    const badge = complete.incomplete ? TTM_INCOMPLETE_BADGE : null;
+    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null);
   }
-  if (trail.eps != null && positiveEpsFallbackBlocked(latest?.eps ?? null, trail.eps, ttm.eps)) {
-    return {
-      eps: null,
-      currency: trail.currency,
-      note: `n/a — letztes Quartals-EPS ${latest?.eps} ist negativ, positives trailing EPS ${trail.eps} wird nicht gezeichnet · ${trailingEpsLabel(trail.source)}`,
-    };
+  const positiveTrailWouldCover = latest != null && latest.eps < 0 && trail.eps != null && trail.eps > 0 && trail.asOf != null && latest.asOf >= trail.asOf;
+  const olderWindow = complete != null && latest != null && latest.eps < 0 && complete.periodEnd < latest.periodEnd;
+  if (latest && latest.eps < 0 && (positiveTrailWouldCover || olderWindow || (complete == null && (trail.eps == null || trail.eps > 0)))) {
+    const src = latest.source ?? null;
+    return numeratorFrom(
+      latest.eps,
+      latest.currency,
+      latest.asOf,
+      src,
+      QUARTER_EPS_FORMULA,
+      true,
+      [`EPS ${latest.eps} am ${latest.asOf}`, src ? `Quelle: ${src}` : null, TTM_INCOMPLETE_BADGE].filter((part): part is string => !!part).join(" · "),
+    );
+  }
+  if (complete && agrees) {
+    const badge = complete.incomplete ? TTM_INCOMPLETE_BADGE : null;
+    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null);
+  }
+  if (trail.eps != null) {
+    const why = reported.eps != null
+      ? `Quartalssumme ${reported.eps} weicht vom berichteten TTM ab`
+      : (reported.note ?? "Quartalsfenster nicht gebildet");
+    return numeratorFrom(trail.eps, trail.currency, trailPrint?.asOf ?? null, trail.source, EARNINGS_YIELD_FORMULA, false, `Fallback: ${trailingEpsLabel(trail.source)} (${why})`);
   }
   const year = ttmPrintAt(annual, asOf);
-  if (year.eps != null && !positiveEpsFallbackBlocked(latest?.eps ?? null, year.eps, ttm.eps)) {
-    const base = `Fallback: Jahres-EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})`;
-    return { eps: year.eps, currency: year.currency, note: year.source ? `${base} · Quelle: ${year.source}` : base };
+  const yearPrint = annual.filter(row => row && row.asOf <= asOf && Number.isFinite(row.eps)).sort((a, b) => a.asOf.localeCompare(b.asOf)).pop() ?? null;
+  if (year.eps != null) {
+    const base = `Fallback: Jahres-EPS (${reported.note ?? "Quartalsfenster nicht gebildet"})`;
+    return numeratorFrom(year.eps, year.currency, yearPrint?.asOf ?? null, year.source, EARNINGS_YIELD_FORMULA, false, year.source ? `${base} · Quelle: ${year.source}` : base);
   }
-  if (year.eps != null && positiveEpsFallbackBlocked(latest?.eps ?? null, year.eps, ttm.eps)) {
-    return {
-      eps: null,
-      currency: year.currency,
-      note: `n/a — letztes Quartals-EPS ${latest?.eps} ist negativ, positives Jahres-EPS ${year.eps} wird nicht gezeichnet`,
-    };
-  }
-  return { eps: null, currency: null, note: ttm.note };
+  return numeratorFrom(null, null, null, null, EARNINGS_YIELD_FORMULA, false, reported.note);
 }
 
 function sameCurrency(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -368,13 +515,13 @@ export function supplementPrints(primary: TtmPrint[], extra: TtmPrint[]): { prin
 }
 
 /** Letzter berichteter TTM-Druck mit asOf <= Stichtag. Kein Auffüllen zwischen den Drucken über eine Schätzung. */
-export function ttmPrintAt(prints: TtmPrint[], asOf: string): { eps: number | null; currency: string | null; source: string | null } {
+export function ttmPrintAt(prints: TtmPrint[], asOf: string): { eps: number | null; currency: string | null; source: string | null; asOf: string | null } {
   let hit: TtmPrint | null = null;
   for (const print of prints) {
     if (!print || print.asOf > asOf || !Number.isFinite(print.eps)) continue;
     if (!hit || print.asOf >= hit.asOf) hit = print;
   }
-  return hit ? { eps: hit.eps, currency: hit.currency, source: hit.source ?? null } : { eps: null, currency: null, source: null };
+  return hit ? { eps: hit.eps, currency: hit.currency, source: hit.source ?? null, asOf: hit.asOf } : { eps: null, currency: null, source: null, asOf: null };
 }
 
 function ccyCode(value: string | null | undefined): string {
@@ -606,6 +753,10 @@ export function joinFundamentalsOntoPrices(
   return rows.map(row => {
     let earningsYieldPct: number | null = null;
     let earningsYieldNote: string | null = null;
+    let earningsYieldEps: number | null = null;
+    let earningsYieldEpsDate: string | null = null;
+    let earningsYieldSource: string | null = null;
+    let earningsYieldBadge: string | null = null;
     if (args.showEarningsYield) {
       if (useQuarters) {
         const numerator = epsNumeratorAt(args.epsQuarters ?? [], args.ttmPrints ?? [], args.annualEps ?? [], row.date);
@@ -613,8 +764,12 @@ export function joinFundamentalsOntoPrices(
           ? { value: null, note: numerator.note }
           : earningsYieldFromTtm(numerator.eps, row.close, numerator.currency, args.priceCurrency ?? null, args.priceFx ? { ...args.priceFx, asOf: row.date } : null);
         earningsYieldPct = yieldHit.value;
-        const bits = [`Formel: ${EARNINGS_YIELD_FORMULA}`, numerator.note, yieldHit.note].filter((part): part is string => !!part);
+        const bits = [`Formel: ${numerator.formula}`, numerator.note, yieldHit.note].filter((part): part is string => !!part);
         earningsYieldNote = bits.filter((part, index) => bits.indexOf(part) === index).join(" · ") || null;
+        earningsYieldEps = numerator.eps;
+        earningsYieldEpsDate = numerator.asOf;
+        earningsYieldSource = numerator.source;
+        earningsYieldBadge = numerator.incomplete ? TTM_INCOMPLETE_BADGE : null;
       } else {
         const eyHit = asofLatest(ey, row.date, cEy);
         const yieldHit = finitePointNote(eyHit, ey.length > 0, "n/a — keine Earnings-Yield-Punkte", "n/a — noch kein Earnings-Yield-Stichtag");
@@ -643,6 +798,10 @@ export function joinFundamentalsOntoPrices(
       date: row.date,
       earningsYieldPct,
       earningsYieldNote,
+      earningsYieldEps,
+      earningsYieldEpsDate,
+      earningsYieldSource,
+      earningsYieldBadge,
       roicPct: roicResolved.value,
       roicNote: roicResolved.note,
       peerRoicPct: peerKnown.value,

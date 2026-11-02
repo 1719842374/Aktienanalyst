@@ -19,10 +19,12 @@ import {
   PERIOD_GAP_FACTOR,
   ROIC_FORMULA,
   ROIC_TTM_LABEL,
+  TTM_INCOMPLETE_BADGE,
   TTM_QUARTER_COUNT,
   annualizedRoicSeries,
   derivedQuarterWindow,
   earningsYieldFromTtm,
+  fillSingleGapFromAnnual,
   joinFundamentalsOntoPrices,
   ttmEpsAt,
   type EpsQuarter,
@@ -98,11 +100,11 @@ check("SAP.DE: EPS EUR und Kurs USD mit Listing-FX, nicht n/a", sapFx.value != n
 check("ohne Listing-FX bleibt die Währungsabweichung n/a", earningsYieldFromTtm(6.91, 235.9, "EUR", "USD").value === null);
 
 const vowQuarters: EpsQuarter[] = [
-  { periodEnd: "2025-03-31", asOf: "2025-03-31", eps: 3.63, currency: "EUR" },
-  { periodEnd: "2025-06-30", asOf: "2025-06-30", eps: 4.34, currency: "EUR" },
-  { periodEnd: "2026-03-31", asOf: "2026-03-31", eps: 2.55, currency: "EUR" },
-  { periodEnd: "2026-06-30", asOf: "2026-06-30", eps: 2.56, currency: "EUR" },
-  { periodEnd: "2026-09-30", asOf: "2026-09-30", eps: -9.29, currency: "EUR" },
+  { periodEnd: "2025-03-31", asOf: "2025-03-31", eps: 3.63, currency: "EUR", source: "Yahoo" },
+  { periodEnd: "2025-06-30", asOf: "2025-06-30", eps: 4.34, currency: "EUR", source: "Yahoo" },
+  { periodEnd: "2026-03-31", asOf: "2026-03-31", eps: 2.55, currency: "EUR", source: "Yahoo" },
+  { periodEnd: "2026-06-30", asOf: "2026-06-30", eps: 2.56, currency: "EUR", source: "Yahoo" },
+  { periodEnd: "2026-09-30", asOf: "2026-09-30", eps: -9.29, currency: "EUR", source: "Yahoo" },
 ];
 check("VOW3.DE: Quartalslücke bildet kein TTM", ttmEpsAt(vowQuarters, "2026-09-30").note?.includes("Lücke") === true);
 const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
@@ -121,8 +123,8 @@ const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
   showPeerPrice: false,
 });
 check(
-  "VOW3.DE: positives trailing EPS überdeckt das negative Quartal nicht",
-  vowJoined[0].earningsYieldPct == null && vowJoined[0].earningsYieldNote?.includes("n/a") === true && vowJoined[0].earningsYieldNote?.includes("trailing EPS · Quelle: Yahoo") === true && vowJoined[0].earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true,
+  "VOW3.DE: jüngeres negatives Quartal wird gezeichnet, nicht vom positiven trailing verdeckt",
+  vowJoined[0].earningsYieldPct != null && vowJoined[0].earningsYieldPct < 0 && Math.abs((vowJoined[0].earningsYieldPct ?? 0) - (-9.29)) < 1e-9 && vowJoined[0].earningsYieldEps === -9.29 && vowJoined[0].earningsYieldEpsDate === "2026-09-30" && vowJoined[0].earningsYieldSource === "Yahoo" && vowJoined[0].earningsYieldBadge === "Schätzung / TTM unvollständig" && vowJoined[0].earningsYieldNote?.includes("Quelle: Yahoo") === true && vowJoined[0].earningsYieldNote?.includes("jüngstes Quartals-EPS / Kurs") === true,
   `${vowJoined[0].earningsYieldPct} ${vowJoined[0].earningsYieldNote}`,
 );
 const vowNegativeTrail = joinFundamentalsOntoPrices(["2026-09-30"], {
@@ -162,6 +164,19 @@ const vowAnnualOnly = joinFundamentalsOntoPrices(["2025-12-31"], {
   showPeerPrice: false,
 });
 check("VOW3.DE: ohne trailing EPS fällt der Jahreswert ein und ist gekennzeichnet", vowAnnualOnly[0].earningsYieldNote?.includes("Fallback: Jahres-EPS") === true && vowAnnualOnly[0].earningsYieldPct != null, vowAnnualOnly[0].earningsYieldNote ?? "");
+const oneGap = fillSingleGapFromAnnual(
+  [
+    { periodEnd: "2024-03-31", asOf: "2024-04-20", eps: 1, currency: "EUR", source: "FMP" },
+    { periodEnd: "2024-06-30", asOf: "2024-07-20", eps: 1, currency: "EUR", source: "FMP" },
+    { periodEnd: "2024-09-30", asOf: "2024-10-20", eps: 1, currency: "EUR", source: "FMP" },
+  ],
+  [{ asOf: "2024-12-31", eps: 5, currency: "EUR", source: "Yahoo" }],
+  "2024-12-31",
+);
+const residual = oneGap.find(q => (q.source ?? "").includes("Schätzung"));
+check("ein fehlendes Quartal wird aus Jahres-EPS minus bekannten Quartalen gefüllt", oneGap.length === 4 && residual != null && residual.eps === 2 && residual.asOf === "2024-12-31", JSON.stringify(oneGap));
+const twoGaps = fillSingleGapFromAnnual(vowQuarters, [{ asOf: "2025-12-31", eps: 13.29, currency: "EUR", source: "Yahoo" }], "2026-09-30");
+check("zwei fehlende Quartale werden nicht aufgeteilt", twoGaps.length === vowQuarters.length, String(twoGaps.length));
 
 const roicTtm = annualizedRoicSeries(
   [
@@ -248,6 +263,8 @@ const chart = readFileSync("client/src/components/sections/TechnicalChart.tsx", 
 const hook = readFileSync("client/src/lib/useFundamentalSeries.ts", "utf8");
 check("Chart lädt Peer-ROIC mit dem Peer, nicht nur im ROIC-Modus", chart.includes("useRoicSeries(peerQuery, peerOn)"));
 check("Tooltip nennt Formel und Grund", chart.includes("fmtPctOrNote") && chart.includes("EARNINGS_YIELD_FORMULA") && chart.includes("_peerRoicKnown"));
+check("Tooltip nennt EPS, Datum und Quelle", chart.includes('data-testid="earnings-yield-eps"') && chart.includes('data-testid="earnings-yield-source"') && chart.includes("TTM_INCOMPLETE_BADGE") && TTM_INCOMPLETE_BADGE === "Schätzung / TTM unvollständig");
+check("negativer Earnings Yield ist rot und hat eine Nulllinie", chart.includes('dataKey="_eyNeg"') && chart.includes('stroke="#ef4444"') && chart.includes('yAxisId="fund" y={0}'));
 check("Peer-Kurs geht über /api/chart/peer-price, nicht über den 5-Jahres-OHLCV-Clamp", hook.includes("/api/chart/peer-price/") && !hook.includes("/api/ohlcv?tickers="));
 const routeSrc = readFileSync("server/earnings-yield-roic-route.ts", "utf8") + readFileSync("server/chart-peer-price-route.ts", "utf8");
 check("analyze-route wird von der Overlay-Route nicht importiert", !/from ["'][^"']*analyze-route["']/.test(routeSrc));
