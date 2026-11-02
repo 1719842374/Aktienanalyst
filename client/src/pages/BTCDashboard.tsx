@@ -1087,8 +1087,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     [capitulationInputsFull]
   );
 
-  // Handelstage-Fenster wie TechnicalChart: letzte N Bars der vollen Reihe.
-  // Die SMA ist vorher auf der ganzen Historie gerechnet, der Vorlauf bleibt draußen.
+  // Kalenderfenster ab heute. Die SMA ist vorher auf der ganzen Historie gerechnet, der Vorlauf bleibt draußen.
   const taWindow = useMemo(() => sliceBtcTaWindow(fullChart, timeRange), [fullChart, timeRange]);
   const filteredData = taWindow.visible;
 
@@ -1536,6 +1535,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {taWindow.historyNote}
           </div>
         )}
+        {capitulationSegmentsSnapped.length > 0 && (
+          <div className="w-full basis-full text-[10px] text-orange-300" data-testid="btc-miner-zone-legend">
+            Miner-Kapitulation: orange Schraffur mit gestricheltem Rand
+          </div>
+        )}
 
         {/* MA toggles */}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
@@ -1752,6 +1756,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               }
             }}
           >
+            <defs>
+              <pattern id="btc-miner-zone" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="7" height="7" fill="#fb923c" fillOpacity="0.07" />
+                <line x1="0" y1="0" x2="0" y2="7" stroke="#fb923c" strokeWidth="1.5" strokeOpacity="0.75" />
+              </pattern>
+            </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
@@ -1859,22 +1869,6 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               }}
             />
 
-            {/* Kapitulationszonen (additiv): rote Fläche pro zusammenhängendem
-                Segment, in dem Spot < Breakeven UND Puell < 0.5 UND MA30(Hashrate)
-                < MA60(Hashrate) gleichzeitig gelten (siehe minerMetrics.ts).
-                Nur Segmente sichtbar, die im aktuell gewählten Zeitfenster liegen
-                — Recharts clippt ReferenceArea automatisch am sichtbaren Bereich. */}
-            {capitulationSegmentsSnapped.map((seg, idx) => (
-              <ReferenceArea
-                key={`cap-zone-${idx}`}
-                x1={seg.x1}
-                x2={seg.x2}
-                fill="#EF4444"
-                fillOpacity={0.3}
-                strokeOpacity={0}
-                ifOverflow="hidden"
-              />
-            ))}
             {capitulationResolvedFull && breakevenNowForChart != null && (
               <>
                 <ReferenceLine
@@ -1901,6 +1895,23 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
 
             {qeQtBandNodes(qeQt.bands, showQeQt)}
+
+            {/* Miner-Kapitulation über den QE/QT-Flächen: orange Schraffur und
+                gestrichelter Rand. Die Bänder selbst bleiben Grün/Rot/Grau.
+                Bedingung: Spot < Breakeven und Puell < 0.5 und MA30 < MA60. */}
+            {capitulationSegmentsSnapped.map((seg, idx) => (
+              <ReferenceArea
+                key={`cap-zone-${idx}`}
+                x1={seg.x1}
+                x2={seg.x2}
+                fill="url(#btc-miner-zone)"
+                stroke="#fb923c"
+                strokeWidth={1.25}
+                strokeDasharray="4 3"
+                strokeOpacity={0.9}
+                ifOverflow="hidden"
+              />
+            ))}
 
             {/* Price line */}
             <Line
