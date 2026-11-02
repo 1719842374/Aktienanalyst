@@ -4,6 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 import { fetchFmpChunks, createChartHistoryCache, historyWindows, CHART_HISTORY_TTL_MS, CHART_HISTORY_INCOMPLETE_TTL_MS } from "../server/gold-chart-history";
+import { goldChartHistoryStaleTime } from "../client/src/lib/goldFetchPolicy";
 
 let failed = 0;
 const check = (name: string, cond: boolean, detail?: unknown) => {
@@ -83,7 +84,10 @@ async function main() {
     check("kein fester 6-h-Cache mehr in der Route", !routes.includes("chartHistoryCache"));
     const chart = readFileSync(new URL("../client/src/components/gold/GoldPriceChart.tsx", import.meta.url), "utf-8");
     check("Chart zeigt 'unvollständig'", chart.includes('data-testid="gold-range-incomplete"') && chart.includes("unvollständig"));
-    check("Client haelt unvollstaendige Daten nur 10 min", chart.includes("query.state.data?.incomplete ? 10 * 60 * 1000"));
+    check("Client haelt unvollstaendige Daten nur 10 min",
+      chart.includes("goldChartHistoryStaleTime(query.state.data)") &&
+      goldChartHistoryStaleTime({ incomplete: true }) === 10 * 60 * 1000 &&
+      goldChartHistoryStaleTime({ incomplete: false }) === 6 * 60 * 60 * 1000);
   }
 
   if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }

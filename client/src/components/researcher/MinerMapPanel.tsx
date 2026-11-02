@@ -43,6 +43,11 @@ function SourceLink({ sourced }: { sourced: SourcedNumber }) {
   );
 }
 
+function EstimateBadge({ sourced }: { sourced: SourcedNumber | null }) {
+  if (!sourced?.estimateLabel) return null;
+  return <span className="text-amber-200/90" data-testid="miner-estimate-badge"> · {sourced.estimateLabel}</span>;
+}
+
 /** Versatz in der Pixelebene der gerade gezeichneten Projektion, also relativ zu deren Maßstab. */
 function MinerBubbles({ sites, selected, onSelect, onOffset }: { sites: SiteView[]; selected: string | null; onSelect: (id: string) => void; onOffset: (active: boolean) => void }) {
   const { projection } = useMapContext();
@@ -197,7 +202,7 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
       {data && data.countryShares.length > 0 && (
         <div className="text-[10px] text-foreground/70 space-y-0.5" data-testid="miner-country-shares">
           {data.countryShares.map(share => (
-            <div key={share.iso2} title={share.note ?? share.sourceUrl} data-testid={`miner-country-share-${share.iso2}`}>
+            <div key={`${share.iso2}-${share.asOf}`} title={share.note ?? share.sourceUrl} data-testid={`miner-country-share-${share.iso2}-${share.asOf}`}>
               {share.name}: {share.hashrateEH == null ? "EH/s n/a" : `${share.hashrateEH} EH/s`} · {share.sharePct == null ? "Anteil n/a" : `${share.sharePct} %`} · {share.label}
             </div>
           ))}
@@ -217,7 +222,9 @@ function PipelineStrip({ data }: { data: MinerMapResponse }) {
   const cells = [
     ["Netz-Hashrate", fmtPipeline(p.networkHashrateEH, p.networkHashrateNote, 0, "EH/s")],
     ["Hashprice", p.hashpriceBtcPerThDay == null ? (p.hashpriceNote ?? "n/a") : `${p.hashpriceBtcPerThDay.toExponential(2)} BTC/TH/Tag`],
-    ["Hashprice USD", p.hashpriceUsdNote ?? "n/a"],
+    ["Hashprice USD", p.hashpriceUsdPerThDay == null
+      ? (p.hashpriceUsdNote ?? "n/a")
+      : `$${p.hashpriceUsdPerThDay.toLocaleString("de-DE", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} /TH/Tag${p.hashpriceUsdFormula ? ` · ${p.hashpriceUsdFormula}` : ""}`],
     ["Breakeven", fmtPipeline(p.breakevenUsd, p.breakevenNote, 0, "USD")],
     ["Puell", p.puellMultiple == null ? (p.puellNote ?? "n/a") : p.puellMultiple.toLocaleString("de-DE", { maximumFractionDigits: 2 })],
   ] as const;
@@ -226,7 +233,7 @@ function PipelineStrip({ data }: { data: MinerMapResponse }) {
       {cells.map(([label, value]) => (
         <div key={label} className="rounded border border-border/30 px-2 py-1 min-w-0">
           <div className="text-[10px] text-foreground/45">{label}</div>
-          <div className="font-mono text-[10px] break-words">{value}</div>
+          <div className="font-mono text-[10px] break-words" data-testid={label === "Hashprice USD" ? "miner-hashprice-usd" : undefined}>{value}</div>
         </div>
       ))}
     </div>
@@ -258,10 +265,11 @@ function SiteCard({ site, onClose }: { site: SiteView; onClose: () => void }) {
       {site.operators.map(op => (
         <div key={op.ticker} className="border-t border-border/20 pt-1.5 space-y-0.5">
           <div className="font-mono text-foreground/80">{op.ticker} <span className="font-sans text-foreground/50">{op.name}</span></div>
-          <div>Standort-Hashrate: {fmtEh(op.siteHashrateEHs?.value ?? null, op.siteHashrateNote)}{op.siteHashrateEHs && <> · <SourceLink sourced={op.siteHashrateEHs} /></>}</div>
-          <div>Konzern-Hashrate: {fmtEh(op.companyHashrateEHs?.value ?? null, op.companyHashrateNote)}{op.companyHashrateEHs && <> · <SourceLink sourced={op.companyHashrateEHs} /></>}</div>
+          <div>Standort-Hashrate: {fmtEh(op.siteHashrateEHs?.value ?? null, op.siteHashrateNote)}{op.siteHashrateEHs && <> · <SourceLink sourced={op.siteHashrateEHs} /></>}<EstimateBadge sourced={op.siteHashrateEHs} /></div>
+          {op.siteHashrateEHs && <div className="text-[10px] text-foreground/45">{op.siteHashrateEHs.scope}</div>}
+          <div>Konzern-Hashrate: {fmtEh(op.companyHashrateEHs?.value ?? null, op.companyHashrateNote)}{op.companyHashrateEHs && <> · <SourceLink sourced={op.companyHashrateEHs} /></>}<EstimateBadge sourced={op.companyHashrateEHs} /></div>
           {op.companyHashrateEHs && <div className="text-[10px] text-foreground/45">{op.companyHashrateEHs.scope}</div>}
-          <div>Strom: {fmtCt(op.companyPowerUsdPerKwh?.value ?? null, op.companyPowerNote)}{op.companyPowerUsdPerKwh && <> · <SourceLink sourced={op.companyPowerUsdPerKwh} /></>}</div>
+          <div>Strom: {fmtCt(op.companyPowerUsdPerKwh?.value ?? null, op.companyPowerNote)}{op.companyPowerUsdPerKwh && <> · <SourceLink sourced={op.companyPowerUsdPerKwh} /></>}<EstimateBadge sourced={op.companyPowerUsdPerKwh} /></div>
           {op.companyPowerUsdPerKwh && <div className="text-[10px] text-foreground/45">{op.companyPowerUsdPerKwh.scope}</div>}
         </div>
       ))}

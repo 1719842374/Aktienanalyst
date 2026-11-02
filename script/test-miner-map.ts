@@ -21,10 +21,14 @@ import {
   formatMinerCoverage,
   spreadMarkerOffsets,
   mwFromHashrateEh,
+  ehsFromMw,
   VEGA_FORMULA_MW,
   VEGA_HASHRATE_CEILING,
   HASHRATE_MW,
   CAMBRIDGE_ARCHIVE_SHARES,
+  CAMBRIDGE_CHINA_JAN2022_EH,
+  HASHRATE_INDEX_CHINA_Q4,
+  applyHashpriceUsd,
 } from "../shared/miner-map";
 
 const { buildMinerMap } = await import("../server/miner-map");
@@ -85,7 +89,12 @@ assert.equal(vega.lat, null);
 assert.equal(vega.lon, null);
 assert.match(vega.capacityMw?.scope ?? "", /205 MW/);
 assert.match(vega.formulaTooltip ?? "", /195 MW/);
-assert.match(vega.operators[0]?.siteHashrateNote ?? "", /^n\/a — /);
+assert.equal(vega.operators[0]?.siteHashrateNote, null);
+assert.equal(vega.operators[0]?.siteHashrateEHs?.estimateLabel, "Schätzung");
+assert.equal(vega.operators[0]?.siteHashrateEHs?.value, ehsFromMw(205, 16));
+assert.equal(vega.operators[0]?.companyHashrateEHs?.value, 28.1);
+assert.equal(vega.operators[0]?.companyPowerUsdPerKwh?.estimateLabel, "Schätzung");
+assert.equal(vega.operators[0]?.companyPowerUsdPerKwh?.value, 37.8 / 1000);
 assert.equal(barber.capacityMw?.value, 300);
 assert.equal(barber.capacityRole, "hpc");
 assert.equal(barber.lat, 32.399486);
@@ -95,7 +104,11 @@ assert.match(kz.capacityNote ?? "", /^n\/a — /);
 assert.equal(kz.estimateLabel, "Schätzung / keine Primärquelle");
 assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "KZ")?.sharePct, 13.22);
 assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "KZ")?.hashrateEH, 24.79);
-assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "CN")?.hashrateEH, null);
+assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "CN")?.hashrateEH, CAMBRIDGE_CHINA_JAN2022_EH);
+assert.equal(CAMBRIDGE_CHINA_JAN2022_EH, 39.59);
+assert.match(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "CN")?.note ?? "", /70\.97 × \(21\.11 \/ 37\.84\)/);
+assert.equal(HASHRATE_INDEX_CHINA_Q4.hashrateEH, 110);
+assert.equal(HASHRATE_INDEX_CHINA_Q4.label, "Schätzung");
 
 const sample = bubbleCapacitySample(MINER_MAP_SITES);
 assert.ok(sample.length >= 8, `Stichprobe ${sample.length}`);
@@ -124,7 +137,8 @@ assert.ok(body.pipeline.networkHashrateNote?.startsWith("n/a — "));
 assert.equal(body.pipeline.hashpriceUsdPerThDay, null);
 assert.ok(body.pipeline.hashpriceUsdNote?.startsWith("n/a — "));
 assert.match(body.countryShareNote, /^Schätzung \/ keine Primärquelle/);
-assert.equal(body.countryShares.length, 5);
+assert.equal(body.countryShares.length, 6);
+assert.equal(body.countryShares.find(s => s.asOf === "2026-09")?.hashrateEH, 110);
 assert.equal(body.sites.find(s => s.id === "us-tx-barber-lake")?.bubble.radiusPx, null);
 assert.ok(body.sites.find(s => s.id === "us-tx-vega")?.bubble.radiusPx != null);
 assert.equal(body.pipeline.breakevenUsd, null);
@@ -147,6 +161,45 @@ const zeroed = pipelineFromMiner({ currentHashrateEH: 0, hashprice: 0, breakeven
 assert.equal(zeroed.networkHashrateEH, null);
 assert.equal(zeroed.hashpriceBtcPerThDay, null);
 assert.equal(zeroed.breakevenUsd, null);
+
+const priced = applyHashpriceUsd(pipelineFromMiner({
+  currentHashrateEH: 900,
+  hashprice: 0.0000004,
+  breakevenPrice: 42000,
+}, null), {
+  usd: 70000,
+  asOf: "2026-11-02T00:00:00.000Z",
+  sourceLabel: "CoinGecko simple/price, dieselbe URL wie die BTC-Preis-Pipeline",
+  sourceUrl: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true",
+});
+assert.equal(priced.hashpriceUsdPerThDay, 0.0000004 * 70000);
+assert.equal(priced.hashpriceUsdNote, null);
+assert.equal(priced.btcSpotUsd, 70000);
+assert.match(priced.hashpriceUsdFormula ?? "", /4e-7 × 70000 USD/);
+const pricedWithoutSpot = applyHashpriceUsd(priced, null);
+assert.equal(pricedWithoutSpot.hashpriceUsdPerThDay, null);
+assert.match(pricedWithoutSpot.hashpriceUsdNote ?? "", /^n\/a — /);
+
+const odessa = MINER_MAP_SITES.find(s => s.id === "us-tx-odessa");
+assert.equal(odessa?.capacityMw?.value, 207);
+assert.equal(odessa?.operators[0]?.siteHashrateEHs?.value, 11.6);
+assert.equal(odessa?.operators[0]?.siteHashrateEHs?.estimateLabel, undefined);
+assert.equal(odessa?.operators[0]?.companyHashrateEHs?.value, 11.6);
+const childressOp = MINER_MAP_SITES.find(s => s.id === "us-tx-childress")?.operators[0];
+assert.equal(childressOp?.companyHashrateEHs?.value, 23.2);
+assert.equal(childressOp?.siteHashrateEHs, null);
+assert.match(childressOp?.siteHashrateNote ?? "", /^n\/a — /);
+assert.equal(childressOp?.companyPowerUsdPerKwh?.estimateLabel, "Schätzung");
+assert.equal(childressOp?.companyPowerUsdPerKwh?.value, 37.8 / 1000);
+const ethiopia = MINER_MAP_SITES.find(s => s.id === "et-btdr")?.operators[0];
+assert.equal(ethiopia?.companyHashrateEHs?.value, 82.3);
+assert.equal(ethiopia?.siteHashrateEHs?.value, ehsFromMw(40, 15.8));
+assert.equal(ethiopia?.siteHashrateEHs?.estimateLabel, "Schätzung");
+assert.equal(ethiopia?.companyPowerUsdPerKwh?.value, 0.044);
+
+const btcSrc = readFileSync("client/src/lib/btcAnalysis.ts", "utf8");
+assert.match(btcSrc, /api\.coingecko\.com\/api\/v3\/simple\/price\?ids=bitcoin/);
+assert.match(minerSrc, /api\.coingecko\.com\/api\/v3\/simple\/price\?ids=bitcoin/);
 
 const built = await buildMinerMap({
   fetchMiner: async () => ({ currentHashrateEH: 880, hashprice: 1e-7, breakevenPrice: 39000, puellMultiple: null, hashrateSource: "mempool.space", lastUpdated: "2026-11-01T00:00:00.000Z" }),
@@ -200,19 +253,22 @@ assert.equal((MINER_BUBBLE_ROLES as readonly string[]).includes("planned"), fals
 
 const coverage = minerCoverage(MINER_MAP_SITES);
 assert.equal(coverage.total, MINER_MAP_SITES.length);
-assert.equal(coverage.total - coverage.withMw, 6, "sechs Standorte ohne MW-Zahl");
-assert.equal(coverage.withMw, 14);
-assert.equal(coverage.withSiteEhs, 0, "keine erfundene Standort-EH/s");
-assert.equal(coverage.withCompanyEhs, 9);
+assert.equal(coverage.total - coverage.withMw, 5, "fünf Standorte ohne MW-Zahl");
+assert.equal(coverage.withMw, 15);
+assert.equal(coverage.withSiteEhs, 3);
+assert.equal(coverage.withCompanyEhs, 16);
 assert.equal(body.coverage.withMw, coverage.withMw);
 assert.equal(body.coverage.withSiteEhs, coverage.withSiteEhs);
 assert.equal(body.coverage.withCompanyEhs, coverage.withCompanyEhs);
 assert.equal("withFigure" in body.coverage, false);
 const coverageLabel = formatMinerCoverage(coverage);
-assert.equal(coverageLabel, "14/20 mit MW · 0/20 mit Standort-EH/s · 9/20 mit Konzern-EH/s");
+assert.equal(coverageLabel, "15/20 mit MW · 3/20 mit Standort-EH/s · 16/20 mit Konzern-EH/s");
 assert.doesNotMatch(coverageLabel, /mit Zahl/);
 
 const panelSrc = readFileSync("client/src/components/researcher/MinerMapPanel.tsx", "utf8");
+assert.match(panelSrc, /hashpriceUsdPerThDay/);
+assert.match(panelSrc, /miner-hashprice-usd/);
+assert.match(panelSrc, /miner-estimate-badge/);
 assert.match(panelSrc, /formatMinerCoverage\(data\.coverage\)/);
 assert.match(panelSrc, /spreadMarkerOffsets/);
 assert.doesNotMatch(panelSrc, /mit Zahl/);
