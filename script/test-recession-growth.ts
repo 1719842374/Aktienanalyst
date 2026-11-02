@@ -435,6 +435,51 @@ await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () 
   }
   assert.equal(GROWTH_HOLDINGS_PARAMS.minCoverage, 0.15);
   assert.equal(GROWTH_HOLDINGS_PARAMS.warnCoverage, 0.5);
+  const ashr = weightedHoldingsForward([
+    { symbol: "300308.SZ", weight: 0.0364, gFwdPct: 184.7 },
+    { symbol: "600519.SS", weight: 0.0318, gFwdPct: 10.7 },
+    { symbol: "300750.SZ", weight: 0.0312, gFwdPct: 21.6 },
+    { symbol: "300502.SZ", weight: 0.0221, gFwdPct: 242.1 },
+    { symbol: "600036.SS", weight: 0.0208, gFwdPct: 7.7 },
+    { symbol: "601899.SS", weight: 0.0199, gFwdPct: 29.0 },
+    { symbol: "603259.SS", weight: 0.0169, gFwdPct: 13.6 },
+    { symbol: "000333.SZ", weight: 0.0162, gFwdPct: 2.1 },
+    { symbol: "600900.SS", weight: 0.0142, gFwdPct: 0.5 },
+  ]);
+  assert.equal(ashr.available, true);
+  if (ashr.available) {
+    assert.ok(Math.abs(ashr.gFwdPct - 13.393377483443711) < 1e-9, String(ashr.gFwdPct));
+    assert.deepEqual(ashr.dropped, ["300308.SZ", "300502.SZ"]);
+  }
+});
+
+await ok("MAD 0 schaltet auf meanAD um und wirft nicht jeden Nicht-Median hinaus", () => {
+  assert.equal(FORWARD_OUTLIER.madZeroFallback, "meanAD");
+  const flat = weightedHoldingsForward([
+    { symbol: "A", weight: 0.2, gFwdPct: 10 },
+    { symbol: "B", weight: 0.2, gFwdPct: 10 },
+    { symbol: "C", weight: 0.2, gFwdPct: 10 },
+    { symbol: "D", weight: 0.2, gFwdPct: 12 },
+    { symbol: "E", weight: 0.2, gFwdPct: 400 },
+  ]);
+  assert.equal(flat.available, true);
+  if (flat.available) {
+    assert.deepEqual(flat.dropped, ["E"]);
+    assert.ok(flat.used.includes("D"));
+    assert.ok(Math.abs(flat.gFwdPct - (10 + 10 + 10 + 12) / 4) < 1e-9);
+    assert.match(flat.note, /meanAD/);
+  }
+  const identical = weightedHoldingsForward([
+    { symbol: "A", weight: 0.2, gFwdPct: 10 },
+    { symbol: "B", weight: 0.2, gFwdPct: 10 },
+    { symbol: "C", weight: 0.2, gFwdPct: 10 },
+    { symbol: "D", weight: 0.2, gFwdPct: 10 },
+  ]);
+  assert.equal(identical.available, true);
+  if (identical.available) {
+    assert.deepEqual(identical.dropped, []);
+    assert.ok(Math.abs(identical.gFwdPct - 10) < 1e-9);
+  }
 });
 
 await ok("Fazit liest Median-z an nearZeroSigma und coneSigma, nicht an festen Pp", () => {
@@ -525,6 +570,87 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
   assert.equal(direct.forward.available, true);
   if (direct.forward.available) assert.ok(Math.abs(direct.forward.gFwdPct - 10) < 1e-9);
   assert.equal(directProbes.includes("/etf/holdings"), false);
+});
+
+await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeile sichtbar", async () => {
+  const { loadRecessionGrowth } = await import("../server/recession-growth");
+  const yahooTrend = {
+    defaultKeyStatistics: { trailingEps: { raw: 10 } },
+    earningsTrend: { trend: [{ period: "+1y", endDate: "2027-09-30", earningsEstimate: { avg: { raw: 11 }, growth: { raw: 0.1 } } }] },
+  };
+  const base = {
+    loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 20 }], source: "yahoo" as const, error: null }),
+    fetchMultpl: async () => "",
+    loadIncome: async () => [],
+    loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
+    loadVix: async () => [],
+    fmpAvailable: true,
+    today: "2026-11-02",
+  };
+  const probe = async (path: string, params: Record<string, string>) => {
+    const symbol = params.symbol;
+    if (path === "/analyst-estimates" && symbol === "ASHR") return { status: 200, json: [], detail: "" };
+    if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
+    if (path === "/earnings") return { status: 200, json: [], detail: "" };
+    if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
+    if (path === "/analyst-estimates" && (symbol === "AAA" || symbol === "BBB")) {
+      return { status: 200, json: [{ date: "2027-12-31", epsAvg: 12 }], detail: "" };
+    }
+    if (path === "/ratios-ttm" && (symbol === "AAA" || symbol === "BBB")) {
+      return { status: 200, json: [{ netIncomePerShareTTM: 10 }], detail: "" };
+    }
+    return { status: 404, json: null, detail: "unbekannt" };
+  };
+  const shown = await loadRecessionGrowth("ASHR", {
+    ...base,
+    probeFmp: probe,
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "AAA", holdingPercent: { raw: 0.05 } },
+          { symbol: "BBB", holdingPercent: { raw: 0.06 } },
+        ] } };
+      }
+      if (symbol === "ASHR") return yahooTrend;
+      return { defaultKeyStatistics: {} };
+    },
+  });
+  assert.equal(shown.forward.available, true);
+  if (shown.forward.available) {
+    assert.ok(Math.abs(shown.forward.gFwdPct - 10) < 1e-9);
+    assert.match(shown.forward.coverageWarn ?? "", /minCoverage/);
+    assert.match(shown.forward.coverageWarn ?? "", /Deckung/);
+    assert.match(shown.forward.source, /minCoverage/);
+  }
+  const hidden = await loadRecessionGrowth("ASHR", {
+    ...base,
+    probeFmp: probe,
+    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "AAA", holdingPercent: { raw: 0.05 } },
+          { symbol: "BBB", holdingPercent: { raw: 0.06 } },
+        ] } };
+      }
+      return { defaultKeyStatistics: {} };
+    },
+  });
+  assert.equal(hidden.forward.available, false);
+  if (!hidden.forward.available) {
+    assert.match(hidden.forward.reason, /minCoverage/);
+    assert.match(hidden.forward.reason, /Deckung/);
+  }
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+  });
+  client.setQueryData(["/api/recession/earnings-growth", "SPY"], hidden);
+  client.setQueryData(["/api/recession/growth-gap", "SPY"], hidden);
+  const { RecessionGrowthSection } = await import("../client/src/components/recession/RecessionGrowthSection");
+  const html = renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client }, React.createElement(RecessionGrowthSection, { number: 17 })),
+  );
+  assert.match(html, /data-testid="recession-growth-coverage"/);
+  assert.match(html, /minCoverage/);
 });
 
 await ok("Pins und Score-Pfade bleiben", () => {

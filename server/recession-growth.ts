@@ -386,6 +386,7 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
   const probe = memoProbe(deps.probeFmp);
   const local: GrowthDeps = { ...deps, probeFmp: probe };
   const rates = await usdPerUnit();
+  let thinCoverage: string | null = null;
   if (!deps.fmpAvailable) {
     notes.push("FMP nicht konfiguriert");
   } else {
@@ -499,11 +500,22 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
         };
       }
       notes.push(weighted.reason);
+      if (weighted.reason.includes("minCoverage")) thinCoverage = weighted.reason;
     }
   }
   for (const symbol of book.fmpSymbols) {
     const yahoo = await yahooForward(symbol, deps);
-    if (yahoo.available) return { forward: yahoo, trace: notes.join("; ") };
+    if (yahoo.available) {
+      if (!thinCoverage) return { forward: yahoo, trace: notes.join("; ") };
+      return {
+        forward: {
+          ...yahoo,
+          coverageWarn: thinCoverage,
+          source: `${yahoo.source} · ${thinCoverage}`,
+        },
+        trace: notes.join("; "),
+      };
+    }
     notes.push(`${symbol}: ${yahoo.reason}`);
   }
   const reason = shortForwardReason(notes);
@@ -513,6 +525,7 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
 function shortForwardReason(notes: string[]): string {
   const pick = (re: RegExp) => notes.find(n => re.test(n));
   const chosen = [
+    pick(/minCoverage/),
     pick(/analyst-estimates\?symbol=SPY/),
     pick(/analyst-estimates\?symbol=(%5E|\^)GSPC[^;]*limit=8/),
     pick(/etf\/holdings/),

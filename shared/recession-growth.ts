@@ -75,11 +75,16 @@ export const FORWARD_HORIZON = {
   annualizeAfterDays: 548,
 } as const;
 
-/** Robust z = madScale · (g − median) / MAD. Names past robustZMax leave the mean. */
+/**
+ * Robust z = madScale · (g − median) / MAD. Names past robustZMax leave the mean.
+ * madZeroFallback applies when MAD is 0 (at least half the sample sits on the median).
+ * "meanAD" scales by the mean absolute deviation. If that is 0 too, every print is the median and the filter is suspended.
+ */
 export const FORWARD_OUTLIER = {
   robustZMax: 2.5,
   madScale: 0.6745,
   minNames: 4,
+  madZeroFallback: "meanAD",
 } as const;
 
 export const EPS_CURRENCY = {
@@ -805,11 +810,44 @@ function deFixed(v: number, digits: number): string {
   return sign + Math.abs(v).toFixed(digits).replace(".", ",");
 }
 
-function robustZ(values: number[]): number[] {
+type OutlierScale = "mad" | "meanAD" | "suspended";
+
+/** MAD, or madZeroFallback when MAD is 0. A zero meanAD suspends the filter. */
+function robustZ(values: number[]): { z: number[]; scale: OutlierScale } {
   const med = median(values);
-  const mad = median(values.map(value => Math.abs(value - med)));
-  if (!(mad > 0)) return values.map(value => value === med ? 0 : Number.POSITIVE_INFINITY);
-  return values.map(value => FORWARD_OUTLIER.madScale * (value - med) / mad);
+  const absDev = values.map(value => Math.abs(value - med));
+  const mad = median(absDev);
+  if (mad > 0) {
+    return { z: values.map(value => FORWARD_OUTLIER.madScale * (value - med) / mad), scale: "mad" };
+  }
+  switch (FORWARD_OUTLIER.madZeroFallback) {
+    case "meanAD": {
+      const meanAd = absDev.reduce((sum, value) => sum + value, 0) / values.length;
+      if (meanAd > 0) {
+        return { z: values.map(value => FORWARD_OUTLIER.madScale * (value - med) / meanAd), scale: "meanAD" };
+      }
+      return { z: values.map(() => 0), scale: "suspended" };
+    }
+    default: {
+      const neverFallback: never = FORWARD_OUTLIER.madZeroFallback;
+      return neverFallback;
+    }
+  }
+}
+
+function scaleLabel(scale: OutlierScale): string {
+  switch (scale) {
+    case "mad":
+      return "";
+    case "meanAD":
+      return ` (${FORWARD_OUTLIER.madZeroFallback})`;
+    case "suspended":
+      return "";
+    default: {
+      const neverScale: never = scale;
+      return neverScale;
+    }
+  }
 }
 
 /**
@@ -825,11 +863,13 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   let used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
   if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
   const dropped: string[] = [];
+  let scale: OutlierScale = "suspended";
   if (used.length >= FORWARD_OUTLIER.minNames) {
-    const z = robustZ(used.map(row => row.gFwdPct as number));
+    const scored = robustZ(used.map(row => row.gFwdPct as number));
+    scale = scored.scale;
     const kept: HoldingGrowthRow[] = [];
     used.forEach((row, index) => {
-      if (Math.abs(z[index]) > FORWARD_OUTLIER.robustZMax) dropped.push(row.symbol);
+      if (Math.abs(scored.z[index]) > FORWARD_OUTLIER.robustZMax) dropped.push(row.symbol);
       else kept.push(row);
     });
     used = kept;
@@ -852,7 +892,9 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
       reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %`,
     };
   }
-  const outlierNote = dropped.length ? `, Ausreißer robustZMax ${FORWARD_OUTLIER.robustZMax}: ${dropped.join(", ")}` : "";
+  const outlierNote = dropped.length
+    ? `, Ausreißer robustZMax ${FORWARD_OUTLIER.robustZMax}${scaleLabel(scale)}: ${dropped.join(", ")}`
+    : "";
   const note = coverage != null
     ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${outlierNote}`
     : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position${outlierNote}`;
