@@ -131,14 +131,14 @@ console.log("\n=== One memory layer, wired in front of SerpApi ===");
   check("fresh cache is consulted before SerpApi", scoreFn.indexOf("freshGoogleTrends") !== -1 && scoreFn.indexOf("freshGoogleTrends") < scoreFn.indexOf("serpapi.com/search.json"));
   check("the SerpApi call stays on the same route path", scoreFn.includes("serpapi.com/search.json") && scoreFn.includes("engine=google_trends"));
   check("a miss asks the last-good helper", scoreFn.includes("acceptGoogleTrendsFetch"));
-  check("no key still closes the slot", scoreFn.includes("SERPAPI_KEY not set"));
-  check("scoreGoogleTrends does not open a route or a second store", !scoreFn.includes("app.get") && !scoreFn.includes("app.post") && !scoreFn.includes("redis") && !scoreFn.includes("pytrends") && !scoreFn.includes("diskCache"));
+  check("a missing key does not return before the cache", scoreFn.indexOf("freshGoogleTrends") !== -1 && scoreFn.indexOf("freshGoogleTrends") < scoreFn.indexOf("kein SERPAPI_KEY"));
+  check("pytrends is the miss path, not a second route or Redis", scoreFn.includes("readPytrendsOutcome") && !scoreFn.includes("app.get") && !scoreFn.includes("app.post") && !scoreFn.includes("redis") && !scoreFn.includes("diskCache"));
   const routes = server.slice(server.indexOf("export function registerRecessionRoutes"));
   check("the analysis route is still the one POST", routes.includes('app.post("/api/analyze-recession"') && !routes.includes("app.get(\"/api/analyze-recession"));
   check("schema version stays 1", server.includes("export const RECESSION_SCHEMA_VERSION = 1"));
 
   const cacheSrc = readFileSync(new URL("../server/cache/google-trends-cache.ts", import.meta.url), "utf8");
-  check("the cache module is process memory only", !cacheSrc.includes("ioredis") && !cacheSrc.includes("better-sqlite3") && !cacheSrc.includes("diskCache"));
+  check("no Redis and no sqlite; a local file is the restart copy", !cacheSrc.includes("ioredis") && !cacheSrc.includes("better-sqlite3") && !cacheSrc.includes("REDIS_URL") && cacheSrc.includes("GOOGLE_TRENDS_DISK_NAME"));
 
   const note = readFileSync(new URL("../client/src/components/recession/recessionDashboardPartsB2.tsx", import.meta.url), "utf8");
   check("the 61.2 sentence is gone", !note.includes("61.2") && !note.includes("Score auf 0 gesetzt"));

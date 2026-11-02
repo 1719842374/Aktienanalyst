@@ -32,9 +32,19 @@ export function readGoogleTrendsOverlay(now: number): GoogleTrendsOverlayBody {
   const age = now - entry.timestamp;
   const freshness = age >= 0 ? googleTrendsFreshness(age) : { ageHours: null, isStale: false };
   const asOf = Number.isFinite(entry.timestamp) ? new Date(entry.timestamp).toISOString().slice(0, 10) : null;
+  if (entry.naReason) {
+    return {
+      source: entry.source,
+      points: [],
+      asOf,
+      note: entry.naReason,
+      ageHours: freshness.ageHours,
+      isStale: freshness.isStale,
+    };
+  }
   const points = entry.points?.length
     ? entry.points
-    : (asOf ? [{ date: asOf, value: entry.value }] : []);
+    : (asOf && typeof entry.value === "number" ? [{ date: asOf, value: entry.value }] : []);
   const note = points.length < REST_OVERLAY_PARAMS.minPoints
     ? "zu wenig Drucke im Cache für einen z-Score"
     : (freshness.isStale ? "Druck älter als 24 h" : null);

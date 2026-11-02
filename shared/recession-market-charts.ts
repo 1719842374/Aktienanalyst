@@ -4,6 +4,24 @@
  */
 import { z } from "zod";
 
+/** Missing factpack figure. The reason stays after the dash. No filled-in number. */
+export function naWithReason(reason: string): string {
+  const body = reason.replace(/^n\/a\s*—\s*/, "").trim();
+  return body ? `n/a — ${body}` : "n/a";
+}
+
+/** A finite value stays formatted. An empty one shows the matching `n/a —` clause, or plain n/a. */
+export function displayNa(
+  value: number | null | undefined,
+  formatted: string,
+  note: string | null | undefined,
+  field: string,
+): string {
+  if (value != null && Number.isFinite(value)) return formatted;
+  const part = note?.split(" · ").find(piece => piece.startsWith("n/a —") && piece.includes(field));
+  return part ?? "n/a";
+}
+
 export const SERIES_FLOOR = "1999-01-01";
 export const VOL_Y_MAX = 90;
 export const VOL_MARK_RADIUS = 20;

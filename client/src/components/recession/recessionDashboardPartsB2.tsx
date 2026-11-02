@@ -81,9 +81,12 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
       {ageHours == null && !data.googleTrendsAvailable && (
         <div className="flex items-start gap-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs" data-testid="text-google-trends-age">
           <Info className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0 mt-0.5" />
-          <span className="text-muted-foreground">
-            Google Trends nicht verfügbar. Der Slot bleibt geschlossen und zählt nicht in Netto oder Max.
-          </span>
+          <div className="text-muted-foreground">
+            <p>Google Trends nicht verfügbar. Der Slot bleibt geschlossen und zählt nicht in Netto oder Max.</p>
+            {typeof google?.value === "string" && google.value.startsWith("n/a —") && (
+              <p className="mt-1 font-medium text-foreground" data-testid="text-google-trends-reason">{google.value}</p>
+            )}
+          </div>
         </div>
       )}
     </div>
