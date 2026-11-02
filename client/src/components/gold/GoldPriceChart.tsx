@@ -130,7 +130,8 @@ export function GoldPriceChart({ data }: Props) {
   // Reihe existiert in der Historie, hat aber im Fenster keine Werte -> Chip "n/a", keine Linie.
   const macroNa = useMemo(() => MACRO.filter(m => macroRangeState(rangeTech.points, chartData, m.key) === "na"), [rangeTech, chartData]);
   const rangeNote = goldRangeNote(timeRange, filteredData, rangeSource,
-    Object.fromEntries(MACRO.map(m => [m.key, m.label])) as Record<MacroKey, string>);
+    Object.fromEntries(MACRO.map(m => [m.key, m.label])) as Record<MacroKey, string>,
+    timeRange === "10Y" && filteredData.length >= TIME_RANGE_CUTOFF["10Y"]);
 
   const macroDomain = useMemo(() => {
     const out = {} as Record<MacroKey, [number, number]>;
