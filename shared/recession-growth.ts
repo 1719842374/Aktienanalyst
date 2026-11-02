@@ -63,6 +63,7 @@ export const FORWARD_FORMULA_EPS = "g_fwd = EPS_consensus / EPS_TTM − 1";
 export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i / Σ w) · (EPS_consensus,i / EPS_TTM,i − 1)";
 export const FORWARD_FORMULA_YAHOO_RATIO = "g_fwd = earningsTrend[+1y].avg / trailingEps − 1";
 export const FORWARD_FORMULA_YAHOO_GROWTH = "g_fwd = earningsTrend[+1y].growth (Yahoo-YoY, nicht Konsens/TTM)";
+export const FORWARD_FORMULA_YAHOO_HTML = "g_fwd = forwardEps / trailingEps − 1";
 export const REALIZED_FORMULA = "g_t = EPS_t / EPS_{t−1} − 1";
 export const FAZIT_FORMULA =
   "(EPS-YoY − Median_10J) / σ_10J und (g_fwd − g_realized) / σ_10J; Bänder nearZeroSigma und coneSigma";
@@ -273,6 +274,7 @@ export function forwardFromEps(
   ttm: number | null,
   asOf: string,
   source: string,
+  formula: string = FORWARD_FORMULA_EPS,
 ): ForwardReading {
   if (consensus == null || !Number.isFinite(consensus)) {
     return { available: false, reason: "n/a — Forward-Konsens: epsAvg fehlt" };
@@ -287,8 +289,39 @@ export function forwardFromEps(
     epsTtm: ttm,
     asOf,
     source,
-    formula: FORWARD_FORMULA_EPS,
+    formula,
   };
+}
+
+/** Quote-HTML nach dem Entschärfen der Escape-Quotes. Kein Crumb. */
+export function unescapeYahooHtml(html: string): string {
+  return html.replace(/\\"/g, "\"").replace(/&quot;/g, "\"");
+}
+
+/** Top-Holdings aus der Quote-Seite. Die Reihenfolge im HTML ist symbol, holdingName, holdingPercent. */
+export function holdingsFromYahooHtml(html: string): HoldingWeightRow[] {
+  if (!html) return [];
+  const text = unescapeYahooHtml(html);
+  const out: HoldingWeightRow[] = [];
+  const re = /"symbol":"([A-Z0-9.-]+)","holdingName":"[^"]*","holdingPercent":\{"raw":(\d+(?:\.\d+)?)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const weight = Number(match[2]);
+    if (Number.isFinite(weight) && weight > 0) out.push({ symbol: match[1], weight });
+  }
+  return weightsFromHoldingsPayload(out);
+}
+
+/** trailingEps und forwardEps aus der eingebetteten Quote-Summary der Quote-Seite. */
+export function epsPairFromYahooHtml(html: string): { trailing: number | null; forward: number | null } {
+  if (!html) return { trailing: null, forward: null };
+  const text = unescapeYahooHtml(html);
+  const read = (key: string): number | null => {
+    const match = text.match(new RegExp(`"${key}":\\{"raw":(-?\\d+(?:\\.\\d+)?)`));
+    const n = match ? Number(match[1]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  return { trailing: read("trailingEps"), forward: read("forwardEps") };
 }
 
 /** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
@@ -715,7 +748,8 @@ export function growthFazit(stats: RealizedStats, gap: GapReading): GrowthFazit 
       : "nahe";
   const realized = `EPS-YoY ${signedDe(stats.realizedPct, 1)} % liegt ${side} dem ${GROWTH_GAP_PARAMS.medianWindowYears}J-Median ${signedDe(stats.median10y, 1)} % (Abstand ${signedDe(stats.distanceToMedianPp, 1)} Pp, Perzentil ${deFixed(stats.percentile, 1)} %, Median-z ${signedDe(medianZ, 2)}, Band ${bandPhrase(realizedBand)}; Kegel ±${GROWTH_GAP_PARAMS.coneSigma}σ von ${signedDe(stats.coneLow, 1)} % bis ${signedDe(stats.coneHigh, 1)} %).`;
   if (!gap.available) {
-    return { available: true, text: `${realized} Growth Gap ${gap.reason}`, realizedBand, gapBand: null, formula: FAZIT_FORMULA };
+    const first = gap.reason.replace(/^n\/a — /, "").split(";")[0].trim();
+    return { available: true, text: `${realized} Growth Gap n/a — ${first}.`, realizedBand, gapBand: null, formula: FAZIT_FORMULA };
   }
   const gapBand = sigmaBand(Math.abs(gap.z));
   const gapText = `Growth Gap ${signedDe(gap.gapPp, 1)} Pp (z ${signedDe(gap.z, 2)}, Band ${bandPhrase(gapBand)}): ${gapSentence(gap.direction)}.`;

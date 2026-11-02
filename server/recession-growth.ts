@@ -3,6 +3,7 @@
  * Nur Anzeige. Fehlende Quelle → n/a mit Grund, kein Ersatzwert.
  */
 import { isFmpAvailable, fmpIncomeStatement, fmpObserved } from "./fmp";
+import { fetchYahooQuoteHtml } from "./yahoo-fundamental-fallback";
 import { fetchFredVolSeries } from "./recession-markets";
 import { loadEtfBars } from "./recession-ta-route";
 import { fetchYahooQuoteSummaryResult, type YahooCallDiag } from "./yahoo-fetcher";
@@ -10,6 +11,7 @@ import { ttmEpsFromRatiosTtmRow, epsPrintFromRow } from "../shared/recession-mar
 import {
   FMP_LEGACY_NOTE,
   FORWARD_FORMULA_YAHOO_GROWTH,
+  FORWARD_FORMULA_YAHOO_HTML,
   GROWTH_BOOKS,
   GROWTH_GAP_PARAMS,
   GROWTH_HOLDINGS_PARAMS,
@@ -17,7 +19,9 @@ import {
   describeAnalystEstimates,
   describeEarningsRows,
   forwardFromEps,
+  epsPairFromYahooHtml,
   forwardFromYahooQuoteSummary,
+  holdingsFromYahooHtml,
   multplGrowthPrints,
   nextConsensusEps,
   weightsFromHoldingsPayload,
@@ -47,6 +51,7 @@ export interface GrowthDeps {
   probeFmp: (path: string, params: Record<string, string>) => Promise<FmpProbeResult>;
   loadIncome: (symbol: string) => Promise<unknown>;
   loadYahooSummary: (symbol: string, modules: readonly string[], sink?: YahooCallDiag[]) => Promise<unknown | null>;
+  loadYahooHtml: (symbol: string) => Promise<{ status: number | null; html: string | null; error: string | null }>;
   loadVix: (cosd: string) => Promise<{ date: string; value: number }[]>;
   fmpAvailable: boolean;
   today: string;
@@ -69,6 +74,13 @@ async function defaultFetchMultpl(): Promise<string | null> {
   return resp.text();
 }
 
+let yahooHtmlEnabled = true;
+
+/** Der Stub-HTTP-Lauf bleibt offline. Die Preview lässt den Loader an. */
+export function setYahooHtmlEnabledForTests(on: boolean): void {
+  yahooHtmlEnabled = on;
+}
+
 export function defaultGrowthDeps(today = new Date().toISOString().slice(0, 10)): GrowthDeps {
   return {
     loadBars: loadEtfBars,
@@ -76,6 +88,10 @@ export function defaultGrowthDeps(today = new Date().toISOString().slice(0, 10))
     probeFmp: (path, params) => fmpObserved(path, params),
     loadIncome: symbol => fmpIncomeStatement(symbol, 40),
     loadYahooSummary: (symbol, modules, sink) => fetchYahooQuoteSummaryResult(symbol, modules, sink),
+    loadYahooHtml: async (symbol) => {
+      if (!yahooHtmlEnabled) return { status: null, html: null, error: "im Test aus" };
+      return fetchYahooQuoteHtml(symbol);
+    },
     loadVix: cosd => fetchFredVolSeries("VIXCLS", cosd),
     fmpAvailable: isFmpAvailable(),
     today,
@@ -178,7 +194,10 @@ async function probeConsensus(symbol: string, deps: GrowthDeps, notes: string[])
     try {
       const res = await deps.probeFmp("/analyst-estimates", params);
       const shape = res.status === 200 ? describeAnalystEstimates(res.json, deps.today) : res.detail;
-      notes.push(`${label} HTTP ${res.status || "n/a"}${shape ? `: ${shape}` : ""}`);
+      const line = i === 0 || res.status !== 402
+        ? `${label} HTTP ${res.status || "n/a"}${shape ? `: ${shape}` : ""}`
+        : `${label} HTTP 402 (Parameter geändert, gleicher Gate)`;
+      notes.push(line);
       if (res.status === 402) saw402 = true;
       else saw402 = false;
       if (res.status === 200 && nextConsensusEps(res.json, deps.today)) return res.json;
@@ -262,6 +281,23 @@ async function growthForHolding(
     }
   }
   const yahoo = await yahooOnce();
+  if (!yahoo.available && deps.loadYahooHtml) {
+    try {
+      const page = await deps.loadYahooHtml(symbol);
+      const pair = epsPairFromYahooHtml(page.html ?? "");
+      const htmlFwd = forwardFromEps(
+        pair.forward,
+        pair.trailing,
+        deps.today,
+        `Yahoo Quote-HTML ${symbol} (keyless, HTTP/2)`,
+        FORWARD_FORMULA_YAHOO_HTML,
+      );
+      if (htmlFwd.available) return { gFwdPct: htmlFwd.gFwdPct, via: "Yahoo Quote-HTML" };
+      notes.push(`${symbol}: ${page.error ?? htmlFwd.reason}`);
+    } catch (err) {
+      notes.push(`${symbol}: Yahoo Quote-HTML fehlgeschlagen (${clip(err)})`);
+    }
+  }
   if (yahoo.available) {
     const via = yahoo.formula === FORWARD_FORMULA_YAHOO_GROWTH ? "Yahoo earningsTrend growth" : "Yahoo earningsTrend";
     return { gFwdPct: yahoo.gFwdPct, via };
@@ -332,6 +368,21 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
         notes.push(`Yahoo topHoldings ${book.etf} fehlgeschlagen (${clip(err)})`);
       }
     }
+    if (!weights.length && deps.loadYahooHtml) {
+      try {
+        const page = await deps.loadYahooHtml(book.etf);
+        const parsed = holdingsFromYahooHtml(page.html ?? "").slice(0, GROWTH_HOLDINGS_PARAMS.maxNames);
+        if (parsed.length) {
+          weights = parsed;
+          weightOrigin = "Yahoo Quote-HTML topHoldings (keyless, HTTP/2)";
+          notes.push(`Yahoo Quote-HTML ${book.etf}: ${parsed.length} Gewichte`);
+        } else {
+          notes.push(`Yahoo Quote-HTML ${book.etf} HTTP ${page.status ?? "n/a"}: ${page.error ?? "keine Holdings"}`);
+        }
+      } catch (err) {
+        notes.push(`Yahoo Quote-HTML ${book.etf} fehlgeschlagen (${clip(err)})`);
+      }
+    }
     if (weights.length) {
       const rows: HoldingGrowthRow[] = [];
       const vias = new Set<string>();
@@ -364,8 +415,20 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
     if (yahoo.available) return { forward: yahoo, trace: notes.join("; ") };
     notes.push(`${symbol}: ${yahoo.reason}`);
   }
-  const reason = `n/a — Forward-Konsens: ${notes.join("; ")}`;
+  const reason = shortForwardReason(notes);
   return { forward: { available: false, reason }, trace: notes.join("; ") };
+}
+
+function shortForwardReason(notes: string[]): string {
+  const pick = (re: RegExp) => notes.find(n => re.test(n));
+  const chosen = [
+    pick(/analyst-estimates\?symbol=SPY/),
+    pick(/analyst-estimates\?symbol=(%5E|\^)GSPC[^;]*limit=8/),
+    pick(/etf\/holdings/),
+    pick(/Quote-HTML|crumb|earningsTrend fehlt|topHoldings|FMP nicht konfiguriert/),
+  ].filter((line): line is string => !!line).map(line => line.slice(0, 220));
+  const body = (chosen.length ? chosen : notes.slice(0, 2)).join("; ");
+  return `n/a — Forward-Konsens: ${body}`;
 }
 
 export async function loadRecessionGrowth(index: GrowthIndex, deps: GrowthDeps = defaultGrowthDeps()): Promise<RecessionGrowthBody> {

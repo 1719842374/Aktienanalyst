@@ -14,11 +14,14 @@ import {
   buildGrowthBody,
   describeAnalystEstimates,
   emptyGrowthBody,
+  epsPairFromYahooHtml,
+  FORWARD_FORMULA_YAHOO_HTML,
   forwardFromEps,
   forwardFromYahooQuoteSummary,
   gapReading,
   growthChartPoints,
   growthFazit,
+  holdingsFromYahooHtml,
   multplGrowthPrints,
   nextConsensusEps,
   realizedStats,
@@ -240,6 +243,8 @@ function multplTable(): string {
 await ok("HTTP-Kette: beide Pfade, n/a ohne erfundene Lücke", async () => {
   const express = (await import("express")).default;
   const { registerRecessionGrowthRoutes, resetRecessionGrowthCache } = await import("../server/recession-growth-route");
+  const { setYahooHtmlEnabledForTests } = await import("../server/recession-growth");
+  setYahooHtmlEnabledForTests(false);
   resetRecessionGrowthCache();
   const orig = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL | Request) => {
@@ -279,6 +284,8 @@ await ok("HTTP-Kette: beide Pfade, n/a ohne erfundene Lücke", async () => {
     assert.match(other.priceError ?? "", /unbekannter Index/);
     assert.equal(JSON.stringify(gap.growthGap).includes("\"gapPp\":0"), false);
   } finally {
+    const { setYahooHtmlEnabledForTests } = await import("../server/recession-growth");
+    setYahooHtmlEnabledForTests(true);
     globalThis.fetch = orig;
     await new Promise(resolve => server.close(() => resolve(null)));
   }
@@ -334,6 +341,17 @@ await ok("Yahoo +1y/trailingEps ist der Quotient, fehlendes Modul bleibt n/a", (
   if (!missing.available) assert.match(missing.reason, /earningsTrend fehlt/);
   assert.equal(describeAnalystEstimates([], "2026-11-02"), "0 Zeilen");
   assert.match(describeAnalystEstimates([{ date: "2027-12-31", revenueAvg: 1 }], "2026-11-02"), /keine EPS-Felder/);
+  const html = String.raw`{\"symbol\":\"NVDA\",\"holdingName\":\"Nvidia\",\"holdingPercent\":{\"raw\":0.0836162,\"fmt\":\"8.36%\"}},{\"symbol\":\"AAPL\",\"holdingName\":\"Apple Inc\",\"holdingPercent\":{\"raw\":0.0735303}}`;
+  const rows = holdingsFromYahooHtml(html);
+  assert.deepEqual(rows.map(r => r.symbol), ["NVDA", "AAPL"]);
+  assert.ok(Math.abs(rows[0].weight - 0.0836162) < 1e-9);
+  const pair = epsPairFromYahooHtml(String.raw`\"trailingEps\":{\"raw\":8.72},\"forwardEps\":{\"raw\":9.55226}`);
+  const fromHtml = forwardFromEps(pair.forward, pair.trailing, "2026-11-02", "Yahoo Quote-HTML", FORWARD_FORMULA_YAHOO_HTML);
+  assert.equal(fromHtml.available, true);
+  if (fromHtml.available) {
+    assert.ok(Math.abs(fromHtml.gFwdPct - (9.55226 / 8.72 - 1) * 100) < 1e-9);
+    assert.equal(fromHtml.formula, FORWARD_FORMULA_YAHOO_HTML);
+  }
 });
 
 await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () => {
