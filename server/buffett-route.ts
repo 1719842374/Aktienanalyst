@@ -18,6 +18,7 @@ import {
   type RatioObs,
   type TrendPoint,
 } from "./buffett-ratio";
+import { assembleBuffettRegression, unavailableRegression, type BuffettRegressionFit } from "./buffett-regression";
 
 const REGIONS = ["US", "EU", "CN"] as const;
 type RegionId = (typeof REGIONS)[number];
@@ -252,13 +253,38 @@ function withTrend(points: RatioObs[]): TrendPoint[] {
   return applyTrend(model, points);
 }
 
+const REGRESSION_SOURCES = [
+  { id: "CP", role: "Gewinne nach Steuern, Mrd. $, Quartal (Regression)" },
+  { id: "DFII10", role: "Realzins 10J TIPS, Prozent (Regression)" },
+];
+
+function usRegression(
+  ratios: RatioObs[],
+  gdp: FredPoint[],
+  profits: FredResult,
+  realRates: FredResult,
+): BuffettRegressionFit {
+  try {
+    return assembleBuffettRegression({
+      ratios,
+      profits: profits.points,
+      gdp,
+      realRates: realRates.points,
+      sectorShares: null,
+    });
+  } catch (err) {
+    return unavailableRegression(`n/a — ${String((err as Error)?.message ?? err).slice(0, 180)}`);
+  }
+}
+
 async function buildUnitedStates(): Promise<{
   points: TrendPoint[];
   note: string;
   sources: { id: string; role: string }[];
   fallback?: BuffettFallbackInfo | null;
+  regression: BuffettRegressionFit;
 }> {
-  const [gdpResult, nfcResult, financialResult, wilshireResult, proxy] = await Promise.all([
+  const [gdpResult, nfcResult, financialResult, wilshireResult, proxy, profitResult, realRateResult] = await Promise.all([
     fetchFred("GDP", "1947-01-01"),
     fetchFred("NCBEILQ027S", "1947-01-01"),
     fetchFred("FBCELLQ027S", "1947-01-01"),
@@ -267,6 +293,8 @@ async function buildUnitedStates(): Promise<{
       (err: any) => ({ bars: null as YahooBar[] | null, error: String(err?.message ?? err) }),
     ),
     fetchSessionProxy(),
+    fetchFred("CP", "1947-01-01"),
+    fetchFred("DFII10", "1997-01-01"),
   ]);
   const gdp = gdpResult.points;
   const nfc = nfcResult.points;
@@ -297,7 +325,8 @@ async function buildUnitedStates(): Promise<{
       points,
       fallback: { source: FRED_MARKET_VALUE_FALLBACK_SOURCE, reason: wilshireError, frequency: "quarterly", asOf },
       note: `Ersatzquelle: Der Wilshire 5000 ist nicht verfügbar (${wilshireError}). Der Zähler ist deshalb der Marktwert der Aktien nichtfinanzieller und finanzieller Firmen aus den Financial Accounts (FRED NCBEILQ027S + FBCELLQ027S), geteilt durch das nominale BIP. Das sind Quartalswerte mit Veröffentlichungsverzug; der letzte Punkt ist das letzte veröffentlichte Quartal, nicht der heutige Handelstag. Das Niveau ist nicht mit der Wilshire-Linie vergleichbar, weil die Financial Accounts auch nicht börsennotierte Firmen enthalten. Trend und Bänder werden auf dieser Reihe geschätzt.`,
-      sources: US_SOURCES.filter(source => source.id !== "^W5000"),
+      sources: [...US_SOURCES.filter(source => source.id !== "^W5000"), ...REGRESSION_SOURCES],
+      regression: usRegression(early, gdp, profitResult, realRateResult),
     };
   }
   const wilshire = wilshireResult.bars;
@@ -324,9 +353,13 @@ async function buildUnitedStates(): Promise<{
   return {
     points,
     note: `Der Zähler ist der Wilshire 5000. Ein Indexpunkt wird mit 1,05 Mrd. $ Kapitalisierung angesetzt und durch das nominale BIP geteilt. Bis 1950 zurück wird die Quote der Financial Accounts auf den ersten Indexwert skaliert. Die Trendlinie und die Bänder von einer und zwei Standardabweichungen gelten für die gesamte Reihe. Die Zeitfenster zeigen davon nur einen Ausschnitt.${carried}`,
-    sources: extended && proxy
-      ? [...US_SOURCES, { id: proxy.id, role: `${proxy.name}, Tagesrendite nach dem letzten Wilshire-Schluss` }]
-      : US_SOURCES,
+    sources: [
+      ...(extended && proxy
+        ? [...US_SOURCES, { id: proxy.id, role: `${proxy.name}, Tagesrendite nach dem letzten Wilshire-Schluss` }]
+        : US_SOURCES),
+      ...REGRESSION_SOURCES,
+    ],
+    regression: usRegression(points, gdp, profitResult, realRateResult),
   };
 }
 
@@ -579,6 +612,7 @@ interface LoadedBuffett {
   points: TrendPoint[];
   benchmark?: BenchmarkInfo | null;
   benchmarkUnavailable?: string | null;
+  regression: BuffettRegressionFit;
 }
 
 /** Dieselbe Antwort wie GET /api/analyze-recession/buffett, inklusive Cache und TTL. */
@@ -592,10 +626,14 @@ async function loadRegion(region: RegionId): Promise<LoadedBuffett> {
     fallback?: BuffettFallbackInfo | null;
     benchmark?: BenchmarkInfo | null;
     benchmarkUnavailable?: string | null;
+    regression?: BuffettRegressionFit;
   } = region === "US"
     ? await buildUnitedStates()
     : await buildBenchmarkRegion(region);
   const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
+  const regression = built.regression ?? unavailableRegression(
+    "n/a — Gewinn (FRED CP) und Realzins (DFII10) sind US-Reihen. Für diese Region liegt keine eigene Historie vor.",
+  );
   const body: LoadedBuffett = {
     region,
     asOf: latest?.date ?? null,
@@ -604,6 +642,7 @@ async function loadRegion(region: RegionId): Promise<LoadedBuffett> {
     sources: built.sources,
     fallback: built.fallback ?? null,
     points: built.points,
+    regression,
     // F1-71/F1-74: nur EU/CN; die US-Antwort bleibt unverändert.
     ...(region === "US" ? {} : { benchmark: built.benchmark ?? null, benchmarkUnavailable: built.benchmarkUnavailable ?? null }),
   };
@@ -622,6 +661,24 @@ export async function loadUsBuffettRatios(): Promise<{ date: string; ratio: numb
   } catch (err: any) {
     console.error("[buffett] US series", err?.message?.substring(0, 200));
     return [];
+  }
+}
+
+/** Dieselbe US-Antwort wie die Chart-Route: Quote und Regression, ein Abruf. */
+export async function loadUsBuffettPack(): Promise<{
+  ratios: { date: string; ratio: number }[];
+  regression: BuffettRegressionFit;
+}> {
+  try {
+    const body = await loadRegion("US");
+    return {
+      ratios: body.points.map(point => ({ date: point.date, ratio: point.ratio })),
+      regression: body.regression,
+    };
+  } catch (err: any) {
+    const reason = String(err?.message ?? err).slice(0, 180);
+    console.error("[buffett] US pack", reason);
+    return { ratios: [], regression: unavailableRegression(`n/a — ${reason}`) };
   }
 }
 
