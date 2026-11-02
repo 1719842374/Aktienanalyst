@@ -15,13 +15,17 @@ import {
   describeAnalystEstimates,
   emptyGrowthBody,
   epsPairFromYahooHtml,
+  EPS_BASIS,
+  FORWARD_FORMULA_EPS,
   FORWARD_FORMULA_YAHOO_HTML,
   FORWARD_HORIZON,
   FORWARD_OUTLIER,
   GROWTH_HOLDINGS_PARAMS,
+  adjTtmFromEarnings,
   alignConsensusToTtm,
   annualizedFwdPct,
   consensusForOneYear,
+  horizonDays,
   forwardFromEps,
   forwardFromYahooQuoteSummary,
   yahooEpsContext,
@@ -361,22 +365,100 @@ await ok("Yahoo +1y/trailingEps ist der Quotient, fehlendes Modul bleibt n/a", (
   }
 });
 
-await ok("Horizont über ein Jahr wird auf ein Jahr gerechnet, der nächste Stub nicht", () => {
-  const raw = [
-    { date: "2026-12-31", epsAvg: 105 },
-    { date: "2027-12-31", epsAvg: 121 },
-    { date: "2024-12-31", epsAvg: 80 },
-  ];
-  const picked = consensusForOneYear(raw, "2026-11-02");
-  assert.equal(picked?.date, "2027-12-31");
-  assert.ok(picked != null && picked.horizonDays <= FORWARD_HORIZON.annualizeAfterDays);
-  const plain = annualizedFwdPct(121, 100, picked?.horizonDays ?? 0);
-  assert.equal(plain.annualized, false);
-  assert.ok(Math.abs(plain.gFwdPct - 21) < 1e-9);
-  const long = annualizedFwdPct(121, 100, FORWARD_HORIZON.annualizeAfterDays + 40);
-  assert.equal(long.annualized, true);
-  const years = (FORWARD_HORIZON.annualizeAfterDays + 40) / FORWARD_HORIZON.oneYearDays;
-  assert.ok(Math.abs(long.gFwdPct - ((1.21 ** (1 / years) - 1) * 100)) < 1e-9);
+function powerPct(cons: number, adj: number, t: number): number {
+  return ((cons / adj) ** (365 / t) - 1) * 100;
+}
+
+await ok("g_ann bei t=40, 84 und 449 ist ungedämpft, nahes FY bleibt", () => {
+  assert.equal(FORWARD_HORIZON.oneYearDays, 365);
+  assert.equal("stubBelowDays" in FORWARD_HORIZON, false);
+  const asOf = "2026-11-02";
+  assert.equal(horizonDays(asOf, "2026-12-12"), 40);
+  assert.equal(horizonDays(asOf, "2027-01-25"), 84);
+  assert.equal(horizonDays(asOf, "2028-01-25"), 449);
+  for (const t of [40, 84, 449]) {
+    const g = annualizedFwdPct(2, 1, t);
+    assert.ok("gFwdPct" in g);
+    if ("gFwdPct" in g) {
+      assert.ok(Math.abs(g.gFwdPct - powerPct(2, 1, t)) < 1e-6, String(g.gFwdPct));
+      const capped = powerPct(2, 1, Math.max(t, 90));
+      if (t < 90) assert.ok(Math.abs(g.gFwdPct - capped) > 1);
+      const linearPct = (2 / 1 - 1) * (365 / t) * 100;
+      const epsPerYear = ((2 - 1) / t) * 365;
+      assert.ok(Math.abs(g.gFwdPct - linearPct) > 1, `t=${t} g=${g.gFwdPct} linear=${linearPct}`);
+      assert.ok(Math.abs(g.gFwdPct - epsPerYear) > 1);
+    }
+  }
+  const nvda = consensusForOneYear([
+    { date: "2027-01-25", epsAvg: 2 },
+    { date: "2028-01-25", epsAvg: 9 },
+  ], asOf);
+  assert.equal(nvda?.date, "2027-01-25");
+  assert.equal(nvda?.eps, 2);
+  assert.equal(nvda?.horizonDays, 84);
+  const onlyLong = consensusForOneYear([{ date: "2028-01-25", epsAvg: 5 }], asOf);
+  assert.equal(onlyLong?.horizonDays, 449);
+  assert.equal(onlyLong?.eps, 5);
+  const nearNeg = consensusForOneYear([
+    { date: "2026-12-12", epsAvg: -1 },
+    { date: "2028-01-25", epsAvg: 5 },
+  ], asOf);
+  assert.equal(nearNeg?.date, "2026-12-12");
+  assert.equal(nearNeg?.eps, -1);
+  const negCons = annualizedFwdPct(-1, 4, 40);
+  assert.ok("reason" in negCons);
+  if ("reason" in negCons) assert.match(negCons.reason, /nicht positiv/);
+  const negTtm = annualizedFwdPct(5, -2, 84);
+  assert.ok("reason" in negTtm);
+  if ("reason" in negTtm) assert.match(negTtm.reason, /adjTTM ≤ 0/);
+});
+
+await ok("AVGO-Stub bleibt das nahe FY, Gewicht ist Index × min(1, t/365) × Huber", () => {
+  const avgoAsOf = "2026-09-01";
+  assert.equal(horizonDays(avgoAsOf, "2026-11-01"), 61);
+  const avgo = consensusForOneYear([
+    { date: "2026-11-01", epsAvg: 4.2 },
+    { date: "2027-11-01", epsAvg: 6.1 },
+  ], avgoAsOf);
+  assert.equal(avgo?.date, "2026-11-01");
+  assert.equal(avgo?.eps, 4.2);
+  assert.equal(avgo?.horizonDays, 61);
+  const g40 = annualizedFwdPct(3, 4, 40);
+  const g84 = annualizedFwdPct(6, 4, 84);
+  const g449 = annualizedFwdPct(7, 6, 449);
+  assert.ok("gFwdPct" in g40 && "gFwdPct" in g84 && "gFwdPct" in g449);
+  if (!("gFwdPct" in g40) || !("gFwdPct" in g84) || !("gFwdPct" in g449)) return;
+  const weighted = weightedHoldingsForward([
+    { symbol: "AVGO", weight: 0.2, gFwdPct: g40.gFwdPct, tDays: 40 },
+    { symbol: "NVDA", weight: 0.15, gFwdPct: g84.gFwdPct, tDays: 84 },
+    { symbol: "LONG", weight: 0.12, gFwdPct: g449.gFwdPct, tDays: 449 },
+    { symbol: "NEG", weight: 0.05, gFwdPct: null, tDays: 84, excludeReason: "n/a — adjTTM ≤ 0" },
+  ]);
+  assert.equal(weighted.available, true);
+  if (!weighted.available) return;
+  const w40 = 0.2 * (40 / 365);
+  const w84 = 0.15 * (84 / 365);
+  const w449 = 0.12 * Math.min(1, 449 / 365);
+  const expectG = (w40 * g40.gFwdPct + w84 * g84.gFwdPct + w449 * g449.gFwdPct) / (w40 + w84 + w449);
+  assert.ok(Math.abs(weighted.gFwdPct - expectG) < 1e-6, String(weighted.gFwdPct));
+  const bySymbol = Object.fromEntries(weighted.lines.map(line => [line.symbol, line]));
+  assert.ok(Math.abs((bySymbol.AVGO.gAnnPct ?? 0) - g40.gFwdPct) < 1e-9);
+  assert.ok(Math.abs((bySymbol.AVGO.weight ?? 0) - w40) < 1e-12);
+  assert.equal(bySymbol.AVGO.tDays, 40);
+  assert.ok(Math.abs((bySymbol.NVDA.gAnnPct ?? 0) - g84.gFwdPct) < 1e-9);
+  assert.equal(bySymbol.NVDA.tDays, 84);
+  assert.ok(Math.abs((bySymbol.LONG.weight ?? 0) - w449) < 1e-12);
+  assert.equal(bySymbol.LONG.tDays, 449);
+  assert.equal(bySymbol.NEG.gAnnPct, null);
+  assert.equal(bySymbol.NEG.weight, null);
+  assert.match(bySymbol.NEG.excludeReason ?? "", /adjTTM ≤ 0/);
+  assert.match(weighted.note, /technische Stabilisierung/);
+  assert.match(weighted.note, /NEG \(adjTTM ≤ 0\)/);
+  assert.match(weighted.coverageWarn ?? "", /NEG 5,00 % \(adjTTM ≤ 0\)|NEG 5,0 % \(adjTTM ≤ 0\)/);
+  const gaapGoogl = powerPct(7, 10, 449);
+  assert.ok(g449.gFwdPct > 0);
+  assert.ok(gaapGoogl < 0);
+  assert.ok(Math.abs(g449.gFwdPct - gaapGoogl) > 1);
 });
 
 await ok("unterschiedliche EPS-Währungen werden umgerechnet, Pence gegen Pfund auch", () => {
@@ -430,12 +512,32 @@ await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () 
   ]);
   assert.equal(basket.available, true);
   if (basket.available) {
-    assert.deepEqual(basket.dropped, ["E"]);
-    assert.ok(Math.abs(basket.gFwdPct - (10 + 12 + 11 + 9) / 4) < 1e-9);
-    assert.ok(basket.note.includes(String(FORWARD_OUTLIER.robustZMax)));
+    assert.deepEqual(basket.downweighted, ["E"]);
+    assert.ok(basket.used.includes("E"));
+    assert.match(basket.note, /Huber/);
+    assert.match(basket.note, /technische Stabilisierung/);
+    const med = 11;
+    const mad = 1;
+    const zE = FORWARD_OUTLIER.madScale * (400 - med) / mad;
+    const hE = FORWARD_OUTLIER.robustZMax / zE;
+    const expect = (10 + 12 + 11 + 9 + 400 * hE) / (4 + hE);
+    assert.ok(Math.abs(basket.gFwdPct - expect) < 1e-9, String(basket.gFwdPct));
   }
   assert.equal(GROWTH_HOLDINGS_PARAMS.minCoverage, 0.15);
   assert.equal(GROWTH_HOLDINGS_PARAMS.warnCoverage, 0.5);
+  const sym = weightedHoldingsForward([
+    { symbol: "N", weight: 0.2, gFwdPct: -10 },
+    { symbol: "A", weight: 0.2, gFwdPct: -1 },
+    { symbol: "Z", weight: 0.2, gFwdPct: 0 },
+    { symbol: "B", weight: 0.2, gFwdPct: 1 },
+    { symbol: "P", weight: 0.2, gFwdPct: 10 },
+  ]);
+  assert.equal(sym.available, true);
+  if (sym.available) {
+    assert.ok(Math.abs(sym.gFwdPct) < 1e-9, String(sym.gFwdPct));
+    assert.deepEqual(sym.downweighted, ["N", "P"]);
+    assert.ok(sym.used.includes("N") && sym.used.includes("P"));
+  }
   const ashr = weightedHoldingsForward([
     { symbol: "300308.SZ", weight: 0.0364, gFwdPct: 184.7 },
     { symbol: "600519.SS", weight: 0.0318, gFwdPct: 10.7 },
@@ -449,8 +551,10 @@ await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () 
   ]);
   assert.equal(ashr.available, true);
   if (ashr.available) {
-    assert.ok(Math.abs(ashr.gFwdPct - 13.393377483443711) < 1e-9, String(ashr.gFwdPct));
-    assert.deepEqual(ashr.dropped, ["300308.SZ", "300502.SZ"]);
+    assert.deepEqual(ashr.downweighted, ["300308.SZ", "300502.SZ"]);
+    assert.ok(ashr.used.includes("300308.SZ"));
+    assert.ok(Math.abs(ashr.gFwdPct - 13.393377483443711) > 1, String(ashr.gFwdPct));
+    assert.equal(ashr.coverageWarn, "Geringe Abdeckung: 21,0 % < 50 %, Huber-Gewicht (MAD-z, Schwelle 2,5, symmetrisch): 300308.SZ, 300502.SZ");
   }
 });
 
@@ -465,10 +569,11 @@ await ok("MAD 0 schaltet auf meanAD um und wirft nicht jeden Nicht-Median hinaus
   ]);
   assert.equal(flat.available, true);
   if (flat.available) {
-    assert.deepEqual(flat.dropped, ["E"]);
+    assert.deepEqual(flat.downweighted, ["E"]);
     assert.ok(flat.used.includes("D"));
-    assert.ok(Math.abs(flat.gFwdPct - (10 + 10 + 10 + 12) / 4) < 1e-9);
+    assert.ok(flat.used.includes("E"));
     assert.match(flat.note, /meanAD/);
+    assert.match(flat.note, /Huber/);
   }
   const identical = weightedHoldingsForward([
     { symbol: "A", weight: 0.2, gFwdPct: 10 },
@@ -478,8 +583,21 @@ await ok("MAD 0 schaltet auf meanAD um und wirft nicht jeden Nicht-Median hinaus
   ]);
   assert.equal(identical.available, true);
   if (identical.available) {
-    assert.deepEqual(identical.dropped, []);
+    assert.deepEqual(identical.downweighted, []);
     assert.ok(Math.abs(identical.gFwdPct - 10) < 1e-9);
+  }
+  const signedOut = weightedHoldingsForward([
+    { symbol: "AAA", weight: 0.1, gFwdPct: 10 },
+    { symbol: "BBB", weight: 0.1, gFwdPct: 8 },
+    { symbol: "CCC", weight: 0.1, gFwdPct: 9 },
+    { symbol: "NEG", weight: 0.05, gFwdPct: null, excludeReason: "n/a — adjTTM ≤ 0" },
+  ]);
+  assert.equal(signedOut.available, true);
+  if (signedOut.available) {
+    assert.ok(Math.abs(signedOut.gFwdPct - 9) < 1e-9);
+    assert.match(signedOut.note, /NEG \(adjTTM ≤ 0\)/);
+    assert.match(signedOut.note, /zählt in der Abdeckung/);
+    assert.match(signedOut.coverageWarn ?? "", /NEG 5,0 % \(adjTTM ≤ 0\)/);
   }
 });
 
@@ -498,8 +616,9 @@ await ok("ASHR-Banner und Growth-Gap-Beschriftung stehen im gerenderten Output",
   ]);
   assert.equal(weighted.available, true);
   if (!weighted.available) return;
-  assert.ok(Math.abs(weighted.gFwdPct - 13.393377483443711) < 1e-6, String(weighted.gFwdPct));
-  const banner = "Geringe Abdeckung nach Outlier-Filter (z>2,5): 15,1 % < 50 %, ausgeschlossen: 300308.SZ, 300502.SZ, 601318.SS";
+  assert.deepEqual(weighted.downweighted, ["300308.SZ", "300502.SZ"]);
+  assert.ok(weighted.used.includes("300308.SZ"));
+  const banner = "Geringe Abdeckung: 21,0 % < 50 %, Huber-Gewicht (MAD-z, Schwelle 2,5, symmetrisch): 300308.SZ, 300502.SZ, ausgeschlossen: 601318.SS";
   assert.equal(weighted.coverageWarn, banner);
   const body = buildGrowthBody({
     index: "ASHR",
@@ -541,7 +660,7 @@ await ok("ASHR-Banner und Growth-Gap-Beschriftung stehen im gerenderten Output",
   assert.ok(visible.slice(bannerAt, bannerAt + 500).includes(banner), visible.slice(bannerAt, bannerAt + 500));
   assert.equal(visible.includes("warnCoverage"), false);
   assert.match(visible, /g_fwd \(Forward-Konsens\)/);
-  assert.match(visible, /\+13,4 %/);
+  assert.match(visible, /\+28,6 %/);
   const gapAt = visible.indexOf("recession-growth-gap");
   const gapHtml = visible.slice(gapAt, gapAt + 700);
   assert.match(gapHtml, /Growth Gap \(g_fwd − g_realized\)/);
@@ -580,12 +699,13 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
     if (path === "/analyst-estimates" && symbol === "^GSPC") return { status: 402, json: null, detail: "Premium Query Parameter: symbol" };
     if (path === "/financial-estimates") return { status: 402, json: null, detail: "Premium Query Parameter" };
     if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
+    if (path === "/earnings" && (symbol === "AAA" || symbol === "BBB")) {
+      const each = symbol === "AAA" ? 2.5 : 5;
+      return { status: 200, json: [0, 1, 2, 3].map(i => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: each })), detail: "" };
+    }
     if (path === "/earnings") return { status: 200, json: [{ date: "2026-12-31", epsEstimated: 2 }], detail: "" };
     if (path === "/analyst-estimates" && (symbol === "AAA" || symbol === "BBB")) {
       return { status: 200, json: [{ date: "2027-12-31", epsAvg: symbol === "AAA" ? 12 : 22 }], detail: "" };
-    }
-    if (path === "/ratios-ttm" && (symbol === "AAA" || symbol === "BBB")) {
-      return { status: 200, json: [{ netIncomePerShareTTM: symbol === "AAA" ? 10 : 20 }], detail: "" };
     }
     return { status: 404, json: null, detail: "unbekannt" };
   };
@@ -610,9 +730,17 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
   const mixed = await loadRecessionGrowth("SPY", deps);
   assert.equal(mixed.forward.available, true);
   if (mixed.forward.available) {
-    assert.ok(Math.abs(mixed.forward.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-6);
+    const tDays = horizonDays("2026-11-02", "2027-12-31");
+    const gA = annualizedFwdPct(12, 10, tDays);
+    const gB = annualizedFwdPct(22, 20, tDays);
+    assert.ok("gFwdPct" in gA && "gFwdPct" in gB);
+    if ("gFwdPct" in gA && "gFwdPct" in gB) {
+      assert.ok(Math.abs(mixed.forward.gFwdPct - (0.2 * gA.gFwdPct + 0.1 * gB.gFwdPct) / 0.3) < 1e-6, String(mixed.forward.gFwdPct));
+    }
     assert.match(mixed.forward.formula, /Σ/);
     assert.match(mixed.forward.source, /Yahoo quoteSummary topHoldings/);
+    assert.match(mixed.forward.source, /epsActual/);
+    assert.equal(probes.some(p => p.startsWith("/ratios-ttm")), false);
   }
   assert.match(mixed.consensusTrace, /HTTP 402/);
   assert.match(mixed.consensusTrace, /Premium Query Parameter/);
@@ -629,13 +757,23 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
     probeFmp: async (path, params) => {
       directProbes.push(path);
       if (path === "/analyst-estimates" && params.symbol === "SPY") return { status: 200, json: [{ date: "2027-12-31", epsAvg: 110 }], detail: "" };
-      if (path === "/ratios-ttm" && params.symbol === "SPY") return { status: 200, json: [{ netIncomePerShareTTM: 100 }], detail: "" };
+      if (path === "/earnings" && params.symbol === "SPY") {
+        return { status: 200, json: [25, 25, 25, 25].map((eps, i) => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: eps })), detail: "" };
+      }
       return { status: 500, json: null, detail: "soll nicht laufen" };
     },
   });
   assert.equal(direct.forward.available, true);
-  if (direct.forward.available) assert.ok(Math.abs(direct.forward.gFwdPct - 10) < 1e-9);
+  if (direct.forward.available) {
+    const gDirect = annualizedFwdPct(110, 100, horizonDays("2026-11-02", "2027-12-31"));
+    assert.ok("gFwdPct" in gDirect);
+    if ("gFwdPct" in gDirect) assert.ok(Math.abs(direct.forward.gFwdPct - gDirect.gFwdPct) < 1e-6, String(direct.forward.gFwdPct));
+    assert.equal(direct.forward.formula, FORWARD_FORMULA_EPS);
+    assert.match(direct.forward.source, /epsActual/);
+    assert.match(direct.forward.source, /t=/);
+  }
   assert.equal(directProbes.includes("/etf/holdings"), false);
+  assert.equal(directProbes.includes("/ratios-ttm"), false);
 });
 
 await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeile sichtbar", async () => {
@@ -657,13 +795,13 @@ await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeil
     const symbol = params.symbol;
     if (path === "/analyst-estimates" && symbol === "ASHR") return { status: 200, json: [], detail: "" };
     if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
+    if (path === "/earnings" && (symbol === "AAA" || symbol === "BBB")) {
+      return { status: 200, json: [2.5, 2.5, 2.5, 2.5].map((eps, i) => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: eps })), detail: "" };
+    }
     if (path === "/earnings") return { status: 200, json: [], detail: "" };
     if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
     if (path === "/analyst-estimates" && (symbol === "AAA" || symbol === "BBB")) {
       return { status: 200, json: [{ date: "2027-12-31", epsAvg: 12 }], detail: "" };
-    }
-    if (path === "/ratios-ttm" && (symbol === "AAA" || symbol === "BBB")) {
-      return { status: 200, json: [{ netIncomePerShareTTM: 10 }], detail: "" };
     }
     return { status: 404, json: null, detail: "unbekannt" };
   };
@@ -717,6 +855,109 @@ await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeil
   );
   assert.match(html, /data-testid="recession-growth-coverage"/);
   assert.match(html, /minCoverage/);
+});
+
+await ok("AMZN/GOOGL gegen GAAP, AVGO-Stub, t=40/84/449 und negatives EPS in der Karte", async () => {
+  const asOf = "2026-11-02";
+  const parsed = adjTtmFromEarnings([
+    { date: "2026-09-30", epsActual: 1.5, netIncomePerShareTTM: 10 },
+    { date: "2026-06-30", epsActual: 1.5 },
+    { date: "2026-03-31", epsActual: 1.5 },
+    { date: "2025-12-31", epsActual: 1.5 },
+    { date: "2025-09-30", epsActual: 9 },
+    { date: "2026-12-31", epsActual: 20, period: "FY" },
+    { date: "2026-12-31", epsEstimated: 8 },
+  ], asOf);
+  assert.equal(parsed.quarters.length, EPS_BASIS.reportedQuarters);
+  assert.equal(parsed.adjTtm, 6);
+  assert.equal(parsed.unusableReason, null);
+  const { loadRecessionGrowth } = await import("../server/recession-growth");
+  const probes: string[] = [];
+  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, epsActual: each }));
+  const body = await loadRecessionGrowth("SPY", {
+    loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
+    fetchMultpl: async () => multplTable(),
+    probeFmp: async (path, params) => {
+      probes.push(path);
+      const symbol = params.symbol;
+      if (path === "/ratios-ttm") return { status: 200, json: [{ netIncomePerShareTTM: symbol === "GOOGL" ? 10 : 8 }], detail: "" };
+      if (path === "/analyst-estimates" && (symbol === "SPY" || symbol === "^GSPC")) return { status: 200, json: [], detail: "" };
+      if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
+      if (path === "/etf/holdings") return { status: 402, json: null, detail: "" };
+      if (path === "/earnings" && symbol === "SPY") return { status: 200, json: [{ date: "2026-12-31", epsEstimated: 1 }], detail: "" };
+      if (path === "/analyst-estimates" && symbol === "AVGO") {
+        return { status: 200, json: [{ date: "2026-12-12", epsAvg: 3 }, { date: "2027-12-12", epsAvg: 99 }], detail: "" };
+      }
+      if (path === "/analyst-estimates" && symbol === "AMZN") {
+        return { status: 200, json: [{ date: "2027-01-25", epsAvg: 6 }, { date: "2028-01-25", epsAvg: 50 }], detail: "" };
+      }
+      if (path === "/analyst-estimates" && symbol === "GOOGL") {
+        return { status: 200, json: [{ date: "2028-01-25", epsAvg: 7 }], detail: "" };
+      }
+      if (path === "/analyst-estimates" && symbol === "NEG") {
+        return { status: 200, json: [{ date: "2027-01-25", epsAvg: 2 }], detail: "" };
+      }
+      if (path === "/earnings" && symbol === "AVGO") return { status: 200, json: quarters(1), detail: "" };
+      if (path === "/earnings" && symbol === "AMZN") return { status: 200, json: quarters(1), detail: "" };
+      if (path === "/earnings" && symbol === "GOOGL") return { status: 200, json: quarters(1.5), detail: "" };
+      if (path === "/earnings" && symbol === "NEG") return { status: 200, json: quarters(-1), detail: "" };
+      return { status: 404, json: null, detail: "unbekannt" };
+    },
+    loadIncome: async () => [],
+    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "AVGO", holdingPercent: { raw: 0.2 } },
+          { symbol: "AMZN", holdingPercent: { raw: 0.15 } },
+          { symbol: "GOOGL", holdingPercent: { raw: 0.12 } },
+          { symbol: "NEG", holdingPercent: { raw: 0.05 } },
+        ] } };
+      }
+      return { defaultKeyStatistics: {} };
+    },
+    loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
+    loadVix: async () => [],
+    fmpAvailable: true,
+    today: asOf,
+  });
+  assert.equal(probes.includes("/ratios-ttm"), false);
+  assert.equal(body.forward.available, true);
+  if (!body.forward.available) return;
+  const line = Object.fromEntries((body.forward.lines ?? []).map(row => [row.symbol, row]));
+  assert.equal(line.AVGO.tDays, 40);
+  assert.ok(Math.abs((line.AVGO.gAnnPct ?? NaN) - powerPct(3, 4, 40)) < 1e-6, String(line.AVGO.gAnnPct));
+  assert.ok(Math.abs((line.AVGO.weight ?? NaN) - 0.2 * 40 / 365) < 1e-12);
+  assert.equal(line.AMZN.tDays, 84);
+  assert.ok(Math.abs((line.AMZN.gAnnPct ?? NaN) - powerPct(6, 4, 84)) < 1e-6, String(line.AMZN.gAnnPct));
+  assert.equal(line.GOOGL.tDays, 449);
+  assert.ok(Math.abs((line.GOOGL.gAnnPct ?? NaN) - powerPct(7, 6, 449)) < 1e-6);
+  assert.ok((line.GOOGL.gAnnPct ?? 0) > 0);
+  assert.ok(powerPct(7, 10, 449) < 0);
+  assert.equal(line.NEG.gAnnPct, null);
+  assert.equal(line.NEG.weight, null);
+  assert.match(line.NEG.excludeReason ?? "", /adjTTM ≤ 0/);
+  assert.match(body.forward.source, /epsActual/);
+  assert.match(body.forward.formula, /min\(1, t_i\/365\)/);
+  assert.match(body.forward.source, /technische Stabilisierung/);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+  });
+  client.setQueryData(["/api/recession/earnings-growth", "SPY"], body);
+  client.setQueryData(["/api/recession/growth-gap", "SPY"], body);
+  const { RecessionGrowthSection } = await import("../client/src/components/recession/RecessionGrowthSection");
+  const html = renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client }, React.createElement(RecessionGrowthSection, { number: 17 })),
+  );
+  const visible = html.replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+  assert.match(visible, /Technische Stabilisierung/);
+  assert.match(visible, /g ist ungedämpft/);
+  assert.match(visible, /recession-growth-holding-AVGO/);
+  assert.match(visible, /t 40 Tage/);
+  assert.match(visible, /recession-growth-holding-AMZN/);
+  assert.match(visible, /t 84 Tage/);
+  assert.match(visible, /recession-growth-holding-GOOGL/);
+  assert.match(visible, /t 449 Tage/);
+  assert.match(visible, /adjTTM ≤ 0/);
 });
 
 await ok("Pins und Score-Pfade bleiben", () => {

@@ -7,6 +7,7 @@
  * Kegel = dieser Median ± coneSigma · Stichproben-Streuung.
  * Fehlende Größen bleiben available:false mit Grund, nie 0 und nie interpoliert.
  */
+import { epsPrintFromEarningsRow } from "./recession-market-charts";
 import { asOfJoin } from "./recession-ta";
 
 export const GROWTH_INDEXES = ["SPY", "VGK", "ASHR"] as const;
@@ -64,21 +65,26 @@ export const GROWTH_HOLDINGS_PARAMS = {
 } as const;
 
 /**
- * FMP `date` is the fiscal-year end of that row.
- * A year ending inside minHorizonDays is the current stub, not the one-year-ahead consensus.
- * A year ending past annualizeAfterDays is converted to a one-year rate with oneYearDays.
- * Yahoo forwardEps has no period end on the quote page; it is the next fiscal year (1J).
+ * t = Tage von heute bis zum FY-Ende der Konsenszeile (FMP `date`).
+ * Das ist der Abstand Mitte TTM zu Mitte Konsens-FY.
+ * g_ann = (consensus / adjTTM) ^ (oneYearDays / t) − 1. g wird nicht gedämpft.
+ * Das Aggregationsgewicht ist Index-Gewicht × min(1, t/oneYearDays) × Huber. Das ist technische Stabilisierung.
+ * Yahoo forwardEps hat auf der Quote-Seite kein FY-Ende und bleibt der 1J-Quotient.
  */
 export const FORWARD_HORIZON = {
-  oneYearDays: 365.25,
-  minHorizonDays: 180,
-  annualizeAfterDays: 548,
+  oneYearDays: 365,
+} as const;
+
+/** adjTTM = Summe der letzten reportedQuarters gemeldeten epsActual. */
+export const EPS_BASIS = {
+  reportedQuarters: 4,
 } as const;
 
 /**
- * Robust z = madScale · (g − median) / MAD. Names past robustZMax leave the mean.
- * madZeroFallback applies when MAD is 0 (at least half the sample sits on the median).
- * "meanAD" scales by the mean absolute deviation. If that is 0 too, every print is the median and the filter is suspended.
+ * Robust z = madScale · (g − median) / MAD.
+ * Huber-Gewicht = 1 bei |z| ≤ robustZMax, sonst robustZMax / |z|. Symmetrisch, kein harter Ausschluss.
+ * madZeroFallback gilt bei MAD 0 (mindestens die Hälfte sitzt auf dem Median).
+ * "meanAD" skaliert mit der mittleren absoluten Abweichung. Ist die auch 0, ist jeder Druck der Median und der Filter ruht.
  */
 export const FORWARD_OUTLIER = {
   robustZMax: 2.5,
@@ -91,8 +97,10 @@ export const EPS_CURRENCY = {
   pencePerPound: 100,
 } as const;
 
-export const FORWARD_FORMULA_EPS = "g_fwd = EPS_consensus / EPS_TTM − 1";
-export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i / Σ w) · (EPS_consensus,i / EPS_TTM,i − 1)";
+export const FORWARD_FORMULA_EPS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende";
+/** Unannualisierter Quotient. Nur Yahoo-Felder ohne FY-Ende, nicht der FMP-Konsens. */
+export const FORWARD_FORMULA_LEVEL = "g_fwd = EPS_consensus / EPS_TTM − 1";
+export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i · min(1, t_i/365) · h_i · g_ann,i) / Σ (w_i · min(1, t_i/365) · h_i); g_ann ungedämpft; h = Huber(|MAD-z|, symmetrisch); technische Stabilisierung";
 export const FORWARD_FORMULA_YAHOO_RATIO = "g_fwd = earningsTrend[+1y].avg / trailingEps − 1";
 export const FORWARD_FORMULA_YAHOO_GROWTH = "g_fwd = earningsTrend[+1y].growth (Yahoo-YoY, nicht Konsens/TTM)";
 export const FORWARD_FORMULA_YAHOO_HTML = "g_fwd = forwardEps / trailingEps − 1";
@@ -157,8 +165,22 @@ export type ForwardReading =
       formula: string;
       /** Set when the sample is thinner than warnCoverage but still published. */
       coverageWarn?: string | null;
+      /** Pro Ticker: ungedämpftes g, Aggregationsgewicht und t. */
+      lines?: ForwardHoldingLine[];
     }
   | NaReading;
+
+export interface ForwardHoldingLine {
+  symbol: string;
+  /** Ungedämpftes g_ann in Prozent. null, wenn der Ticker nicht im Mittel ist. */
+  gAnnPct: number | null;
+  /** Index-Gewicht in der Einheit der Holdings-Quelle. */
+  indexWeight: number;
+  /** Index-Gewicht × min(1, t/365) × Huber. null, wenn der Ticker nicht im Mittel ist. */
+  weight: number | null;
+  tDays: number | null;
+  excludeReason: string | null;
+}
 
 export type SigmaBand = "innerhalb_nearZero" | "zwischen_nearZero_und_cone" | "ausserhalb_cone";
 
@@ -308,13 +330,13 @@ export function forwardFromEps(
   ttm: number | null,
   asOf: string,
   source: string,
-  formula: string = FORWARD_FORMULA_EPS,
+  formula: string = FORWARD_FORMULA_LEVEL,
 ): ForwardReading {
   if (consensus == null || !Number.isFinite(consensus)) {
     return { available: false, reason: "n/a — Forward-Konsens: epsAvg fehlt" };
   }
   if (!(consensus > 0)) return { available: false, reason: "n/a — Forward-Konsens: epsAvg ist nicht positiv" };
-  if (ttm == null || !Number.isFinite(ttm)) return { available: false, reason: "n/a — TTM-EPS fehlt (ratios-ttm)" };
+  if (ttm == null || !Number.isFinite(ttm)) return { available: false, reason: "n/a — TTM-EPS fehlt" };
   if (!(ttm > 0)) return { available: false, reason: "n/a — TTM-EPS ist nicht positiv (keine Division durch 0)" };
   return {
     available: true,
@@ -391,7 +413,7 @@ function consensusRows(raw: unknown): { date: string; eps: number; currency: str
     const date = String(r.date ?? "").slice(0, 10);
     const eps = [r.epsAvg, r.estimatedEpsAvg, r.estimatedEpsDiluted, r.estimatedEps]
       .map(v => (typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN))
-      .find(v => Number.isFinite(v) && v > 0);
+      .find(v => Number.isFinite(v));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
     const currencyRaw = r.currency ?? r.reportedCurrency ?? r.epsCurrency;
     const currency = typeof currencyRaw === "string" && currencyRaw.trim() ? currencyRaw.trim() : null;
@@ -412,29 +434,73 @@ export function nextConsensusEps(raw: unknown, asOf: string): { date: string; ep
 }
 
 /**
- * The one-year consensus is the soonest fiscal year that still ends at least
- * minHorizonDays ahead. A nearer stub is the current year. A lone row past
- * annualizeAfterDays stays here; annualizedFwdPct compresses it.
+ * Nächstes FY mit t > 0. t = Tage bis FY-Ende. Ein nahes FY bleibt, der Exponent wird nicht gedeckelt.
+ * t ≤ 0 ist keine Division. Ein nicht positives eps bleibt die gewählte Zeile und fällt in annualizedFwdPct heraus.
  */
-export function consensusForOneYear(raw: unknown, asOf: string): { date: string; eps: number; currency: string | null; horizonDays: number } | null {
+export function consensusForOneYear(raw: unknown, asOf: string): {
+  date: string;
+  eps: number;
+  currency: string | null;
+  horizonDays: number;
+} | null {
   const rows = consensusRows(raw)
     .filter(row => row.date >= asOf)
-    .map(row => ({ ...row, horizonDays: horizonDays(asOf, row.date) }));
-  if (!rows.length) return null;
-  return rows.find(row => row.horizonDays >= FORWARD_HORIZON.minHorizonDays) ?? rows[0];
+    .map(row => ({ ...row, horizonDays: horizonDays(asOf, row.date) }))
+    .filter(row => row.horizonDays > 0);
+  return rows[0] ?? null;
 }
 
-/** CAGR onto oneYearDays when the fiscal year ends past annualizeAfterDays. */
-export function annualizedFwdPct(consensus: number, ttm: number, days: number): { gFwdPct: number; annualized: boolean } {
-  const plain = (consensus / ttm - 1) * GROWTH_GAP_PARAMS.percentScale;
-  if (!(days > FORWARD_HORIZON.annualizeAfterDays) || !(ttm > 0) || !(consensus > 0)) {
-    return { gFwdPct: plain, annualized: false };
+/** g_ann in Prozent. (consensus/adjTTM)^(365/t) − 1, ohne Dämpfung und ohne Tagesfloor. */
+export function annualizedFwdPct(consensus: number, ttm: number, days: number): { gFwdPct: number } | { reason: string } {
+  if (!(consensus > 0)) return { reason: "n/a — Konsens-EPS ist nicht positiv" };
+  if (!(ttm > 0)) return { reason: "n/a — adjTTM ≤ 0" };
+  if (!(days > 0)) return { reason: "n/a — Horizont t ist nicht positiv" };
+  const g = (consensus / ttm) ** (FORWARD_HORIZON.oneYearDays / days) - 1;
+  if (!Number.isFinite(g)) return { reason: "n/a — g_ann nicht endlich" };
+  return { gFwdPct: g * GROWTH_GAP_PARAMS.percentScale };
+}
+
+/** Technische Stabilisierung. Ohne t (Yahoo-1J ohne FY-Ende) bleibt der Faktor 1. */
+export function horizonWeightFactor(tDays: number | null | undefined): number {
+  if (tDays == null || !Number.isFinite(tDays)) return 1;
+  if (!(tDays > 0)) return 0;
+  return Math.min(1, tDays / FORWARD_HORIZON.oneYearDays);
+}
+
+function isFullYearPeriod(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  const period = String((row as Record<string, unknown>).period ?? "").trim().toUpperCase();
+  return period === "FY" || period === "ANNUAL" || period === "YEAR";
+}
+
+/**
+ * adjTTM = Summe der letzten 4 gemeldeten epsActual bis asOf.
+ * Ein FY-Abschluss zählt nicht als Quartal. Weniger als 4 Drucke → null, der Aufrufer nennt den Fallback.
+ * Summe ≤ 0 → unusableReason, kein stiller Ersatz.
+ */
+export function adjTtmFromEarnings(raw: unknown, asOf: string): {
+  adjTtm: number | null;
+  quarters: { date: string; eps: number }[];
+  unusableReason: string | null;
+} {
+  const list = Array.isArray(raw) ? raw : [];
+  const byDate = new Map<string, { date: string; eps: number }>();
+  for (const row of list) {
+    if (isFullYearPeriod(row)) continue;
+    const parsed = epsPrintFromEarningsRow(row);
+    if (!parsed || parsed.date > asOf) continue;
+    byDate.set(parsed.date, parsed);
   }
-  const years = days / FORWARD_HORIZON.oneYearDays;
-  return {
-    gFwdPct: ((consensus / ttm) ** (1 / years) - 1) * GROWTH_GAP_PARAMS.percentScale,
-    annualized: true,
-  };
+  const quarters = Array.from(byDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, EPS_BASIS.reportedQuarters)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (quarters.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters, unusableReason: null };
+  }
+  const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) return { adjTtm, quarters, unusableReason: "n/a — adjTTM ≤ 0" };
+  return { adjTtm, quarters, unusableReason: null };
 }
 
 function majorCurrency(amount: number, code: string): { amount: number; code: string } {
@@ -790,6 +856,10 @@ export interface HoldingGrowthRow {
   symbol: string;
   weight: number;
   gFwdPct: number | null;
+  /** Tage bis FY-Ende. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
+  tDays?: number | null;
+  /** Gesetzter Grund: nicht im Mittel, das Index-Gewicht bleibt im Abdeckungstext. */
+  excludeReason?: string | null;
 }
 
 export type WeightedForward =
@@ -798,7 +868,8 @@ export type WeightedForward =
       gFwdPct: number;
       fundFraction: number | null;
       used: string[];
-      dropped: string[];
+      downweighted: string[];
+      lines: ForwardHoldingLine[];
       formula: string;
       note: string;
       coverageWarn: string | null;
@@ -811,12 +882,22 @@ function deFixed(v: number, digits: number): string {
 }
 
 /** Sichtbarer Hinweis. Der Parametername warnCoverage bleibt intern. */
-function lowCoverageBanner(coverage: number, excluded: string[]): string {
+function lowCoverageBanner(coverage: number, excluded: string[], downweighted: string[]): string {
   const pct = deFixed(coverage, 1);
   const limit = (GROWTH_HOLDINGS_PARAMS.warnCoverage * 100).toFixed(0);
-  if (!excluded.length) return `Geringe Abdeckung: ${pct} % < ${limit} %`;
-  const z = deFixed(FORWARD_OUTLIER.robustZMax, 1);
-  return `Geringe Abdeckung nach Outlier-Filter (z>${z}): ${pct} % < ${limit} %, ausgeschlossen: ${excluded.join(", ")}`;
+  const parts = [`Geringe Abdeckung: ${pct} % < ${limit} %`];
+  if (downweighted.length) {
+    const z = deFixed(FORWARD_OUTLIER.robustZMax, 1);
+    parts.push(`Huber-Gewicht (MAD-z, Schwelle ${z}, symmetrisch): ${downweighted.join(", ")}`);
+  }
+  if (excluded.length) parts.push(`ausgeschlossen: ${excluded.join(", ")}`);
+  return parts.join(", ");
+}
+
+function huberWeight(z: number): number {
+  const absZ = Math.abs(z);
+  if (!(absZ > FORWARD_OUTLIER.robustZMax)) return 1;
+  return FORWARD_OUTLIER.robustZMax / absZ;
 }
 
 type OutlierScale = "mad" | "meanAD" | "suspended";
@@ -860,40 +941,43 @@ function scaleLabel(scale: OutlierScale): string {
 }
 
 /**
- * Gewichtetes Mittel. Ein Holding ohne g zählt nicht als 0.
- * Ab minNames fliegen Ausreißer über robustZMax heraus, die Gewichte werden neu normiert.
- * Die Veröffentlichung scheitert, wenn das belegte Gewicht nicht breiter ist als die größte Position
+ * Gewichtetes Mittel. g_ann bleibt ungedämpft.
+ * Aggregationsgewicht = Index-Gewicht × min(1, t/365) × Huber(|MAD-z|). Das ist technische Stabilisierung, kein Deckeln von g.
+ * Ab minNames. Huber ist symmetrisch und streicht niemanden.
+ * Die Veröffentlichung scheitert, wenn das Index-Gewicht nicht breiter ist als die größte Position
  * oder die Deckung unter minCoverage liegt. Darunter warnCoverage bleibt der Wert, mit Hinweis.
+ * Ein Ticker mit excludeReason ist nicht im Mittel. Sein Index-Gewicht steht im Abdeckungstext.
  * Der nicht gelistete Rest des Fonds ist keine einzelne Aktie und kippt die Regel nicht.
  */
 export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForward {
   const listed = rows.filter(r => Number.isFinite(r.weight) && r.weight > 0);
   if (!listed.length) return { available: false, reason: "n/a — Holdings ohne positives Gewicht" };
-  let used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
+  const used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
   if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
-  const dropped: string[] = [];
+  const huber = used.map(() => 1);
   let scale: OutlierScale = "suspended";
   if (used.length >= FORWARD_OUTLIER.minNames) {
     const scored = robustZ(used.map(row => row.gFwdPct as number));
     scale = scored.scale;
-    const kept: HoldingGrowthRow[] = [];
-    used.forEach((row, index) => {
-      if (Math.abs(scored.z[index]) > FORWARD_OUTLIER.robustZMax) dropped.push(row.symbol);
-      else kept.push(row);
-    });
-    used = kept;
+    if (scale !== "suspended") {
+      scored.z.forEach((z, index) => {
+        huber[index] = huberWeight(z);
+      });
+    }
   }
-  if (!used.length) {
-    return { available: false, reason: `n/a — alle Holdings über robustZMax ${FORWARD_OUTLIER.robustZMax}` };
-  }
+  const horizon = used.map(row => horizonWeightFactor(row.tDays));
+  const downweighted = used.filter((_, index) => huber[index] < 1).map(row => row.symbol);
   const included = used.reduce((s, r) => s + r.weight, 0);
+  const mass = used.reduce((s, r, index) => s + r.weight * horizon[index] * huber[index], 0);
   const largest = used.reduce((m, r) => Math.max(m, r.weight), 0);
   if (!(included > largest)) {
     return { available: false, reason: "n/a — belegtes Gewicht ist nicht breiter als die größte Position" };
   }
-  const g = used.reduce((s, r) => s + r.weight * (r.gFwdPct as number), 0) / included;
+  if (!(mass > 0)) return { available: false, reason: "n/a — Aggregationsgewichte summieren sich auf 0" };
+  const g = used.reduce((s, r, index) => s + r.weight * horizon[index] * huber[index] * (r.gFwdPct as number), 0) / mass;
   const maxListed = listed.reduce((m, r) => Math.max(m, r.weight), 0);
-  const fundFraction = maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? included / 100 : included;
+  const asFraction = (weight: number) => (maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? weight / 100 : weight);
+  const fundFraction = asFraction(included);
   const coverage = fundFraction <= 1.05 ? fundFraction * GROWTH_GAP_PARAMS.percentScale : null;
   if (coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.minCoverage) {
     return {
@@ -901,25 +985,54 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
       reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %`,
     };
   }
-  const outlierNote = dropped.length
-    ? `, Ausreißer robustZMax ${FORWARD_OUTLIER.robustZMax}${scaleLabel(scale)}: ${dropped.join(", ")}`
+  const reasoned = listed.filter(row => row.excludeReason && !used.some(kept => kept.symbol === row.symbol));
+  const reasonedFraction = asFraction(reasoned.reduce((s, row) => s + row.weight, 0));
+  const reasonedPct = reasonedFraction <= 1.05 ? reasonedFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  const huberNote = downweighted.length
+    ? `, Huber-Gewicht (MAD-z, Schwelle ${deFixed(FORWARD_OUTLIER.robustZMax, 1)}${scaleLabel(scale)}, symmetrisch): ${downweighted.join(", ")}`
     : "";
+  const stabilize = ", technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber, g ungedämpft";
+  const reasonedNote = reasoned.length
+    ? `, ausgeschlossen (nicht im Mittel, Gewicht zählt in der Abdeckung${reasonedPct != null ? ` ${deFixed(reasonedPct, 1)} %` : ""}): ${reasoned.map(row => `${row.symbol} (${String(row.excludeReason).replace(/^n\/a — /, "")})`).join(", ")}`
+    : "";
+  const listedWeight = listed.reduce((s, row) => s + row.weight, 0);
   const note = coverage != null
-    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${outlierNote}`
-    : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position${outlierNote}`;
-  const missing = listed
-    .filter(row => !used.some(kept => kept.symbol === row.symbol) && !dropped.includes(row.symbol))
-    .map(row => row.symbol);
-  const excluded = [...dropped, ...missing];
+    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`
+    : `Deckung der gelisteten Gewichte ${deFixed((included / listedWeight) * 100, 1)} %, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`;
+  const huberBySymbol = new Map<string, number>();
+  used.forEach((row, index) => huberBySymbol.set(row.symbol, huber[index] * horizon[index]));
+  const lines: ForwardHoldingLine[] = listed.map(row => {
+    const scaleW = huberBySymbol.get(row.symbol);
+    const inMean = scaleW != null;
+    return {
+      symbol: row.symbol,
+      gAnnPct: inMean ? row.gFwdPct : null,
+      indexWeight: row.weight,
+      weight: inMean ? row.weight * scaleW : null,
+      tDays: row.tDays ?? null,
+      excludeReason: inMean ? null : (row.excludeReason ?? null),
+    };
+  });
+  const excluded = listed
+    .filter(row => !used.some(kept => kept.symbol === row.symbol))
+    .map(row => {
+      const fraction = asFraction(row.weight);
+      const pct = fraction <= 1.05 ? `${deFixed(fraction * GROWTH_GAP_PARAMS.percentScale, 1)} %` : "";
+      const reason = row.excludeReason ? String(row.excludeReason).replace(/^n\/a — /, "") : "";
+      if (reason && pct) return `${row.symbol} ${pct} (${reason})`;
+      if (reason) return `${row.symbol} (${reason})`;
+      return row.symbol;
+    });
   const coverageWarn = coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.warnCoverage
-    ? lowCoverageBanner(coverage, excluded)
+    ? lowCoverageBanner(coverage, excluded, downweighted)
     : null;
   return {
     available: true,
     gFwdPct: g,
     fundFraction: coverage != null ? fundFraction : null,
     used: used.map(r => r.symbol),
-    dropped,
+    downweighted,
+    lines,
     formula: FORWARD_FORMULA_HOLDINGS,
     note,
     coverageWarn,

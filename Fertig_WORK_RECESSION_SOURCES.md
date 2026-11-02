@@ -120,3 +120,54 @@ SONST Standard-Risiko
 Philip hat nur drei Bewegungen freigegeben: Eurozone 70→45, Blended 40→35, ASHR g_fwd +68 %→+13 %. Den US-Wert ändert dieser Stand nicht.
 
 Der Tester liest US P_rez12 als 40, auf diesem Stand und auf Prod. **Soll ist 40, unverändert.** Die 30 im vorherigen PR-Text war keine Freigabe. Sie war eine lokale Lesart des Handlungsbuchs `recession_full` und ist nicht der US-Katalog. Die Kachel „Katalog Rez.“ der USA (`catalog-rez-US`) bleibt der Prod-Wert 40. Handlungstext P_rez12 und P_korr12 bleiben die US-Bücher; ihr Rechenweg wird hier nicht angefasst.
+
+---
+
+## Growth Gap: Horizont, adjTTM, Gewicht (Philip 22:38)
+
+Dieser Abschnitt ergänzt die Datei. Der Name bleibt `Fertig_WORK_RECESSION_SOURCES.md`.
+
+### Definition
+
+t = Abstand Mitte TTM zu Mitte Konsens-FY = Tage von heute bis zum FY-Ende der Konsenszeile (FMP `date`). Es gibt keinen 90-Tage-Floor und keinen Exponenten-Deckel. Ein nahes FY, auch ein Stub, bleibt das gewählte FY.
+
+\[
+g_{\text{ann}} = \left(\frac{\text{consensus}}{\text{adjTTM}}\right)^{365/t} - 1
+\]
+
+g_ann wird nicht gedämpft. Nicht (EPS / Tage) × 365 und nicht der unannualisierte Quotient.
+
+adjTTM = Summe der letzten 4 gemeldeten `epsActual` aus FMP `/stable/earnings`. Ein FY-Abschluss zählt nicht als Quartal. Fehlen die 4 Drucke, ist der Fallback Yahoo `trailingEps`, mit Quellenangabe in der Zeile. GAAP `/stable/ratios-ttm` wird nicht gegen den adjusted Konsens gestellt.
+
+adjTTM ≤ 0 oder Konsens ≤ 0: der Ticker ist nicht im Mittel, der Grund steht in der Abdeckung, das Index-Gewicht ist dort ausgewiesen.
+
+### Technische Stabilisierung
+
+Die Stabilisierung sitzt im Aggregationsgewicht, nicht in g.
+
+\[
+w_i = w^{\text{Index}}_i \times \min\left(1, \frac{t_i}{365}\right) \times h_i
+\]
+
+h ist das Huber-Gewicht auf dem MAD-z von g_ann: 1 bei |z| ≤ 2,5, sonst 2,5/|z|. Symmetrisch. Kein harter Ausschluss. Ohne FY-Ende (Yahoo-1J) ist der Horizontfaktor 1.
+
+\[
+g_{\text{fwd}} = \frac{\sum_i w_i \, g_{\text{ann},i}}{\sum_i w_i}
+\]
+
+Die Karte zeigt pro Ticker g, Gewicht und t. Die Abdeckung bleibt sichtbar.
+
+Der frühere ASHR-Wert +13,4 % war der harte Schnitt bei |z| > 2,5. Diese Freigabe ersetzt den Schnitt durch Huber-Gewichte. Dieselben neun g-Werte, ohne bekanntes t, ergeben im Mittel etwa +28,6 %. Das ist der neue Rechenweg, nicht ein stiller Rückfall auf +68 %.
+
+### Soll-Ist
+
+| Punkt | Soll | Ist auf `cursor/eurostat-growth-gap-59aa` |
+|---|---|---|
+| t und g_ann | Tage bis FY-Ende, Potenz 365/t, g ungedämpft, kein 90-Tage-Floor | `consensusForOneYear`, `annualizedFwdPct` in `shared/recession-growth.ts` |
+| adjTTM | Summe der letzten 4 `epsActual`, Fallback mit Quelle, kein GAAP-`ratios-ttm` | `adjTtmFromEarnings`, `adjTtmOf` in `server/recession-growth.ts` |
+| ≤ 0 | Ticker raus mit Grund, Gewicht in der Abdeckung | `excludeReason`, Abdeckungstext und Zeile in der Karte |
+| Gewicht | Index × min(1, t/365) × Huber(MAD-z), symmetrisch | `horizonWeightFactor`, `weightedHoldingsForward` |
+| Karte | pro Ticker g, Gewicht, t | `ForwardHoldingLine` über `useRecessionGrowth` → `GET /api/recession/growth-gap/:index` → `RecessionGrowthSection` |
+| Tests | t = 40, 84, 449, negatives EPS, AMZN/GOOGL GAAP > Konsens, AVGO-Stub | `script/test-recession-growth.ts` |
+| US P_rez12 | 40, unverändert | dieser Abschnitt fasst den US-Katalog nicht an |
+| Pins, tsc, `analyze-route.ts`, `researcher.ts` | Pins unverändert, tsc bleibt 101, die beiden Dateien unberührt | nicht angefasst |
