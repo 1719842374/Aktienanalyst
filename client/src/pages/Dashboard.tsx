@@ -69,6 +69,7 @@ import {
   RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase, UserCheck, Network,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useLocale } from "@/lib/locale";
 
 const SECTIONS = [
   { id: 1, label: "Executive Summary", icon: Sparkles },
@@ -95,6 +96,7 @@ const SECTIONS = [
 
 export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
+  const { locale, section } = useLocale();
   const [data, setData] = useState<StockAnalysis | null>(null);
   // Canonical Monte Carlo run — computed once and shared by Monte Carlo (18)
   // and the Fazit so both show identical figures instead of two independent runs.
@@ -420,7 +422,7 @@ export default function Dashboard() {
   const chatLive = useChatSectionData("stock");
   const earningsBrief = useEarningsBrief(data && !isEtfOrFund(data) ? data.ticker : null);
   const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withEarningsBriefFacts(withFazitEntryChatFacts(buildStockChatContext(data), data), earningsBrief), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive, earningsBrief]);
-  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  const chatSections = useMemo(() => SECTIONS.map(({ id }) => ({ id, label: section(id) })), [locale, section]);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
     const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
@@ -629,7 +631,7 @@ export default function Dashboard() {
                 data-testid={`nav-section-${s.id}`}
               >
                 <s.icon className="w-3.5 h-3.5 text-sidebar-foreground flex-shrink-0 group-enabled:group-hover:text-primary transition-colors" />
-                <span className="flex-1 truncate">{s.label}</span>
+                <span className="flex-1 truncate">{section(s.id)}</span>
                 <span className="text-[10px] font-mono tabular-nums text-sidebar-foreground">{s.id}</span>
               </button>
             ))}

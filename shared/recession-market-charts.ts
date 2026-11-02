@@ -47,6 +47,12 @@ export const WINDOW_MONTHS: Record<Exclude<MarketWindow, "MAX">, number> = {
   "10Y": 120,
 };
 
+/** F1-69: FINRA bleibt US-only. Europa und Asien bekommen keine erfundene Reihe. */
+export const MARGIN_DEBT_NON_US_NOTE = {
+  VGK: "n/a — FINRA Margin Debt nur für die USA, keine freie Quelle für Europa",
+  ASHR: "n/a — FINRA Margin Debt nur für die USA, keine freie Quelle für Asien",
+} as const;
+
 export const CHART_BOOKS = [
   {
     id: "SPY",

@@ -547,8 +547,8 @@ function MarketPanes({
           <p className="text-[10px] text-muted-foreground">z(YoY) &gt; 1 = Hebel hoch. Nur SPY — nicht unter ASHR, kein EU-Klon.</p>
         </div>
       )}
-      {market.id === "SPY" && !market.leverage && market.leverageNote && (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="leverage-note">{market.leverageNote}</p>
+      {!market.leverage && market.leverageNote && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400 break-words" data-testid={market.id === "SPY" ? "leverage-note" : `leverage-note-${market.id}`}>{market.leverageNote}</p>
       )}
     </div>
   );
