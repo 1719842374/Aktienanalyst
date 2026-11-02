@@ -405,7 +405,7 @@ export const HASHRATE_INDEX_CHINA_Q4: MinerCountryShare = {
   sharePct: 11.7,
   hashrateEH: 110,
   label: "Schätzung",
-  sourceLabel: "Hashrate Index, Global Hashrate Heatmap Q3 2026, 05.10.2026",
+  sourceLabel: "Hashrate Index, Global Hashrate Heatmap Q4 2026 (Stand Ende Q3 2026), 05.10.2026",
   sourceUrl: "https://hashrateindex.com/blog/global-hashrate-heatmap-update-q4-2026-c/",
   note: "Schätzung. Artikel vom 05.10.2026 zum Stand Ende Q3 2026: China etwa 110 EH/s, 11.7 % von etwa 941 EH/s Netz. Die Tilde steht in der Quelle. Kein Primärfiling und nicht das Cambridge-Archiv Januar 2022.",
 };
