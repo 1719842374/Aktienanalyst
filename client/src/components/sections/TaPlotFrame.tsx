@@ -14,10 +14,13 @@ export function TaPlotScroll({
   testId = "ta-plot-scroll",
   widthScale = 1,
   scrollToEnd = false,
+  overlay = null,
 }: {
   minWidth?: number;
   children: ReactNode;
   testId?: string;
+  /** Liegt auf dem sichtbaren Scrollport, nicht auf dem rechten Ende der Serie. */
+  overlay?: ReactNode;
   /**
    * 1 = bisherige Breite (Chart pixelgleich).
    * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien.
@@ -43,7 +46,7 @@ export function TaPlotScroll({
   return (
     <div
       ref={scroller}
-      className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+      className="relative w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
       style={{ WebkitOverflowScrolling: "touch" }}
       data-testid={testId}
       data-min-width={minWidth ?? undefined}
@@ -56,6 +59,7 @@ export function TaPlotScroll({
       >
         {children}
       </div>
+      {overlay}
     </div>
   );
 }
