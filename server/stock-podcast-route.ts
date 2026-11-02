@@ -194,7 +194,7 @@ export async function buildStockPodcast(symbol: string, body: StockPodcastBody, 
     cacheKey,
     generatedAt: new Date(deps.now()).toISOString(),
     model: earnings.model ?? analysis.model,
-    earnings: { ...earnings.chapter, meta: call.meta, diagnostics: call.diagnostics },
+    earnings: { ...earnings.chapter, meta: call.meta, diagnostics: call.status === "ok" && call.reason ? [call.reason, ...call.diagnostics] : call.diagnostics },
     analysis: { ...analysis.chapter, asOf: ctx.asOf },
     cached: false,
   };

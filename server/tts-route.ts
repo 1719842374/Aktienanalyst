@@ -91,6 +91,7 @@ export function createTtsService(opts: { resolve?: () => TtsResolution; cacheDir
     while (queue.length) {
       const t = queue.shift()!;
       try {
+        fs.mkdirSync(path.dirname(t.abs), { recursive: true });
         const out = await p.synthesize(t.sentences, t.abs);
         fs.writeFileSync(`${t.abs}.json`, JSON.stringify(out));
         pruneCache(cacheDir, maxCacheBytes);

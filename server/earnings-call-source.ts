@@ -118,7 +118,7 @@ export interface SecDeps {
   getText: (url: string) => Promise<{ status: number; text: string }>;
 }
 
-const defaultSecDeps: SecDeps = {
+export const defaultSecDeps: SecDeps = {
   cik: getCikForTicker,
   getText: async (url) => {
     const resp = await fetch(url, {

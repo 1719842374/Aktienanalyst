@@ -21,6 +21,12 @@ export const PLAYER_PARAMS = {
   estimateSentencePauseSeconds: 0.35,
   /** Intervall, in dem der Client den TTS-Auftrag erneut abfragt. */
   ttsPollMs: 4000,
+  /** Client-Timeout je TTS-Statusabfrage (die Synthese selbst läuft im Hintergrund). */
+  ttsRequestTimeoutMs: 30_000,
+  /** Aktualisierung von Fortschrittsbalken und Highlight während der Wiedergabe. */
+  tickMs: 250,
+  /** Namensteile, die bei Browser-Stimmen auf eine natürlichere (neuronale) Stimme hindeuten. */
+  preferredVoiceHints: ["natural", "neural", "online", "google"] as const,
   /** Sprache der Browser-Stimme, wenn keine Server-Stimme bereitsteht. */
   speechLang: "de-DE",
   /** localStorage-Schlüssel der gewählten Browser-Stimme. */
@@ -56,9 +62,18 @@ export interface PlayerEpisode {
 export function splitSentences(text: string): string[] {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return [];
-  const parts = clean.split(/(?<=[.!?…])\s+(?=["„»(A-ZÄÖÜ0-9])/);
-  return parts.map(p => p.trim()).filter(Boolean);
+  const parts = clean.split(/(?<=[.!?…])\s+(?=["„»(A-ZÄÖÜ0-9])/).map(p => p.trim()).filter(Boolean);
+  const merged: string[] = [];
+  for (const p of parts) {
+    const prev = merged[merged.length - 1];
+    if (prev && SENTENCE_ABBREVIATIONS.test(prev)) merged[merged.length - 1] = `${prev} ${p}`;
+    else merged.push(p);
+  }
+  return merged;
 }
+
+/** Abkürzungen mit Punkt, nach denen kein Satz endet (Finanz- und Firmentexte). */
+const SENTENCE_ABBREVIATIONS = /(?:^|\s)(?:Mrd|Mio|Tsd|Nr|Dr|Prof|ca|bzw|vgl|z\.\s?B|u\.\s?a|d\.\s?h|inkl|exkl|Inc|Corp|Co|Ltd|St|Mr|Mrs|Ms|Jan|Feb|Mär|Apr|Jun|Jul|Aug|Sep|Sept|Okt|Nov|Dez|U\.S|v\.\s?a)\.$/;
 
 /** Absätze (Leerzeile) → Sätze, Absatzgrenzen zählen als Satzgrenze. */
 export function sentencesOfParagraphs(text: string): string[] {
