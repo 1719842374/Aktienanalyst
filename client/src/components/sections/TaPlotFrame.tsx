@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Bar, ComposedChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { TA_VOLUME_BAND_PX } from "@/lib/taChartScale";
 
@@ -13,25 +13,41 @@ export function TaPlotScroll({
   children,
   testId = "ta-plot-scroll",
   widthScale = 1,
+  scrollToEnd = false,
 }: {
   minWidth?: number;
   children: ReactNode;
   testId?: string;
   /**
    * 1 = bisherige Breite (Chart pixelgleich).
-   * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien (Szenario-Kegel),
-   * damit die Historie nicht auf die Viewport-Breite gestaucht wird.
+   * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien.
+   * Der Szenario-Kegel übergibt 1: eine Verlängerung schiebt den Vorlauf aus dem sichtbaren Scrollport.
    */
   widthScale?: number;
+  /** true = rechte Kante (Kegelspitze) im Scrollport halten, wenn die Mindestbreite darüber hinausragt. */
+  scrollToEnd?: boolean;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
   const base = minWidth ? `max(100%, ${minWidth}px)` : "100%";
   const width = widthScale > 1 ? `calc(${base} * ${widthScale})` : base;
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !scrollToEnd) return;
+    const pin = () => { el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth); };
+    pin();
+    if (typeof ResizeObserver === "undefined") return;
+    const obs = new ResizeObserver(pin);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [scrollToEnd, width, minWidth]);
   return (
     <div
+      ref={scroller}
       className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
       style={{ WebkitOverflowScrolling: "touch" }}
       data-testid={testId}
       data-min-width={minWidth ?? undefined}
+      data-scroll-end={scrollToEnd ? "1" : undefined}
     >
       <div
         data-testid={`${testId}-inner`}

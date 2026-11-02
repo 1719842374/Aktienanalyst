@@ -6,7 +6,7 @@ import {
   Tooltip, ReferenceLine, ReferenceArea, ReferenceDot, Customized, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TA_OSC_MIN_PX, TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
   type WindowPoint, type WindowSeries,
@@ -26,7 +26,8 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_FORMULA, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
+  type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
@@ -56,6 +57,11 @@ interface Props {
   extraPanes?: (ctx: TaPaneContext) => ReactNode;
   rangePresets?: readonly TimeRange[];
   defaultRange?: TimeRange;
+  /**
+   * S18-Ziehung aus Dashboard: Endkurse und der Horizont aus dem Ergebnis.
+   * null = keine Ziehung, der Kegel bleibt beim Katalysator-Horizont und die PoS ist die Log-Regression.
+   */
+  monteCarlo?: ConeMonteCarlo | null;
 }
 
 const STOCK_RANGE_PRESETS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"] as const;
@@ -74,6 +80,17 @@ type MAKey = typeof MA_LINES[number]["key"];
 const SIGNALS_PAGE_SIZE = 10;
 
 const EMPTY_WINDOW_HINT = "Keine Bars in diesem Fenster";
+
+/**
+ * Sichtbare Plot-Skala des Szenario-Kegels.
+ * conePlotScale > 1 verlängert den Scroll-Inhalt. ResponsiveContainer zeichnet
+ * den Kegel zuerst in die bisherige Viewport-Breite; der ResizeObserver setzt
+ * danach die Pixelbreite auf die verlängerte Fläche. scrollLeft bleibt 0, der
+ * Vorlauf liegt außerhalb des sichtbaren Bereichs — der Kegel ist kurz da und
+ * verschwindet, auch wenn Earnings Yield oder der Zeitraum den Chart neu zeichnet.
+ * Skala 1 hält Historie und Kegel auf derselben Kategorie-Achse im Viewport.
+ */
+const CONE_VIEWPORT_SCALE = 1;
 
 function clampIsoDate(value: string, minDate: string, maxDate: string): string {
   if (value < minDate) return minDate;
@@ -164,9 +181,10 @@ export function TechnicalChart({
   extraPanes,
   rangePresets = STOCK_RANGE_PRESETS,
   defaultRange = "1Y",
+  monteCarlo = null,
 }: Props) {
   const narrow = useIsNarrow();
-  const stockPlotMinWidth = taChartMinWidth(52, 0, 10);
+  const stockPlotMinWidth = taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX);
   const ti = data.technicalIndicators;
   const ohlcv = data.ohlcvData;
 
@@ -345,10 +363,8 @@ export function TechnicalChart({
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
     if (!last || !Number.isFinite(last.close) || last.close <= 0) return null;
-    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close });
-  }, [showCone, data, aBuilt.points]);
-  const coneForward = scenarioCone ? Math.max(0, scenarioCone.points.length - 1) : 0;
-  const coneScale = conePlotScale(aBuilt.points.length, coneForward);
+    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarlo);
+  }, [showCone, data, aBuilt.points, monteCarlo]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
@@ -950,7 +966,7 @@ export function TechnicalChart({
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={coneScale}>
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -1014,7 +1030,8 @@ export function TechnicalChart({
               count={visibleKursCount}
               ccy={ccy}
               cone={scenarioCone}
-              widthScale={coneScale}
+              widthScale={CONE_VIEWPORT_SCALE}
+              scrollToEnd={showCone}
               alignedPoints={aAligned}
               testId="chart-band-a"
               macdTestId="chart-macd"
@@ -1089,13 +1106,21 @@ export function TechnicalChart({
           data-sigma={scenarioCone.sigmaDaily ?? ""}
           data-horizon={scenarioCone.horizonDays}
           data-short={scenarioCone.shortHistory ? "1" : "0"}
+          data-drift={scenarioCone.driftPerDay ?? ""}
+          data-formula={CONE_FORMULA}
+          title={`${CONE_SOURCE}. ${CONE_FORMULA}`}
         >
           Szenario-Kegel ab letztem Close <span className="font-mono">{ccy}{scenarioCone.anchorPrice.toFixed(2)}</span>
           {" "}({scenarioCone.anchorDate}) · Horizont {scenarioCone.horizonDays} Handelstage
-          {scenarioCone.sigmaDaily != null && <> · σ daily <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
-          {scenarioCone.shortHistory && <> · Vola-Fenster kürzer als {CONE_PARAMS.volWindowDays} Tage</>}
-          {" "}· {scenarioCone.markers.map(m => `${m.name} ${m.price != null ? `${ccy}${m.price.toFixed(2)}` : "n/a"} · ${m.posText}`).join(" · ")}
+          {scenarioCone.sigmaDaily != null && <> · σ<sub>η</sub> <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
+          {scenarioCone.driftPerDay != null && <> · b <span className="font-mono">{scenarioCone.driftPerDay.toFixed(6)}</span></>}
+          {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
+          {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
+          {" "}· 50%-Band und 80%-Band
+          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${ccy}${m.price.toFixed(2)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
+          {" "}· {CONE_SOURCE}
           {" "}· nur Anzeige, kein Score
+          <div data-testid="cone-probability-hint">{CONE_PROBABILITY_HINT}</div>
         </div>
       )}
 
@@ -1310,7 +1335,7 @@ function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): Wi
   return points.concat(tail);
 }
 
-const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneBull", "coneBase", "coneBear"]);
+const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneInnerLow", "coneInnerHigh", "coneBull", "coneBase", "coneBear"]);
 
 function markerFill(id: string): string {
   if (id === "bull") return CONE_STYLE.bull;
@@ -1349,8 +1374,31 @@ function ConeEndLabels({
   const dotX = xAxis.scale(end.date);
   if (!Number.isFinite(dotX)) return null;
   const markers = cone.markers.filter(m => m.price != null && Number.isFinite(m.price));
+  const bands = [
+    { id: "band-outer", y: end.p90, text: "80%" },
+    { id: "band-inner", y: end.innerHigh, text: "50%" },
+  ];
   return (
     <g data-testid="cone-marker-labels">
+      <title>{`${CONE_SOURCE}. ${CONE_FORMULA}`}</title>
+      {bands.map(b => {
+        const anchorY = priceAxis.scale!(b.y);
+        if (!Number.isFinite(anchorY)) return null;
+        return (
+          <text
+            key={b.id}
+            data-testid={`cone-label-${b.id}`}
+            x={dotX - priceFontPx}
+            y={anchorY + (labelShift[b.id] ?? 0)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={priceFontPx}
+            fill={CONE_STYLE.band}
+          >
+            {b.text}
+          </text>
+        );
+      })}
       {markers.map(m => {
         const anchorY = priceAxis.scale!(m.price as number);
         if (!Number.isFinite(anchorY)) return null;
@@ -1365,7 +1413,7 @@ function ConeEndLabels({
             fontSize={priceFontPx}
             fill={markerFill(m.id)}
           >
-            {m.name} · {m.posText}
+            {m.caption}
           </text>
         );
       })}
@@ -1427,9 +1475,15 @@ function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
   );
   return (
     <>
-      {row(CONE_STYLE.band, "Kegel P10", p.coneP10)}
-      {row(CONE_STYLE.band, "Kegel P50", p.coneP50)}
-      {row(CONE_STYLE.band, "Kegel P90", p.coneP90)}
+      <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[260px] whitespace-normal text-muted-foreground" title={CONE_FORMULA}>
+        <div>{CONE_SOURCE}</div>
+        <div>{CONE_FORMULA}</div>
+      </div>
+      {row(CONE_STYLE.band, "80%-Band unten", p.coneP10)}
+      {row(CONE_STYLE.band, "50%-Band unten", p.coneInnerLow)}
+      {row(CONE_STYLE.band, "Trend", p.coneP50)}
+      {row(CONE_STYLE.band, "50%-Band oben", p.coneInnerHigh)}
+      {row(CONE_STYLE.band, "80%-Band oben", p.coneP90)}
       {typeof p.coneBullLabel === "string" && <div style={{ color: CONE_STYLE.bull }}>{p.coneBullLabel}</div>}
       {typeof p.coneBaseLabel === "string" && <div style={{ color: CONE_STYLE.base }}>{p.coneBaseLabel}</div>}
       {typeof p.coneBearLabel === "string" && <div style={{ color: CONE_STYLE.bear }}>{p.coneBearLabel}</div>}
@@ -1642,9 +1696,11 @@ function PricePane({
         )}
         {cone && (
           <>
-            <Line yAxisId="price" type="monotone" dataKey="coneP90" name="Kegel P90" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP10" name="Kegel P10" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP50" name="Kegel P50" stroke={CONE_STYLE.band} strokeWidth={1} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP90" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP10" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerHigh" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerLow" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP50" name="Trend" stroke={CONE_STYLE.band} strokeWidth={1} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             {cone.markers.map((m) => m.price == null ? null : (
               <ReferenceDot
                 key={m.id}
@@ -1917,7 +1973,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, fund, ccy,
-  cone = null, widthScale = 1, alignedPoints,
+  cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
 }: {
   label: string;
   labelClassName: string;
@@ -1950,6 +2006,7 @@ function BandStack({
   ccy?: string;
   cone?: ScenarioCone | null;
   widthScale?: number;
+  scrollToEnd?: boolean;
   alignedPoints?: WindowPoint[];
 }) {
   const narrow = useIsNarrow();
@@ -1957,7 +2014,7 @@ function BandStack({
   const compact = count > 1;
   const aligned = alignedPoints ?? series.points;
   return (
-    <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`} widthScale={widthScale}>
+    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd}>
     <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
