@@ -23,6 +23,40 @@ export interface EarningsCallBrief {
   /** true, wenn der Auszug am Budget abgeschnitten wurde. */
   excerptTruncated: boolean;
   source: string | null;
+  /** Link auf das Dokument (SEC-Exhibit); beim FMP-Transkript null. */
+  sourceUrl?: string | null;
+  /** "transcript" = FMP-Call-Transkript, "earnings-release" = SEC 8-K/6-K Exhibit 99.1. */
+  kind?: EarningsBriefKind | null;
+  /** Wörtliche Management-Zitate aus der Quelle. */
+  quotes?: string[];
+}
+
+export type EarningsBriefKind = "transcript" | "earnings-release";
+
+/** So viele Zitate gehen in den Chat-Kontext. */
+export const EARNINGS_QUOTE_COUNT = 3;
+/** Zitate kürzer als das sind Floskeln ("we are pleased"). */
+export const EARNINGS_QUOTE_MIN_CHARS = 60;
+
+const QUOTE_SAID = /[“"]([^”"]{20,900})[”"]\s*,?\s*(?:said|says|stated|commented|added)\s+([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){0,3})/g;
+const QUOTE_ROLE = /\b([A-Z][a-zà-ž'’-]+(?:\s+[A-Z][a-zà-ž'’-]+){1,2}),\s*(CEO|CFO|COO|Chief [A-Z][a-z]+ Officer|President)\s*:\s*(.{40,700}?[.!?])(?=\s+[A-Z][a-zà-ž'’-]+(?:\s+[A-Z][a-zà-ž'’-]+){1,2},\s*(?:CEO|CFO|COO|Chief|President)\b|\s+\d+\s*\/|\s*$)/g;
+
+/**
+ * Management-Zitate aus einem Earnings Release: “…,” said Name bzw. „Name, CEO: …“.
+ * Nur wörtlicher Text aus der Quelle, kein Umformulieren.
+ */
+export function extractReleaseQuotes(text: string, max = EARNINGS_QUOTE_COUNT): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (who: string, quote: string) => {
+    const q = quote.replace(/\s+/g, " ").replace(/[,\s]+$/, "").trim();
+    if (q.length < EARNINGS_QUOTE_MIN_CHARS || seen.has(q)) return;
+    seen.add(q);
+    out.push(`${who.trim()}: „${q}“`);
+  };
+  for (const m of Array.from(text.matchAll(QUOTE_SAID))) push(m[2], m[1]);
+  for (const m of Array.from(text.matchAll(QUOTE_ROLE))) push(`${m[1]} (${m[2]})`, m[3]);
+  return out.slice(0, max);
 }
 
 export function earningsBriefNa(symbol: string, reason: string): EarningsCallBrief {
