@@ -25,7 +25,14 @@ import {
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
 } from "./cache/google-trends-cache";
-import { PYTRENDS_TIMEOUT_MS, PYTRENDS_USER_AGENT, readPytrendsRecession } from "./cache/google-trends-pytrends";
+import {
+  GOOGLE_TRENDS_EMPTY_NA,
+  GOOGLE_TRENDS_RATE_LIMIT_NA,
+  PYTRENDS_TIMEOUT_MS,
+  PYTRENDS_USER_AGENT,
+  readPytrendsOutcome,
+  type TrendsHttpResponse,
+} from "./cache/google-trends-pytrends";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
@@ -50,6 +57,24 @@ function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string
     });
   } catch {
     return "";
+  }
+}
+
+/** Same curl as fetchUrl, plus the HTTP status. A 429 body is not a market value. */
+function fetchUrlResult(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): { status: number; body: string } {
+  try {
+    const headerArgs = Object.entries(headers)
+      .map(([k, v]) => `-H "${k}: ${v.replace(/"/g, "\\\"")}"`)
+      .join(" ");
+    const raw = execSync(
+      `curl -sL --max-time ${Math.floor(timeoutMs / 1000)} -w "\\n__STATUS__%{http_code}" ${headerArgs} "${url}"`,
+      { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 50 * 1024 * 1024 },
+    );
+    const match = raw.match(/\n__STATUS__(\d{3})$/);
+    if (!match) return { status: 0, body: raw };
+    return { status: Number(match[1]), body: raw.slice(0, -match[0].length) };
+  } catch {
+    return { status: 0, body: "" };
   }
 }
 
@@ -502,15 +527,36 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 }
 
 // 11. Google Trends "Recession"
-// One cache: server/cache/google-trends-cache.ts. No second store, no extra route.
-// A miss inside 48h is scored with the last print. Older than that, the slot closes.
+// Order: fresh cache → SerpApi only when a key is set → pytrends → n/a with a reason.
+// A Google 429 is n/a and is not written into the cache. Other misses still keep
+// the last print inside 48h. One cache, no second route.
+export type GoogleTrendsTransport = (
+  url: string,
+  timeoutMs: number,
+  headers?: Record<string, string>,
+) => TrendsHttpResponse | string;
+
+let trendsTransport: GoogleTrendsTransport | null = null;
+
+/** Tests inject a mock. Production uses curl. */
+export function setGoogleTrendsTransportForTests(transport: GoogleTrendsTransport | null): void {
+  trendsTransport = transport;
+}
+
+export function scoreGoogleTrendsForTests(): IndicatorResult {
+  return scoreGoogleTrends();
+}
+
+function trendsGet(url: string, timeoutMs: number, headers?: Record<string, string>): TrendsHttpResponse {
+  const raw = trendsTransport
+    ? trendsTransport(url, timeoutMs, headers)
+    : fetchUrlResult(url, timeoutMs, headers ?? {});
+  if (typeof raw === "string") return { status: 0, body: raw };
+  return raw;
+}
+
 function scoreGoogleTrends(): IndicatorResult {
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
-  if (!serpKey) {
-    console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
-    return googleReading(null);
-  }
-
   const now = Date.now();
   const cached = readGoogleTrendsCache();
   const fresh = freshGoogleTrends(cached, now);
@@ -520,34 +566,53 @@ function scoreGoogleTrends(): IndicatorResult {
   }
 
   let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
-  try {
-    const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const raw = fetchUrl(url, 12000);
-    const parsed = parseSerpApiGoogleTrends(raw);
-    if (parsed) {
-      const points = parseSerpApiTrendPoints(raw) ?? undefined;
-      fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
-      console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+  if (serpKey) {
+    try {
+      const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
+      const res = trendsGet(url, 12000);
+      if (res.status === 429) {
+        console.log("  Google Trends SerpApi: n/a — 429, weiter zu pytrends");
+      } else {
+        const parsed = parseSerpApiGoogleTrends(res.body);
+        if (parsed) {
+          const points = parseSerpApiTrendPoints(res.body) ?? undefined;
+          fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
+          console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+        }
+      }
+    } catch (err: any) {
+      console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
     }
-  } catch (err: any) {
-    console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
+  } else {
+    console.log("  Google Trends: kein SERPAPI_KEY, pytrends als Ersatz");
   }
 
+  let googleRateLimited = false;
   if (!fetched) {
-    const py = readPytrendsRecession(url => fetchUrl(url, PYTRENDS_TIMEOUT_MS, { "User-Agent": PYTRENDS_USER_AGENT }));
-    if (py) {
-      fetched = { value: py.value, source: py.source, ...(py.points.length ? { points: py.points } : {}) };
-      console.log(`  Google Trends pytrends: avg=${py.value}, latest=${py.latest}, peak=${py.peak}`);
+    const py = readPytrendsOutcome(url => trendsGet(url, PYTRENDS_TIMEOUT_MS, { "User-Agent": PYTRENDS_USER_AGENT }));
+    if (py.kind === "print") {
+      fetched = { value: py.print.value, source: py.print.source, ...(py.print.points.length ? { points: py.print.points } : {}) };
+      console.log(`  Google Trends pytrends: avg=${py.print.value}, latest=${py.print.latest}, peak=${py.print.peak}`);
+    } else if (py.kind === "rate_limited") {
+      googleRateLimited = true;
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_RATE_LIMIT_NA}`);
+    } else if (py.kind === "miss") {
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_EMPTY_NA}`);
     } else {
-      console.log("  Google Trends pytrends: n/a — kein Verlauf");
+      const unreachable: never = py;
+      console.log(`  Google Trends pytrends: unbekannter Ausgang ${String(unreachable)}`);
     }
+  }
+
+  if (googleRateLimited) {
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_RATE_LIMIT_NA);
   }
 
   const decided = acceptGoogleTrendsFetch(fetched, cached, now);
   if (decided.store) writeGoogleTrendsCache(decided.store);
   if (decided.value == null) {
-    console.log("  Google Trends: no value within 48h — reporting N/A");
-    return googleReading(null);
+    console.log(`  Google Trends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_EMPTY_NA);
   }
   if (!fetched) {
     console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale})`);
@@ -1295,6 +1360,7 @@ export function googleReading(
   trend: number | null,
   source = "Google Trends",
   freshness?: { ageHours: number; isStale: boolean },
+  naReason?: string,
 ): IndicatorResult {
   const base = {
     name: "Google Trends \"Recession\"",
@@ -1303,7 +1369,10 @@ export function googleReading(
     source: trend == null ? "Google Trends (N/A)" : source,
     description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
   };
-  if (trend == null || !Number.isFinite(trend)) return closedIndicator(base);
+  if (trend == null || !Number.isFinite(trend)) {
+    const value = naReason && naReason.startsWith("n/a —") ? naReason : "N/A";
+    return closedIndicator(base, value);
+  }
   let rawScore = -4;
   let zone = `Niedrig (${trend} <30) → Sorglosigkeit`;
   if (trend > 75) { rawScore = 7; zone = `Extrem hoch (${trend} >75) → Panik-Suchen`; }
@@ -1500,7 +1569,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     console.log(`  ${ind.name}: ${ind.value} → Score ${ind.weightedScore} (max ${ind.maxWeighted})`);
   });
 
-  const googleAvailable = indicators.find(i => i.name.includes("Google"))?.value !== "N/A";
+  const googleHit = indicators.find(i => i.name.includes("Google"));
+  const googleAvailable = googleHit != null && googleHit.available !== false;
   const nyFedValue = getNYFedRecessionProb();
   console.log(`[RECESSION] NY Fed recession prob: ${nyFedValue}`);
 

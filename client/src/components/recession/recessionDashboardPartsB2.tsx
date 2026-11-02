@@ -83,6 +83,7 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
           <Info className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0 mt-0.5" />
           <span className="text-muted-foreground">
             Google Trends nicht verfügbar. Der Slot bleibt geschlossen und zählt nicht in Netto oder Max.
+            {typeof google?.value === "string" && google.value.startsWith("n/a —") ? ` ${google.value}` : ""}
           </span>
         </div>
       )}

@@ -14,6 +14,10 @@ export const PYTRENDS_EXPLORE_URL = "https://trends.google.com/trends/api/explor
 export const PYTRENDS_MULTILINE_URL = "https://trends.google.com/trends/api/widgetdata/multiline";
 export const PYTRENDS_TIMEOUT_MS = 8_000;
 export const PYTRENDS_USER_AGENT = "Mozilla/5.0 (compatible; Aktienanalyst/1.0; +https://github.com/1719842374/Aktienanalyst)";
+/** Shown when trends.google.com answers 429. The body is not a print and is not cached. */
+export const GOOGLE_TRENDS_RATE_LIMIT_NA = "n/a — Google Trends 429";
+/** Shown when cache, SerpApi and pytrends all have no print. */
+export const GOOGLE_TRENDS_EMPTY_NA = "n/a — kein Google-Trends-Verlauf";
 
 export interface PytrendsWidget {
   token: string;
@@ -118,11 +122,43 @@ export function parsePytrendsMultiline(raw: string): Omit<PytrendsPrint, "ageHou
   };
 }
 
-/** Explore, then one multiline call. Any wall, empty body, or bad JSON is null. */
+export interface TrendsHttpResponse {
+  status: number;
+  body: string;
+}
+
+export type PytrendsOutcome =
+  | { kind: "print"; print: PytrendsPrint }
+  | { kind: "rate_limited" }
+  | { kind: "miss" };
+
+function responseOf(raw: TrendsHttpResponse | string): TrendsHttpResponse {
+  if (typeof raw === "string") return { status: 0, body: raw };
+  if (!raw || typeof raw.status !== "number") return { status: 0, body: "" };
+  return { status: raw.status, body: typeof raw.body === "string" ? raw.body : "" };
+}
+
+function isGoogleRateLimited(res: TrendsHttpResponse): boolean {
+  if (res.status === 429) return true;
+  return res.body.includes("429") && res.body.includes("Too Many Requests");
+}
+
+/** Explore, then one multiline call. 429 is its own outcome so the caller does not cache it. */
+export function readPytrendsOutcome(get: (url: string) => TrendsHttpResponse | string): PytrendsOutcome {
+  const explore = responseOf(get(pytrendsExploreUrl()));
+  if (isGoogleRateLimited(explore)) return { kind: "rate_limited" };
+  const widget = parsePytrendsExplore(explore.body);
+  if (!widget) return { kind: "miss" };
+  const line = responseOf(get(pytrendsMultilineUrl(widget.request, widget.token)));
+  if (isGoogleRateLimited(line)) return { kind: "rate_limited" };
+  const parsed = parsePytrendsMultiline(line.body);
+  if (!parsed) return { kind: "miss" };
+  return { kind: "print", print: { ...parsed, ageHours: 0 } };
+}
+
+/** Explore, then one multiline call. Any wall, empty body, 429, or bad JSON is null. */
 export function readPytrendsRecession(get: (url: string) => string): PytrendsPrint | null {
-  const widget = parsePytrendsExplore(get(pytrendsExploreUrl()));
-  if (!widget) return null;
-  const parsed = parsePytrendsMultiline(get(pytrendsMultilineUrl(widget.request, widget.token)));
-  if (!parsed) return null;
-  return { ...parsed, ageHours: 0 };
+  const outcome = readPytrendsOutcome(get);
+  if (outcome.kind === "print") return outcome.print;
+  return null;
 }
