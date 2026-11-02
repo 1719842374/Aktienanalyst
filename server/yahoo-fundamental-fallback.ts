@@ -7,7 +7,7 @@
  * danach timeseries trailingPeRatio. Wirft nie. Fehlende Werte bleiben n/a.
  */
 import http2 from "node:http2";
-import type { EpsQuarter, FundamentalPoint, TtmPrint } from "../shared/earnings-yield-roic";
+import type { EpsQuarter, FundamentalPoint, RoicPeriod, TtmPrint } from "../shared/earnings-yield-roic";
 import { sanitizeRoic } from "./news-peers";
 import {
   fetchYahooQuoteSummaryResult,
@@ -37,6 +37,8 @@ import {
   trailingPeFromYahooHtml,
   YAHOO_ANNUAL_TYPES,
   YAHOO_EPS_TYPES,
+  YAHOO_QUARTER_ROIC_TYPES,
+  roicPeriodsFromTimeseries,
   YAHOO_HTML_TRAILING_PE_SOURCE,
   YAHOO_QS_EY_SOURCE,
   YAHOO_QS_ROIC_SOURCE,
@@ -59,6 +61,8 @@ export interface YahooSeriesBundle {
   epsNote: string | null;
   ttmPrints: TtmPrint[];
   annualEps: TtmPrint[];
+  /** Quartals-ROIC in Prozent. Leer, wenn die Timeseries die Bestandteile nicht hat. */
+  roicQuarters?: RoicPeriod[];
 }
 
 export interface YahooTrailingPe {
@@ -274,7 +278,7 @@ async function buildBundle(symbol: string, years: number): Promise<YahooSeriesBu
   };
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - years * DAYS_PER_FISCAL_YEAR * 24 * 60 * 60;
-  const doc = await fetchYahooTimeseriesDocument(sym, [...YAHOO_ANNUAL_TYPES, ...YAHOO_EPS_TYPES, YAHOO_ANNUAL_EPS_TYPE], period1, period2);
+  const doc = await fetchYahooTimeseriesDocument(sym, [...YAHOO_ANNUAL_TYPES, ...YAHOO_EPS_TYPES, YAHOO_ANNUAL_EPS_TYPE, ...YAHOO_QUARTER_ROIC_TYPES], period1, period2);
   const eps = doc ? epsQuartersFromTimeseries(doc) : { quarters: [], note: "n/a — Yahoo fundamentals-timeseries nicht verfügbar" };
   const ttmPrints = doc ? ttmPrintsFromTimeseries(doc) : [];
   const annualEps = doc ? annualEpsFromTimeseries(doc) : [];
@@ -300,6 +304,10 @@ async function buildBundle(symbol: string, years: number): Promise<YahooSeriesBu
     epsNote: eps.note,
     ttmPrints,
     annualEps,
+    roicQuarters: (doc ? roicPeriodsFromTimeseries(doc) : []).flatMap(period => {
+      const sane = sanitizeRoic(period.value);
+      return sane == null ? [] : [{ ...period, value: +sane.toFixed(1) }];
+    }),
   };
 }
 

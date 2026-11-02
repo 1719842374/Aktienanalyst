@@ -2149,7 +2149,7 @@ function FundTooltipRows({ p }: { p: FundFields }) {
       <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>
       <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>
       {p._roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
-      <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>
+      {p._roicNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>}
       <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPctOrNote(p._peerRoicKnown, p._peerRoicKnown != null ? null : p._peerRoicNote)}</span></div>
       {p._peerRoicKnown != null && p._peerRoicNote ? <div className="text-muted-foreground">{p._peerRoicNote}</div> : null}
       <div className="flex justify-between gap-3"><span className="text-orange-400">Peer-Kurs</span><span className="font-mono">{p._peerPxRaw != null ? p._peerPxRaw.toFixed(2) : fmtPctOrNote(null, p._peerPxNote)}</span></div>

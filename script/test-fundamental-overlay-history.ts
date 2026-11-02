@@ -49,7 +49,7 @@ const quarters: EpsQuarter[] = [
   { periodEnd: "2024-03-31", asOf: "2024-04-25", eps: 2, currency: "USD" },
 ];
 
-check("Fenster und Perioden sind benannt", TTM_QUARTER_COUNT === 4 && FISCAL_YEAR_DAYS === 365 && PERIOD_GAP_FACTOR === 1.6 && FUNDAMENTAL_ANNUAL_LIMIT === 12 && FUNDAMENTAL_QUARTER_LIMIT === 48);
+check("Fenster und Perioden sind benannt", TTM_QUARTER_COUNT === 4 && FISCAL_YEAR_DAYS === 365 && PERIOD_GAP_FACTOR === 1.6 && FUNDAMENTAL_ANNUAL_LIMIT === 15 && FUNDAMENTAL_QUARTER_LIMIT === 60);
 const quarterWindow = derivedQuarterWindow(quarters.map(q => q.periodEnd));
 check("Quartalszahl kommt aus dem Median-Abstand, nicht aus einer festen 4", quarterWindow?.count === 4 && (quarterWindow?.maxGapDays ?? 0) > 100, JSON.stringify(quarterWindow));
 const warmup = ttmEpsAt(quarters, "2023-12-15");
@@ -90,7 +90,7 @@ const joined = joinFundamentalsOntoPrices(["2024-01-15", "2024-01-30"], {
   showPeerRoic: true,
   showPeerPrice: true,
 });
-check("Yield vor dem TTM-Filing ist leer und nennt den Grund", joined[0].earningsYieldPct === null && joined[0].earningsYieldNote?.startsWith("n/a") === true, joined[0].earningsYieldNote ?? "");
+check("Yield vor dem TTM-Filing ist leer und nennt den Grund", joined[0].earningsYieldPct === null && joined[0].earningsYieldNote?.includes("n/a") === true, joined[0].earningsYieldNote ?? "");
 check("Yield am Filing-Tag ist 4 / 80", joined[1].earningsYieldPct === 5, String(joined[1].earningsYieldPct));
 
 const sapFx = earningsYieldFromTtm(6.91, 235.9, "EUR", "USD", { from: "EUR", to: "USD", rate: 1.08 });

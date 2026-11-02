@@ -117,7 +117,7 @@ const roic = await loadRoicSeries("SAP.DE", {
     };
   },
 });
-check("ROIC: Yahoo bleibt, FMP ergänzt das fehlende Filing und nennt beide Quellen", yahoo >= 1 && roic.points.some(p => p.date === "2023-01-30" && p.note?.includes("Yahoo") === true && p.note?.includes("ROIC Jahr") === true) && roic.points.some(p => p.date === "2024-10-20" && p.note?.includes("FMP SAP") === true && p.note?.includes("ROIC Jahr") === true) && roic.source.includes("ergänzt um") === true && roic.label === "ROIC Jahr", roic.source);
+check("ROIC: Jahresreihe wird nicht als Stufen gezeichnet", roic.points.every(p => p.date !== "2023-01-30") && (roic.note ?? "").includes("nicht als Stufen") === true && roic.source.includes("Yahoo") === true, `${roic.label} ${roic.note ?? ""} ${roic.source}`);
 
 resetFundamentalCacheForTests();
 const roicTtm = await loadRoicSeries("SAP.DE", {
@@ -148,7 +148,7 @@ const roicTtm = await loadRoicSeries("SAP.DE", {
   }),
 });
 const ttmPoint = roicTtm.points.find(p => p.date === "2025-01-25");
-check("ROIC: letzter FMP-Punkt ist die TTM-Summe und trägt dieses Label", roicTtm.label === "ROIC TTM" && ttmPoint?.value === 8 && ttmPoint.note?.includes("ROIC TTM") === true && ttmPoint.note?.includes("FMP SAP") === true && roicTtm.points.some(p => p.date === "2023-01-30" && p.note?.includes("ROIC Jahr") === true), `${roicTtm.label} ${ttmPoint?.value ?? "—"} ${ttmPoint?.note ?? ""}`);
+check("ROIC: letzter FMP-Punkt ist die TTM-Summe und trägt dieses Label", roicTtm.label === "ROIC TTM" && ttmPoint?.value === 8 && ttmPoint.note?.includes("Formel:") === true && ttmPoint.note?.includes("FMP SAP") === true && roicTtm.points.every(p => p.date !== "2023-01-30"), `${roicTtm.label} ${ttmPoint?.value ?? "—"} ${ttmPoint?.note ?? ""}`);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead as {
   VWAGY: { overallScore: number }; SAP: { overallScore: number }; MSFT: { overallScore: number };

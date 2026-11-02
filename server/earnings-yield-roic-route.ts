@@ -16,7 +16,8 @@ import {
   FUNDAMENTAL_QUARTER_LIMIT,
   ROIC_ANNUAL_FORMULA,
   ROIC_ANNUAL_LABEL,
-  annualizedRoicSeries,
+  overlayHistoryStart,
+  rollingRoicSeries,
   earningsYieldPct,
   finiteNumber,
   supplementPrints,
@@ -25,7 +26,7 @@ import {
   type RoicPeriod,
   type TtmPrint,
 } from "../shared/earnings-yield-roic";
-import { YAHOO_EPS_ASOF_NOTE, YAHOO_TS_EPS_SOURCE, type ReportedSeries } from "../shared/yahoo-fundamental-series";
+import { YAHOO_EPS_ASOF_NOTE, YAHOO_QUARTER_ROIC_SOURCE, YAHOO_TS_EPS_SOURCE, type ReportedSeries } from "../shared/yahoo-fundamental-series";
 import { extractRoicPercentFromRow, sanitizeRoic } from "./news-peers";
 import {
   fmpEnterpriseValues,
@@ -372,7 +373,7 @@ async function yahooSeries(symbol: string, deps: FundamentalDeps): Promise<Yahoo
   const load = deps.yahooBundle ?? defaultDeps.yahooBundle;
   if (!load) {
     const empty: ReportedSeries = { points: [], source: "Yahoo", note: "n/a — Yahoo nicht verfügbar" };
-    return { earningsYield: empty, roic: empty, epsQuarters: [], epsNote: "n/a — Yahoo nicht verfügbar", ttmPrints: [], annualEps: [] };
+    return { earningsYield: empty, roic: empty, epsQuarters: [], epsNote: "n/a — Yahoo nicht verfügbar", ttmPrints: [], annualEps: [], roicQuarters: [] };
   }
   const body = await load(symbol, FUNDAMENTAL_ANNUAL_LIMIT);
   return {
@@ -441,6 +442,21 @@ function tagPrints(rows: TtmPrint[], source: string): TtmPrint[] {
   return rows.map(row => ({ ...row, source: row.source ?? source }));
 }
 
+function periodsCover(rows: Array<{ periodEnd: string }>, start: string): boolean {
+  return rows.some(row => row.periodEnd <= start);
+}
+
+function supplementPeriods(primary: RoicPeriod[], extra: RoicPeriod[]): { periods: RoicPeriod[]; added: number } {
+  const have = new Set(primary.map(row => row.periodEnd));
+  const added = extra.filter(row => row.periodEnd && !have.has(row.periodEnd));
+  return {
+    periods: [...primary, ...added].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd) || a.asOf.localeCompare(b.asOf)),
+    added: added.length,
+  };
+}
+
+const ANNUAL_ROIC_NOT_DRAWN = "n/a — keine Quartals-ROIC für TTM oder 5J-Mittel. Jahresreihe wird nicht als Stufen gezeichnet";
+
 function annualEpsFromIncomeRows(raw: unknown, currency: string | null, source: string): TtmPrint[] {
   const out: TtmPrint[] = [];
   for (const row of asRows(raw)) {
@@ -469,18 +485,29 @@ async function loadGermanEarningsYield(symbol: string, deps: FundamentalDeps, no
   if (deps.search && deps.profile) {
     const listing = await resolveGermanListing(symbol, deps.search, deps.profile, now);
     if (listing) {
-      const incomeQ = await runOptional(deps.incomeQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT);
-      const built = epsQuartersFromIncomeRows(incomeQ.raw);
-      const fmpQuarters = tagQuarters(built.quarters.map(row => row.currency ? row : { ...row, currency: listing.currency }), listing.source);
-      const mergedQ = supplementQuarters(quarters, fmpQuarters);
-      quarters = mergedQ.quarters;
-      if (mergedQ.heldBack) heldBack = mergedQ.heldBack;
-      const incomeA = await captureCall(() => deps.income(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT));
-      const fmpAnnual = annualEpsFromIncomeRows(incomeA.raw, listing.currency, listing.source);
-      const mergedA = supplementPrints(annual, fmpAnnual);
-      annual = mergedA.prints;
-      if (mergedA.heldBack) heldBack = heldBack ?? mergedA.heldBack;
-      if (mergedQ.added > 0 || mergedA.added > 0) parts.push(`ergänzt um ${listing.source}`);
+      const symbols = listing.fmpSymbol === symbol ? [listing.fmpSymbol] : [symbol, listing.fmpSymbol];
+      let addedQ = 0;
+      let addedA = 0;
+      for (const fetchSymbol of symbols) {
+        const incomeQ = await runOptional(deps.incomeQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT);
+        const built = epsQuartersFromIncomeRows(incomeQ.raw);
+        const fallbackCcy = fetchSymbol === listing.fmpSymbol ? listing.currency : null;
+        const fmpQuarters = tagQuarters(built.quarters.flatMap(row => {
+          const currency = row.currency ?? fallbackCcy;
+          return currency ? [{ ...row, currency }] : [];
+        }), listing.source);
+        const mergedQ = supplementQuarters(quarters, fmpQuarters);
+        quarters = mergedQ.quarters;
+        addedQ += mergedQ.added;
+        if (mergedQ.heldBack) heldBack = heldBack ?? mergedQ.heldBack;
+        const incomeA = await captureCall(() => deps.income(fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT));
+        const fmpAnnual = annualEpsFromIncomeRows(incomeA.raw, fallbackCcy, listing.source).filter(row => row.currency);
+        const mergedA = supplementPrints(annual, fmpAnnual);
+        annual = mergedA.prints;
+        addedA += mergedA.added;
+        if (mergedA.heldBack) heldBack = heldBack ?? mergedA.heldBack;
+      }
+      if (addedQ > 0 || addedA > 0) parts.push(`ergänzt um ${listing.source}`);
       else if (!quarters.length && !prints.length && !annual.length) parts.push(listing.source);
       else parts.push(`${listing.source} ohne zusätzliche Periode`);
     } else {
@@ -497,74 +524,49 @@ async function loadGermanEarningsYield(symbol: string, deps: FundamentalDeps, no
   return body;
 }
 
-function sourcedNote(note: string | null | undefined, basis: string, source: string): string {
-  const text = note && note.trim() ? note.trim() : basis;
-  const withBasis = text === basis || text.includes(basis) ? text : `${basis} · ${text}`;
-  return withBasis.includes("Quelle:") ? withBasis : `${withBasis} · Quelle: ${source}`;
+async function quarterlyRoicFromFmp(symbol: string, deps: FundamentalDeps): Promise<RoicPeriod[]> {
+  const [metricsQ, ratiosQ, incomeQ] = await Promise.all([
+    runOptional(deps.keyMetricsQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
+    runOptional(deps.ratiosQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
+    runOptional(deps.incomeQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
+  ]);
+  const filings = filingMapFromIncome(incomeQ.raw);
+  const metrics = pitRoicPeriods(metricsQ.raw, filings);
+  const ratios = pitRoicPeriods(ratiosQ.raw, filings);
+  return metrics.length > 0 ? metrics : ratios;
 }
 
 async function loadGermanRoic(symbol: string, deps: FundamentalDeps, now: number): Promise<RoicSeriesResponse> {
   const yahoo = await yahooSeries(symbol, deps);
-  const yahooPoints = (yahoo.roic.points ?? []).map(point => (
-    point.value == null ? point : { ...point, note: sourcedNote(point.note, ROIC_ANNUAL_LABEL, "Yahoo") }
-  ));
-  let points = yahooPoints;
-  let source = hasValue(yahooPoints) ? yahoo.roic.source : "Yahoo";
-  let note = hasValue(yahooPoints) ? (yahoo.roic.note ?? YAHOO_EPS_ASOF_NOTE) : yahoo.roic.note;
-  let formula = ROIC_ANNUAL_FORMULA;
-  let label = ROIC_ANNUAL_LABEL;
+  let periods = yahoo.roicQuarters ?? [];
+  const parts = [periods.length ? YAHOO_QUARTER_ROIC_SOURCE : "Yahoo ohne Quartals-ROIC"];
   if (deps.search && deps.profile) {
     const listing = await resolveGermanListing(symbol, deps.search, deps.profile, now);
     if (listing) {
-      const [metricsQ, metricsA, ratiosQ, ratiosA, incomeQ, incomeA] = await Promise.all([
-        runOptional(deps.keyMetricsQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-        captureCall(() => deps.keyMetrics(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
-        runOptional(deps.ratiosQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-        runOptional(deps.ratios, listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT),
-        runOptional(deps.incomeQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-        captureCall(() => deps.income(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
-      ]);
-      const quarterFilings = filingMapFromIncome(incomeQ.raw);
-      const annualFilings = filingMapFromIncome(incomeA.raw);
-      const metricsSeries = annualizedRoicSeries(pitRoicPeriods(metricsQ.raw, quarterFilings), pitRoicPeriods(metricsA.raw, annualFilings));
-      const ratiosSeries = annualizedRoicSeries(pitRoicPeriods(ratiosQ.raw, quarterFilings), pitRoicPeriods(ratiosA.raw, annualFilings));
-      const picked = hasValue(metricsSeries.points) ? metricsSeries : ratiosSeries;
-      if (hasValue(picked.points)) {
-        const have = new Set(points.filter(point => point.value != null).map(point => point.date));
-        const extra = picked.points.filter(point => point.value != null && !have.has(point.date)).map(point => {
-          const basis = point.note && point.note.includes("Jahres") ? ROIC_ANNUAL_LABEL : picked.label;
-          return { ...point, note: sourcedNote(point.note, basis, listing.source) };
-        });
-        if (extra.length > 0) {
-          points = [...points, ...extra].sort((a, b) => a.date.localeCompare(b.date));
-          source = hasValue(yahooPoints) ? `${yahoo.roic.source}; ergänzt um ${listing.source}` : listing.source;
-          const latest = [...points].reverse().find(point => point.value != null);
-          if (!hasValue(yahooPoints) || (latest != null && extra.some(point => point.date === latest.date))) {
-            formula = picked.formula;
-            label = picked.label;
-          }
-        } else if (!hasValue(yahooPoints)) {
-          points = picked.points.map(point => {
-            const basis = point.note && point.note.includes("Jahres") ? ROIC_ANNUAL_LABEL : picked.label;
-            return { ...point, note: sourcedNote(point.note, basis, listing.source) };
-          });
-          source = listing.source;
-          formula = picked.formula;
-          label = picked.label;
-        } else {
-          source = `${yahoo.roic.source}; ${listing.source} ohne zusätzliches Filing`;
-        }
-        note = joinNotes(note, picked.note);
-      } else if (!hasValue(points)) {
-        source = listing.source;
-        note = picked.note ?? "n/a — FMP ohne ROIC";
+      const symbols = listing.fmpSymbol === symbol ? [listing.fmpSymbol] : [symbol, listing.fmpSymbol];
+      let added = 0;
+      for (const fetchSymbol of symbols) {
+        const extra = await quarterlyRoicFromFmp(fetchSymbol, deps);
+        const merged = supplementPeriods(periods, extra);
+        periods = merged.periods;
+        added += merged.added;
       }
-    } else if (!hasValue(points)) {
-      note = joinNotes(note, "n/a — kein FMP-Symbol für XETRA aufgelöst");
+      parts.push(added > 0 ? `ergänzt um ${listing.source}` : `${listing.source} ohne zusätzliches Quartal`);
+    } else if (periods.length === 0) {
+      parts.push("FMP-Auflösung ohne XETRA-Treffer");
     }
   }
-  const body = roicBody(symbol, points, source, note, formula, label);
-  if (hasValue(points)) roicCache.set(symbol, { at: now, body });
+  const rolled = rollingRoicSeries(periods);
+  const source = parts.join("; ");
+  if (rolled.points.length === 0) {
+    return roicBody(symbol, [], source, joinNotes(yahoo.roic.note, ANNUAL_ROIC_NOT_DRAWN));
+  }
+  const points = rolled.points.map(point => ({
+    ...point,
+    note: point.note ? `${point.note} · Quelle: ${source}` : `Quelle: ${source}`,
+  }));
+  const body = roicBody(symbol, points, source, rolled.note, rolled.formula, rolled.label);
+  roicCache.set(symbol, { at: now, body });
   return body;
 }
 
@@ -578,26 +580,30 @@ export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = 
   try {
     const income = await runOptional(deps.incomeQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT);
     const built = epsQuartersFromIncomeRows(income.raw);
-    if (built.quarters.length > 0) {
-      const body = finishEy(yieldBody(symbol, built.quarters, EARNINGS_YIELD_SOURCE, built.note, []), german.listing);
-      eyCache.set(symbol, { at: now, body });
-      return body;
+    let quarters = tagQuarters(built.quarters, EARNINGS_YIELD_SOURCE);
+    let prints: TtmPrint[] = [];
+    let annual: TtmPrint[] = [];
+    const parts = [quarters.length ? EARNINGS_YIELD_SOURCE : "FMP ohne Quartals-EPS"];
+    let heldBack: string | null = null;
+    const start = overlayHistoryStart(new Date(now));
+    if (!periodsCover(quarters, start)) {
+      const yahoo = await yahooSeries(symbol, deps);
+      const mergedQ = supplementQuarters(quarters, tagQuarters(yahoo.epsQuarters ?? [], "Yahoo"));
+      quarters = mergedQ.quarters;
+      if (mergedQ.heldBack) heldBack = mergedQ.heldBack;
+      const mergedP = supplementPrints(prints, tagPrints(yahoo.ttmPrints ?? [], "Yahoo"));
+      prints = mergedP.prints;
+      const mergedA = supplementPrints(annual, tagPrints(yahoo.annualEps ?? [], "Yahoo"));
+      annual = mergedA.prints;
+      if (mergedQ.added > 0 || mergedP.added > 0 || mergedA.added > 0) parts.push(`ergänzt um ${YAHOO_TS_EPS_SOURCE}`);
+      else parts.push("Yahoo ohne zusätzliche Periode");
+      if (mergedQ.heldBack) heldBack = heldBack ?? mergedQ.heldBack;
     }
-    const fmpNote = income.error ? errorNote(new Error(income.error)) : built.note;
-    if (german.listing) {
-      const body = finishEy(yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, fmpNote ?? "n/a — FMP ohne Quartals-EPS"), german.listing);
-      return body;
-    }
-    const yahoo = await yahooSeries(symbol, deps);
-    const quarters = yahoo.epsQuarters ?? [];
-    const prints = yahoo.ttmPrints ?? [];
-    const annualEps = yahoo.annualEps ?? [];
-    const source = prints.length > 0 || annualEps.length > 0
-      ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS oder Jahres-EPS, wenn das Quartalsfenster nicht steht`
-      : YAHOO_TS_EPS_SOURCE;
-    const body = quarters.length > 0 || prints.length > 0 || annualEps.length > 0
-      ? yieldBody(symbol, quarters, source, yahoo.epsNote, prints, annualEps)
-      : yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, joinNotes(fmpNote, yahoo.epsNote), prints, annualEps);
+    const source = parts.join("; ");
+    const note = joinNotes(income.error ? errorNote(new Error(income.error)) : built.note, heldBack);
+    const body = quarters.length || prints.length || annual.length
+      ? finishEy(yieldBody(symbol, quarters, source, note, prints, annual), german.listing)
+      : finishEy(yieldBody(symbol, [], source, note ?? "n/a — weder FMP noch Yahoo mit EPS", prints, annual), german.listing);
     if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
     return body;
   } catch (err) {
@@ -614,46 +620,26 @@ export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = def
   const fetchSymbol = german.fetchSymbol;
   const fmpSource = german.listing ? german.listing.source : "FMP key-metrics";
   try {
-    const [metricsQ, metricsA, ratiosQ, ratiosA, incomeQ, incomeA] = await Promise.all([
-      runOptional(deps.keyMetricsQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-      captureCall(() => deps.keyMetrics(fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
-      runOptional(deps.ratiosQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-      runOptional(deps.ratios, fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT),
-      runOptional(deps.incomeQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
-      captureCall(() => deps.income(fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
-    ]);
-    const quarterFilings = filingMapFromIncome(incomeQ.raw);
-    const annualFilings = filingMapFromIncome(incomeA.raw);
-    const metricsSeries = annualizedRoicSeries(
-      pitRoicPeriods(metricsQ.raw, quarterFilings),
-      pitRoicPeriods(metricsA.raw, annualFilings),
-    );
-    const ratiosSeries = annualizedRoicSeries(
-      pitRoicPeriods(ratiosQ.raw, quarterFilings),
-      pitRoicPeriods(ratiosA.raw, annualFilings),
-    );
-    const picked = hasValue(metricsSeries.points) ? metricsSeries : ratiosSeries;
-    const pickedSource = hasValue(metricsSeries.points) ? "FMP key-metrics" : "FMP ratios";
-    if (hasValue(picked.points)) {
-      const source = german.listing ? `${german.listing.source}. ${pickedSource} ${picked.label}` : `${pickedSource} ${picked.label}`;
-      const body = roicBody(symbol, picked.points, source, picked.note, picked.formula, picked.label);
-      roicCache.set(symbol, { at: now, body });
-      return body;
+    let periods = await quarterlyRoicFromFmp(fetchSymbol, deps);
+    const parts = [periods.length ? fmpSource : "FMP ohne Quartals-ROIC"];
+    const start = overlayHistoryStart(new Date(now));
+    if (!periodsCover(periods, start)) {
+      const yahoo = await yahooSeries(symbol, deps);
+      const merged = supplementPeriods(periods, yahoo.roicQuarters ?? []);
+      periods = merged.periods;
+      parts.push(merged.added > 0 ? `ergänzt um ${YAHOO_QUARTER_ROIC_SOURCE}` : "Yahoo ohne zusätzliches Quartal");
     }
-    const fmpNote = joinNotes(
-      metricsA.error ? errorNote(new Error(metricsA.error)) : metricsSeries.note,
-      metricsQ.error ? errorNote(new Error(metricsQ.error)) : picked.note,
-    );
-    if (german.listing) return roicBody(symbol, [], fmpSource, fmpNote ?? "n/a — FMP ohne ROIC");
-    const yahoo = await yahooSeries(symbol, deps);
-    const series = yahoo.roic;
-    const body = roicBody(
-      symbol,
-      series.points,
-      hasValue(series.points) ? series.source : fmpSource,
-      hasValue(series.points) ? (series.note ?? YAHOO_EPS_ASOF_NOTE) : joinNotes(fmpNote, series.note),
-    );
-    if (hasValue(body.points)) roicCache.set(symbol, { at: now, body });
+    const rolled = rollingRoicSeries(periods);
+    const source = parts.join("; ");
+    if (rolled.points.length === 0) {
+      return roicBody(symbol, [], source, ANNUAL_ROIC_NOT_DRAWN);
+    }
+    const points = rolled.points.map(point => ({
+      ...point,
+      note: point.note ? `${point.note} · Quelle: ${source}` : `Quelle: ${source}`,
+    }));
+    const body = roicBody(symbol, points, source, rolled.note, rolled.formula, rolled.label);
+    roicCache.set(symbol, { at: now, body });
     return body;
   } catch (err) {
     return roicBody(symbol, [], fmpSource, errorNote(err));

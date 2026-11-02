@@ -10,8 +10,10 @@ export const ROIC_SOURCE = "FMP key-metrics returnOnInvestedCapital";
 export const EARNINGS_YIELD_FORMULA = "TTM-EPS / Kurs";
 export const ROIC_FORMULA = "letzter berichteter ROIC zum Filing-Datum";
 export const ROIC_TTM_FORMULA = "Summe der Quartals-ROIC über das aus den Abständen abgeleitete Jahresfenster";
+export const ROIC_5Y_FORMULA = "Mittelwert der Quartals-ROIC-TTM über die letzten 5 Jahre";
 export const ROIC_ANNUAL_FORMULA = "Jahres-ROIC zum Filing-Datum";
 export const ROIC_TTM_LABEL = "ROIC TTM";
+export const ROIC_5Y_LABEL = "ROIC 5Y";
 export const ROIC_ANNUAL_LABEL = "ROIC Jahr";
 
 /** Nur die Abruf-Tiefe (Jahre × dieses Fenster). Die Mindestzahl der Quartale einer Serie kommt aus den Abständen. */
@@ -22,8 +24,10 @@ export const FISCAL_YEAR_DAYS = 365;
 export const PERIOD_GAP_FACTOR = 1.6;
 /** Sichtbare Chart-Spanne, die die Fundamentalhistorie abdecken können muss. */
 export const OVERLAY_HISTORY_YEARS = 10;
-/** Zusätzliche Jahre, damit das TTM am linken Rand des 10Y-Fensters schon steht. */
-export const OVERLAY_WARMUP_YEARS = 2;
+/** Rollierender ROIC-Mittelwert. Dieselben Jahre liegen vor dem Chart-Rand als Vorlauf. */
+export const ROIC_LOOKBACK_YEARS = 5;
+/** Vorlauf vor dem 10Y-Rand, damit der 5J-ROIC am linken Rand schon steht. */
+export const OVERLAY_WARMUP_YEARS = ROIC_LOOKBACK_YEARS;
 export const FUNDAMENTAL_ANNUAL_LIMIT = OVERLAY_HISTORY_YEARS + OVERLAY_WARMUP_YEARS;
 export const FUNDAMENTAL_QUARTER_LIMIT = FUNDAMENTAL_ANNUAL_LIMIT * TTM_QUARTER_COUNT;
 
@@ -170,6 +174,20 @@ export function medianIndexScale(subjectCloses: number[], peerCloses: number[]):
 
 function isoDayNumber(iso: string): number {
   return Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86_400_000);
+}
+
+/** Ältestes Periodenende, das der Abruf noch enthalten muss (Chart-Spanne plus ROIC-Vorlauf). */
+export function overlayHistoryStart(now: Date = new Date()): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  d.setUTCFullYear(d.getUTCFullYear() - FUNDAMENTAL_ANNUAL_LIMIT);
+  return d.toISOString().slice(0, 10);
+}
+
+function lookbackStart(asOf: string, years: number): string {
+  const d = new Date(`${asOf}T00:00:00Z`);
+  if (!Number.isFinite(d.getTime())) return asOf;
+  d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -395,6 +413,58 @@ export function annualizedRoicSeries(quarters: RoicPeriod[], annuals: RoicPeriod
     : { points, formula: ROIC_ANNUAL_FORMULA, label: ROIC_ANNUAL_LABEL, note: null };
 }
 
+function quarterTtmValue(known: RoicPeriod[]): number | null {
+  const window = derivedQuarterWindow(known.map(row => row.periodEnd));
+  if (!window || known.length < window.count) return null;
+  const last = known.slice(-window.count);
+  for (let i = 1; i < last.length; i++) {
+    const gap = isoDayNumber(last[i].periodEnd) - isoDayNumber(last[i - 1].periodEnd);
+    if (!(gap > 0 && gap <= window.maxGapDays)) return null;
+  }
+  const sum = last.reduce((total, row) => total + row.value, 0);
+  return Number.isFinite(sum) ? +sum.toFixed(1) : null;
+}
+
+/**
+ * Je Filing: TTM aus den Quartalen, und sobald das 5J-Fenster voll ist der Mittelwert
+ * dieser TTM-Werte. Keine Jahresreihe, nichts wird zwischen den Filings geschätzt.
+ */
+export function rollingRoicSeries(quarters: RoicPeriod[]): {
+  points: FundamentalPoint[];
+  formula: string;
+  label: string;
+  note: string | null;
+} {
+  const q = quarters.filter(row => row.asOf && row.periodEnd && Number.isFinite(row.value))
+    .sort((a, b) => a.asOf.localeCompare(b.asOf) || a.periodEnd.localeCompare(b.periodEnd));
+  const dates = Array.from(new Set(q.map(row => row.asOf))).sort((a, b) => a.localeCompare(b));
+  const snapshots: Array<{ date: string; ttm: number }> = [];
+  const points: FundamentalPoint[] = [];
+  let sawFiveYear = false;
+  for (const date of dates) {
+    const known = q.filter(row => row.asOf <= date).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+    const ttm = quarterTtmValue(known);
+    if (ttm == null) continue;
+    snapshots.push({ date, ttm });
+    const start = lookbackStart(date, ROIC_LOOKBACK_YEARS);
+    const oldest = known[0]?.periodEnd ?? date;
+    const full = oldest <= start;
+    const inWindow = snapshots.filter(row => row.date >= start && row.date <= date);
+    const value = full && inWindow.length > 0
+      ? +(inWindow.reduce((total, row) => total + row.ttm, 0) / inWindow.length).toFixed(1)
+      : ttm;
+    if (full) sawFiveYear = true;
+    const formula = full ? ROIC_5Y_FORMULA : ROIC_TTM_FORMULA;
+    points.push({ date, value, note: `Formel: ${formula}` });
+  }
+  if (points.length === 0) {
+    return { points: [], formula: ROIC_TTM_FORMULA, label: ROIC_TTM_LABEL, note: "n/a — keine Quartals-ROIC für TTM oder 5J-Mittel" };
+  }
+  return sawFiveYear
+    ? { points, formula: ROIC_5Y_FORMULA, label: ROIC_5Y_LABEL, note: "Frühe Punkte bleiben ROIC TTM, bis das 5J-Fenster voll ist." }
+    : { points, formula: ROIC_TTM_FORMULA, label: ROIC_TTM_LABEL, note: "5J-Fenster noch nicht voll, gezeichnet ist die Quartals-TTM." };
+}
+
 function asofLatest<T extends { date: string }>(sorted: T[], date: string, cursor: { i: number; last: T | null }): T | null {
   while (cursor.i < sorted.length && sorted[cursor.i].date <= date) {
     cursor.last = sorted[cursor.i];
@@ -404,7 +474,7 @@ function asofLatest<T extends { date: string }>(sorted: T[], date: string, curso
 }
 
 function finitePointNote(hit: FundamentalPoint | null, hasSeries: boolean, emptyNote: string, beforeNote: string): { value: number | null; note: string | null } {
-  if (hit?.value != null && Number.isFinite(hit.value)) return { value: hit.value, note: null };
+  if (hit?.value != null && Number.isFinite(hit.value)) return { value: hit.value, note: hit.note };
   if (hit?.note) return { value: null, note: hit.note };
   return { value: null, note: hasSeries ? beforeNote : emptyNote };
 }
@@ -463,7 +533,8 @@ export function joinFundamentalsOntoPrices(
           ? { value: null, note: numerator.note }
           : earningsYieldFromTtm(numerator.eps, row.close, numerator.currency, args.priceCurrency ?? null, args.priceFx ?? null);
         earningsYieldPct = yieldHit.value;
-        earningsYieldNote = [numerator.note, yieldHit.note].filter((part): part is string => !!part).join(" · ") || null;
+        const bits = [`Formel: ${EARNINGS_YIELD_FORMULA}`, numerator.note, yieldHit.note].filter((part): part is string => !!part);
+        earningsYieldNote = bits.filter((part, index) => bits.indexOf(part) === index).join(" · ") || null;
       } else {
         const eyHit = asofLatest(ey, row.date, cEy);
         const yieldHit = finitePointNote(eyHit, ey.length > 0, "n/a — keine Earnings-Yield-Punkte", "n/a — noch kein Earnings-Yield-Stichtag");

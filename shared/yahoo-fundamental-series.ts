@@ -3,7 +3,7 @@
  * Earnings Yield = EBIT / EV, ROIC = NOPAT / Invested Capital.
  * Fehlende oder nur als Platzhalter genullte Felder bleiben n/a, nie 0.
  */
-import { earningsYieldPct, type EpsQuarter, type FundamentalPoint, type TtmPrint } from "./earnings-yield-roic";
+import { earningsYieldPct, type EpsQuarter, type FundamentalPoint, type RoicPeriod, type TtmPrint } from "./earnings-yield-roic";
 
 export const YAHOO_QS_EY_SOURCE = "Yahoo quoteSummary incomeStatementHistory + defaultKeyStatistics.enterpriseValue";
 export const YAHOO_QS_ROIC_SOURCE = "Yahoo quoteSummary incomeStatementHistory + balanceSheetHistory";
@@ -24,6 +24,15 @@ export const DAYS_PER_FISCAL_YEAR = 366;
 
 export const YAHOO_EPS_TYPES = ["quarterlyDilutedEPS", "quarterlyBasicEPS", "trailingDilutedEPS"] as const;
 export const YAHOO_ANNUAL_EPS_TYPE = "annualDilutedEPS";
+/** Quartalsbestandteile für ROIC. Dieselbe NOPAT/Capital-Rechnung wie die Jahresreihe, je Quartal. */
+export const YAHOO_QUARTER_ROIC_TYPES = [
+  "quarterlyOperatingIncome",
+  "quarterlyEBIT",
+  "quarterlyPretaxIncome",
+  "quarterlyTaxProvision",
+  "quarterlyInvestedCapital",
+] as const;
+export const YAHOO_QUARTER_ROIC_SOURCE = "Yahoo fundamentals-timeseries quarterlyOperatingIncome, quarterlyPretaxIncome, quarterlyTaxProvision, quarterlyInvestedCapital";
 
 export const YAHOO_ANNUAL_TYPES = [
   "annualEBIT",
@@ -358,6 +367,44 @@ export function roicPointsFromAnnuals(rows: AnnualFundamental[]): { points: Fund
   }
   const any = points.some(p => p.value != null);
   return { points, note: any ? null : (points.find(p => p.note)?.note ?? "n/a — ROIC nicht berechenbar") };
+}
+
+/** Quartals-ROIC als Quote in Prozent. asOf ist das Yahoo-asOfDate, kein separates Filing. */
+export function roicPeriodsFromTimeseries(json: unknown): RoicPeriod[] {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byDate = new Map<string, AnnualFundamental>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    if (!rec) continue;
+    for (const type of YAHOO_QUARTER_ROIC_TYPES) {
+      const rows = rec[type];
+      if (!Array.isArray(rows)) continue;
+      const field = type === "quarterlyEBIT" || type === "quarterlyOperatingIncome"
+        ? (type === "quarterlyEBIT" ? "ebit" : "operatingIncome")
+        : type === "quarterlyPretaxIncome"
+          ? "pretax"
+          : type === "quarterlyTaxProvision"
+            ? "tax"
+            : "investedCapital";
+      for (const cell of rows) {
+        const parsed = readTimeseriesCell(cell);
+        if (!parsed) continue;
+        const row = byDate.get(parsed.date) ?? emptyAnnual(parsed.date);
+        row[field] = { value: parsed.value, currency: parsed.currency };
+        byDate.set(parsed.date, row);
+      }
+    }
+  }
+  const out: RoicPeriod[] = [];
+  for (const row of Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))) {
+    const built = roicPointsFromAnnuals([row]);
+    const value = built.points[0]?.value;
+    if (value == null || !Number.isFinite(value)) continue;
+    out.push({ asOf: row.date, periodEnd: row.date, value });
+  }
+  return out;
 }
 
 function usableCount(points: FundamentalPoint[]): number {
