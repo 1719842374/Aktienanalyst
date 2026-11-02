@@ -25,7 +25,7 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonPosLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs,
   type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
@@ -1511,6 +1511,8 @@ function ConeEndLabels({
   priceFontPx,
   labelShift,
   formatPx,
+  priceSymbol,
+  priceFactor,
 }: {
   xAxisMap?: Record<string, ChartAxis>;
   yAxisMap?: Record<string, ChartAxis>;
@@ -1518,6 +1520,8 @@ function ConeEndLabels({
   priceFontPx: number;
   labelShift: Record<string, number>;
   formatPx: (value: number, digits?: number) => string;
+  priceSymbol: string;
+  priceFactor: number;
 }) {
   const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
   const priceAxis = yAxisMap?.price;
@@ -1559,8 +1563,15 @@ function ConeEndLabels({
       {markers.map(m => {
         const price = m.price as number;
         const anchorY = priceAxis.scale!(price);
-        const move = coneMoveParts(cone.anchorPrice, price);
-        if (!Number.isFinite(anchorY)) return null;
+        const line = coneHorizonLabel({
+          name: CONE_HORIZON_NAME[m.id],
+          probability: m.probability,
+          price,
+          anchor: cone.anchorPrice,
+          symbol: priceSymbol,
+          factor: priceFactor,
+        });
+        if (!Number.isFinite(anchorY) || !line) return null;
         return (
           <text
             key={m.id}
@@ -1573,8 +1584,8 @@ function ConeEndLabels({
             fontWeight={600}
           >
             <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
-            <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{coneHorizonPosLabel(CONE_HORIZON_NAME[m.id], m.posText)}</tspan>
-            {move && <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(price)} ${move.text}`}</tspan>}
+            <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{line.lead}</tspan>
+            <tspan fill={coneMoveColor(line.direction)} data-direction={line.direction}>{line.move}</tspan>
           </text>
         );
       })}
@@ -1638,7 +1649,7 @@ function ConePriceWithMove({ anchor, price, formatPx }: { anchor: number; price:
   );
 }
 
-function ConeTooltipRows({ p, formatPx, cone }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string; cone: ScenarioCone }) {
+function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string; cone: ScenarioCone; priceSymbol: string; priceFactor: number }) {
   if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
   const anchor = cone.anchorPrice;
   const row = (color: string, name: string, value: number | null | undefined) => (
@@ -1649,11 +1660,19 @@ function ConeTooltipRows({ p, formatPx, cone }: { p: ConePlotFields; formatPx: (
   const scenarioRow = (id: "bull" | "base" | "bear", value: number | null | undefined, caption: string | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return null;
     const marker = cone.markers.find(m => m.id === id);
-    if (!marker) return null;
+    const line = marker && coneHorizonLabel({
+      name: CONE_HORIZON_NAME[id],
+      probability: marker.probability,
+      price: value,
+      anchor,
+      symbol: priceSymbol,
+      factor: priceFactor,
+    });
+    if (!marker || !line) return null;
     return (
       <div key={id} className="flex justify-between gap-3" title={[caption, marker.formula, marker.posReason].filter(Boolean).join(" · ") || undefined} data-testid={`cone-tip-${id}`}>
-        <span style={{ color: markerFill(id) }}>{coneHorizonPosLabel(CONE_HORIZON_NAME[id], marker.posText)}</span>
-        <ConePriceWithMove anchor={anchor} price={value} formatPx={formatPx} />
+        <span style={{ color: markerFill(id) }}>{line.lead}</span>
+        <span className="font-mono" data-testid="cone-move" data-direction={line.direction} style={{ color: coneMoveColor(line.direction) }}>{line.move}</span>
       </div>
     );
   };
@@ -1861,7 +1880,7 @@ function PricePane({
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
-              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} cone={cone} />}
+              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} cone={cone} priceSymbol={ccy} priceFactor={priceFactor} />}
               {fund && (dp.close != null && Number.isFinite(dp.close)
                 ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
                 : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
@@ -1917,6 +1936,8 @@ function PricePane({
                 priceFontPx={typeof tick.fontSize === "number" ? tick.fontSize : 0}
                 labelShift={labelShift}
                 formatPx={formatPx}
+                priceSymbol={ccy}
+                priceFactor={priceFactor}
               />
             )} />
           </>

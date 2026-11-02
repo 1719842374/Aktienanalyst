@@ -11,10 +11,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   CONE_EVENT_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, coneHorizonPosLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotScale, conePriceMovePct, fitLogPriceTrend, formatConeMovePct, horizonTradingDays, separateLabelYs,
+  coneBandPrice, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotScale, conePriceMovePct, fitLogPriceTrend, formatConeMovePct, horizonTradingDays, separateLabelYs,
   realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 import { chartListingPrice, CHART_PRICE_SCALE_IDENTITY } from "../client/src/lib/chartListingPrice";
+import { TA_PRICE_AXIS_LEFT_PX } from "../client/src/lib/taChartScale";
 import { gbmMonteCarlo, MONTE_CARLO_SEED } from "../client/src/lib/calculations";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -515,12 +516,12 @@ assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
   assert.equal(conePriceMovePct(0, 128), null);
   assert.equal(conePriceMovePct(-5, 128), null);
   assert.equal(conePriceMovePct(Number.NaN, 128), null);
-  assert.equal(formatConeMovePct(28), "(+28 %)");
-  assert.equal(formatConeMovePct(-17.2), "(-17 %)");
-  assert.equal(formatConeMovePct(0), "(0 %)");
-  assert.equal(formatConeMovePct(0.4), "(0 %)");
-  assert.equal(formatConeMovePct(0.6), "(+1 %)");
-  assert.equal(formatConeMovePct(-0.6), "(-1 %)");
+  assert.equal(formatConeMovePct(28), "+28 %");
+  assert.equal(formatConeMovePct(-17.2), "-17 %");
+  assert.equal(formatConeMovePct(0), "0 %");
+  assert.equal(formatConeMovePct(0.4), "0 %");
+  assert.equal(formatConeMovePct(0.6), "+1 %");
+  assert.equal(formatConeMovePct(-0.6), "-1 %");
   assert.equal(coneMoveDirection(28), "up");
   assert.equal(coneMoveDirection(-17.2), "down");
   assert.equal(coneMoveDirection(0), "flat");
@@ -548,21 +549,53 @@ assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
   near(conePriceMovePct(shown.anchorPrice, byId.bull.price!), 28);
   near(conePriceMovePct(shown.anchorPrice, byId.base.price!), 0);
   near(conePriceMovePct(shown.anchorPrice, byId.bear.price!), -20);
-  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.bull, byId.bull.posText), `Bull · PoS ${byId.bull.posText}`);
-  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.base, byId.base.posText), `Trend/Base · PoS ${byId.base.posText}`);
-  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.bear, byId.bear.posText), `Bear · PoS ${byId.bear.posText}`);
-  assert.equal(formatConeMovePct(conePriceMovePct(shown.anchorPrice, byId.bull.price!)!), "(+28 %)");
-  assert.equal(formatConeMovePct(conePriceMovePct(shown.anchorPrice, byId.bear.price!)!), "(-20 %)");
-  assert.equal(coneMoveDirection(conePriceMovePct(shown.anchorPrice, byId.base.price!)), "flat");
+  const bullLine = coneHorizonLabel({ name: CONE_HORIZON_NAME.bull, probability: byId.bull.probability, price: byId.bull.price!, anchor: shown.anchorPrice, symbol: "$" });
+  const baseLine = coneHorizonLabel({ name: CONE_HORIZON_NAME.base, probability: byId.base.probability, price: byId.base.price!, anchor: shown.anchorPrice, symbol: "$" });
+  const bearLine = coneHorizonLabel({ name: CONE_HORIZON_NAME.bear, probability: byId.bear.probability, price: byId.bear.price!, anchor: shown.anchorPrice, symbol: "$" });
+  assert.ok(bullLine && baseLine && bearLine);
+  assert.match(bullLine.text, /^Bull .+ · \$128,00 · \+28 %$/);
+  assert.match(baseLine.text, /^Base .+ · \$100,00 · 0 %$/);
+  assert.match(bearLine.text, /^Bear .+ · \$80,00 · -20 %$/);
+  assert.equal(bullLine.direction, "up");
+  assert.equal(baseLine.direction, "flat");
+  assert.equal(bearLine.direction, "down");
+  assert.equal(coneMoveColor(bullLine.direction), "#22c55e");
+  assert.equal(coneMoveColor(bearLine.direction), "#ef4444");
+  assert.equal(coneMoveColor("up"), CONE_STYLE.upside);
+  assert.equal(coneMoveColor("down"), CONE_STYLE.downside);
+  const sample = coneHorizonLabel({ name: "Bull", probability: 0.061, price: 164.64, anchor: 98, symbol: "$" });
+  assert.ok(sample);
+  assert.equal(sample.text, "Bull 6,1 % · $164,64 · +68 %");
+  assert.equal(sample.direction, "up");
+  assert.equal(coneMoveColor(sample.direction), "#22c55e");
+  const down = coneHorizonLabel({ name: "Bear", probability: 0.172, price: 80, anchor: 100, symbol: "$" });
+  assert.ok(down);
+  assert.equal(down.text, "Bear 17,2 % · $80,00 · -20 %");
+  assert.equal(down.direction, "down");
+  assert.equal(coneMoveColor(down.direction), "#ef4444");
+  const baseNamed = coneHorizonLabel({ name: "Base", probability: 0.736, price: 100, anchor: 100, symbol: "$" });
+  assert.equal(baseNamed?.text, "Base 73,6 % · $100,00 · 0 %");
   const ui = read("client/src/components/sections/TechnicalChart.tsx");
-  assert.match(ui, /coneHorizonPosLabel\(CONE_HORIZON_NAME\[m\.id\], m\.posText\)/);
-  assert.match(ui, /coneHorizonPosLabel\(CONE_HORIZON_NAME\[id\], marker\.posText\)/);
-  assert.match(ui, /data-direction=\{move\.direction\}/);
+  assert.match(ui, /coneHorizonLabel\(\{/);
+  assert.doesNotMatch(ui, /164,64|6,1 %|\+68 %/);
+  assert.match(ui, /data-direction=\{line\.direction\}/);
   assert.match(ui, /data-testid="cone-move"/);
   assert.match(ui, /CONE_HORIZON_LABEL_PX/);
   assert.match(ui, /CONE_EDGE_LABEL\.p10/);
   assert.match(ui, /CONE_EDGE_LABEL\.p90/);
   assert.match(ui, /m\.caption/);
+  const fontPx = 13;
+  const labelWidth = sample.text.length * fontPx * 0.6;
+  const plotWidth = 375 - TA_PRICE_AXIS_LEFT_PX - 10;
+  assert.ok(labelWidth < plotWidth, `Label ${labelWidth}px passt in den 375-px-Plot ${plotWidth}px`);
+  const xPx = plotWidth - labelWidth;
+  assertSeparated([
+    { id: "bull", xPx, widthPx: labelWidth, yPx: 120, heightPx: fontPx },
+    { id: "base", xPx, widthPx: labelWidth, yPx: 121, heightPx: fontPx },
+    { id: "bear", xPx, widthPx: labelWidth, yPx: 122, heightPx: fontPx },
+    { id: "p90", xPx, widthPx: labelWidth, yPx: 118, heightPx: fontPx },
+    { id: "p10", xPx, widthPx: labelWidth, yPx: 124, heightPx: fontPx },
+  ]);
 }
 
 console.log("test-scenario-cone: OK");

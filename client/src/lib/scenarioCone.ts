@@ -150,7 +150,7 @@ export const CONE_EDGE_LABEL = {
 /** Sichtbarer Szenarioname am Horizont. Base ist das Trendszenario aus g*. */
 export const CONE_HORIZON_NAME: Record<ScenarioMarkerId, string> = {
   bull: "Bull",
-  base: "Trend/Base",
+  base: "Base",
   bear: "Bear",
 };
 
@@ -362,9 +362,22 @@ export function formatPos(probability: number | null | undefined): string {
   return Number.isInteger(pct) ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
 }
 
-/** Horizont-Label: Szenarioname und die schon berechnete PoS. Keine neue Wahrscheinlichkeit. */
-export function coneHorizonPosLabel(name: string, posText: string): string {
-  return `${name} · PoS ${posText}`;
+/**
+ * PoS im Horizont-Label, dieselbe Rundung wie formatPos, mit Komma und Abstand.
+ * Fehlende Wahrscheinlichkeit bleibt „PoS n/a“, kein eingesetzter Prozentwert.
+ */
+export function formatConePosDe(probability: number | null | undefined): string {
+  if (probability == null || !Number.isFinite(probability)) return POS_NA;
+  const pct = Math.round(probability * CONE_PARAMS.percent * 10) / 10;
+  const body = Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1).replace(".", ",");
+  return `${body} %`;
+}
+
+/** Kurs im Horizont-Label. factor ist nur die Anzeige (Euro-Achse), nicht der Score. */
+export function formatConeDePrice(symbol: string, value: number, factor = 1): string {
+  const shown = value * factor;
+  if (!Number.isFinite(shown)) return "";
+  return `${symbol}${shown.toFixed(2).replace(".", ",")}`;
 }
 
 /**
@@ -403,13 +416,43 @@ export function coneMoveColor(direction: ConeMoveDirection): string {
   }
 }
 
-/** „(+28 %)“ oder „(-17 %)“. Die Farbe kommt aus coneMoveColor, nicht aus diesem Text. */
+/** „+68 %“ oder „-17 %“. Plus ist grün, Minus rot, über coneMoveColor. */
 export function formatConeMovePct(pct: number): string {
   const rounded = Math.round(pct);
   if (!Number.isFinite(rounded)) return "";
-  if (rounded > 0) return `(+${rounded} %)`;
-  if (rounded < 0) return `(${rounded} %)`;
-  return `(0 %)`;
+  if (rounded > 0) return `+${rounded} %`;
+  if (rounded < 0) return `${rounded} %`;
+  return `0 %`;
+}
+
+export interface ConeHorizonLabel {
+  /** „Bull 6,1 % · $164,64 · “ ohne die Änderung. */
+  lead: string;
+  /** „+68 %“. Die Farbe hängt am Vorzeichen. */
+  move: string;
+  direction: ConeMoveDirection;
+  /** lead + move. */
+  text: string;
+}
+
+/**
+ * Eine Zeile am Horizont: Name, PoS, Kurs, Änderung gegen den letzten Close.
+ * Die Zahlen kommen aus probability, price und anchor. Nichts davon ist fest eingesetzt.
+ */
+export function coneHorizonLabel(input: {
+  name: string;
+  probability: number | null;
+  price: number;
+  anchor: number;
+  symbol: string;
+  factor?: number;
+}): ConeHorizonLabel | null {
+  const pct = conePriceMovePct(input.anchor, input.price);
+  const direction = coneMoveDirection(pct);
+  if (pct == null || direction == null || !Number.isFinite(input.price)) return null;
+  const move = formatConeMovePct(pct);
+  const lead = `${input.name} ${formatConePosDe(input.probability)} · ${formatConeDePrice(input.symbol, input.price, input.factor ?? 1)} · `;
+  return { lead, move, direction, text: `${lead}${move}` };
 }
 
 export interface ScenarioMarker {
