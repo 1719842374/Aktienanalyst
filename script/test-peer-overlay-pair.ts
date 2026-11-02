@@ -3,7 +3,8 @@
  * Aufruf: npx tsx script/test-peer-overlay-pair.ts
  *
  * FIXTURE, wenn FMP_API_KEY fehlt. Die Zahlen sind dann gesetzt und als FIXTURE
- * markiert, nicht live abgerufen. Mit Key prüft der Lauf zusätzlich die echten Serien.
+ * markiert, nicht live abgerufen. Ohne Key prüft der Lauf den Yahoo-Jahres-Fallback.
+ * Mit Key prüft er die FMP-TTM zum Filing-Datum, nicht den Yahoo-Jahreswert.
  */
 import { readFileSync } from "node:fs";
 import {
@@ -15,6 +16,7 @@ import {
 } from "../shared/dividends";
 import {
   EARNINGS_YIELD_FORMULA,
+  EARNINGS_YIELD_SOURCE,
   estimateBadge,
   joinFundamentalsOntoPrices,
   type EpsQuarter,
@@ -35,7 +37,7 @@ function check(label: string, cond: boolean, detail = ""): void {
 const FIXTURE = !process.env.FMP_API_KEY;
 console.log(FIXTURE
   ? "FIXTURE: kein FMP_API_KEY — Join-Paar mit gesetzten Werten. Yahoo-Filings werden danach ohne Key gelesen."
-  : "FMP_API_KEY vorhanden — Fixture plus Live-Prüfung.");
+  : "FMP_API_KEY vorhanden — Fixture plus Live-Prüfung der FMP-TTM zum Filing.");
 
 /** Tooltip vom 04.05.2023: MSFT-Kurs und ORCL-Peer-Kurs aus der gemeldeten Ansicht. */
 const HOVER = "2023-05-04";
@@ -214,6 +216,26 @@ check("Schätzung hat ein Badge", chart.includes("data-testid=\"badge-schaetzung
 check(".DE bleibt Yahoo zuerst, dann FMP", route.includes("if (isGermanXetraTicker(symbol)) return loadGermanEarningsYield") && route.includes("if (isGermanXetraTicker(symbol)) return loadGermanRoic"));
 check("analyze-route wird von der Overlay-Route nicht importiert", !/from ["'][^"']*analyze-route["']/.test(route));
 
+/** Quartale, deren Filing am Stichtag bekannt ist. Ein Periodenende behält das spätere Filing. */
+function pitQuarters(quarters: EpsQuarter[], asOf: string): EpsQuarter[] {
+  const known = new Map<string, EpsQuarter>();
+  for (const quarter of quarters) {
+    if (!quarter || quarter.asOf > asOf || !Number.isFinite(quarter.eps)) continue;
+    const prev = known.get(quarter.periodEnd);
+    if (!prev || quarter.asOf >= prev.asOf) known.set(quarter.periodEnd, quarter);
+  }
+  return Array.from(known.values()).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+}
+
+function lastFundPoint(points: FundamentalPoint[], asOf: string): FundamentalPoint | null {
+  let hit: FundamentalPoint | null = null;
+  for (const point of points) {
+    if (!point?.date || point.date > asOf || point.value == null || !Number.isFinite(point.value)) continue;
+    if (!hit || point.date >= hit.date) hit = point;
+  }
+  return hit;
+}
+
 {
   const { loadEarningsYield, loadRoicSeries, resetFundamentalCacheForTests } = await import("../server/earnings-yield-roic-route");
   const { yahooFetch } = await import("../server/history-fallback");
@@ -245,10 +267,17 @@ check("analyze-route wird von der Overlay-Route nicht importiert", !/from ["'][^
     resolveEarningsYield: true,
     resolveRoic: true,
   })[0];
-  console.log(`LIVE Yahoo ohne FMP-Key ${HOVER}: MSFT Kurs ${msftHover?.close ?? "n/a"} EY ${live.earningsYieldKnown ?? "n/a"} (${live.earningsYieldNote}) ROIC ${live.roicKnown ?? "n/a"} (${live.roicNote}) Peer-ROIC ${live.peerRoicKnown ?? "n/a"} (${live.peerRoicNote})`);
+  const fmpFirst = !!process.env.FMP_API_KEY
+    && msftEy.source.startsWith(EARNINGS_YIELD_SOURCE)
+    && orclEy.source.startsWith(EARNINGS_YIELD_SOURCE)
+    && msftRoic.source.startsWith("FMP")
+    && orclRoic.source.startsWith("FMP");
+  console.log(`LIVE ${fmpFirst ? "FMP-TTM" : "Yahoo-Fallback"} ${HOVER}: Quelle EY ${msftEy.source} | ROIC ${msftRoic.source}`);
+  console.log(`LIVE ${HOVER}: MSFT Kurs ${msftHover?.close ?? "n/a"} EY ${live.earningsYieldKnown ?? "n/a"} (${live.earningsYieldNote}) ROIC ${live.roicKnown ?? "n/a"} (${live.roicNote}) Peer-ROIC ${live.peerRoicKnown ?? "n/a"} (${live.peerRoicNote})`);
   check("LIVE Kurs am 04.05.2023 ist der Tooltip-Kurs, Yahoo", msftHover != null && Math.abs(msftHover.close - MSFT_CLOSE) < 0.02 && orclHover != null && Math.abs(orclHover.close - ORCL_CLOSE) < 0.02, `${msftHover?.close} ${orclHover?.close}`);
-  check("LIVE am 04.05.2023 nennt EY einen Grund, nicht „kein Wert“ — Yahoo-Jahres-EPS beginnt am 30.06.2023", live.earningsYieldKnown == null && (live.earningsYieldNote ?? "").includes("n/a") && !(live.earningsYieldNote ?? "").includes("kein Wert"), live.earningsYieldNote ?? "");
-  check("LIVE am 04.05.2023 nennt ROIC einen Grund — der erste Yahoo-Jahres-ROIC ist der 30.06.2023", live.roicKnown == null && (live.roicNote ?? "").includes("n/a") && !(live.roicNote ?? "").includes("kein Wert"), live.roicNote ?? "");
+  if (process.env.FMP_API_KEY) {
+    check("mit Key kommt FMP vor Yahoo", fmpFirst, `${msftEy.source} | ${orclEy.source} | ${msftRoic.source} | ${orclRoic.source}`);
+  }
   const afterFiling = "2023-07-03";
   const afterBar = [...msftBars].reverse().find(row => row.date <= afterFiling);
   const msftAnnual = msftEy.annualEps.find(row => row.asOf === "2023-06-30");
@@ -273,11 +302,6 @@ check("analyze-route wird von der Overlay-Route nicht importiert", !/from ["'][^
   })[0];
   const expectedAfter = afterBar && msftAnnual ? (msftAnnual.eps / afterBar.close) * 100 : Number.NaN;
   console.log(`LIVE MSFT ${afterFiling} Kurs ${afterBar?.close ?? "n/a"} Jahres-EPS ${msftAnnual?.eps ?? "n/a"} EY ${after.earningsYieldKnown ?? "n/a"} (${after.earningsYieldNote})`);
-  check(
-    "LIVE nach dem Filing 30.06.2023 ist EY das Jahres-EPS dieses Filings / Kurs",
-    msftAnnual != null && msftAnnual.eps > 8 && msftAnnual.eps < 12 && after.earningsYieldKnown != null && Math.abs((after.earningsYieldKnown ?? 0) - expectedAfter) < 1e-9 && after.earningsYieldNote?.includes("Jahres-EPS") === true && after.earningsYieldNote?.includes("Quelle:") === true,
-    `${msftAnnual?.eps} ${after.earningsYieldKnown} ${after.earningsYieldNote}`,
-  );
   const orclAfterDate = "2023-06-01";
   const orclAfterBar = [...orclBars].reverse().find(row => row.date <= orclAfterDate);
   const orclAnnual = orclEy.annualEps.find(row => row.asOf === "2023-05-31");
@@ -300,11 +324,92 @@ check("analyze-route wird von der Overlay-Route nicht importiert", !/from ["'][^
   })[0];
   const expectedOrcl = orclAfterBar && orclAnnual ? (orclAnnual.eps / orclAfterBar.close) * 100 : Number.NaN;
   console.log(`LIVE ORCL ${orclAfterDate} Kurs ${orclAfterBar?.close ?? "n/a"} Jahres-EPS ${orclAnnual?.eps ?? "n/a"} EY ${orclAfter.earningsYieldKnown ?? "n/a"} (${orclAfter.earningsYieldNote}) Peer-ROIC ${orclAfter.peerRoicKnown ?? "n/a"}`);
-  check(
-    "LIVE umgekehrt: ORCL nach dem Filing 31.05.2023 nutzt das Jahres-EPS dieses Filings",
-    orclAnnual != null && orclAnnual.eps > 2 && orclAnnual.eps < 5 && orclAfter.earningsYieldKnown != null && Math.abs((orclAfter.earningsYieldKnown ?? 0) - expectedOrcl) < 1e-9 && orclAfter.earningsYieldNote?.includes("Jahres-EPS") === true,
-    `${orclAnnual?.eps} ${orclAfter.earningsYieldKnown} ${orclAfter.earningsYieldNote}`,
-  );
+  if (fmpFirst) {
+    const msftQ4 = msftEy.quarters.find(row => row.periodEnd === "2023-06-30");
+    const orclQ4 = orclEy.quarters.find(row => row.periodEnd === "2023-05-31");
+    check("MSFT Q4 FY23 ist am 03.07.2023 noch nicht gefiled", msftQ4 != null && msftQ4.asOf > afterFiling, `${msftQ4?.asOf ?? "fehlt"} ${msftQ4?.eps ?? ""}`);
+    check("ORCL Q4 FY23 ist am 01.06.2023 noch nicht gefiled", orclQ4 != null && orclQ4.asOf > orclAfterDate, `${orclQ4?.asOf ?? "fehlt"} ${orclQ4?.eps ?? ""}`);
+    const msftWindow = pitQuarters(msftEy.quarters, HOVER).slice(-4);
+    const msftLater = pitQuarters(msftEy.quarters, afterFiling).slice(-4);
+    const orclWindow = pitQuarters(orclEy.quarters, orclAfterDate).slice(-4);
+    const msftSum = msftWindow.reduce((total, row) => total + row.eps, 0);
+    const msftLaterSum = msftLater.reduce((total, row) => total + row.eps, 0);
+    const orclSum = orclWindow.reduce((total, row) => total + row.eps, 0);
+    const msftEyAtHover = msftHover ? (msftSum / msftHover.close) * 100 : Number.NaN;
+    const msftEyAfter = afterBar ? (msftLaterSum / afterBar.close) * 100 : Number.NaN;
+    const orclEyAt = orclAfterBar ? (orclSum / orclAfterBar.close) * 100 : Number.NaN;
+    check(
+      "LIVE FMP MSFT 04.05.2023: TTM der vier Filings vor dem Tag, Tooltip 3,0 %",
+      msftWindow.length === 4
+        && msftWindow.every(row => row.asOf <= HOVER)
+        && msftWindow[0]?.periodEnd === "2022-06-30"
+        && msftWindow[3]?.periodEnd === "2023-03-31"
+        && Math.abs(msftSum - 9.23) < 0.08
+        && live.earningsYieldKnown != null
+        && Math.abs(live.earningsYieldKnown - msftEyAtHover) < 1e-6
+        && live.earningsYieldKnown.toFixed(1) === "3.0"
+        && live.earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true
+        && live.earningsYieldNote?.includes("FMP") === true
+        && live.earningsYieldNote?.includes("Jahres-EPS") !== true
+        && live.earningsYieldNote?.includes("kein Wert") !== true,
+      `sum ${msftSum} ey ${live.earningsYieldKnown} ${live.earningsYieldNote}`,
+    );
+    const msftRoicHit = lastFundPoint(msftRoic.points, HOVER);
+    const orclRoicHit = lastFundPoint(orclRoic.points, HOVER);
+    check(
+      "LIVE FMP MSFT 04.05.2023: ROIC ist der letzte Punkt zum Filing, nicht leer",
+      msftRoicHit != null
+        && msftRoicHit.date <= HOVER
+        && msftRoicHit.date >= "2023-01-01"
+        && live.roicKnown === msftRoicHit.value
+        && Math.abs(msftRoicHit.value - 20) < 1
+        && orclRoicHit != null
+        && live.peerRoicKnown === orclRoicHit.value
+        && Math.abs(orclRoicHit.value - 10.3) < 1
+        && (live.roicNote ?? "").includes("Formel:")
+        && (live.roicNote ?? "").includes("kein Wert") !== true,
+      `roic ${live.roicKnown} am ${msftRoicHit?.date} peer ${live.peerRoicKnown} am ${orclRoicHit?.date} ${live.roicNote}`,
+    );
+    check(
+      "LIVE FMP MSFT 03.07.2023: EY bleibt die TTM vor dem Q4-Filing, nicht das Yahoo-Jahres-EPS",
+      msftLater.length === 4
+        && msftLater[3]?.periodEnd === "2023-03-31"
+        && Math.abs(msftLaterSum - msftSum) < 1e-9
+        && after.earningsYieldKnown != null
+        && Math.abs(after.earningsYieldKnown - msftEyAfter) < 1e-6
+        && Math.abs(after.earningsYieldKnown - 2.73) < 0.08
+        && after.earningsYieldNote?.includes("Jahres-EPS") !== true
+        && after.earningsYieldNote?.includes("FMP") === true,
+      `sum ${msftLaterSum} ey ${after.earningsYieldKnown} ${after.earningsYieldNote}`,
+    );
+    check(
+      "LIVE FMP ORCL 01.06.2023: EY ist die TTM vor dem Q4-Filing, nicht das Yahoo-Jahres-EPS",
+      orclWindow.length === 4
+        && orclWindow.every(row => row.asOf <= orclAfterDate)
+        && orclWindow[0]?.periodEnd === "2022-05-31"
+        && orclWindow[3]?.periodEnd === "2023-02-28"
+        && Math.abs(orclSum - 3.03) < 0.03
+        && orclAfter.earningsYieldKnown != null
+        && Math.abs(orclAfter.earningsYieldKnown - orclEyAt) < 1e-6
+        && Math.abs(orclAfter.earningsYieldKnown - 2.86) < 0.05
+        && orclAfter.earningsYieldNote?.includes("Jahres-EPS") !== true
+        && orclAfter.earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true,
+      `sum ${orclSum} ey ${orclAfter.earningsYieldKnown} ${orclAfter.earningsYieldNote}`,
+    );
+  } else {
+    check("LIVE am 04.05.2023 nennt EY einen Grund, nicht „kein Wert“ — Yahoo-Jahres-EPS beginnt am 30.06.2023", live.earningsYieldKnown == null && (live.earningsYieldNote ?? "").includes("n/a") && !(live.earningsYieldNote ?? "").includes("kein Wert"), live.earningsYieldNote ?? "");
+    check("LIVE am 04.05.2023 nennt ROIC einen Grund — der erste Yahoo-Jahres-ROIC ist der 30.06.2023", live.roicKnown == null && (live.roicNote ?? "").includes("n/a") && !(live.roicNote ?? "").includes("kein Wert"), live.roicNote ?? "");
+    check(
+      "LIVE nach dem Filing 30.06.2023 ist EY das Jahres-EPS dieses Filings / Kurs",
+      msftAnnual != null && msftAnnual.eps > 8 && msftAnnual.eps < 12 && after.earningsYieldKnown != null && Math.abs((after.earningsYieldKnown ?? 0) - expectedAfter) < 1e-9 && after.earningsYieldNote?.includes("Jahres-EPS") === true && after.earningsYieldNote?.includes("Quelle:") === true,
+      `${msftAnnual?.eps} ${after.earningsYieldKnown} ${after.earningsYieldNote}`,
+    );
+    check(
+      "LIVE umgekehrt: ORCL nach dem Filing 31.05.2023 nutzt das Jahres-EPS dieses Filings",
+      orclAnnual != null && orclAnnual.eps > 2 && orclAnnual.eps < 5 && orclAfter.earningsYieldKnown != null && Math.abs((orclAfter.earningsYieldKnown ?? 0) - expectedOrcl) < 1e-9 && orclAfter.earningsYieldNote?.includes("Jahres-EPS") === true,
+      `${orclAnnual?.eps} ${orclAfter.earningsYieldKnown} ${orclAfter.earningsYieldNote}`,
+    );
+  }
 }
 
 if (failures > 0) {
