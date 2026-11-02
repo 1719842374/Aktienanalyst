@@ -2,14 +2,16 @@
  * Szenario-Kegel ab dem letzten Close (WORK_SCENARIO_CONE_STOCK.md).
  * Reine Anzeige — keine Bewertungs- oder Score-Rechnung, kein Import aus der Score-Pipeline.
  *
- * Kegelbreite: σ_daily aus den letzten CONE_PARAMS.volWindowDays Schlusskursen,
- * Band = last · exp(z · σ_daily · √t). z steht in CONE_PARAMS.quantiles (P10/P50/P90).
+ * Kegelbreite: Regression von log(Kurs) auf den Handelstag über
+ * CONE_PARAMS.regressionWindowDays. Der Trend ist b, die Bandbreite ist die
+ * Streuung σ_η von Δlog P − b. 50-%- und 80-%-Band:
+ * last · exp(b·t ± z·σ_η·√t), z aus CONE_PARAMS.confidence.
  *
- * Endpunkte Bull / Base / Bear sind Marker. Wahrscheinlichkeiten nur, wenn die
- * Response sie als Szenario-PoS trägt. shared/schema.ts hat kein solches Feld
- * (Catalyst.pos und Risk.ew sind je Eintrag, Monte Carlo liegt nicht in
- * /api/analyze). Fehlt die Wahrscheinlichkeit → „PoS n/a“, ohne Prozentzeichen.
- * Die Platzhalter 50/30/20 werden nicht eingesetzt.
+ * Endpunkte Bull / Base / Bear sind Marker. Liegt keine Szenario-PoS in der
+ * Response (shared/schema.ts hat kein solches Feld; Catalyst.pos und Risk.ew
+ * sind je Eintrag, Monte Carlo liegt nicht in /api/analyze), kommt die
+ * Wahrscheinlichkeit aus derselben Verteilung am Horizont. Geht das nicht,
+ * bleibt „PoS n/a“ mit Grund. Die Platzhalter 50/30/20 werden nicht eingesetzt.
  *
  * Herkunft der Fenster: Philip 01.11.2026 12:36 — Schwellen aus den Daten
  * (Median der Katalysator-Horizonte), Gewichte/Fenster nur als benannte
@@ -34,16 +36,56 @@ export const CONE_PARAMS = {
    */
   percent: 100,
   /**
-   * Quantile der Kegelbänder. z = Φ⁻¹(Perzentil/100), Standardnormalverteilung.
+   * Quantile der äußeren Kegellinien. z = Φ⁻¹(Perzentil/100).
    * P10 −1.2815515655446004, P50 0, P90 +1.2815515655446004.
-   * Der Band-Pfad liest nur diese z-Parameter.
+   * Das 80-%-Band liest |z| von P90 (Φ⁻¹(0.90)).
    */
   quantiles: {
     P10: { percentile: 10, z: -1.2815515655446004 },
     P50: { percentile: 50, z: 0 },
     P90: { percentile: 90, z: 1.2815515655446004 },
   },
+  /**
+   * Konfidenzbänder um den Log-Trend. z = Φ⁻¹((1 + Niveau) / 2), je Seite.
+   * inner 50 % → Φ⁻¹(0.75). outer 80 % → Φ⁻¹(0.90), derselbe Betrag wie P90.
+   * Der Band-Pfad liest nur diese Namen.
+   */
+  confidence: {
+    inner: { level: 0.5, z: 0.6744897501960817 },
+    outer: { level: 0.8, z: 1.2815515655446004 },
+  },
+  /**
+   * Fenster der Regression log(Kurs) auf den Handelstag.
+   * Ein Börsenjahr, dieselbe 252-Tage-Konvention wie tradingDaysPerYear.
+   */
+  regressionWindowDays: 252,
+  /** Unter dieser Kurszahl keine Innovations-σ (mindestens ein Freiheitsgrad). */
+  minRegressionPoints: 3,
+  /**
+   * Nenner der Innovationsstreuung: Anzahl Tages-Log-Renditen minus innovationDf.
+   * b ist der eine geschätzte Drift. Die Niveaustreuung von ε wird nicht mit √t
+   * multipliziert — das wäre die falsche Einheit und sprengt den Kegel.
+   */
+  innovationDf: 1,
+  /** Relative Toleranz, wenn σ = 0 und der Pfad auf einem Ziel liegt. */
+  priceMatchRel: 1e-9,
+  /**
+   * Unter dieser Residuen-σ gilt die Serie als ohne Streuung (Gleitkomma-Rest
+   * einer flachen Log-Reihe). Kein Konfidenzniveau.
+   */
+  residualSigmaFloor: 1e-12,
 } as const;
+
+/** Quelle der Bänder: nur die Schlusskurse dieser Aktie bis zum Anker. */
+export const CONE_SOURCE = "eigene Kurshistorie (Schlusskurse bis zum letzten Close)";
+
+/**
+ * Formel am Kegel. b aus der Regression log P = a + b·t.
+ * σ_η ist die Streuung der Tages-Log-Rendite um b (Residuum der Regression,
+ * nicht die Niveaustreuung von ε und nicht noch einmal mit √t als Tages-σ).
+ * z aus CONE_PARAMS.confidence, t in Handelstagen ab dem Anker.
+ */
+export const CONE_FORMULA = "log P = a + b·t + ε; σ_η = Streuung(Δlog P − b); Band(t) = P₀·exp(b·t ± z·σ_η·√t); z = Φ⁻¹((1+Niveau)/2); PoS = Φ derselben Verteilung am Horizont";
 
 export type ConeBand = keyof typeof CONE_PARAMS.quantiles;
 
@@ -70,9 +112,102 @@ export function bandZ(band: ConeBand): number {
   return CONE_PARAMS.quantiles[band].z;
 }
 
-/** last · exp(z · σ_daily · √t). t in Handelstagen, σ daily (nicht annualisiert). */
-export function coneBandPrice(last: number, sigmaDaily: number, z: number, tDays: number): number {
-  return last * Math.exp(z * sigmaDaily * Math.sqrt(tDays));
+/**
+ * last · exp(drift·t + z · σ · √t). t in Handelstagen.
+ * drift = 0 ist der alte Null-Drift. σ ist die Residuenstreuung der Log-Regression
+ * (oder, im Test der Hilfsfunktion, eine übergebene Tages-σ).
+ */
+export function coneBandPrice(last: number, sigmaDaily: number, z: number, tDays: number, driftPerDay = 0): number {
+  return last * Math.exp(driftPerDay * tDays + z * sigmaDaily * Math.sqrt(tDays));
+}
+
+/** Abramowitz & Stegun 7.1.26. Maximale Abweichung etwa 1.5e-7. Kein Konfidenzniveau. */
+const ERF_AS726 = {
+  p: 0.3275911,
+  a1: 0.254829592,
+  a2: -0.284496736,
+  a3: 1.421413741,
+  a4: -1.453152027,
+  a5: 1.061405429,
+} as const;
+
+function erfAs726(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const a = Math.abs(x);
+  const t = 1 / (1 + ERF_AS726.p * a);
+  const y = 1 - (((((ERF_AS726.a5 * t + ERF_AS726.a4) * t) + ERF_AS726.a3) * t + ERF_AS726.a2) * t + ERF_AS726.a1) * t * Math.exp(-a * a);
+  return sign * y;
+}
+
+/** Φ(z), Standardnormalverteilung. Für die Szenario-PoS am Horizont. */
+export function standardNormalCdf(z: number): number {
+  if (!Number.isFinite(z)) return z > 0 ? 1 : 0;
+  return 0.5 * (1 + erfAs726(z / Math.SQRT2));
+}
+
+export interface LogTrendFit {
+  /** Steigung von log(Kurs) je Handelstag. null = Regression steht nicht. */
+  slope: number | null;
+  /**
+   * Streuung von Δlog P − b. Das ist die Bandbreite je √Handelstag.
+   * null = nicht berechenbar.
+   */
+  residualSigma: number | null;
+  sample: number;
+  shortHistory: boolean;
+  /** null, wenn die Regression steht. Sonst der n/a-Grund. */
+  reason: string | null;
+}
+
+/**
+ * OLS von log(Kurs) auf den Handelstagsindex, letzte `window` positive Kurse.
+ * Bandbreite = Streuung der Tages-Log-Rendite um die Steigung b.
+ * Historie kürzer als das Fenster → Rechnung mit den vorhandenen Kursen, kein Auffüllen.
+ */
+export function fitLogPriceTrend(closes: readonly number[], window = CONE_PARAMS.regressionWindowDays): LogTrendFit {
+  const positive: number[] = [];
+  for (const c of closes) {
+    if (typeof c === "number" && Number.isFinite(c) && c > 0) positive.push(c);
+  }
+  const slice = positive.slice(-window);
+  const n = slice.length;
+  const shortHistory = n < window;
+  if (n < CONE_PARAMS.minRegressionPoints) {
+    return {
+      slope: null,
+      residualSigma: null,
+      sample: n,
+      shortHistory: true,
+      reason: `n/a — nur ${n} Kurse, Log-Regression braucht ${CONE_PARAMS.minRegressionPoints}`,
+    };
+  }
+  const ys = slice.map(c => Math.log(c));
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumXY = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += ys[i];
+    sumXX += i * i;
+    sumXY += i * ys[i];
+  }
+  const meanX = sumX / n;
+  const meanY = sumY / n;
+  const sxx = sumXX - n * meanX * meanX;
+  const rawSlope = sxx > 0 ? (sumXY - n * meanX * meanY) / sxx : 0;
+  const slope = Math.abs(rawSlope) <= CONE_PARAMS.residualSigmaFloor ? 0 : rawSlope;
+  let sse = 0;
+  let nRet = 0;
+  for (let i = 1; i < n; i++) {
+    const innovation = (ys[i] - ys[i - 1]) - slope;
+    sse += innovation * innovation;
+    nRet += 1;
+  }
+  const df = nRet - CONE_PARAMS.innovationDf;
+  const rawSigma = df > 0 ? Math.sqrt(sse / df) : 0;
+  const residualSigma = rawSigma <= CONE_PARAMS.residualSigmaFloor ? 0 : rawSigma;
+  return { slope, residualSigma, sample: n, shortHistory, reason: null };
 }
 
 export interface SigmaEstimate {
@@ -155,25 +290,40 @@ export interface ScenarioMarker {
   name: string;
   /** null = kein Ziel in der Response (nicht 0 als Ersatz). */
   price: number | null;
-  /** null = Response trägt keine Szenario-Wahrscheinlichkeit. */
+  /** null = weder Response noch Historie tragen eine Wahrscheinlichkeit. */
   probability: number | null;
   posText: string;
+  /** null, wenn probability eine Zahl ist. Sonst der n/a-Grund. */
+  posReason: string | null;
 }
 
 export interface ConePoint {
   t: number;
   date: string;
+  /** Untere Kante des 80-%-Bands. */
   p10: number;
+  /** Trend = Anker · exp(b·t). */
   p50: number;
+  /** Obere Kante des 80-%-Bands. */
   p90: number;
+  /** Untere / obere Kante des 50-%-Bands. */
+  innerLow: number;
+  innerHigh: number;
 }
 
 export interface ScenarioCone {
   anchorPrice: number;
   anchorDate: string;
+  /** Residuen-σ der Log-Regression. null = Regression steht nicht. */
   sigmaDaily: number | null;
+  /** Steigung b von log(Kurs) je Handelstag. null = Regression steht nicht. */
+  driftPerDay: number | null;
   volSample: number;
   shortHistory: boolean;
+  /** null, wenn die Bänder stehen. Sonst der n/a-Grund. */
+  bandReason: string | null;
+  source: string;
+  formula: string;
   horizonDays: number;
   points: ConePoint[];
   markers: ScenarioMarker[];
@@ -193,7 +343,10 @@ export interface ScenarioConeInput {
   forwardConsensusPrice: number | null;
   /** Summe risks[].expectedDamage in Prozent. null = kein Bear-Marker. */
   expectedDamagePct: number | null;
-  /** Szenario-PoS als Anteil 0–1. null = fehlt. */
+  /**
+   * Szenario-PoS als Anteil 0–1.
+   * null = aus der Log-Regression am Horizont ableiten (kein 50/30/20-Platzhalter).
+   */
   probabilityBull: number | null;
   probabilityBase: number | null;
   probabilityBear: number | null;
@@ -205,37 +358,83 @@ function finiteOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function marker(id: ScenarioMarkerId, price: number | null, probability: number | null): ScenarioMarker {
+function marker(id: ScenarioMarkerId, price: number | null, probability: number | null, posReason: string | null): ScenarioMarker {
   const usable = price != null && Number.isFinite(price) ? price : null;
+  const p = probability != null && Number.isFinite(probability) ? probability : null;
   return {
     id,
     name: MARKER_NAME[id],
     price: usable,
-    probability: probability != null && Number.isFinite(probability) ? probability : null,
-    posText: formatPos(probability),
+    probability: p,
+    posText: formatPos(p),
+    posReason: p == null ? posReason : null,
   };
+}
+
+function pricesMatch(a: number, b: number): boolean {
+  const tol = Math.max(CONE_PARAMS.priceMatchRel, Math.abs(b) * CONE_PARAMS.priceMatchRel);
+  return Math.abs(a - b) <= tol;
+}
+
+/**
+ * PoS aus der Log-Normalverteilung am Horizont.
+ * Bull = P(P_H ≥ Ziel), Bear = P(P_H ≤ Ziel),
+ * Base = P(P_H im 50-%-breiten Intervall um das Base-Ziel).
+ * Eine übergebene Wahrscheinlichkeit bleibt stehen. Fehlt das Ziel oder die
+ * Regression, bleibt null und posReason nennt den Grund.
+ */
+export function scenarioProbability(
+  kind: ScenarioMarkerId,
+  price: number | null,
+  anchor: number,
+  slope: number | null,
+  sigma: number | null,
+  horizon: number,
+): { probability: number | null; reason: string | null } {
+  if (price == null || !Number.isFinite(price)) {
+    const why = kind === "bull" ? "kein Forward-Konsens" : kind === "base" ? "g* fehlt" : "kein Expected Damage";
+    return { probability: null, reason: `n/a — ${why}` };
+  }
+  if (!(price > 0)) return { probability: null, reason: "n/a — Zielkurs nicht positiv" };
+  if (slope == null || sigma == null) return { probability: null, reason: "n/a — Log-Regression nicht berechenbar" };
+  if (!(horizon > 0)) return { probability: null, reason: "n/a — kein Horizont aus den Katalysator-Timelines" };
+  const path = anchor * Math.exp(slope * horizon);
+  if (sigma === 0) {
+    if (kind === "bull") return { probability: path >= price || pricesMatch(path, price) ? 1 : 0, reason: null };
+    if (kind === "bear") return { probability: path <= price || pricesMatch(path, price) ? 1 : 0, reason: null };
+    return { probability: pricesMatch(path, price) ? 1 : 0, reason: null };
+  }
+  const scale = sigma * Math.sqrt(horizon);
+  const z = (Math.log(price / anchor) - slope * horizon) / scale;
+  if (kind === "bull") return { probability: 1 - standardNormalCdf(z), reason: null };
+  if (kind === "bear") return { probability: standardNormalCdf(z), reason: null };
+  const half = CONE_PARAMS.confidence.inner.z;
+  return { probability: standardNormalCdf(z + half) - standardNormalCdf(z - half), reason: null };
 }
 
 export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null {
   const last = input.anchorPrice;
   if (!Number.isFinite(last) || last <= 0 || !input.anchorDate) return null;
-  const est = realizedSigmaDaily(input.closes, CONE_PARAMS.volWindowDays);
+  const fit = fitLogPriceTrend(input.closes, CONE_PARAMS.regressionWindowDays);
   const horizon = input.horizonDays != null && input.horizonDays > 0 ? input.horizonDays : 0;
-  const z10 = bandZ("P10");
-  const z50 = bandZ("P50");
-  const z90 = bandZ("P90");
-  const dates = est.sigma != null && horizon > 0 ? addTradingDays(input.anchorDate, horizon) : [];
-  const steps = est.sigma != null ? horizon : 0;
+  const zOuter = CONE_PARAMS.confidence.outer.z;
+  const zInner = CONE_PARAMS.confidence.inner.z;
+  const canFan = fit.residualSigma != null && fit.slope != null && horizon > 0;
+  const dates = canFan ? addTradingDays(input.anchorDate, horizon) : [];
+  const steps = canFan ? horizon : 0;
+  const slope = fit.slope ?? 0;
+  const sigma = fit.residualSigma ?? 0;
   const points: ConePoint[] = [];
   for (let t = 0; t <= steps; t++) {
     const date = t === 0 ? input.anchorDate.slice(0, 10) : dates[t - 1];
-    const sigma = est.sigma ?? 0;
     points.push({
       t,
       date,
-      p10: coneBandPrice(last, sigma, z10, t),
-      p50: coneBandPrice(last, sigma, z50, t),
-      p90: coneBandPrice(last, sigma, z90, t),
+      p10: coneBandPrice(last, sigma, -zOuter, t, slope),
+      p50: coneBandPrice(last, sigma, 0, t, slope),
+      p90: coneBandPrice(last, sigma, zOuter, t, slope),
+      innerLow: coneBandPrice(last, sigma, -zInner, t, slope),
+      innerHigh: coneBandPrice(last, sigma, zInner, t, slope),
     });
   }
   const bullPrice = input.forwardConsensusPrice != null
@@ -249,19 +448,31 @@ export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null
   const bearPrice = input.expectedDamagePct != null && Number.isFinite(input.expectedDamagePct)
     ? last * (1 - input.expectedDamagePct / CONE_PARAMS.percent)
     : null;
+  const explicit: Record<ScenarioMarkerId, number | null> = {
+    bull: input.probabilityBull,
+    base: input.probabilityBase,
+    bear: input.probabilityBear,
+  };
+  const prices: Record<ScenarioMarkerId, number | null> = { bull: bullPrice, base: basePrice, bear: bearPrice };
+  const markers = MARKER_ORDER.map(id => {
+    const given = explicit[id];
+    if (given != null && Number.isFinite(given)) return marker(id, prices[id], given, null);
+    const derived = scenarioProbability(id, prices[id], last, fit.slope, fit.residualSigma, horizon);
+    return marker(id, prices[id], derived.probability, derived.reason);
+  });
   return {
     anchorPrice: last,
     anchorDate: input.anchorDate.slice(0, 10),
-    sigmaDaily: est.sigma,
-    volSample: est.sample,
-    shortHistory: est.shortHistory,
+    sigmaDaily: fit.residualSigma,
+    driftPerDay: fit.slope,
+    volSample: fit.sample,
+    shortHistory: fit.shortHistory,
+    bandReason: fit.reason,
+    source: CONE_SOURCE,
+    formula: CONE_FORMULA,
     horizonDays: horizon,
     points,
-    markers: [
-      marker("bull", bullPrice, input.probabilityBull),
-      marker("base", basePrice, input.probabilityBase),
-      marker("bear", bearPrice, input.probabilityBear),
-    ],
+    markers,
   };
 }
 
@@ -328,6 +539,8 @@ export interface ConePlotFields {
   coneP10?: number | null;
   coneP50?: number | null;
   coneP90?: number | null;
+  coneInnerLow?: number | null;
+  coneInnerHigh?: number | null;
   coneBull?: number | null;
   coneBase?: number | null;
   coneBear?: number | null;
@@ -375,6 +588,8 @@ export function attachConeSeries<T extends { date: string; close: number }>(
       coneP10: anchor.p10,
       coneP50: anchor.p50,
       coneP90: anchor.p90,
+      coneInnerLow: anchor.innerLow,
+      coneInnerHigh: anchor.innerHigh,
       ...(future.length === 0 ? endMarkers : EMPTY_MARKERS),
     };
   });
@@ -391,6 +606,8 @@ export function attachConeSeries<T extends { date: string; close: number }>(
       coneP10: pt.p10,
       coneP50: pt.p50,
       coneP90: pt.p90,
+      coneInnerLow: pt.innerLow,
+      coneInnerHigh: pt.innerHigh,
       ...(isEnd ? endMarkers : EMPTY_MARKERS),
     } as unknown as T & ConePlotFields);
   }
@@ -401,7 +618,7 @@ export function attachConeSeries<T extends { date: string; close: number }>(
 export function coneDomainValues(cone: ScenarioCone): number[] {
   const out: number[] = [];
   for (const p of cone.points) {
-    for (const v of [p.p10, p.p50, p.p90]) {
+    for (const v of [p.p10, p.p50, p.p90, p.innerLow, p.innerHigh]) {
       if (Number.isFinite(v)) out.push(v);
     }
   }

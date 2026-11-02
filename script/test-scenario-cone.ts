@@ -10,9 +10,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  CONE_PARAMS, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, conePlotScale, horizonTradingDays, separateLabelYs,
-  realizedSigmaDaily, scenarioConeFromAnalysis, type LabelBox, type ScenarioConeInput,
+  CONE_FORMULA, CONE_PARAMS, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
+  coneBandPrice, coneDomainValues, conePlotScale, fitLogPriceTrend, horizonTradingDays, separateLabelYs,
+  realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -48,6 +48,13 @@ assert.equal(bandZ("P90"), CONE_PARAMS.quantiles.P90.z);
 assert.equal(bandZ("P50"), 0);
 assert.equal(bandZ("P10"), -bandZ("P90"));
 assert.equal(bandZ("P90"), 1.2815515655446004);
+assert.equal(CONE_PARAMS.regressionWindowDays, CONE_PARAMS.tradingDaysPerYear);
+assert.equal(CONE_PARAMS.confidence.outer.level, 0.8);
+assert.equal(CONE_PARAMS.confidence.inner.level, 0.5);
+assert.equal(CONE_PARAMS.confidence.outer.z, bandZ("P90"));
+assert.ok(Math.abs(standardNormalCdf(0) - 0.5) < 1e-6);
+assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.outer.z) - 0.9) < 1e-6);
+assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.inner.z) - 0.75) < 1e-6);
 
 // σ = 0 → Band klebt auf dem letzten Close, für jeden Horizont.
 {
@@ -60,7 +67,10 @@ assert.equal(bandZ("P90"), 1.2815515655446004);
   }));
   assert.ok(cone);
   assert.equal(cone.sigmaDaily, 0);
-  assert.equal(cone.shortHistory, false);
+  assert.equal(cone.driftPerDay, 0);
+  assert.equal(cone.shortHistory, cone.volSample < CONE_PARAMS.regressionWindowDays);
+  assert.equal(cone.points[0].innerLow, last);
+  assert.equal(cone.points[0].innerHigh, last);
   assert.equal(cone.points.length, 16);
   assert.equal(cone.points[0].date, "2026-01-05");
   for (const p of cone.points) {
@@ -91,18 +101,24 @@ assert.equal(bandZ("P90"), 1.2815515655446004);
   assert.ok(cone);
   assert.equal(cone.shortHistory, true);
   assert.equal(cone.volSample, closes.length);
-  assert.ok(cone.volSample < CONE_PARAMS.volWindowDays);
+  assert.ok(cone.volSample < CONE_PARAMS.regressionWindowDays);
   assert.ok(cone.sigmaDaily != null && cone.sigmaDaily > 0);
   assert.equal(cone.points[0].p10, 10.8);
   assert.equal(cone.points[0].p50, 10.8);
   assert.equal(cone.points[0].p90, 10.8);
+  assert.equal(cone.points[0].innerLow, 10.8);
+  assert.equal(cone.points[0].innerHigh, 10.8);
   assert.equal(cone.points.length, 6);
-  const manual = realizedSigmaDaily(closes, closes.length);
-  assert.equal(cone.sigmaDaily, manual.sigma);
+  const fit = fitLogPriceTrend(closes, closes.length);
+  assert.equal(cone.sigmaDaily, fit.residualSigma);
+  assert.equal(cone.driftPerDay, fit.slope);
   const t = 4;
-  assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(10.8, cone.sigmaDaily!, bandZ("P90"), t)) < 1e-9);
-  assert.ok(Math.abs(cone.points[t].p10 - coneBandPrice(10.8, cone.sigmaDaily!, bandZ("P10"), t)) < 1e-9);
-  assert.equal(cone.points[t].p50, 10.8);
+  const drift = cone.driftPerDay!;
+  assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(10.8, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, drift)) < 1e-9);
+  assert.ok(Math.abs(cone.points[t].p10 - coneBandPrice(10.8, cone.sigmaDaily!, -CONE_PARAMS.confidence.outer.z, t, drift)) < 1e-9);
+  assert.ok(Math.abs(cone.points[t].innerHigh - coneBandPrice(10.8, cone.sigmaDaily!, CONE_PARAMS.confidence.inner.z, t, drift)) < 1e-9);
+  assert.ok(Math.abs(cone.points[t].innerLow - coneBandPrice(10.8, cone.sigmaDaily!, -CONE_PARAMS.confidence.inner.z, t, drift)) < 1e-9);
+  assert.ok(Math.abs(cone.points[t].p50 - coneBandPrice(10.8, 0, 0, t, drift)) < 1e-9);
 }
 
 // Weniger als zwei Kurse → kein σ, kein Vorlauf, Anker bleibt der Close.
@@ -194,7 +210,8 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(attachConeSeries(same, null), same);
 }
 
-// MSFT: letzter Close, Bull = Konsens-Kurs, Base = Close·(1+g*), Bear = Close·(1−Schaden), PoS n/a.
+// MSFT: letzter Close, Bull = Konsens-Kurs, Base = Close·(1+g*), Bear = Close·(1−Schaden).
+// PoS aus der Log-Regression, nicht 50/30/20 und nicht null, solange Ziel und Historie da sind.
 {
   const msft = json("script/fixtures/analysis-MSFT.json");
   const last = msft.historicalPrices[msft.historicalPrices.length - 1];
@@ -214,14 +231,20 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(bull.price, msft.analystPT.median);
   assert.ok(Math.abs(base.price! - last.close * (1 + msft.impliedGStar / CONE_PARAMS.percent)) < 1e-6);
   assert.ok(Math.abs(bear.price! - last.close * (1 - damage / CONE_PARAMS.percent)) < 1e-6);
+  assert.equal(cone.formula, CONE_FORMULA);
+  assert.equal(cone.source, CONE_SOURCE);
+  assert.equal(cone.bandReason, null);
   for (const m of cone.markers) {
-    assert.equal(m.probability, null);
-    assert.equal(m.posText, POS_NA);
-    assert.equal(m.posText, "PoS n/a");
-    assert.ok(m.posText !== "50%" && m.posText !== "30%" && m.posText !== "20%");
+    const derived = scenarioProbability(m.id, m.price, last.close, cone.driftPerDay, cone.sigmaDaily, cone.horizonDays);
+    assert.equal(m.probability, derived.probability);
+    assert.equal(m.posReason, null);
+    assert.ok(m.probability != null && m.probability > 0 && m.probability < 1, `${m.id} ${m.probability}`);
+    assert.ok(m.posText.endsWith("%") && m.posText !== POS_NA);
   }
+  assert.ok(!(cone.markers[0].probability === 0.5 && cone.markers[1].probability === 0.3 && cone.markers[2].probability === 0.2));
   const t = 20;
-  assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(last.close, cone.sigmaDaily!, bandZ("P90"), t)) < 1e-6);
+  assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, cone.driftPerDay!)) < 1e-6);
+  assert.ok(Math.abs(cone.points[t].innerHigh - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.inner.z, t, cone.driftPerDay!)) < 1e-6);
   const attached = attachConeSeries([{ date: last.date, close: last.close }], cone);
   assert.equal(attached[0].coneP50, last.close);
   assert.equal(attached[0].close, last.close);
@@ -239,14 +262,23 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(cone.points[0].p10, 39.38);
   assert.equal(cone.points[0].p50, 39.38);
   assert.equal(cone.points[0].p90, 39.38);
-  assert.equal(cone.markers.find(m => m.id === "bull")!.price, null);
+  const shelBull = cone.markers.find(m => m.id === "bull")!;
+  assert.equal(shelBull.price, null);
+  assert.equal(shelBull.posText, POS_NA);
+  assert.match(shelBull.posReason ?? "", /Forward-Konsens/);
   const samples = coneDomainValues(cone);
   const lo = Math.min(...samples);
   const hi = Math.max(...samples);
   assert.ok(lo > 1, `Achse auf 0/Pence gezogen: min ${lo}`);
   assert.equal(samples.some(v => v === 0), false);
   assert.ok(hi / 39.38 < 30 && 39.38 / lo < 30, `Spanne ${lo}…${hi} nicht mehr GBP-Kurs`);
-  for (const m of cone.markers) assert.equal(m.posText, POS_NA);
+  for (const m of cone.markers.filter(x => x.id !== "bull")) {
+    assert.ok(m.price != null && m.price > 0);
+    assert.equal(m.posReason, null);
+    assert.ok(m.posText.endsWith("%"));
+    const derived = scenarioProbability(m.id, m.price, 39.38, cone.driftPerDay, cone.sigmaDaily, cone.horizonDays);
+    assert.equal(m.probability, derived.probability);
+  }
 }
 
 // SAP.DE und VOW3.DE: kurze Yahoo-Historie, Kegel startet am letzten Close, Achse bleibt in der Kursgröße.
@@ -272,9 +304,14 @@ for (const [ticker, file] of [["SAP.DE", "script/fixtures/yahoo-chart-SAP.DE.jso
   const samples = coneDomainValues(cone);
   const lo = Math.min(...samples);
   const hi = Math.max(...samples);
-  assert.ok(lo > 0 && lo > last * 0.05, `${ticker} Achse gestaucht: ${lo} bei Close ${last}`);
-  assert.ok(hi / last < 30 && last / lo < 30, `${ticker} Spanne ${lo}…${hi}`);
-  assert.ok(cone.markers.every(m => m.posText === POS_NA));
+  assert.ok(lo > 0 && last / lo < 30 && hi / last < 30, `${ticker} Spanne ${lo}…${hi} bei Close ${last}`);
+  const bull = cone.markers.find(m => m.id === "bull")!;
+  assert.equal(bull.posText, POS_NA);
+  assert.match(bull.posReason ?? "", /Forward-Konsens/);
+  for (const m of cone.markers.filter(x => x.id !== "bull")) {
+    assert.equal(m.posReason, null, `${ticker} ${m.id} ${m.posReason}`);
+    assert.ok(m.posText.endsWith("%"), `${ticker} ${m.id} ${m.posText}`);
+  }
 }
 
 // Tester-FAIL #359 (NVO, 1440 px): Labels weichen nur um den Fehlbetrag aus Höhe und Pixelabstand aus.
@@ -336,7 +373,14 @@ assertSeparated([
   assert.match(ui, /if \(!showCone\) return null/);
   assert.match(ui, /data-testid="button-scenario-cone"/);
   assert.match(ui, /data-testid="button-dividend"/);
-  assert.match(ui, /widthScale=\{coneScale\}/);
+  assert.match(ui, /widthScale=\{CONE_VIEWPORT_SCALE\}/);
+  assert.match(ui, /const CONE_VIEWPORT_SCALE = 1/);
+  assert.doesNotMatch(ui, /widthScale=\{coneScale\}/);
+  assert.match(ui, /data-testid="cone-tooltip-formula"/);
+  assert.match(ui, /data-testid=\{`cone-label-\$\{b\.id\}`\}/);
+  assert.match(ui, /scrollToEnd=\{showCone\}/);
+  assert.match(lib, /regressionWindowDays: 252/);
+  assert.match(lib, /inner: \{ level: 0\.5, z: 0\.6744897501960817 \}/);
   assert.match(ui, /\{cone && \(/);
   assert.match(ui, /separateLabelYs/);
   assert.match(ui, /data-testid=\{`cone-label-\$\{m\.id\}`\}/);
