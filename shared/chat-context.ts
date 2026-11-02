@@ -530,6 +530,7 @@ export const RECESSION_SECTION_DEFS: ReadonlyArray<{ key: string; label: string;
   { key: "fazit", label: "Fazit & Makro-Risiko", when: "fazit" },
   { key: "quellen", label: "Quellenliste" },
   { key: "lager", label: "Lager/Nachfrage-Lücke" },
+  { key: "makroSchicht", label: "Makro-Schicht" },
 ];
 
 /** Nummerierung wie in client/src/pages/RecessionDashboard.tsx (abhängig von Regionen/Fazit). */
@@ -578,6 +579,7 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
     regionen: regionFacts(opts.regions),
     rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, ta: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
     lager: { hinweis: SELF_LOADED },
+    makroSchicht: { hinweis: SELF_LOADED },
     summary: { topTreiber: list(d.topDrivers), interpretation: str(d.interpretation, 800) },
     fazit: { risiko: str(d.fazit?.riskLevel), zusammenfassung: str(d.fazit?.summary, 800), abschnitte: list((d.fazit?.sections ?? []).map((s: any) => s.title)) },
     quellen: { anzahl: Array.isArray(d.sources) ? d.sources.length : null, quellen: list((d.sources ?? []).map((s: any) => s.name), 8) },
@@ -585,7 +587,7 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
   const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => ({ ...sec(s.id, s.label, facts[s.key] ?? {}), key: s.key }));
   return {
     dashboard: "recession", entity: "US-Rezession", title: "Rezessions-Dashboard", asOf: str(d.asOf ?? d.date, 40), sections, gates: [],
-    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts, Technische Analyse, Buffett-Indikator und Lager/Nachfrage-Lücke laden eigene Daten und fehlen im Kontext"],
+    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts, Technische Analyse, Buffett-Indikator, Lager/Nachfrage-Lücke und Makro-Schicht laden eigene Daten und fehlen im Kontext, bis sie geladen sind"],
   };
 }
 
