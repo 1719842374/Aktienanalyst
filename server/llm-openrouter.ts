@@ -58,10 +58,11 @@ const MODEL_FALLBACK_CHAIN = [
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean; signal?: AbortSignal },
+  opts?: { online?: boolean; signal?: AbortSignal; models?: readonly string[] },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
-  const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
+  // Eine vom Aufrufer fest gewählte Kette (z. B. KI-Chat) hat Vorrang vor OPENROUTER_MODEL.
+  const chain = opts?.models?.length ? opts.models : override ? [override] : MODEL_FALLBACK_CHAIN;
   let lastErr: any;
   for (const model of chain) {
     const variants = opts?.online && !model.endsWith(":online") ? [`${model}:online`, model] : [model];
@@ -809,6 +810,8 @@ export async function callLLMJson(opts: {
   online?: boolean;
   /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
   signal?: AbortSignal;
+  /** Eigene Modellkette (erstes Modell zuerst). Ohne Angabe: OPENROUTER_MODEL bzw. MODEL_FALLBACK_CHAIN. */
+  models?: readonly string[];
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -821,7 +824,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online, signal: opts.signal });
+    }, { online: opts.online, signal: opts.signal, models: opts.models });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
