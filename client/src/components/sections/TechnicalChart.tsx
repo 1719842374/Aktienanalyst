@@ -6,7 +6,7 @@ import {
   Tooltip, ReferenceLine, ReferenceArea, ReferenceDot, Customized, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TA_OSC_MIN_PX, TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
   type WindowPoint, type WindowSeries,
@@ -25,7 +25,7 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_FORMULA, CONE_PARAMS, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_FORMULA, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
@@ -53,6 +53,11 @@ interface Props {
   extraPanes?: (ctx: TaPaneContext) => ReactNode;
   rangePresets?: readonly TimeRange[];
   defaultRange?: TimeRange;
+  /**
+   * Endkurse der S18-Ziehung aus Dashboard. Die Analyze-Response enthält sie nicht.
+   * null = diese Quelle fehlt, der Kegel geht zu S17 und danach zur Log-Regression.
+   */
+  monteCarloTerminals?: readonly number[] | null;
 }
 
 const STOCK_RANGE_PRESETS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"] as const;
@@ -180,9 +185,10 @@ export function TechnicalChart({
   extraPanes,
   rangePresets = STOCK_RANGE_PRESETS,
   defaultRange = "1Y",
+  monteCarloTerminals = null,
 }: Props) {
   const narrow = useIsNarrow();
-  const stockPlotMinWidth = taChartMinWidth(52, 0, 10);
+  const stockPlotMinWidth = taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX);
   const ti = data.technicalIndicators;
   const ohlcv = data.ohlcvData;
 
@@ -358,8 +364,8 @@ export function TechnicalChart({
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
     if (!last || !Number.isFinite(last.close) || last.close <= 0) return null;
-    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close });
-  }, [showCone, data, aBuilt.points]);
+    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarloTerminals);
+  }, [showCone, data, aBuilt.points, monteCarloTerminals]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
@@ -1088,9 +1094,10 @@ export function TechnicalChart({
           {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
           {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
           {" "}· 50%-Band und 80%-Band
-          {" "}· {scenarioCone.markers.map(m => `${m.name} ${m.price != null ? `${ccy}${m.price.toFixed(2)}` : "n/a"} · ${m.posText}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
+          {" "}· {scenarioCone.markers.map(m => `${m.eventLabel} ${m.price != null ? `${ccy}${m.price.toFixed(2)}` : "n/a"} · ${m.posText}${m.fallback ? " · Fallback" : ""}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
           {" "}· {CONE_SOURCE}
           {" "}· nur Anzeige, kein Score
+          <div data-testid="cone-probability-hint">{CONE_PROBABILITY_HINT}</div>
         </div>
       )}
 
@@ -1355,9 +1362,9 @@ function ConeEndLabels({
           <text
             key={b.id}
             data-testid={`cone-label-${b.id}`}
-            x={dotX + priceFontPx}
+            x={dotX - priceFontPx}
             y={anchorY + (labelShift[b.id] ?? 0)}
-            textAnchor="start"
+            textAnchor="end"
             dominantBaseline="middle"
             fontSize={priceFontPx}
             fill={CONE_STYLE.band}
@@ -1380,7 +1387,7 @@ function ConeEndLabels({
             fontSize={priceFontPx}
             fill={markerFill(m.id)}
           >
-            {m.name} · {m.posText}
+            {m.fallback ? `${m.eventLabel} ${m.posText} · Fallback` : `${m.eventLabel} ${m.posText}`}
           </text>
         );
       })}
@@ -1981,7 +1988,7 @@ function BandStack({
   const compact = count > 1;
   const aligned = alignedPoints ?? series.points;
   return (
-    <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd}>
+    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd}>
     <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>

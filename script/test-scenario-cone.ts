@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  CONE_FORMULA, CONE_PARAMS, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
+  CONE_EVENT_LABEL, CONE_FORMULA, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
   coneBandPrice, coneDomainValues, conePlotScale, fitLogPriceTrend, horizonTradingDays, separateLabelYs,
   realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
@@ -162,7 +162,7 @@ assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.inner.z) - 0.75) < 1
   assert.equal(attached[0].close, 50);
   assert.equal(attached[0].coneP10, 50);
   assert.equal(attached[attached.length - 1].close, null);
-  assert.equal(attached[attached.length - 1].coneBearLabel, "Bear · PoS n/a");
+  assert.equal(attached[attached.length - 1].coneBearLabel, "P(≤ Bear-Ziel) PoS n/a");
   assert.equal(String(attached[attached.length - 1].coneBearLabel).includes("%"), false);
 }
 
@@ -234,14 +234,25 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(cone.formula, CONE_FORMULA);
   assert.equal(cone.source, CONE_SOURCE);
   assert.equal(cone.bandReason, null);
-  for (const m of cone.markers) {
+  const posSum = msft.catalysts.reduce((s: number, c: { pos: number }) => s + c.pos, 0) / CONE_PARAMS.percent;
+  assert.equal(bull.eventLabel, CONE_EVENT_LABEL.bull);
+  assert.equal(bull.sourceLabel, CONE_POS_SOURCE.catalysts);
+  assert.equal(bull.fallback, false);
+  assert.ok(Math.abs(bull.probability! - posSum) < 1e-9);
+  assert.equal(bull.formula?.includes("S17"), true);
+  for (const m of [base, bear]) {
     const derived = scenarioProbability(m.id, m.price, last.close, cone.driftPerDay, cone.sigmaDaily, cone.horizonDays);
     assert.equal(m.probability, derived.probability);
+    assert.equal(m.sourceLabel, CONE_POS_SOURCE.regression);
+    assert.equal(m.fallback, true);
     assert.equal(m.posReason, null);
-    assert.ok(m.probability != null && m.probability > 0 && m.probability < 1, `${m.id} ${m.probability}`);
-    assert.ok(m.posText.endsWith("%") && m.posText !== POS_NA);
+    assert.ok(m.posText.endsWith("%"));
   }
   assert.ok(!(cone.markers[0].probability === 0.5 && cone.markers[1].probability === 0.3 && cone.markers[2].probability === 0.2));
+  const withMc = scenarioConeFromAnalysis(msft, last, [100, 600, 700, 800]);
+  assert.equal(withMc!.markers.find(m => m.id === "bull")!.sourceLabel, CONE_POS_SOURCE.monteCarlo);
+  assert.equal(withMc!.markers.find(m => m.id === "bull")!.fallback, false);
+  assert.ok(Math.abs(withMc!.markers.find(m => m.id === "bull")!.probability! - 0.75) < 1e-9);
   const t = 20;
   assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, cone.driftPerDay!)) < 1e-6);
   assert.ok(Math.abs(cone.points[t].innerHigh - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.inner.z, t, cone.driftPerDay!)) < 1e-6);
@@ -375,6 +386,15 @@ assertSeparated([
   assert.match(ui, /data-testid="button-dividend"/);
   assert.match(ui, /widthScale=\{CONE_VIEWPORT_SCALE\}/);
   assert.match(ui, /const CONE_VIEWPORT_SCALE = 1/);
+  assert.match(ui, /\{CONE_PROBABILITY_HINT\}/);
+  assert.match(lib, /Einzelwahrscheinlichkeiten, Summe ≠ 100 %/);
+  assert.match(ui, /m\.eventLabel/);
+  assert.match(lib, /P\(≥ Bull-Ziel\)/);
+  assert.match(lib, /P\(Base ± Intervall\)/);
+  assert.match(lib, /P\(≤ Bear-Ziel\)/);
+  assert.match(ui, /data-testid="cone-probability-hint"/);
+  assert.match(ui, /TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX/);
+  assert.doesNotMatch(ui, /taChartMinWidth\(52, 0, 10\)/);
   assert.doesNotMatch(ui, /widthScale=\{coneScale\}/);
   assert.match(ui, /data-testid="cone-tooltip-formula"/);
   assert.match(ui, /data-testid=\{`cone-label-\$\{b\.id\}`\}/);

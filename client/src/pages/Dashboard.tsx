@@ -707,7 +707,7 @@ export default function Dashboard() {
                 ref={setSectionRef(12)}
                 data-testid="section-12-wide"
                 className="min-w-0 max-w-full lg:w-[calc(100vw-13rem-2rem)] lg:max-w-none lg:ml-[calc((100%-(100vw-13rem-2rem))/2)] lg:mr-[calc((100%-(100vw-13rem-2rem))/2)]"
-              ><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              ><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} monteCarloTerminals={sharedMonteCarlo?.terminalPrices ?? null} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
