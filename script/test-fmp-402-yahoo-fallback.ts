@@ -194,7 +194,7 @@ const countFmp = async () => {
 };
 const sapRoic = await loadRoicSeries("SAP.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
 const vowEy = await loadEarningsYield("VOW3.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
-check("SAP.DE ohne Suche bleibt bei Yahoo und zeichnet keine Jahresstufen", sapRoic.source.includes("Yahoo") === true && yahooCalls > 0 && (usable(sapRoic.points) === 0 ? (sapRoic.note ?? "").includes("nicht als Stufen") : sapRoic.points.every(p => (p.note ?? "").includes("Formel:"))), sapRoic.source);
+check("SAP.DE ohne Suche füllt ROIC aus der Yahoo-Jahresreihe", sapRoic.source.includes("Yahoo") === true && yahooCalls > 0 && usable(sapRoic.points) >= 1 && sapRoic.points.every(p => (p.note ?? "").includes("Formel:")), `${sapRoic.source} n=${usable(sapRoic.points)}`);
 check("VOW3.DE ohne Suche bleibt bei Yahoo-Quartals-EPS", usable(vowEy.points) >= 3 && vowEy.quarters.length >= 3 && vowEy.source.includes("Yahoo") === true, vowEy.source);
 check(".DE ohne deps.search löst keinen Statement-Call aus", fmpCalls === 0, String(fmpCalls));
 check("Yahoo-Punkte sind keine erfundenen Nullen", sapRoic.points.every(p => p.value !== 0) && vowEy.points.every(p => p.value !== 0));

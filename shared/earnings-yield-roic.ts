@@ -67,6 +67,8 @@ export interface EarningsYieldResponse {
   ttmPrints: TtmPrint[];
   /** Jahres-EPS. Ersatz nach dem trailing EPS. */
   annualEps: TtmPrint[];
+  /** Tageskurse der EPS-Währung gegen USD, damit die Kerze nicht einen Spotkurs für die ganze Historie benutzt. */
+  fxHistory?: FxObservation[];
   formula: string;
   source: string;
   note: string | null;
@@ -82,11 +84,24 @@ export interface RoicSeriesResponse {
   note: string | null;
 }
 
-/** Listing-FX der Kursserie: EPS in `from` × rate = EPS in `to` (Kurswährung). */
+/** Ein Tageskurs der Wechselkursreihe. */
+export interface FxObservation {
+  date: string;
+  rate: number;
+  source: string;
+}
+
+/**
+ * Listing-FX. `rate` ist der Kurs, der schon in der Chart-Historie steckt.
+ * `history` ersetzt ihn je Kerze. Ohne Tageskurs kein fester Ersatzkurs.
+ */
 export interface PriceFx {
   from: string;
   to: string;
   rate: number;
+  history?: FxObservation[] | null;
+  /** Kerzentag, zu dem `history` gelesen wird. */
+  asOf?: string;
 }
 
 export interface RoicPeriod {
@@ -211,7 +226,7 @@ export function derivedQuarterWindow(periodEnds: string[]): { count: number; max
  * TTM-EPS aus den letzten Perioden, deren Filing am Stichtag bekannt ist.
  * Die Fensterlänge kommt aus den Abständen. Eine Lücke lässt die Summe leer.
  */
-export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | null; currency: string | null; note: string | null } {
+export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | null; currency: string | null; note: string | null; maxAbs: number | null } {
   const known = new Map<string, EpsQuarter>();
   for (const quarter of quarters) {
     if (!quarter || quarter.asOf > asOf || !Number.isFinite(quarter.eps)) continue;
@@ -221,24 +236,25 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
   const ordered = Array.from(known.values()).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
   const window = derivedQuarterWindow(ordered.map(q => q.periodEnd));
   if (!window) {
-    return { eps: null, currency: null, note: "n/a — Warmup, Abstand der Quartale nicht ableitbar" };
+    return { eps: null, currency: null, note: "n/a — Warmup, Abstand der Quartale nicht ableitbar", maxAbs: null };
   }
   if (ordered.length < window.count) {
-    return { eps: null, currency: null, note: `n/a — Warmup, weniger als ${window.count} Quartale` };
+    return { eps: null, currency: null, note: `n/a — Warmup, weniger als ${window.count} Quartale`, maxAbs: null };
   }
   const last = ordered.slice(-window.count);
   for (let i = 1; i < last.length; i++) {
     const gap = isoDayNumber(last[i].periodEnd) - isoDayNumber(last[i - 1].periodEnd);
     if (!(gap > 0 && gap <= window.maxGapDays)) {
-      return { eps: null, currency: null, note: "n/a — Lücke in der Quartalshistorie, TTM nicht gebildet" };
+      return { eps: null, currency: null, note: "n/a — Lücke in der Quartalshistorie, TTM nicht gebildet", maxAbs: null };
     }
   }
   const currencies = new Set(last.map(q => q.currency?.trim().toUpperCase()).filter((c): c is string => !!c));
-  if (currencies.size > 1) return { eps: null, currency: null, note: "n/a — Währung der Quartals-EPS weicht ab" };
+  if (currencies.size > 1) return { eps: null, currency: null, note: "n/a — Währung der Quartals-EPS weicht ab", maxAbs: null };
   const eps = last.reduce((sum, quarter) => sum + quarter.eps, 0);
-  if (!Number.isFinite(eps)) return { eps: null, currency: null, note: "n/a — TTM-EPS nicht berechenbar" };
+  if (!Number.isFinite(eps)) return { eps: null, currency: null, note: "n/a — TTM-EPS nicht berechenbar", maxAbs: null };
   const sources = Array.from(new Set(last.map(q => q.source).filter((s): s is string => !!s && s.trim() !== "")));
-  return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: sources.length ? `Quelle: ${sources.join(" + ")}` : null };
+  const maxAbs = last.reduce((max, quarter) => Math.max(max, Math.abs(quarter.eps)), 0);
+  return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: sources.length ? `Quelle: ${sources.join(" + ")}` : null, maxAbs };
 }
 
 /** Quartals-TTM, sonst trailing EPS, sonst Jahres-EPS. Der Ersatz steht im note. */
@@ -249,10 +265,14 @@ export function epsNumeratorAt(
   asOf: string,
 ): { eps: number | null; currency: string | null; note: string | null } {
   const ttm = ttmEpsAt(quarters, asOf);
-  if (ttm.eps != null) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
   const trail = ttmPrintAt(trailing, asOf);
+  const sumAgrees = ttm.eps == null || trail.eps == null || ttm.maxAbs == null || Math.abs(ttm.eps - trail.eps) <= ttm.maxAbs;
+  if (ttm.eps != null && sumAgrees) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
   if (trail.eps != null) {
-    const base = `Fallback: trailing EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})`;
+    const why = ttm.eps != null
+      ? `Quartalssumme ${ttm.eps} weicht vom berichteten TTM ab`
+      : (ttm.note ?? "Quartalsfenster nicht gebildet");
+    const base = `Fallback: trailing EPS (${why})`;
     return { eps: trail.eps, currency: trail.currency, note: trail.source ? `${base} · Quelle: ${trail.source}` : base };
   }
   const year = ttmPrintAt(annual, asOf);
@@ -320,6 +340,16 @@ function ccyCode(value: string | null | undefined): string {
   return value?.trim().toUpperCase() ?? "";
 }
 
+/** Letzter Wechselkurs mit Datum <= Stichtag. Kein Auffüllen nach vorn. */
+export function fxObservationAt(history: FxObservation[] | null | undefined, asOf: string): FxObservation | null {
+  let hit: FxObservation | null = null;
+  for (const row of history ?? []) {
+    if (!row || row.date > asOf || !(row.rate > 0)) continue;
+    if (!hit || row.date >= hit.date) hit = row;
+  }
+  return hit;
+}
+
 export function earningsYieldFromTtm(
   ttmEps: number,
   close: number,
@@ -332,18 +362,27 @@ export function earningsYieldFromTtm(
   const epsCode = ccyCode(epsCurrency);
   const priceCode = ccyCode(priceCurrency);
   let eps = ttmEps;
+  let price = close;
   let fxNote: string | null = null;
   if (epsCode && priceCode && epsCode !== priceCode) {
     const from = ccyCode(fx?.from);
     const to = ccyCode(fx?.to);
-    if (fx && from === epsCode && to === priceCode && fx.rate > 0) {
+    const day = fx?.history ? fxObservationAt(fx.history, fx.asOf ?? "") : null;
+    if (day && from === epsCode && to === priceCode) {
+      const scale = fx && fx.rate > 0 ? fx.rate : day.rate;
+      eps = ttmEps * day.rate;
+      price = close / scale * day.rate;
+      fxNote = `${fx?.from ?? ""}${fx?.to ?? ""} ${day.rate} am ${day.date}, Quelle ${day.source}`;
+    } else if (!fx?.history && fx && from === epsCode && to === priceCode && fx.rate > 0) {
       eps = ttmEps * fx.rate;
       fxNote = `Fallback: EPS ${epsCurrency} × ${fx.from}${fx.to} ${fx.rate} auf Kurswährung ${priceCurrency}`;
+    } else if (fx?.history) {
+      return { value: null, note: `n/a — kein ${fx.from}${fx.to} bis ${fx.asOf ?? "zum Stichtag"}` };
     } else {
       return { value: null, note: `n/a — EPS in ${epsCurrency}, Kurs in ${priceCurrency}` };
     }
   }
-  const value = (eps / close) * 100;
+  const value = (eps / price) * 100;
   if (!Number.isFinite(value)) return { value: null, note: "n/a — Earnings Yield nicht berechenbar" };
   return { value, note: fxNote };
 }
@@ -531,7 +570,7 @@ export function joinFundamentalsOntoPrices(
         const numerator = epsNumeratorAt(args.epsQuarters ?? [], args.ttmPrints ?? [], args.annualEps ?? [], row.date);
         const yieldHit = numerator.eps == null
           ? { value: null, note: numerator.note }
-          : earningsYieldFromTtm(numerator.eps, row.close, numerator.currency, args.priceCurrency ?? null, args.priceFx ?? null);
+          : earningsYieldFromTtm(numerator.eps, row.close, numerator.currency, args.priceCurrency ?? null, args.priceFx ? { ...args.priceFx, asOf: row.date } : null);
         earningsYieldPct = yieldHit.value;
         const bits = [`Formel: ${EARNINGS_YIELD_FORMULA}`, numerator.note, yieldHit.note].filter((part): part is string => !!part);
         earningsYieldNote = bits.filter((part, index) => bits.indexOf(part) === index).join(" · ") || null;

@@ -485,8 +485,13 @@ export function TechnicalChart({
       ttmPrints: showEy ? (eyQuery.data?.ttmPrints ?? []) : null,
       annualEps: showEy ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
-      priceFx: data.currencyInfo?.converted && data.currencyInfo.fxRate > 0
-        ? { from: data.currencyInfo.reportedCurrency, to: data.currencyInfo.tradingCurrency, rate: data.currencyInfo.fxRate }
+      priceFx: data.currencyInfo?.converted && eyQuery.data?.fxHistory && eyQuery.data.fxHistory.length > 0
+        ? {
+            from: data.currencyInfo.reportedCurrency,
+            to: data.currencyInfo.tradingCurrency,
+            rate: data.currencyInfo.fxRate,
+            history: eyQuery.data.fxHistory,
+          }
         : null,
       roic: roicQuery.data?.points ?? null,
       roicSeriesNote: roicQuery.data?.note ?? null,

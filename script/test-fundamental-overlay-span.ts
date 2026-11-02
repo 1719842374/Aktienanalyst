@@ -14,7 +14,7 @@ import {
   type EpsQuarter,
   type RoicPeriod,
 } from "../shared/earnings-yield-roic";
-import { loadEarningsYield, resetFundamentalCacheForTests } from "../server/earnings-yield-roic-route";
+import { loadEarningsYield, loadRoicSeries, resetFundamentalCacheForTests } from "../server/earnings-yield-roic-route";
 import { yahooFetch } from "../server/history-fallback";
 
 let failures = 0;
@@ -121,6 +121,45 @@ check("MSFT-Pin 4.058138", Number(pin.MSFT.overallScore).toFixed(6) === "4.05813
 /** Doublecheck: EY darf vom Kehrwert des berichteten KGV höchstens so weit abweichen. */
 const EY_VERSUS_REPORTED_PE_BAND = 0.1;
 const EY_PE_DATES = ["2026-06-30", "2026-08-03", "2026-10-30"] as const;
+const SAP_EY_DATES = ["2022-12-31", "2023-09-30", "2026-10-30"] as const;
+
+const partial = epsNumeratorAt(
+  [
+    { periodEnd: "2025-06-30", asOf: "2025-06-30", eps: 1.44, currency: "EUR", source: "Yahoo" },
+    { periodEnd: "2025-12-31", asOf: "2025-12-31", eps: 1.57, currency: "EUR", source: "Yahoo" },
+  ],
+  [{ asOf: "2025-12-31", eps: 6.1, currency: "EUR", source: "Yahoo" }],
+  [{ asOf: "2022-12-31", eps: 1.95, currency: "EUR", source: "Yahoo" }],
+  "2025-12-31",
+);
+check("unvollständige Quartalssumme verdrängt das berichtete TTM nicht", partial.eps === 6.1 && partial.note?.includes("Fallback: trailing EPS") === true && partial.note?.includes("Quelle: Yahoo") === true, `${partial.eps} ${partial.note}`);
+
+const fxJoined = joinFundamentalsOntoPrices(["2023-09-30"], {
+  earningsYield: null,
+  epsQuarters: [],
+  ttmPrints: [{ asOf: "2023-09-30", eps: 4.55, currency: "EUR", source: "Yahoo" }],
+  annualEps: [],
+  priceCurrency: "USD",
+  priceFx: {
+    from: "EUR",
+    to: "USD",
+    rate: 1.12016,
+    history: [{ date: "2023-09-29", rate: 1.05, source: "Yahoo EURUSD=X" }],
+  },
+  roic: null,
+  peerRoic: null,
+  peerBars: null,
+  subjectCloses: [100 * 1.12016],
+  showEarningsYield: true,
+  showRoic: false,
+  showPeerRoic: false,
+  showPeerPrice: false,
+});
+check(
+  "historischer EURUSD ersetzt den Spotkurs in der Kerze",
+  fxJoined[0].earningsYieldPct != null && Math.abs(fxJoined[0].earningsYieldPct - 4.55) < 1e-9 && fxJoined[0].earningsYieldNote?.includes("2023-09-29") === true && fxJoined[0].earningsYieldNote?.includes("1.05") === true,
+  `${fxJoined[0].earningsYieldPct} ${fxJoined[0].earningsYieldNote}`,
+);
 
 console.log("\n=== EY gegen 1/KGV, Kurs aus Yahoo, nicht aus einem Festwert ===");
 resetFundamentalCacheForTests();
@@ -142,6 +181,29 @@ for (const symbol of ["MSFT", "ORCL", "SAP.DE"]) {
     console.log(line);
     check(`${symbol} ${date} EY nahe 1/KGV`, gap != null && gap < EY_VERSUS_REPORTED_PE_BAND, line);
   }
+}
+
+const sap = await loadEarningsYield("SAP.DE");
+const sapRoic = await loadRoicSeries("SAP.DE");
+console.log(`SAP.DE quarters ${sap.quarters.length} ab ${sap.quarters[0]?.periodEnd ?? "—"}`);
+console.log(`SAP.DE ttmPrints ${sap.ttmPrints.length} ab ${sap.ttmPrints[0]?.asOf ?? "—"}`);
+console.log(`SAP.DE annualEps ${sap.annualEps.length} ab ${sap.annualEps[0]?.asOf ?? "—"}`);
+console.log(`SAP.DE ROIC ${sapRoic.points.length} ab ${sapRoic.points[0]?.date ?? "—"} ${sapRoic.label}`);
+check("SAP.DE hat trailing und Jahres-EPS neben den fünf Quartalen", sap.quarters.length >= 1 && sap.ttmPrints.length > sap.quarters.length && (sap.annualEps[0]?.asOf ?? "9999") <= "2022-12-31", `${sap.quarters.length}/${sap.ttmPrints.length}/${sap.annualEps[0]?.asOf}`);
+check("SAP.DE ROIC beginnt vor den letzten Quartalen", sapRoic.points.length >= 3 && (sapRoic.points[0]?.date ?? "9999") < "2025-01-01", sapRoic.points.map(p => p.date).join(","));
+const sapBars = await yahooFetch("SAP.DE", "2022-01-01", "2026-11-03");
+for (const date of SAP_EY_DATES) {
+  const bar = [...sapBars].reverse().find(row => row.date <= date);
+  const numerator = epsNumeratorAt(sap.quarters, sap.ttmPrints, sap.annualEps, date);
+  const reported = ttmPrintAt(sap.ttmPrints, date);
+  const benchmark = reported.eps ?? (date >= (sap.annualEps[0]?.asOf ?? "9999") ? [...sap.annualEps].reverse().find(row => row.asOf <= date)?.eps ?? null : null);
+  const yieldHit = numerator.eps != null && bar ? earningsYieldFromTtm(numerator.eps, bar.close, numerator.currency, numerator.currency) : { value: null, note: numerator.note };
+  const kgv = benchmark != null && bar && benchmark !== 0 ? bar.close / benchmark : null;
+  const implied = kgv != null && kgv !== 0 ? 100 / kgv : null;
+  const gap = yieldHit.value != null && implied != null && implied !== 0 ? Math.abs(yieldHit.value - implied) / Math.abs(implied) : null;
+  const line = `SAP.DE ${date} Kurs ${bar?.close?.toFixed(2) ?? "n/a"} TTM ${numerator.eps?.toFixed(2) ?? "n/a"} EY ${yieldHit.value?.toFixed(2) ?? "n/a"} % KGV ${kgv?.toFixed(2) ?? "n/a"} 1/KGV ${implied?.toFixed(2) ?? "n/a"} % Abweichung ${gap == null ? "n/a" : `${(gap * 100).toFixed(1)} %`} ${numerator.note ?? ""}`;
+  console.log(line);
+  check(`SAP.DE ${date} EY nahe 1/KGV`, gap != null && gap < EY_VERSUS_REPORTED_PE_BAND, line);
 }
 
 if (failures > 0) {

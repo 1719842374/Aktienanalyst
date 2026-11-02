@@ -23,6 +23,7 @@ import {
   supplementPrints,
   supplementQuarters,
   type EpsQuarter,
+  type FxObservation,
   type RoicPeriod,
   type TtmPrint,
 } from "../shared/earnings-yield-roic";
@@ -41,6 +42,7 @@ import {
 } from "./fmp";
 import { loadYahooFundamentalBundle, type YahooSeriesBundle } from "./yahoo-fundamental-fallback";
 import { isGermanXetraTicker } from "./yahoo-fetcher";
+import { yahooFetch } from "./history-fallback";
 import { registerPeerPriceRoute } from "./chart-peer-price-route";
 import {
   MAX_LISTING_CANDIDATES,
@@ -434,6 +436,17 @@ async function germanFmpSymbol(symbol: string, deps: FundamentalDeps, now: numbe
   return { fetchSymbol: listing.fmpSymbol, listing, miss: null };
 }
 
+async function fxHistoryFor(currency: string | null, now: number): Promise<FxObservation[]> {
+  const code = (currency ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(code) || code === "USD") return [];
+  const from = overlayHistoryStart(new Date(now));
+  const to = new Date(now).toISOString().slice(0, 10);
+  const bars = await yahooFetch(`${code}USD=X`, from, to).catch(() => []);
+  return bars
+    .filter(bar => bar.close > 0)
+    .map(bar => ({ date: bar.date, rate: bar.close, source: `Yahoo ${code}USD=X` }));
+}
+
 function tagQuarters(rows: EpsQuarter[], source: string): EpsQuarter[] {
   return rows.map(row => ({ ...row, source: row.source ?? source }));
 }
@@ -520,8 +533,13 @@ async function loadGermanEarningsYield(symbol: string, deps: FundamentalDeps, no
   const body = quarters.length || prints.length || annual.length
     ? yieldBody(symbol, quarters, source, note, prints, annual)
     : yieldBody(symbol, [], source, note ?? "n/a — weder Yahoo noch FMP mit EPS", prints, annual);
-  if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
-  return body;
+  const epsCurrency = body.quarters.find(row => row.currency)?.currency
+    ?? body.ttmPrints.find(row => row.currency)?.currency
+    ?? body.annualEps.find(row => row.currency)?.currency
+    ?? null;
+  const withFx = { ...body, fxHistory: await fxHistoryFor(epsCurrency, now) };
+  if (withFx.quarters.length > 0 || withFx.ttmPrints.length > 0 || withFx.annualEps.length > 0) eyCache.set(symbol, { at: now, body: withFx });
+  return withFx;
 }
 
 async function quarterlyRoicFromFmp(symbol: string, deps: FundamentalDeps): Promise<RoicPeriod[]> {
@@ -558,14 +576,28 @@ async function loadGermanRoic(symbol: string, deps: FundamentalDeps, now: number
   }
   const rolled = rollingRoicSeries(periods);
   const source = parts.join("; ");
-  if (rolled.points.length === 0) {
-    return roicBody(symbol, [], source, joinNotes(yahoo.roic.note, ANNUAL_ROIC_NOT_DRAWN));
-  }
-  const points = rolled.points.map(point => ({
+  const annualSource = yahoo.roic.source || "Yahoo";
+  const annualPoints = (yahoo.roic.points ?? []).filter(point => point.value != null && Number.isFinite(point.value));
+  const firstQuarter = rolled.points[0]?.date ?? "9999-99-99";
+  const earlier = annualPoints.filter(point => point.date < firstQuarter).map(point => ({
+    date: point.date,
+    value: point.value,
+    note: `Formel: ${ROIC_ANNUAL_FORMULA} · Quelle: ${annualSource}`,
+  }));
+  const quarterPoints = rolled.points.map(point => ({
     ...point,
     note: point.note ? `${point.note} · Quelle: ${source}` : `Quelle: ${source}`,
   }));
-  const body = roicBody(symbol, points, source, rolled.note, rolled.formula, rolled.label);
+  const points = [...earlier, ...quarterPoints].sort((a, b) => a.date.localeCompare(b.date));
+  if (points.length === 0) {
+    return roicBody(symbol, [], source, joinNotes(yahoo.roic.note, ANNUAL_ROIC_NOT_DRAWN));
+  }
+  const formula = quarterPoints.length > 0 ? rolled.formula : ROIC_ANNUAL_FORMULA;
+  const label = quarterPoints.length > 0 ? rolled.label : ROIC_ANNUAL_LABEL;
+  const note = earlier.length > 0 && quarterPoints.length > 0
+    ? "Vor dem ersten Quartals-TTM steht der Jahres-ROIC aus NOPAT/Invested Capital."
+    : (quarterPoints.length > 0 ? rolled.note : null);
+  const body = roicBody(symbol, points, earlier.length ? `${annualSource}; ${source}` : source, note, formula, label);
   roicCache.set(symbol, { at: now, body });
   return body;
 }
