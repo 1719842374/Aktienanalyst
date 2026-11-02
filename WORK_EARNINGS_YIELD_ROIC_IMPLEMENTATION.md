@@ -93,3 +93,17 @@ app.get("/api/chart/roic/:symbol", async (req, res) => {
 
 **Kurz:**  
 Endpoints für Earnings Yield und ROIC, Peer-Logik analog Sektion 9, Dual-Axis im bestehenden Chart. Aktuell nichts davon implementiert.
+
+---
+
+## Soll-Ist, 02.11.2026
+
+Die Abschnitte oben bleiben der Stand vom 26.10.2026. Die Route für den Peer-Kurs ist `GET /api/chart/peer-price/:symbol?from&to`, nicht `GET /api/chart/peer/:symbol`.
+
+| | Soll 26.10. | Ist |
+| --- | --- | --- |
+| Earnings Yield | EBIT / EV, Jahrespunkte | `TTM-EPS / Kurs` je Kerze. `GET /api/chart/earnings-yield/:symbol` |
+| Quartals-Fallback | — | Jüngeres negatives Quartal wird nicht von einem positiven trailing EPS verdeckt. Zähler `EPS_q × QUARTER_ANNUALIZATION_FACTOR` (Default 4), Badge `Schätzung: Quartal annualisiert`, Formel `jüngstes Quartals-EPS × 4 / Kurs` |
+| ROIC | Jahres-ROIC | Quartals-TTM und 5J-Mittel, `GET /api/chart/roic/:symbol` |
+| Peer-Kurs | `GET /api/chart/peer/:symbol` | `GET /api/chart/peer-price/:symbol?from&to` |
+| Peer-ROIC | dieselbe Peer-Route | `GET /api/chart/roic/:symbol` für den Peer |

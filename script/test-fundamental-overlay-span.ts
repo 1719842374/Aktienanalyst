@@ -5,11 +5,14 @@
 import { readFileSync } from "node:fs";
 import {
   EARNINGS_YIELD_FORMULA,
+  QUARTER_ANNUALIZATION_FACTOR,
+  QUARTER_ANNUALIZED_BADGE,
   ROIC_5Y_LABEL,
   earningsYieldFromTtm,
   epsNumeratorAt,
   joinFundamentalsOntoPrices,
   rollingRoicSeries,
+  ttmEpsAt,
   ttmPrintAt,
   type EpsQuarter,
   type RoicPeriod,
@@ -205,6 +208,42 @@ for (const date of SAP_EY_DATES) {
   console.log(line);
   check(`SAP.DE ${date} EY nahe 1/KGV`, gap != null && gap < EY_VERSUS_REPORTED_PE_BAND, line);
 }
+
+const vow = await loadEarningsYield("VOW3.DE");
+const vowBars = await yahooFetch("VOW3.DE", "2026-09-01", "2026-11-03");
+const vowDate = "2026-11-02";
+const vowBar = [...vowBars].reverse().find(row => row.date <= vowDate);
+const vowNumerator = epsNumeratorAt(vow.quarters, vow.ttmPrints, vow.annualEps, vowDate);
+const vowQuarter = [...vow.quarters].reverse().find(row => row.asOf <= vowDate);
+const vowSum = ttmEpsAt(vow.quarters, vowDate);
+const vowTrail = ttmPrintAt(vow.ttmPrints, vowDate);
+const vowYield = vowNumerator.eps != null && vowBar
+  ? earningsYieldFromTtm(vowNumerator.eps, vowBar.close, vowNumerator.currency, vowNumerator.currency)
+  : { value: null, note: vowNumerator.note };
+const vowJoined = vowBar ? joinFundamentalsOntoPrices([vowBar.date], {
+  earningsYield: null,
+  epsQuarters: vow.quarters,
+  ttmPrints: vow.ttmPrints,
+  annualEps: vow.annualEps,
+  priceCurrency: vowNumerator.currency,
+  roic: null,
+  peerRoic: null,
+  peerBars: null,
+  subjectCloses: [vowBar.close],
+  showEarningsYield: true,
+  showRoic: false,
+  showPeerRoic: false,
+  showPeerPrice: false,
+}) : [];
+const vowLine = `VOW3.DE ${vowDate} Kurs ${vowBar?.close?.toFixed(2) ?? "n/a"} Quartal ${vowQuarter?.eps ?? "n/a"} Summe ${vowSum.eps ?? "n/a"} trailing ${vowTrail.eps ?? "n/a"} EY ${vowYield.value?.toFixed(2) ?? "n/a"} ${vowJoined[0]?.earningsYieldNote ?? vowNumerator.note ?? ""}`;
+console.log(vowLine);
+const vowLossOpen = vowQuarter != null && vowQuarter.eps < 0 && (vowSum.eps == null || vowSum.eps < 0) && vowTrail.eps != null && vowTrail.eps > 0 && vowQuarter.asOf >= vowTrail.asOf;
+const vowQuarterYield = vowBar ? (vowQuarter!.eps * QUARTER_ANNUALIZATION_FACTOR / vowBar.close) * 100 : null;
+check(
+  "VOW3.DE: negatives Quartal wird annualisiert und als negativer Yield gezeichnet",
+  vowLossOpen && QUARTER_ANNUALIZATION_FACTOR === 4 && vowYield.value != null && vowYield.value < 0 && vowQuarterYield != null && Math.abs(vowYield.value - vowQuarterYield) < 1e-6 && vowJoined[0]?.earningsYieldEps === vowQuarter?.eps && vowJoined[0]?.earningsYieldEpsDate === vowQuarter?.asOf && vowJoined[0]?.earningsYieldSource === "Yahoo" && vowJoined[0]?.earningsYieldBadge === QUARTER_ANNUALIZED_BADGE && vowJoined[0]?.earningsYieldNote?.includes("Quelle: Yahoo") === true && vowJoined[0]?.earningsYieldNote?.includes(`× ${QUARTER_ANNUALIZATION_FACTOR} / Kurs`) === true,
+  vowLine,
+);
 
 if (failures > 0) {
   console.error(`\n${failures} Fehler`);

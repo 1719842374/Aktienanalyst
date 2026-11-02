@@ -31,7 +31,7 @@ import {
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, QUARTER_ANNUALIZED_BADGE, ROIC_FORMULA, TTM_INCOMPLETE_BADGE, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -1544,7 +1544,10 @@ function PricePane({
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
   const rightAxis = !!dividend || !!credit || !!t10y || !!real10y || !!fund;
-  const fundDomain = percentAxisDomain((fund ?? []).flatMap(p => [p.earningsYieldPct, p.roicPct, p.peerRoicPct]));
+  const fundSamples = (fund ?? []).flatMap(p => [p.earningsYieldPct, p.roicPct, p.peerRoicPct]);
+  const [fundLo, fundHi] = percentAxisDomain(fundSamples);
+  const eyBelowZero = (fund ?? []).some(p => p.earningsYieldPct != null && p.earningsYieldPct < 0);
+  const fundDomain: [number, number] = eyBelowZero ? [Math.min(fundLo, 0), Math.max(fundHi, 0)] : [fundLo, fundHi];
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
@@ -1782,8 +1785,14 @@ function PricePane({
             isAnimationActive={false}
           />
         )}
+        {fund && eyBelowZero && (
+          <ReferenceLine yAxisId="fund" y={0} stroke="#ef4444" strokeDasharray="3 3" strokeWidth={1} />
+        )}
         {fund && (
-          <Line yAxisId="fund" type="monotone" dataKey="_ey" name="Earnings Yield" stroke="#0ea5e9" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+          <Line yAxisId="fund" type="monotone" dataKey="_eyPos" name="Earnings Yield" stroke="#0ea5e9" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {fund && (
+          <Line yAxisId="fund" type="monotone" dataKey="_eyNeg" name="Earnings Yield negativ" stroke="#ef4444" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
         )}
         {fund && (
           <Line yAxisId="fund" type="stepAfter" dataKey="_roic" name="ROIC" stroke="#84cc16" strokeWidth={1.5} strokeDasharray="4 2" dot={false} connectNulls={false} isAnimationActive={false} />
@@ -2166,7 +2175,13 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
 
 type FundFields = {
   _ey?: number | null;
+  _eyPos?: number | null;
+  _eyNeg?: number | null;
   _eyNote?: string | null;
+  _eyEps?: number | null;
+  _eyEpsDate?: string | null;
+  _eySource?: string | null;
+  _eyBadge?: string | null;
   _roic?: number | null;
   _roicNote?: string | null;
   _peerRoic?: number | null;
@@ -2185,7 +2200,13 @@ function withFundOverlay<T extends WindowPoint>(points: T[], series: FundJoinPoi
     return {
       ...pt,
       _ey: f?.earningsYieldPct ?? null,
+      _eyPos: f?.earningsYieldPct != null && f.earningsYieldPct >= 0 ? f.earningsYieldPct : null,
+      _eyNeg: f?.earningsYieldPct != null && f.earningsYieldPct < 0 ? f.earningsYieldPct : null,
       _eyNote: f?.earningsYieldNote ?? null,
+      _eyEps: f?.earningsYieldEps ?? null,
+      _eyEpsDate: f?.earningsYieldEpsDate ?? null,
+      _eySource: f?.earningsYieldSource ?? null,
+      _eyBadge: f?.earningsYieldBadge ?? null,
       _roic: f?.roicPct ?? null,
       _roicNote: f?.roicNote ?? null,
       _peerRoic: f?.peerRoicPct ?? null,
@@ -2206,9 +2227,12 @@ function fmtPctOrNote(v: number | null | undefined, note: string | null | undefi
 function FundTooltipRows({ p }: { p: FundFields }) {
   return (
     <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal">
-      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
+      <div className="flex justify-between gap-3"><span className={p._ey != null && p._ey < 0 ? "text-red-500" : "text-sky-500"}>Earnings Yield</span><span className={`font-mono${p._ey != null && p._ey < 0 ? " text-red-500" : ""}`}>{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
+      {p._eyEps != null && <div data-testid="earnings-yield-eps">EPS {p._eyEps} am {p._eyEpsDate ?? "—"}</div>}
+      {p._eySource ? <div data-testid="earnings-yield-source">Quelle: {p._eySource}</div> : null}
+      {p._eyBadge === TTM_INCOMPLETE_BADGE || p._eyBadge === QUARTER_ANNUALIZED_BADGE ? <div data-testid="earnings-yield-incomplete-badge">{p._eyBadge}</div> : null}
       {p._ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
-      <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>
+      {p._eyNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>}
       <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>
       {p._roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
       {p._roicNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>}
@@ -2225,6 +2249,10 @@ function latestOverlayPct(
   noteKey: "earningsYieldNote" | "roicNote" | "peerRoicNote",
 ): { value: number | null; note: string | null } | null {
   if (!series || series.length === 0) return null;
+  const last = series[series.length - 1];
+  const lastValue = last[valueKey];
+  if (lastValue != null && Number.isFinite(lastValue)) return { value: lastValue, note: last[noteKey] ?? null };
+  if (last[noteKey]) return { value: null, note: last[noteKey] };
   for (let i = series.length - 1; i >= 0; i--) {
     const value = series[i][valueKey];
     if (value != null && Number.isFinite(value)) return { value, note: series[i][noteKey] ?? null };
@@ -2261,7 +2289,7 @@ function FundamentalOverlayStatus({
   peerPriceNote: string | null;
 }) {
   const base = "mt-1 text-[10px] text-muted-foreground break-words";
-  const ey = !showEy ? null : eyLoading ? "wird geladen …" : eyLatest.value != null ? `${eyLatest.value.toFixed(1)} %` : (eyLatest.note ?? eyNote ?? "n/a — keine Earnings-Yield-Punkte");
+  const ey = !showEy ? null : eyLoading ? "wird geladen …" : eyLatest.value != null ? `${eyLatest.value.toFixed(1)} %` : "n/a";
   const roic = !showRoic ? null : roicLoading ? "wird geladen …" : roicLatest.value != null ? `${roicLatest.value.toFixed(1)} %` : (roicLatest.note ?? roicNote ?? "n/a — keine ROIC-Punkte");
   let peerRoic: string | null = null;
   let peerPrice: string | null = null;
@@ -2280,7 +2308,7 @@ function FundamentalOverlayStatus({
   const sourceText = (source: string | null) => source ? ` Quelle: ${source}.` : "";
   return (
     <div className={base} data-testid="fundamental-overlay-status">
-      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Formel: {EARNINGS_YIELD_FORMULA}.{eyLatest.note ? ` ${eyLatest.note}` : ""}{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{sourceText(eySource)} Kein Score-Einfluss.</div>}
+      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: <span className={eyLatest.value != null && eyLatest.value < 0 ? "text-red-500 font-medium" : ""}>{ey}</span>.{eyLoading || eyLatest.note?.includes("Formel:") ? "" : ` Formel: ${EARNINGS_YIELD_FORMULA}.`}{!eyLoading && eyLatest.note ? ` ${eyLatest.note}` : ""}{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{!eyLoading ? sourceText(eySource) : ""} Kein Score-Einfluss.</div>}
       {roic != null && <div data-testid="status-roic">{roicLabel}: {roic}. Formel: {roicFormula}.{roicLatest.note ? ` ${roicLatest.note}` : ""}{roicLatest.value != null && roicNote ? ` ${roicNote}` : ""}{sourceText(roicSource)} Kein Score-Einfluss.</div>}
       {peerRoic != null && <div data-testid="status-fund-peer">Peer-ROIC: {peerRoic}. Formel: {peerRoicFormula}.{sourceText(peerRoicSource)} Kein Score-Einfluss.</div>}
       {peerPrice != null && <div data-testid="status-fund-peer-price">Peer-Kurs: {peerPrice}. Kein Score-Einfluss.</div>}

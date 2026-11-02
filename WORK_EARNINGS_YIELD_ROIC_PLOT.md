@@ -77,3 +77,16 @@
 
 **Kurz:**  
 Earnings Yield und ROIC 5Y als Dual-Axis-Plots in Sektion 12. Peer-Ticker können als Kurs oder ROIC eingeblendet werden. Aufwand ~17–24 h.
+
+---
+
+## Soll-Ist, 02.11.2026
+
+Die Tabelle oben bleibt der Stand vom 26.10.2026. Der Peer-Kurs läuft über `GET /api/chart/peer-price/:symbol?from&to`, nicht über `GET /api/chart/peer/:symbol`.
+
+| Plot | Soll 26.10. | Ist |
+| --- | --- | --- |
+| Earnings Yield | EBIT / EV | `TTM-EPS / Kurs`. Fehlt das Fenster, wird das jüngste negative Quartal mit `QUARTER_ANNUALIZATION_FACTOR` (Default 4) auf dieselbe Skala gehoben. Badge `Schätzung: Quartal annualisiert` |
+| ROIC 5Y | NOPAT / Invested Capital | Quartals-TTM, danach 5J-Mittel |
+| Peer-Kurs | `GET /api/chart/peer/:symbol` | `GET /api/chart/peer-price/:symbol?from&to` |
+| Peer-ROIC | dieselbe Peer-Route | `GET /api/chart/roic/:symbol` |
