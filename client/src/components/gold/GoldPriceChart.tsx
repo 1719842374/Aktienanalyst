@@ -15,9 +15,10 @@ import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
-  buildGoldTechnical, describeRelativeRsi, volumeLegendText, filterGoldRange, goldRangeNote, macroRangeState, needsLongHistory,
+  buildGoldTechnical, describeRelativeRsi, volumeLegendText, goldRangeNote, macroRangeState, needsLongHistory,
   type GoldTechPoint, type GoldTimeRange,
 } from "./goldTechnical";
+import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
 import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
 
@@ -53,7 +54,8 @@ const MACRO = [
 
 type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
-type TimeRange = GoldTimeRange;
+/** Dieselben Presets und Handelstage wie TechnicalChart (`slicePresetWindow`). */
+const GOLD_PRESETS = Object.keys(TIME_RANGE_CUTOFF) as TimeRange[];
 
 interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null; range?: "10Y" | "Max"; warmupPoints?: number }
 
@@ -74,7 +76,7 @@ export function GoldPriceChart({ data }: Props) {
   const [showVolume, setShowVolume] = useState(true);
   const [showQeQt, setShowQeQt] = useState(false);
   const [showGoldWalcl, setShowGoldWalcl] = useState(false);
-  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+  const [timeRange, setTimeRange] = useState<GoldTimeRange>("1Y");
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
   const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
@@ -105,7 +107,7 @@ export function GoldPriceChart({ data }: Props) {
 
   const filteredData = useMemo(() => {
     if (rangeTech.points.length === 0) return [];
-    return filterGoldRange(rangeTech.points, timeRange);
+    return slicePresetWindow(rangeTech.points, timeRange);
   }, [rangeTech, timeRange]);
 
   // Downsampling wie BTC (max ~500 Punkte). Cross-Tage bleiben erhalten,
@@ -344,13 +346,15 @@ export function GoldPriceChart({ data }: Props) {
       {/* Controls — Preset → MAs → Signale/Volumen */}
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="gold-presets">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const).map(r => (
+          {GOLD_PRESETS.map(r => (
             <button
               key={r}
+              type="button"
               onClick={() => { setTimeRange(r); setMeasureStart(null); setMeasureEnd(null); }}
               className={`min-h-9 shrink-0 rounded-md border border-border px-2.5 text-[11px] font-medium transition-colors sm:min-h-0 sm:rounded-none sm:border-0 sm:py-1 sm:text-[10px] ${
                 timeRange === r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
               }`}
+              data-testid={`button-gold-range-${r}`}
             >
               {r}
             </button>

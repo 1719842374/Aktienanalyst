@@ -36,6 +36,10 @@ console.log("\nZeilen zusammenfuehren / Quelle waehlen");
   check("Yahoo nur wenn > 1 J frueher", pickLongerSource(fmp, yahoo).source.startsWith("Yahoo"));
   check("FMP bleibt Standard bei aehnlicher Tiefe", pickLongerSource([{ date: "2000-09-01", close: 1 }], yahoo).source === "FMP GCUSD");
   check("FMP leer -> Yahoo", pickLongerSource([], yahoo).source.startsWith("Yahoo"));
+  const lateFmp = [{ date: "2017-05-18", close: 1 }];
+  const yahoo2016 = [{ date: "2016-08-01", close: 1 }];
+  check("FMP nach 2016 und Yahoo bis 2016 -> Yahoo, eine Quelle", pickLongerSource(lateFmp, yahoo2016).source === "Yahoo GC=F (Futures)" && pickLongerSource(lateFmp, yahoo2016).rows[0].date === "2016-08-01");
+  check("FMP bis 2016 bleibt Spot, auch wenn Yahoo etwas frueher ist", pickLongerSource([{ date: "2016-06-01", close: 1 }], yahoo2016).source === "FMP GCUSD");
 }
 
 // Synthetische 26-Jahres-Historie ab 2000-08-30 (wie Yahoo GC=F live), FRED-Starts wie live.
@@ -107,6 +111,8 @@ console.log("\nScore/Gates unberuehrt");
   const hist = src.slice(histStart);
   check("Chart-Route laedt FRED async, je Serie einmal", hist.includes("fredKeys.map(id => fetchFREDSeriesHistoryAsync(id, GOLD_HISTORY_FRED_FLOOR))") && !/fetchFREDSeriesHistory\(|execSync/.test(hist));
   check("analyze-gold behaelt das FRED-Memo (#223, seit JOB 11 mit Prefetch)", analyze.includes("createFredHistoryMemo(fredFetcher)"));
+  const chart = readFileSync(new URL("../client/src/components/gold/GoldPriceChart.tsx", import.meta.url), "utf-8");
+  check("Sektion 2 schneidet mit slicePresetWindow und den Presets aus TIME_RANGE_CUTOFF", chart.includes("slicePresetWindow(rangeTech.points, timeRange)") && chart.includes("Object.keys(TIME_RANGE_CUTOFF)") && chart.includes("button-gold-range-"));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }

@@ -211,6 +211,19 @@ console.log("\nechte gold-aisc.json");
   const early = buildGoldMinerZone(earlyDates.map(date => ({ date, close: 1300 })), series);
   check("2018-06 trägt die damals gültige Stufe 2018-Q1 Ø 883", early?.points.every(p => p.aisc === 883) === true, String(early?.points[0]?.aisc));
   check("seit-Datum folgt der Preisreihe, nicht mehr 2024-05-30", early?.thresholds.since === earlyDates[0]);
+  const from2016 = businessDays("2016-08-03", 2700).filter(d => d <= "2026-11-02");
+  let px2016 = 1200;
+  const hist = buildGoldMinerZone(from2016.map(date => { px2016 += 0.8; return { date, close: px2016 }; }), series)!;
+  const firstBoth = hist.points.find(p => p.multiple != null && p.marginPct != null && p.aisc != null);
+  check("Multiple und Marge beginnen 2016, nicht am 2024-05-30", !!firstBoth && firstBoth.date >= "2016-11-29" && firstBoth.date <= "2016-12-31", firstBoth?.date);
+  const in2017 = hist.points.find(p => p.date >= "2017-06-01" && p.aisc != null);
+  check("2017: Multiple = Spot/AISC, Marge = (Spot−AISC)/Spot",
+    !!in2017 && in2017.multiple != null && in2017.marginPct != null
+    && Math.abs(in2017.multiple - in2017.spot / in2017.aisc!) < 1e-9
+    && Math.abs(in2017.marginPct - (in2017.spot - in2017.aisc!) / in2017.spot) < 1e-9,
+    in2017 ? `${in2017.date} ×${in2017.multiple?.toFixed(3)}` : "kein Punkt");
+  const before2024 = hist.points.filter(p => p.date < "2024-05-30" && p.multiple != null && p.marginPct != null);
+  check("vor 2024-05-30 liegen Multiple und Marge auf der Reihe", before2024.length > 500, String(before2024.length));
   check("drei Firmen am letzten Quartal", latest?.perCompany.length === 3);
   check("keine Euphorie-Zone und euph null",
     zone?.thresholds.euph == null && zone!.points.every(p => p.zone !== "euphoria") && zone!.segments.every(s => s.zone !== "euphoria"));

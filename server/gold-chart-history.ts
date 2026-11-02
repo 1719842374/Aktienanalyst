@@ -44,13 +44,23 @@ export function mergeGoldRows(chunks: any[][]): RawGoldRow[] {
 }
 
 /**
+ * 10Y (2520 Handelstage) und Max sollen mindestens bis Ende 2016 reichen.
+ * Liegt FMP danach und Yahoo davor, kommt die ganze Reihe von Yahoo — nicht gemischt.
+ */
+export const GOLD_HISTORY_FLOOR = "2016-12-31";
+
+/**
  * Laengere Quelle waehlen, ohne zu mischen (Spot und Futures liegen leicht
- * auseinander). FMP bleibt Standard; Yahoo nur, wenn es mehr als ein Jahr
- * frueher beginnt oder FMP leer ist.
+ * auseinander). FMP bleibt Standard, wenn es den Floor erreicht. Yahoo, wenn
+ * FMP leer ist, den Floor verfehlt und Yahoo ihn trifft, oder mehr als ein
+ * Jahr frueher beginnt.
  */
 export function pickLongerSource(fmp: RawGoldRow[], yahoo: RawGoldRow[]): { rows: RawGoldRow[]; source: string } {
   if (fmp.length === 0) return { rows: yahoo, source: yahoo.length ? "Yahoo GC=F (Futures)" : "keine" };
   if (yahoo.length === 0) return { rows: fmp, source: "FMP GCUSD" };
+  const fmpReaches = fmp[0].date <= GOLD_HISTORY_FLOOR;
+  const yahooReaches = yahoo[0].date <= GOLD_HISTORY_FLOOR;
+  if (!fmpReaches && yahooReaches) return { rows: yahoo, source: "Yahoo GC=F (Futures)" };
   const gapDays = (Date.parse(fmp[0].date) - Date.parse(yahoo[0].date)) / 864e5;
   return gapDays > 365 ? { rows: yahoo, source: "Yahoo GC=F (Futures)" } : { rows: fmp, source: "FMP GCUSD" };
 }
