@@ -271,6 +271,7 @@ async function main() {
 
   // ── Sätze und Sprechform ────────────────────────────────────────────────
   assert.deepEqual(splitSentences("Der Umsatz stieg auf 77,7 Mrd. Dollar. Das ist gut! Q1 lief."), ["Der Umsatz stieg auf 77,7 Mrd. Dollar.", "Das ist gut!", "Q1 lief."]);
+  assert.deepEqual(splitSentences("Das Quartal endete am 30. September 2026. 3. Platz bleibt ein Satz."), ["Das Quartal endete am 30. September 2026.", "3. Platz bleibt ein Satz."]);
   assert.deepEqual(sentencesOfParagraphs("A eins.\n\nB zwei."), ["A eins.", "B zwei."]);
   assert.equal(spokenForm("Q1 FY2027: +18 % auf 77,7 Mrd. am 28.10.2026 bzw. 2026-09-30, €24,1 und $5"), "Quartal 1 Geschäftsjahr 2027: +18 Prozent auf 77,7 Milliarden am 28. Oktober 2026 bzw. 30. September 2026, 24,1 Euro und 5 Dollar");
   ok("Satzgrenzen lassen Zahlen ganz; Sprechform liest Q1, FY, %, Mrd., Datum und Währung aus");

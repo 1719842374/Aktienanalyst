@@ -66,11 +66,17 @@ export function splitSentences(text: string): string[] {
   const merged: string[] = [];
   for (const p of parts) {
     const prev = merged[merged.length - 1];
-    if (prev && SENTENCE_ABBREVIATIONS.test(prev)) merged[merged.length - 1] = `${prev} ${p}`;
+    const ordinal = prev != null && (ORDINAL_ONLY.test(prev) || (ORDINAL_DAY_END.test(prev) && MONTH_START.test(p)));
+    if (prev && (SENTENCE_ABBREVIATIONS.test(prev) || ordinal)) merged[merged.length - 1] = `${prev} ${p}`;
     else merged.push(p);
   }
   return merged;
 }
+
+/** „bis zum 30. September“ und „3. Platz“: Ordinalzahl mit Punkt ist kein Satzende. */
+const ORDINAL_ONLY = /^\d{1,2}\.$/;
+const ORDINAL_DAY_END = /(?:^|\s)\d{1,2}\.$/;
+const MONTH_START = /^(?:Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\b/;
 
 /** Abkürzungen mit Punkt, nach denen kein Satz endet (Finanz- und Firmentexte). */
 const SENTENCE_ABBREVIATIONS = /(?:^|\s)(?:Mrd|Mio|Tsd|Nr|Dr|Prof|ca|bzw|vgl|z\.\s?B|u\.\s?a|d\.\s?h|inkl|exkl|Inc|Corp|Co|Ltd|St|Mr|Mrs|Ms|Jan|Feb|Mär|Apr|Jun|Jul|Aug|Sep|Sept|Okt|Nov|Dez|U\.S|v\.\s?a)\.$/;
