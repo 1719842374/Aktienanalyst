@@ -21,11 +21,14 @@ export const GOOGLE_TRENDS_LAST_GOOD_MS = 48 * 60 * 60 * 1000;
 export const GOOGLE_TRENDS_STALE_AFTER_HOURS = 24;
 
 export interface GoogleTrendsCacheEntry {
-  value: number;
+  /** Null when this entry is only an n/a reason, not a scored print. */
+  value: number | null;
   timestamp: number;
   source: string;
   /** Tagespunkte der SerpApi-Timeline, nur für die Anzeige. Der Score nutzt weiter `value`. */
   points?: { date: string; value: number }[];
+  /** Closed-slot reason, kept so the next read does not collapse to a bare N/A. */
+  naReason?: string;
 }
 
 export interface GoogleTrendsFreshness {
@@ -74,13 +77,16 @@ function copyEntry(entry: GoogleTrendsCacheEntry): GoogleTrendsCacheEntry {
     timestamp: entry.timestamp,
     source: entry.source,
     ...(entry.points?.length ? { points: entry.points.map(p => ({ date: p.date, value: p.value })) } : {}),
+    ...(entry.naReason ? { naReason: entry.naReason } : {}),
   };
 }
 
 function entryFromUnknown(raw: unknown): GoogleTrendsCacheEntry | null {
   if (!raw || typeof raw !== "object") return null;
-  const row = raw as { value?: unknown; timestamp?: unknown; source?: unknown; points?: unknown };
-  if (typeof row.value !== "number" || !Number.isFinite(row.value)) return null;
+  const row = raw as { value?: unknown; timestamp?: unknown; source?: unknown; points?: unknown; naReason?: unknown };
+  const naReason = typeof row.naReason === "string" && row.naReason.startsWith("n/a —") ? row.naReason : undefined;
+  const value = typeof row.value === "number" && Number.isFinite(row.value) ? row.value : null;
+  if (value == null && !naReason) return null;
   if (typeof row.timestamp !== "number" || !Number.isFinite(row.timestamp)) return null;
   if (typeof row.source !== "string" || row.source.length === 0) return null;
   const points: { date: string; value: number }[] = [];
@@ -92,7 +98,13 @@ function entryFromUnknown(raw: unknown): GoogleTrendsCacheEntry | null {
       }
     }
   }
-  return { value: row.value, timestamp: row.timestamp, source: row.source, ...(points.length ? { points } : {}) };
+  return {
+    value,
+    timestamp: row.timestamp,
+    source: row.source,
+    ...(points.length ? { points } : {}),
+    ...(naReason ? { naReason } : {}),
+  };
 }
 
 function readDisk(): GoogleTrendsCacheEntry | null {
@@ -149,18 +161,26 @@ export function googleTrendsFreshness(ageMs: number): GoogleTrendsFreshness {
 }
 
 function ageMsOf(entry: GoogleTrendsCacheEntry, now: number): number | null {
-  if (!Number.isFinite(entry.timestamp) || !Number.isFinite(entry.value) || !Number.isFinite(now)) return null;
+  if (!Number.isFinite(entry.timestamp) || !Number.isFinite(now)) return null;
+  const hasPrint = typeof entry.value === "number" && Number.isFinite(entry.value);
+  const hasReason = typeof entry.naReason === "string" && entry.naReason.startsWith("n/a —");
+  if (!hasPrint && !hasReason) return null;
   const age = now - entry.timestamp;
   if (age < 0) return null;
   return age;
 }
 
-/** A hit inside the fresh TTL. The caller must not call SerpApi. */
-export function freshGoogleTrends(entry: GoogleTrendsCacheEntry | null, now: number): (GoogleTrendsFreshness & { value: number; source: string }) | null {
+/** A hit inside the fresh TTL. The caller must not call SerpApi. A reason hit is not a print. */
+export function freshGoogleTrends(entry: GoogleTrendsCacheEntry | null, now: number): (GoogleTrendsFreshness & { value: number | null; source: string; naReason?: string }) | null {
   if (!entry) return null;
   const age = ageMsOf(entry, now);
   if (age == null || age >= GOOGLE_TRENDS_FRESH_MS) return null;
-  return { value: entry.value, source: entry.source, ...googleTrendsFreshness(age) };
+  const freshness = googleTrendsFreshness(age);
+  if (entry.naReason && entry.naReason.startsWith("n/a —")) {
+    return { value: null, source: entry.source, naReason: entry.naReason, ...freshness };
+  }
+  if (typeof entry.value !== "number" || !Number.isFinite(entry.value)) return null;
+  return { value: entry.value, source: entry.source, ...freshness };
 }
 
 /**

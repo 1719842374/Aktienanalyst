@@ -90,16 +90,21 @@ console.log("\n=== no key: pytrends mock fills the slot and is cached ===");
   resetGoogleTrendsCache();
 }
 
-console.log("\n=== Google 429: n/a with reason, previous print not replaced ===");
+console.log("\n=== Google 429: reason is cached and the next read returns it ===");
 {
   resetGoogleTrendsCache();
-  const previous = Date.now() - 30 * 60 * 60 * 1000;
-  writeGoogleTrendsCache({ value: 11, timestamp: previous, source: "old print" });
   setGoogleTrendsTransportForTests(() => ({ status: 429, body: "Too Many Requests" }));
-  const reading = scoreGoogleTrendsForTests();
+  const first = scoreGoogleTrendsForTests();
   const stored = readGoogleTrendsCache();
-  check("the result is n/a with the 429 reason", reading.value === GOOGLE_TRENDS_RATE_LIMIT_NA && reading.available === false && reading.weight === 0 && reading.maxWeighted === 0, reading.value);
-  check("the 429 is not cached", stored?.value === 11 && stored.timestamp === previous && stored.source === "old print", JSON.stringify(stored));
+  check("the first result names the 429 and is not scored", first.value === GOOGLE_TRENDS_RATE_LIMIT_NA && first.available === false && first.weight === 0 && first.maxWeighted === 0, first.value);
+  check("the cache stores the reason, not a print", stored?.value == null && stored?.naReason === GOOGLE_TRENDS_RATE_LIMIT_NA, JSON.stringify(stored));
+  let calls = 0;
+  setGoogleTrendsTransportForTests(() => {
+    calls += 1;
+    return { status: 500, body: "should-not-run" };
+  });
+  const second = scoreGoogleTrendsForTests();
+  check("the second read comes from the cache with the same reason", second.value === GOOGLE_TRENDS_RATE_LIMIT_NA && calls === 0, `${second.value} calls=${calls}`);
   resetGoogleTrendsCache();
 }
 

@@ -561,7 +561,9 @@ function scoreGoogleTrends(): IndicatorResult {
   const cached = readGoogleTrendsCache();
   const fresh = freshGoogleTrends(cached, now);
   if (fresh) {
-    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h)`);
+    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h${fresh.naReason ? " reason" : ""})`);
+    if (fresh.naReason) return googleReading(null, fresh.source, fresh, fresh.naReason);
+    if (fresh.value == null) return googleReading(null, fresh.source, fresh, GOOGLE_TRENDS_EMPTY_NA);
     return googleReading(fresh.value, fresh.source, fresh);
   }
 
@@ -605,6 +607,12 @@ function scoreGoogleTrends(): IndicatorResult {
   }
 
   if (googleRateLimited) {
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_RATE_LIMIT_NA,
+    });
     return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_RATE_LIMIT_NA);
   }
 
@@ -612,6 +620,12 @@ function scoreGoogleTrends(): IndicatorResult {
   if (decided.store) writeGoogleTrendsCache(decided.store);
   if (decided.value == null) {
     console.log(`  Google Trends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_EMPTY_NA,
+    });
     return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_EMPTY_NA);
   }
   if (!fetched) {
