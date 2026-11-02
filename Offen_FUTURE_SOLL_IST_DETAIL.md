@@ -259,17 +259,17 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
-| F9-08 | Z.38 | CAPEX der Hyperscaler, YoY | 0 Treffer im Makropfad | ❌ | Autonom; FMP-Cashflow der 4–5 Hyperscaler |
+| F9-08 | Z.38 | CAPEX der Hyperscaler, YoY | 🟡 #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. Kette: `MacroAdaptiveLayerCard.tsx:188` Knopf → `POST /api/macro/adaptive-layer` (`server/macro-adaptive-layer-route.ts:40`, Registrierung `server/routes.ts:575`) → `server/hyperscaler-capex.ts:23–25` ohne `FMP_API_KEY` Rückgabe `n/a — FMP_API_KEY fehlt` → `shared/hyperscaler-capex.ts` `computeHyperscalerCapex`. Vorher: 0 Treffer im Makropfad | 🟡 | Code auf `9c0fdda9`. Live n/a, weil `FMP_API_KEY` fehlt |
 | F9-09 | Z.58–91 | `calculateAdaptiveWeights`: Basisgewichte, Habitat „restrictive“, Konzentration > 0,4, Stärke-Layer | 0 Treffer; nur das Gold-Gegenstück `server/gold-adaptive-score.ts:17–105` | ❌ | Autonom (freigegeben); Muster aus Gold übernehmen |
 | F9-10 | Z.95–103 | Managing-Score Makro (CAPEX, EPS, Realzins, Konzentration gegen Trend) | 0 Treffer | ❌ | Autonom, nach F9-02/06/07/08 |
 | F9-11 | Z.14, 69 | Dimension „Makro-Bilanzwidersprüche“ | 0 Treffer | ❌ | Spec ist hier unscharf → vor Bau Definition schärfen |
 | F9-12 | Z.141–232 | OpenRouter-Call `getAIWeightSuggestion`: JSON, max ±25 %, Fehler → quantitative Gewichte | Infrastruktur `server/llm-openrouter.ts` (`callLLMJson`) vorhanden; Rezession nutzt LLM nur für Treiber-Text (`server/recession-drivers.ts:422–477`, `bc72953` #152) | ❌ | Autonom (Philip JA 18.10.); bestehenden `callLLMJson` nutzen, keinen zweiten Client |
 | F9-13 | Z.235–239 | API-Key über Umgebungsvariable, Modell frei, Antwort 6–12 h cachen | Key vorhanden (`OPENROUTER_API_KEY`), Cache für diesen Call fehlt | ❌ | Mit F9-12 |
-| F9-14 | Z.129 | Europa-Ersatzdaten definieren | 0 Treffer | ❌ | Nach F9-09 |
+| F9-14 | Z.129 | Europa-Ersatzdaten definieren | ✅ #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. `shared/europe-macro-fallbacks.ts:2–4` (Surprise, Equal-Weight EXSA.DE/OSX6.DE, Eurostat P51G) und `server/europe-macro-fallbacks.ts`; Anzeige in `MacroAdaptiveLayerCard.tsx` erst nach Klick. Vorher: 0 Treffer | ✅ | Keiner |
 | F9-15 | Z.130 | Habitat-Erkennung verfeinern | kein Habitat im Rezessionspfad | ❌ | Mit F9-09 |
 | F9-16 | Z.132 | Im Dashboard zeigen, welche Gewichte angepasst wurden | 0 Treffer | ❌ | Mit F9-12 (Muster `client/src/components/gold/GoldAdaptiveLayersCard.tsx`) |
 | F9-17 | Z.133 | Historische Validierung 2000 / 2008 / 2022 | 0 Treffer | ❌ | Vor dem Umschalten der Live-P Pflicht |
-| F9-18 | Z.137, 218–232 | Umsetzung über einen Analyse-Button | 0 Treffer | ❌ | Mit F9-12 |
+| F9-18 | Z.137, 218–232 | Umsetzung über einen Analyse-Button | ✅ #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. `MacroAdaptiveLayerCard.tsx:13–14` kein Abruf beim Seitenladen, `:188–193` Knopf „Schicht analysieren“; `server/macro-adaptive-layer.ts:2–3` läuft erst beim POST; `shared/macro-adaptive-layer.ts:3,11` `scoreSwitch` bleibt `aus`, `liveScoreUnchanged: true`. Karte `RecessionDashboard.tsx:210`. Layer lädt nur auf Klick, Score unverändert. Vorher: 0 Treffer | ✅ | Keiner |
 
 ## Future_10_Gold_Adaptive_Scoring_Framework.md (279 Zeilen)
 
