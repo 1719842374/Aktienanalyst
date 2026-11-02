@@ -115,7 +115,49 @@ export const CONE_STYLE = {
   bull: "#22c55e",
   base: "#38bdf8",
   bear: "#ef4444",
+  /** Fläche zwischen P10 und P90, halbtransparent wie der Python-Forecast. */
+  outerFill: "#8b7cf6",
+  outerFillOpacity: 0.28,
+  outerStroke: "#a78bfa",
+  /** Inneres Band P25–P75, etwas dichter, damit beide Intervalle lesbar bleiben. */
+  innerFill: "#6d28d9",
+  innerFillOpacity: 0.38,
+  innerStroke: "#c4b5fd",
+  /** Prognose-Mittellinie P50. Deutlich, durchgezogen, nicht die graue Bandlinie. */
+  midline: "#38bdf8",
+  midlineWidth: 2.25,
+  /** Senkrechte Marke am letzten Close. Bild 3: gestrichelt. */
+  forecastStart: "#f43f5e",
+  forecastDash: "4 3",
+  forecastWidth: 1.25,
 } as const;
+
+/** Namen der Kanten. Die Perzentile stehen in CONE_PARAMS, nicht hier als zweite Zahl. */
+export const CONE_EDGE_LABEL = {
+  p10: "P10",
+  p25: "P25",
+  p75: "P75",
+  p90: "P90",
+} as const;
+
+export const CONE_LEGEND = {
+  midline: "Prognose P50",
+  forecastStart: "Prognosestart",
+} as const;
+
+/**
+ * „80 %-Intervall (P10–P90)“ aus CONE_PARAMS.confidence.
+ * Unteres Perzentil = (1 − Niveau) / 2, oberes = 1 − das.
+ * outer 0.8 → P10–P90, inner 0.5 → P25–P75.
+ */
+export function coneIntervalLegend(which: keyof typeof CONE_PARAMS.confidence): string {
+  const level = CONE_PARAMS.confidence[which].level;
+  const tail = (1 - level) / 2;
+  const low = Math.round(tail * CONE_PARAMS.percent);
+  const high = Math.round((1 - tail) * CONE_PARAMS.percent);
+  const pct = Math.round(level * CONE_PARAMS.percent);
+  return `${pct} %-Intervall (P${low}–P${high})`;
+}
 
 export const POS_NA = "PoS n/a";
 

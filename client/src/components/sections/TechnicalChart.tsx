@@ -17,7 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
-import { currencySymbol } from "@/lib/formatters";
+import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
 import { useMarketTreasury10Y } from "@/lib/useMarketTreasury10Y";
@@ -25,7 +25,7 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_FORMULA, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_EDGE_LABEL, CONE_FORMULA, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneIntervalLegend, scenarioConeFromAnalysis, separateLabelYs,
   type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
@@ -446,8 +446,12 @@ export function TechnicalChart({
   });
 
   const cs = ti.currentStatus;
-  // JOB 22: Kurs-Symbol aus der Listing-Währung (SHEL.L → £), nicht fest "$".
-  const ccy = currencySymbol(data.currency);
+  // JOB 22: Kurs-Symbol aus der Listing-Währung (SHEL.L → £).
+  // SAP.DE / VOW3.DE: nach der USD-Bewertung die Achse wieder in Euro (factor = 1/FX).
+  const listingPrice = chartListingPrice(data);
+  const ccy = listingPrice.symbol;
+  const priceFactor = listingPrice.factor;
+  const px = (value: number, digits = 2) => formatChartPrice(ccy, value, priceFactor, digits);
 
   // ── Buy-signal score (0-4) ──────────────────────────────────────────────────
   const buyScore = [
@@ -653,8 +657,8 @@ export function TechnicalChart({
 
       {/* ── Status pills (4 Bedingungen) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: ${ccy}${cs.ma200Value.toFixed(2)}` : ""} />
-        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: ${ccy}${cs.ma50Value.toFixed(2)}`   : ""} />
+        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: ${px(cs.ma200Value)}` : ""} />
+        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: ${px(cs.ma50Value)}`   : ""} />
         <StatusPill label="MACD > 0"      value={cs.macdAboveZero}   detail={cs.macdValue  !== undefined ? `MACD: ${cs.macdValue.toFixed(4)}`    : ""} />
         <StatusPill label="MACD steigend" value={cs.macdRising}      detail={cs.signalValue!== undefined ? `Signal: ${cs.signalValue.toFixed(4)}` : ""} />
       </div>
@@ -967,7 +971,7 @@ export function TechnicalChart({
             {!measurement ? (
               <span className="text-muted-foreground">
                 {measurePoints.length===0 ? "Klicke auf den Chart um Punkt A zu setzen" : "Klicke auf den Chart um Punkt B zu setzen"}
-                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — {ccy}{measurePoints[0].close.toFixed(2)}</span>}
+                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — {px(measurePoints[0].close)}</span>}
               </span>
             ) : (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -975,7 +979,7 @@ export function TechnicalChart({
                 <span className={`font-bold font-mono text-sm ${measurement.isGain?"text-emerald-500":"text-red-500"}`}>
                   {measurement.isGain?"+":""}{measurement.diff.toFixed(2)} ({measurement.isGain?"+":""}{measurement.pct.toFixed(2)}%) {measurement.isGain?"↑":"↓"}
                 </span>
-                <span className="text-muted-foreground font-mono">{ccy}{measurement.a.close.toFixed(2)} → {ccy}{measurement.b.close.toFixed(2)}</span>
+                <span className="text-muted-foreground font-mono">{px(measurement.a.close)} → {px(measurement.b.close)}</span>
               </div>
             )}
           </div>
@@ -1066,6 +1070,7 @@ export function TechnicalChart({
                 t10y={t10yOverlay}
                 real10y={real10yOverlay}
                 ccy={ccy}
+                priceFactor={priceFactor}
                 cone={scenarioCone}
                 fund={fundOverlay}
               />
@@ -1105,6 +1110,7 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               cone={scenarioCone}
               widthScale={CONE_VIEWPORT_SCALE}
               scrollToEnd={showCone}
@@ -1144,6 +1150,7 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               testId="chart-band-b"
               macdTestId="chart-macd-b"
               rsiTestId="chart-rsi-b"
@@ -1167,6 +1174,7 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               testId="chart-band-c"
               macdTestId="chart-macd-c"
               rsiTestId="chart-rsi-c"
@@ -1188,16 +1196,23 @@ export function TechnicalChart({
           data-formula={CONE_FORMULA}
           title={`${CONE_SOURCE}. ${CONE_FORMULA}`}
         >
-          Szenario-Kegel ab letztem Close <span className="font-mono">{ccy}{scenarioCone.anchorPrice.toFixed(2)}</span>
+          Szenario-Kegel ab letztem Close <span className="font-mono">{px(scenarioCone.anchorPrice)}</span>
           {" "}({scenarioCone.anchorDate}) · Horizont {scenarioCone.horizonDays} Handelstage
           {scenarioCone.sigmaDaily != null && <> · σ<sub>η</sub> <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
           {scenarioCone.driftPerDay != null && <> · b <span className="font-mono">{scenarioCone.driftPerDay.toFixed(6)}</span></>}
           {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
           {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
           {" "}· 50%-Band und 80%-Band
-          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${ccy}${m.price.toFixed(2)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
+          {" "}· {coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}
+          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${px(m.price)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
           {" "}· {CONE_SOURCE}
           {" "}· nur Anzeige, kein Score
+          <div data-testid="cone-legend" className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: CONE_STYLE.outerFill, opacity: CONE_STYLE.outerFillOpacity }} />{coneIntervalLegend("outer")}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: CONE_STYLE.innerFill, opacity: CONE_STYLE.innerFillOpacity }} />{coneIntervalLegend("inner")}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3" style={{ background: CONE_STYLE.midline }} />{CONE_LEGEND.midline}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-0 w-3 border-t border-dashed" style={{ borderColor: CONE_STYLE.forecastStart }} />{CONE_LEGEND.forecastStart}</span>
+          </div>
           <div data-testid="cone-probability-hint">{CONE_PROBABILITY_HINT}</div>
         </div>
       )}
@@ -1324,7 +1339,7 @@ export function TechnicalChart({
                       : s.reason.includes('Bearish')      ? 'text-red-500'
                       : s.reason.includes('Bullish')      ? 'text-emerald-500' : ''
                     }`}>{s.reason}</td>
-                    <td className="py-1 text-right font-mono tabular-nums">{ccy}{s.price.toFixed(2)}</td>
+                    <td className="py-1 text-right font-mono tabular-nums">{px(s.price)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1428,6 +1443,52 @@ type ChartAxis = {
   tick?: { fontSize?: number } | boolean;
 };
 
+/** Geschlossene Fläche zwischen zwei Kegellinien. Koordinaten aus den Achsen, keine zweite Skala. */
+function coneBandPath(
+  xScale: (value: number | string) => number,
+  yScale: (value: number | string) => number,
+  cone: ScenarioCone,
+  low: (point: ScenarioCone["points"][number]) => number,
+  high: (point: ScenarioCone["points"][number]) => number,
+): string {
+  const forward: string[] = [];
+  const back: Array<[number, number]> = [];
+  for (const point of cone.points) {
+    const x = xScale(point.date);
+    const yHi = yScale(high(point));
+    const yLo = yScale(low(point));
+    if (!Number.isFinite(x) || !Number.isFinite(yHi) || !Number.isFinite(yLo)) continue;
+    forward.push(`${forward.length === 0 ? "M" : "L"}${x.toFixed(2)},${yHi.toFixed(2)}`);
+    back.push([x, yLo]);
+  }
+  if (forward.length < 2) return "";
+  const reverse = [...back].reverse().map(([x, y]) => `L${x.toFixed(2)},${y.toFixed(2)}`);
+  return `${forward.join("")}${reverse.join("")}Z`;
+}
+
+function ConeBandFill({
+  xAxisMap,
+  yAxisMap,
+  cone,
+}: {
+  xAxisMap?: Record<string, ChartAxis>;
+  yAxisMap?: Record<string, ChartAxis>;
+  cone: ScenarioCone;
+}) {
+  const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
+  const priceAxis = yAxisMap?.price;
+  if (!xAxis?.scale || !priceAxis?.scale || cone.points.length < 2) return null;
+  const outer = coneBandPath(xAxis.scale, priceAxis.scale, cone, point => point.p10, point => point.p90);
+  const inner = coneBandPath(xAxis.scale, priceAxis.scale, cone, point => point.innerLow, point => point.innerHigh);
+  if (!outer && !inner) return null;
+  return (
+    <g data-testid="cone-band-fill" pointerEvents="none">
+      {outer ? <path data-testid="cone-band-outer" d={outer} fill={CONE_STYLE.outerFill} fillOpacity={CONE_STYLE.outerFillOpacity} stroke="none" /> : null}
+      {inner ? <path data-testid="cone-band-inner" d={inner} fill={CONE_STYLE.innerFill} fillOpacity={CONE_STYLE.innerFillOpacity} stroke="none" /> : null}
+    </g>
+  );
+}
+
 /**
  * Kegel-Labels am Horizont-Ende. Stehen sie sich oder dem Dividenden-Label
  * „4 % attraktiv“ zu nahe, verschiebt separateLabelYs sie um den Fehlbetrag
@@ -1492,7 +1553,8 @@ function ConeEndLabels({
             fontSize={priceFontPx}
             fill={markerFill(m.id)}
           >
-            {m.caption}
+            <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
+            {`${m.name} · ${m.posText}`}
           </text>
         );
       })}
@@ -1545,11 +1607,11 @@ function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>):
   return changed ? next : null;
 }
 
-function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
+function ConeTooltipRows({ p, formatPx }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string }) {
   if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
   const row = (color: string, name: string, value: number | null | undefined) => (
     value != null && Number.isFinite(value)
-      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><span className="font-mono">{ccy}{value.toFixed(2)}</span></div>
+      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><span className="font-mono">{formatPx(value)}</span></div>
       : null
   );
   return (
@@ -1557,12 +1619,13 @@ function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
       <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[260px] whitespace-normal text-muted-foreground" title={CONE_FORMULA}>
         <div>{CONE_SOURCE}</div>
         <div>{CONE_FORMULA}</div>
+        <div>{coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}</div>
       </div>
-      {row(CONE_STYLE.band, "80%-Band unten", p.coneP10)}
-      {row(CONE_STYLE.band, "50%-Band unten", p.coneInnerLow)}
-      {row(CONE_STYLE.band, "Trend", p.coneP50)}
-      {row(CONE_STYLE.band, "50%-Band oben", p.coneInnerHigh)}
-      {row(CONE_STYLE.band, "80%-Band oben", p.coneP90)}
+      {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p10, p.coneP10)}
+      {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p25, p.coneInnerLow)}
+      {row(CONE_STYLE.midline, CONE_LEGEND.midline, p.coneP50)}
+      {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p75, p.coneInnerHigh)}
+      {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p90, p.coneP90)}
       {typeof p.coneBullLabel === "string" && <div style={{ color: CONE_STYLE.bull }}>{p.coneBullLabel}</div>}
       {typeof p.coneBaseLabel === "string" && <div style={{ color: CONE_STYLE.base }}>{p.coneBaseLabel}</div>}
       {typeof p.coneBearLabel === "string" && <div style={{ color: CONE_STYLE.bear }}>{p.coneBearLabel}</div>}
@@ -1574,7 +1637,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
-  cone = null, fund = null,
+  priceFactor = 1, cone = null, fund = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1603,6 +1666,8 @@ function PricePane({
   real10y?: Real10YOverlayPoint[] | null;
   /** JOB 22: Kurs-Symbol (Listing-Währung). */
   ccy?: string;
+  /** Datenwert × factor = Beschriftung. 1 = Kerzen schon in der Anzeigewährung. */
+  priceFactor?: number;
   /** Szenario-Kegel. null = Chart-Daten und Preisdomäne unverändert. */
   cone?: ScenarioCone | null;
   /** Earnings Yield / ROIC / Peer, nur Anzeige. null = keine zusätzliche Serie. */
@@ -1627,6 +1692,7 @@ function PricePane({
   const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
   const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
+  const formatPx = (value: number, digits = 2) => formatChartPrice(ccy, value, priceFactor, digits);
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(chartData.length / (dense ? 5 : 8))));
   const plotRef = useRef<HTMLDivElement>(null);
@@ -1650,7 +1716,7 @@ function PricePane({
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} {...xInterval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
-        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `${ccy}${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => formatPx(v, 0)} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
         {dividend && (
@@ -1731,33 +1797,35 @@ function PricePane({
               }
             }
           }
-          const bbWidth = dp.bbUpper != null && dp.bbLower != null ? (dp.bbUpper - dp.bbLower).toFixed(2) : null;
+          const bbWidth = dp.bbUpper != null && dp.bbLower != null ? formatPx(dp.bbUpper - dp.bbLower) : null;
           const dv = dp as WindowPoint & DividendFields;
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
               {dp.close != null && Number.isFinite(dp.close) && (
-                <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{ccy}{dp.close.toFixed(2)}</span></div>
+                <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{formatPx(dp.close)}</span></div>
               )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
                 <>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">{ccy}{dp.bbUpper.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">{ccy}{dp.bbMid?.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">{ccy}{dp.bbLower?.toFixed(2)}</span></div>
-                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{ccy}{bbWidth}</span></div>}
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">{formatPx(dp.bbUpper)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">{dp.bbMid != null ? formatPx(dp.bbMid) : ""}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">{dp.bbLower != null ? formatPx(dp.bbLower) : ""}</span></div>
+                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{bbWidth}</span></div>}
                 </>
               )}
               {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} peerSource={peerDividendSource} />}
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
-              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} ccy={ccy} />}
-              {fund && <FundTooltipRows p={dp as WindowPoint & FundFields} />}
+              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} />}
+              {fund && (dp.close != null && Number.isFinite(dp.close)
+                ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
+                : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
-                  <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
+                  <span className="font-mono">{formatPx(Number(p.value))}</span>
                 </div>
               ))}
               {sigs.map((s, i) => (
@@ -1779,11 +1847,15 @@ function PricePane({
         )}
         {cone && (
           <>
-            <Line yAxisId="price" type="monotone" dataKey="coneP90" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP10" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneInnerHigh" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneInnerLow" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP50" name="Trend" stroke={CONE_STYLE.band} strokeWidth={1} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Customized component={(overlay: { xAxisMap?: Record<string, ChartAxis>; yAxisMap?: Record<string, ChartAxis> }) => (
+              <ConeBandFill {...overlay} cone={cone} />
+            )} />
+            <ReferenceLine yAxisId="price" x={cone.anchorDate} stroke={CONE_STYLE.forecastStart} strokeDasharray={CONE_STYLE.forecastDash} strokeWidth={CONE_STYLE.forecastWidth} />
+            <Line yAxisId="price" type="monotone" dataKey="coneP90" name={coneIntervalLegend("outer")} stroke={CONE_STYLE.outerStroke} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP10" name={coneIntervalLegend("outer")} stroke={CONE_STYLE.outerStroke} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerHigh" name={coneIntervalLegend("inner")} stroke={CONE_STYLE.innerStroke} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerLow" name={coneIntervalLegend("inner")} stroke={CONE_STYLE.innerStroke} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP50" name={CONE_LEGEND.midline} stroke={CONE_STYLE.midline} strokeWidth={CONE_STYLE.midlineWidth} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             {cone.markers.map((m) => m.price == null ? null : (
               <ReferenceDot
                 key={m.id}
@@ -2070,7 +2142,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
-  cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
+  priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
 }: {
   label: string;
   labelClassName: string;
@@ -2103,6 +2175,7 @@ function BandStack({
   real10y?: Real10YOverlayPoint[] | null;
   fund?: FundJoinPoint[] | null;
   ccy?: string;
+  priceFactor?: number;
   cone?: ScenarioCone | null;
   widthScale?: number;
   scrollToEnd?: boolean;
@@ -2147,6 +2220,7 @@ function BandStack({
               real10y={real10y}
               fund={fund}
               ccy={ccy}
+              priceFactor={priceFactor}
               cone={cone}
             />
           )}
@@ -2347,6 +2421,55 @@ function fmtPctOrNote(v: number | null | undefined, note: string | null | undefi
 function EstimateBadge({ note }: { note: string | null | undefined }) {
   if (!estimateBadge(note)) return null;
   return <div className="text-amber-400" data-testid="badge-schaetzung">Schätzung · {note}</div>;
+}
+
+const LAST_IST_LABEL = "letzter Ist-Wert";
+
+function lastFiniteFund<K extends "earningsYieldPct" | "roicPct" | "peerRoicKnown" | "peerPriceRaw">(
+  series: FundJoinPoint[],
+  key: K,
+): FundJoinPoint | null {
+  for (let i = series.length - 1; i >= 0; i--) {
+    const value = series[i][key];
+    if (typeof value === "number" && Number.isFinite(value)) return series[i];
+  }
+  return null;
+}
+
+/**
+ * Prognosepunkte haben keinen Ist-Wert. Statt „n/a — kein Wert“ der letzte
+ * bekannte Punkt mit Datum. Fehlt der Wert auch in der Historie, bleibt die Zeile weg.
+ */
+function FundLastIstRows({ series, formatDateFull }: { series: FundJoinPoint[]; formatDateFull: (date: string) => string }) {
+  const rows: { key: string; label: string; className: string; text: string; date: string; formula: string | null }[] = [];
+  const ey = lastFiniteFund(series, "earningsYieldPct");
+  if (ey?.earningsYieldPct != null) {
+    rows.push({ key: "ey", label: "Earnings Yield", className: "text-sky-500", text: `${ey.earningsYieldPct.toFixed(1)} %`, date: ey.date, formula: EARNINGS_YIELD_FORMULA });
+  }
+  const roic = lastFiniteFund(series, "roicPct");
+  if (roic?.roicPct != null) {
+    rows.push({ key: "roic", label: "ROIC", className: "text-lime-500", text: `${roic.roicPct.toFixed(1)} %`, date: roic.date, formula: ROIC_FORMULA });
+  }
+  const peer = lastFiniteFund(series, "peerRoicKnown");
+  if (peer?.peerRoicKnown != null) {
+    rows.push({ key: "peer-roic", label: "Peer-ROIC", className: "text-lime-500", text: `${peer.peerRoicKnown.toFixed(1)} %`, date: peer.date, formula: ROIC_FORMULA });
+  }
+  const peerPx = lastFiniteFund(series, "peerPriceRaw");
+  if (peerPx?.peerPriceRaw != null) {
+    rows.push({ key: "peer-px", label: "Peer-Kurs", className: "text-orange-400", text: peerPx.peerPriceRaw.toFixed(2), date: peerPx.date, formula: null });
+  }
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal" data-testid="fund-last-ist">
+      {rows.map(row => (
+        <div key={row.key}>
+          <div className="flex justify-between gap-3"><span className={row.className}>{row.label}</span><span className="font-mono">{row.text}</span></div>
+          <div className="text-muted-foreground">{LAST_IST_LABEL} · {formatDateFull(row.date)}</div>
+          {row.formula ? <div className="text-muted-foreground">Formel: {row.formula}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function FundTooltipRows({ p }: { p: FundFields }) {

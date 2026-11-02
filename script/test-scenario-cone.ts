@@ -10,10 +10,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  CONE_EVENT_LABEL, CONE_FORMULA, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, conePlotScale, fitLogPriceTrend, horizonTradingDays, separateLabelYs,
+  CONE_EVENT_LABEL, CONE_FORMULA, CONE_LEGEND, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
+  coneBandPrice, coneDomainValues, coneIntervalLegend, conePlotScale, fitLogPriceTrend, horizonTradingDays, separateLabelYs,
   realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
+import { chartListingPrice, CHART_PRICE_SCALE_IDENTITY } from "../client/src/lib/chartListingPrice";
+import { gbmMonteCarlo, MONTE_CARLO_SEED } from "../client/src/lib/calculations";
 
 const read = (p: string) => readFileSync(p, "utf8");
 const json = (p: string) => JSON.parse(read(p));
@@ -445,6 +447,60 @@ assertSeparated([
   assert.match(lib, /P10: \{ percentile: 10, z: -1\.2815515655446004 \}/);
   assert.match(lib, /P90: \{ percentile: 90, z: 1\.2815515655446004 \}/);
   assert.doesNotMatch(lib, /inverseNorm|INV_NORM|CONE_BAND_PERCENT/);
+}
+
+// Fläche und Legende: Niveau und Perzentile nur aus CONE_PARAMS.confidence.
+assert.equal(coneIntervalLegend("outer"), "80 %-Intervall (P10–P90)");
+assert.equal(coneIntervalLegend("inner"), "50 %-Intervall (P25–P75)");
+assert.equal(CONE_LEGEND.midline, "Prognose P50");
+assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
+{
+  const ui = read("client/src/components/sections/TechnicalChart.tsx");
+  assert.match(ui, /data-testid="cone-band-outer"/);
+  assert.match(ui, /data-testid="cone-band-inner"/);
+  assert.match(ui, /data-testid="cone-legend"/);
+  assert.match(ui, /coneIntervalLegend\("outer"\)/);
+  assert.match(ui, /CONE_STYLE\.midlineWidth/);
+  assert.match(ui, /CONE_STYLE\.forecastDash/);
+  assert.match(ui, /letzter Ist-Wert/);
+  assert.match(ui, /FundLastIstRows/);
+  assert.match(ui, /chartListingPrice\(data\)/);
+  assert.match(ui, /m\.caption/);
+}
+
+// Euro-Achse nur als Anzeige. USD-Kerzen bleiben, factor = 1/FX. Score liest das nicht.
+{
+  const sap = chartListingPrice({
+    ticker: "SAP.DE",
+    currency: "USD",
+    currencyInfo: { reportedCurrency: "EUR", tradingCurrency: "USD", fxRate: 1.08, fxPair: "EURUSD", converted: true, note: "" },
+  });
+  assert.equal(sap.code, "EUR");
+  assert.equal(sap.symbol, "€");
+  assert.ok(Math.abs(sap.factor - CHART_PRICE_SCALE_IDENTITY / 1.08) < 1e-12);
+  const vow = chartListingPrice({
+    ticker: "VOW3.DE",
+    currency: "EUR",
+    currencyInfo: { reportedCurrency: "EUR", tradingCurrency: "EUR", fxRate: 1, fxPair: "EURUSD", converted: false, note: "" },
+  });
+  assert.equal(vow.symbol, "€");
+  assert.equal(vow.factor, CHART_PRICE_SCALE_IDENTITY);
+  const msft = chartListingPrice({ ticker: "MSFT", currency: "USD" });
+  assert.equal(msft.symbol, "$");
+  assert.equal(msft.factor, CHART_PRICE_SCALE_IDENTITY);
+}
+
+// Fester Seed: zwei GBM-Läufe, dieselbe Endkursreihe. Der Kegel-PoS springt beim Reload nicht.
+{
+  const params = { currentPrice: 100, mu: 0.08, sigma: 0.2, iterations: 400, tradingDays: 40 };
+  const first = gbmMonteCarlo(params, 120);
+  const second = gbmMonteCarlo(params, 120);
+  assert.equal(typeof MONTE_CARLO_SEED, "number");
+  assert.equal(first.p50, second.p50);
+  assert.equal(first.terminalPrices.length, second.terminalPrices.length);
+  assert.equal(first.terminalPrices[0], second.terminalPrices[0]);
+  assert.equal(first.terminalPrices[first.terminalPrices.length - 1], second.terminalPrices[second.terminalPrices.length - 1]);
+  assert.equal(first.horizonDays, params.tradingDays);
 }
 
 console.log("test-scenario-cone: OK");
