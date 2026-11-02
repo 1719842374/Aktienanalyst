@@ -29,6 +29,7 @@ import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { applyRegressionToSlot, unavailableRegression } from "./buffett-regression";
 import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
 
 // ============================================================
@@ -1455,9 +1456,12 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const bridgePromise = fetchBridge();
   // Chart-Reihe für den Fazit-Satz, parallel zur Analyse. Der Import bleibt dynamisch,
   // damit der statische Import oben nur die Wilshire-Konstante zieht (Score-Wächter).
-  const buffettSeriesPromise = import("./buffett-route")
-    .then(mod => mod.loadUsBuffettRatios())
-    .catch(() => [] as { date: string; ratio: number }[]);
+  const buffettPackPromise = import("./buffett-route")
+    .then(mod => mod.loadUsBuffettPack())
+    .catch(err => ({
+      ratios: [] as { date: string; ratio: number }[],
+      regression: unavailableRegression(`n/a — ${String((err as Error)?.message ?? err).slice(0, 180)}`),
+    }));
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
@@ -1483,6 +1487,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCrowdLeg(vixValue, vix.source),
     scoreWei(),
   ]);
+  const buffettPack = await buffettPackPromise;
+  const buffettIndex = indicators.findIndex(indicator => indicator.name.includes("Buffett"));
+  if (buffettIndex >= 0) {
+    indicators[buffettIndex] = applyRegressionToSlot(indicators[buffettIndex], buffettPack.regression);
+  }
 
   console.log("[RECESSION] All indicators scored:");
   indicators.forEach(ind => {
@@ -1638,7 +1647,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     lines: driverAssessment.lines,
     cards: driverAssessment.cards,
   };
-  const buffettSeries = await buffettSeriesPromise;
+  const buffettSeries = buffettPack.ratios;
   const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers, buffettSeries);
 
   console.log("[RECESSION] Analysis complete.");

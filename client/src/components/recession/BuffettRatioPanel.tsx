@@ -22,6 +22,8 @@ interface TrendPoint {
   minus2: number;
   premiumPct: number;
   zScore: number;
+  /** Quartalsfit der Regression, am letzten vollständigen Quartal gehalten. */
+  adjusted?: number;
   /** #245: Proxy-Symbol bei fortgeschriebenen Punkten */
   proxy?: string;
   /** F1-74: „etf“, wenn der Punkt aus einem ETF-Kurs geschätzt ist (EU/CN) */
@@ -42,6 +44,46 @@ interface BuffettPayload {
     anchorYear: number; anchorDate: string; anchorQuote: number; gdpSeries: string; gdpAsOf: string; skipped: string[];
   } | null;
   benchmarkUnavailable?: string | null;
+  regression?: {
+    available: boolean;
+    reason: string | null;
+    sectorNote: string;
+    zone: string;
+    detail: string;
+    n: number;
+    residualZ: number | null;
+    residualPercentile: number | null;
+    fitted: number | null;
+    rawScore: number | null;
+    weightedScore: number | null;
+    coefficients: { name: string; beta: number }[];
+    curve: { date: string; fitted: number }[];
+    carriedRegressors: boolean;
+  };
+}
+
+function attachAdjusted(points: TrendPoint[], curve: { date: string; fitted: number }[] | undefined): TrendPoint[] {
+  if (!curve || curve.length === 0) return points;
+  const ordered = [...curve].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  let index = 0;
+  let fitted: number | null = null;
+  return points.map(point => {
+    while (index < ordered.length && ordered[index].date <= point.date) {
+      fitted = ordered[index].fitted;
+      index += 1;
+    }
+    return fitted == null ? point : { ...point, adjusted: fitted };
+  });
+}
+
+export function regressionCaption(regression: BuffettPayload["regression"]): string {
+  if (!regression) return "Regression: n/a — keine Schätzung in der Antwort";
+  if (!regression.available) return `Regression: ${regression.reason ?? regression.detail}`;
+  const betas = regression.coefficients.map(item => `${item.name} ${item.beta >= 0 ? "+" : ""}${item.beta.toFixed(2).replace(".", ",")}`).join(", ");
+  const pct = regression.residualPercentile == null ? "n/a" : `${Math.round(regression.residualPercentile * 100)}`;
+  const fitted = regression.fitted == null ? "n/a" : `${regression.fitted.toFixed(1).replace(".", ",")} %`;
+  const carried = regression.carriedRegressors ? " · Regressoren vom letzten vollständigen Quartal" : "";
+  return `Adjustiert ${fitted} · ${regression.zone.replace(".", ",")} · β ${betas} · Perzentil ${pct} · ${regression.sectorNote}${carried}`;
 }
 
 function pctDe(v: number): string {
@@ -97,6 +139,7 @@ const MONTHS = [
 ];
 
 const RATIO = "#1473fc";
+const ADJUSTED = "#0f766e";
 const TREND = "#7a7a7a";
 const PLUS_1 = "#f47c12";
 const PLUS_2 = "#d12b3e";
@@ -141,8 +184,8 @@ function yDomain(rows: TrendPoint[], range: RangeId, fallback = false): [number,
   // F1-31: nur beim FRED-Ersatz (Financial Accounts, über 250 %) die Obergrenze in 50er-Schritten erweitern; Wilshire-Achse unverändert.
   if (range === "Max" && maxRatio >= 180) return [0, fallback ? Math.max(250, Math.ceil(maxRatio / 50) * 50) : 250];
   const near = rows
-    .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2])
-    .filter(value => value >= minRatio - 25 && value <= maxRatio + 25);
+    .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2, row.adjusted ?? Number.NaN])
+    .filter(value => Number.isFinite(value) && value >= minRatio - 25 && value <= maxRatio + 25);
   const min = Math.min(...near);
   const max = Math.max(...near);
   const pad = Math.max(3, (max - min) * 0.12);
@@ -381,7 +424,7 @@ export function BuffettRatioPanel() {
     },
   });
 
-  const all = query.data?.points ?? [];
+  const all = attachAdjusted(query.data?.points ?? [], query.data?.regression?.curve);
 
   // PR 3 (Chat-Kontext): letzter angezeigter Punkt aus der bestehenden Query — keine neue Abfrage.
   const bl = query.data?.latest ?? (all.length ? all[all.length - 1] : null);
@@ -390,6 +433,9 @@ export function BuffettRatioPanel() {
     region, stand: query.data.asOf, datum: bl?.date ?? null, marktwertZuBipPct: b1(bl?.ratio), trendPct: b1(bl?.trend),
     abweichungVomTrendPct: b1(bl?.premiumPct), zScore: b1(bl?.zScore), plus1Sigma: b1(bl?.plus1), plus2Sigma: b1(bl?.plus2),
     proxy: bl?.proxy ?? null, hinweisQuelle: query.data.note ? query.data.note.slice(0, 400) : null,
+    regression: regressionCaption(query.data.regression),
+    regressionZ: query.data.regression?.residualZ ?? null,
+    regressionRohnote: query.data.regression?.rawScore ?? null,
     _auffaelligkeiten: [
       bl && bl.zScore >= 2 ? "Bewertung ≥ +2σ über dem Trend" : bl && bl.zScore >= 1 ? "Bewertung ≥ +1σ über dem Trend" : "",
       bl && bl.zScore <= -1 ? "Bewertung ≤ −1σ unter dem Trend" : "",
@@ -488,6 +534,11 @@ export function BuffettRatioPanel() {
           Benchmark-Schätzung n/a — {query.data.benchmarkUnavailable}
         </p>
       )}
+      {query.data?.regression && (
+        <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-regression">
+          {regressionCaption(query.data.regression)}
+        </p>
+      )}
 
       {query.data && (
         <>
@@ -545,6 +596,9 @@ export function BuffettRatioPanel() {
                   <Line type="linear" dataKey="minus1" name="− 1 Std.-Abw." stroke={MINUS_1} dot={false} strokeWidth={1.5} strokeDasharray="6 4" isAnimationActive={false} />
                   <Line type="linear" dataKey="minus2" name="− 2 Std.-Abw." stroke={MINUS_2} dot={false} strokeWidth={1.5} strokeDasharray="6 4" isAnimationActive={false} />
                   <Line type="linear" dataKey="ratio" name="Marktwert zum BIP" stroke={RATIO} dot={false} strokeWidth={1.8} isAnimationActive={false} />
+                  {chart.some(row => row.adjusted != null) && (
+                    <Line type="stepAfter" dataKey="adjusted" name="Adjustiert (Regression)" stroke={ADJUSTED} dot={false} strokeWidth={1.6} isAnimationActive={false} connectNulls={false} />
+                  )}
                   <Customized component={(overlay: { xAxisMap?: Record<string, AxisMap>; yAxisMap?: Record<string, AxisMap> }) => (
                     <ChartOverlay {...overlay} rows={chart} range={range} wide={wide} />
                   )} />
