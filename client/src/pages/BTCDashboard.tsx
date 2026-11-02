@@ -28,6 +28,17 @@ import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
 import { BTC_TA_RANGES, sliceBtcTaWindow, type BtcTaRange } from "@/lib/btcTaWindow";
+import {
+  M2_IMPLIED_COLOR,
+  M2_IMPLIED_DISCLAIMER,
+  M2_IMPLIED_LINE_NAME,
+  fitM2ImpliedBtc,
+  m2ImpliedAxisHint,
+  m2ImpliedAxisPlacement,
+  m2ImpliedPointOutside,
+  m2ImpliedPrice,
+  m2ImpliedTooltipLines,
+} from "@/lib/m2ImpliedBtc";
 import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
@@ -77,6 +88,8 @@ interface TechChartPoint {
   ma1400: number | null;
   real10y?: number | null; m2Yoy?: number | null;
   m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
+  /** exp(a + b·ln(M2-Lag)) auf der Preisachse. OLS über die Historie bis zum Fensterende. */
+  m2ImpliedBtc?: number | null;
   /** Fed-Bilanz WALCL in Bio. USD (Liquiditäts-Endpoint) */
   walcl?: number | null;
   rsi14?: number | null;
@@ -1102,6 +1115,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     return result;
   }, [filteredData]);
 
+  // Koeffizienten aus den echten Monatswerten der Historie bis zum Fensterende,
+  // nicht aus dem sichtbaren Fenster und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
+  const m2Implied = useMemo(
+    () => fitM2ImpliedBtc(fullChart, filteredData.length > 0 ? filteredData[filteredData.length - 1].date : null),
+    [fullChart, filteredData],
+  );
+
   const qePoints = useMemo(
     () => fullChart.map(p => ({ date: p.date, price: p.price, walcl: p.walcl ?? null })),
     [fullChart],
@@ -1212,8 +1232,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       rsi14: hasServerRSI ? (d.rsi14 ?? null) : (clientRsiArr[i] ?? null),
       _volNorm: volNorms[i] ?? 0,
       _volUp: i === 0 ? true : prices[i] >= prices[i - 1],
+      m2ImpliedBtc: m2ImpliedPrice(m2Implied, d.m2AbsoluteLagged),
     }));
-  }, [chartData]);
+  }, [chartData, m2Implied]);
 
   // Filter signals within the displayed time range
   const visibleSignals = useMemo(() => {
@@ -1245,7 +1266,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const yDomain = useMemo(() => {
     let minVal = Infinity;
     let maxVal = -Infinity;
-    for (const d of chartData) {
+    for (const d of chartDataWithRSI) {
       if (d.price > 0) {
         if (d.price < minVal) minVal = d.price;
         if (d.price > maxVal) maxVal = d.price;
@@ -1267,13 +1288,21 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         }
       }
     }
-    // Safeguard: never go below 0, ensure valid range
+    // Safeguard: never go below 0, ensure valid range.
+    // Der implizite M2-Preis zieht die Achse nicht auf: er liegt auf derselben
+    // Skala und wird am Rand abgeschnitten, wenn er außerhalb des Kurses liegt.
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) {
       return [0, 100000] as [number, number];
     }
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartData, visibleMAs, visibleOverlays]);
+  }, [chartDataWithRSI, visibleMAs, visibleOverlays]);
+
+  const m2ImpliedPlacement = useMemo(
+    () => m2ImpliedAxisPlacement(chartDataWithRSI.map(d => d.m2ImpliedBtc), yDomain),
+    [chartDataWithRSI, yDomain],
+  );
+  const m2ImpliedOffAxis = m2ImpliedAxisHint(m2ImpliedPlacement);
 
   // Format helpers
   const formatDate = (date: string) => {
@@ -1535,6 +1564,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {taWindow.historyNote}
           </div>
         )}
+        {showM2AbsoluteLagged && (
+          <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-note">
+            {m2Implied.ok
+              ? `${M2_IMPLIED_LINE_NAME} auf der Preisachse · OLS über die Historie bis zum Fensterende, nur Monatswerte (n=${m2Implied.n}) · ${M2_IMPLIED_DISCLAIMER}`
+              : m2Implied.reason}
+          </div>
+        )}
+        {showM2AbsoluteLagged && m2Implied.ok && m2ImpliedOffAxis && (
+          <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-offaxis">
+            {m2ImpliedOffAxis}
+          </div>
+        )}
         {capitulationSegmentsSnapped.length > 0 && (
           <div className="w-full basis-full text-[10px] text-orange-300" data-testid="btc-miner-zone-legend">
             Miner-Kapitulation: orange Schraffur mit gestricheltem Rand
@@ -1655,7 +1696,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showM2AbsoluteLagged ? "border-amber-300 text-amber-300" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
-                title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, ein-/ausblenden"
+                title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, plus M2-impliziter BTC-Preis in USD auf der Preisachse"
                 data-testid="toggle-btc-m2absolute-lagged"
               >
                 {showM2AbsoluteLagged ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
@@ -1772,6 +1813,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
             <YAxis
               domain={yDomain}
+              allowDataOverflow
               tick={xTick}
               tickFormatter={formatYAxis}
               width={55}
@@ -1842,7 +1884,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 return (
                   <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                     <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                    {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => (
+                    {payload.filter((p: any) => p.dataKey !== "_volNorm" && p.dataKey !== "m2ImpliedBtc").map((p: any) => (
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
                         <span className="font-mono tabular-nums">
@@ -1858,6 +1900,17 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                     ))}
                     {(volPoint?.volume ?? 0) > 0 && (
                       <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{((volPoint!.volume ?? 0) / 1e9).toFixed(2)}B</span></div>
+                    )}
+                    {showM2AbsoluteLagged && (
+                      <div className="mt-1 space-y-0.5 border-t border-border pt-1" data-testid="btc-m2-implied-tooltip">
+                        {m2ImpliedTooltipLines(
+                          m2Implied,
+                          volPoint?.m2ImpliedBtc ?? null,
+                          m2ImpliedPointOutside(volPoint?.m2ImpliedBtc, yDomain) ? "outside" : "inside",
+                        ).map(line => (
+                          <div key={line} className="text-cyan-300">{line}</div>
+                        ))}
+                      </div>
                     )}
                     {visibleSignals.filter(s => s.date === label).map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
@@ -2010,6 +2063,19 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 stroke="#fbbf24"
                 strokeWidth={1.25}
                 strokeDasharray="6 3"
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {showM2AbsoluteLagged && hasM2AbsoluteLagged && m2Implied.ok && (
+              <Line
+                type="monotone"
+                dataKey="m2ImpliedBtc"
+                name={M2_IMPLIED_LINE_NAME}
+                stroke={M2_IMPLIED_COLOR}
+                strokeWidth={1.5}
+                strokeDasharray="5 3"
                 dot={false}
                 connectNulls
                 isAnimationActive={false}
