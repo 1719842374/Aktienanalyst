@@ -30,12 +30,23 @@ import {
   fmpIncomeStatementQuarterly,
   fmpKeyMetrics,
   fmpKeyMetricsQuarterly,
+  fmpProfile,
   fmpRatios,
   fmpRatiosQuarterly,
+  fmpSearchTicker,
 } from "./fmp";
 import { loadYahooFundamentalBundle, type YahooSeriesBundle } from "./yahoo-fundamental-fallback";
 import { isGermanXetraTicker } from "./yahoo-fetcher";
 import { registerPeerPriceRoute } from "./chart-peer-price-route";
+import {
+  MAX_LISTING_CANDIDATES,
+  profileHitFromRow,
+  resolveGermanListing,
+  searchHitFromRow,
+  type FmpProfileHit,
+  type FmpSearchHit,
+  type FmpSymbolResolution,
+} from "./fmp-listing-resolve";
 
 export const FUNDAMENTAL_CACHE_MS = 6 * 60 * 60 * 1000;
 const ROIC_DECIMAL_FIELDS = ["returnOnInvestedCapital"] as const;
@@ -50,8 +61,11 @@ export interface FundamentalDeps {
   keyMetricsQuarterly?: (symbol: string, limit: number) => Promise<unknown>;
   ratios?: (symbol: string, limit: number) => Promise<unknown>;
   ratiosQuarterly?: (symbol: string, limit: number) => Promise<unknown>;
-  /** Kostenlose Ersatzquelle bei FMP 402 oder leerer Serie. */
+  /** Kostenlose Ersatzquelle bei FMP 402 oder leerer Serie. Nicht für .DE. */
   yahooBundle?: (symbol: string, years: number) => Promise<YahooSeriesBundle>;
+  /** .DE: Suche und Profil, um das FMP-Symbol datengetrieben zu finden. */
+  search?: (query: string) => Promise<FmpSearchHit[]>;
+  profile?: (symbol: string) => Promise<FmpProfileHit>;
 }
 
 const defaultDeps: FundamentalDeps = {
@@ -63,6 +77,18 @@ const defaultDeps: FundamentalDeps = {
   ratios: (symbol, limit) => fmpRatios(symbol, limit),
   ratiosQuarterly: (symbol, limit) => fmpRatiosQuarterly(symbol, limit),
   yahooBundle: (symbol, years) => loadYahooFundamentalBundle(symbol, years),
+  search: async (query) => {
+    const rows = await fmpSearchTicker(query, MAX_LISTING_CANDIDATES);
+    return rows.map(searchHitFromRow).filter((row): row is FmpSearchHit => row != null);
+  },
+  profile: async (symbol) => {
+    try {
+      const row = await fmpProfile(symbol);
+      return profileHitFromRow(symbol, row, !!row);
+    } catch {
+      return profileHitFromRow(symbol, null, false);
+    }
+  },
 };
 
 let eyCache = new Map<string, { at: number; body: EarningsYieldResponse }>();
@@ -381,25 +407,46 @@ async function roicFromYahoo(symbol: string, deps: FundamentalDeps, now: number)
   return body;
 }
 
+function finishEy(body: EarningsYieldResponse, listing: FmpSymbolResolution | null): EarningsYieldResponse {
+  if (!listing) return body;
+  return {
+    ...body,
+    quarters: body.quarters.map(quarter => quarter.currency ? quarter : { ...quarter, currency: listing.currency }),
+    source: `${listing.source}. ${body.source}`,
+  };
+}
+
+async function germanFmpSymbol(symbol: string, deps: FundamentalDeps, now: number): Promise<{ fetchSymbol: string; listing: FmpSymbolResolution | null; miss: EarningsYieldResponse | null }> {
+  if (!isGermanXetraTicker(symbol)) return { fetchSymbol: symbol, listing: null, miss: null };
+  if (!deps.search || !deps.profile) {
+    return { fetchSymbol: symbol, listing: null, miss: yieldBody(symbol, [], "FMP", "n/a — FMP-Suche für .DE nicht verfügbar") };
+  }
+  const listing = await resolveGermanListing(symbol, deps.search, deps.profile, now);
+  if (!listing) {
+    return { fetchSymbol: symbol, listing: null, miss: yieldBody(symbol, [], "FMP", "n/a — kein FMP-Symbol für XETRA aufgelöst (Suche/Profil ohne ISIN- oder Namens-Treffer)") };
+  }
+  return { fetchSymbol: listing.fmpSymbol, listing, miss: null };
+}
+
 export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<EarningsYieldResponse> {
   const hit = eyCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
-  if (isGermanXetraTicker(symbol)) {
-    try {
-      return await earningsYieldFromYahoo(symbol, deps, now);
-    } catch (err) {
-      return yieldBody(symbol, [], "Yahoo", errorNote(err));
-    }
-  }
+  const german = await germanFmpSymbol(symbol, deps, now);
+  if (german.miss) return german.miss;
+  const fetchSymbol = german.fetchSymbol;
   try {
-    const income = await runOptional(deps.incomeQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT);
+    const income = await runOptional(deps.incomeQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT);
     const built = epsQuartersFromIncomeRows(income.raw);
     if (built.quarters.length > 0) {
-      const body = yieldBody(symbol, built.quarters, EARNINGS_YIELD_SOURCE, built.note, []);
+      const body = finishEy(yieldBody(symbol, built.quarters, EARNINGS_YIELD_SOURCE, built.note, []), german.listing);
       eyCache.set(symbol, { at: now, body });
       return body;
     }
     const fmpNote = income.error ? errorNote(new Error(income.error)) : built.note;
+    if (german.listing) {
+      const body = finishEy(yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, fmpNote ?? "n/a — FMP ohne Quartals-EPS"), german.listing);
+      return body;
+    }
     const yahoo = await yahooSeries(symbol, deps);
     const quarters = yahoo.epsQuarters ?? [];
     const prints = yahoo.ttmPrints ?? [];
@@ -420,22 +467,18 @@ export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = 
 export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<RoicSeriesResponse> {
   const hit = roicCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
-  if (isGermanXetraTicker(symbol)) {
-    try {
-      return await roicFromYahoo(symbol, deps, now);
-    } catch (err) {
-      return roicBody(symbol, [], "Yahoo", errorNote(err));
-    }
-  }
-  const fmpSource = "FMP key-metrics";
+  const german = await germanFmpSymbol(symbol, deps, now);
+  if (german.miss) return roicBody(symbol, [], "FMP", german.miss.note);
+  const fetchSymbol = german.fetchSymbol;
+  const fmpSource = german.listing ? german.listing.source : "FMP key-metrics";
   try {
     const [metricsQ, metricsA, ratiosQ, ratiosA, incomeQ, incomeA] = await Promise.all([
-      runOptional(deps.keyMetricsQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
-      captureCall(() => deps.keyMetrics(symbol, FUNDAMENTAL_ANNUAL_LIMIT)),
-      runOptional(deps.ratiosQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
-      runOptional(deps.ratios, symbol, FUNDAMENTAL_ANNUAL_LIMIT),
-      runOptional(deps.incomeQuarterly, symbol, FUNDAMENTAL_QUARTER_LIMIT),
-      captureCall(() => deps.income(symbol, FUNDAMENTAL_ANNUAL_LIMIT)),
+      runOptional(deps.keyMetricsQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+      captureCall(() => deps.keyMetrics(fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
+      runOptional(deps.ratiosQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+      runOptional(deps.ratios, fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT),
+      runOptional(deps.incomeQuarterly, fetchSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+      captureCall(() => deps.income(fetchSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
     ]);
     const quarterFilings = filingMapFromIncome(incomeQ.raw);
     const annualFilings = filingMapFromIncome(incomeA.raw);
@@ -450,7 +493,8 @@ export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = def
     const picked = hasValue(metricsSeries.points) ? metricsSeries : ratiosSeries;
     const pickedSource = hasValue(metricsSeries.points) ? "FMP key-metrics" : "FMP ratios";
     if (hasValue(picked.points)) {
-      const body = roicBody(symbol, picked.points, `${pickedSource} ${picked.label}`, picked.note, picked.formula, picked.label);
+      const source = german.listing ? `${german.listing.source}. ${pickedSource} ${picked.label}` : `${pickedSource} ${picked.label}`;
+      const body = roicBody(symbol, picked.points, source, picked.note, picked.formula, picked.label);
       roicCache.set(symbol, { at: now, body });
       return body;
     }
@@ -458,6 +502,7 @@ export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = def
       metricsA.error ? errorNote(new Error(metricsA.error)) : metricsSeries.note,
       metricsQ.error ? errorNote(new Error(metricsQ.error)) : picked.note,
     );
+    if (german.listing) return roicBody(symbol, [], fmpSource, fmpNote ?? "n/a — FMP ohne ROIC");
     const yahoo = await yahooSeries(symbol, deps);
     const series = yahoo.roic;
     const body = roicBody(

@@ -6,6 +6,8 @@
 import type { Express, Request, Response } from "express";
 import { altFetchYahooThenStooq, fetchDailyHistory, type DailyBar } from "./history-fallback";
 import { fmpHistoricalPrices } from "./fmp";
+import { resolveGermanListingDefault } from "./fmp-listing-resolve";
+import { isGermanXetraTicker } from "./yahoo-fetcher";
 
 function isPeerSymbol(raw: string): boolean {
   return /^[A-Z0-9.]{1,15}$/.test(raw.trim().toUpperCase());
@@ -68,6 +70,20 @@ function toDailyBars(raw: unknown): DailyBar[] {
 }
 
 export async function loadPeerPrice(symbol: string, from: string, to: string): Promise<PeerPriceResponse> {
+  if (isGermanXetraTicker(symbol)) {
+    const listing = await resolveGermanListingDefault(symbol);
+    if (!listing) {
+      return { symbol, from, to, bars: [], source: "FMP", note: "n/a — kein FMP-Symbol für XETRA aufgelöst" };
+    }
+    try {
+      const bars = toDailyBars(await fmpHistoricalPrices(listing.fmpSymbol, from, to));
+      const body = peerPriceFromBars(symbol, from, to, bars);
+      return { ...body, source: listing.source, note: body.bars.length === 0 ? `n/a — FMP ohne Kurse für ${listing.fmpSymbol}` : body.note };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { symbol, from, to, bars: [], source: listing.source, note: `n/a — Peer-Kurs nicht geladen: ${message.slice(0, 160)}` };
+    }
+  }
   const failures: string[] = [];
   const history = await fetchDailyHistory({
     symbol,

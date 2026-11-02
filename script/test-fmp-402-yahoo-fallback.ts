@@ -194,10 +194,10 @@ const countFmp = async () => {
 };
 const sapRoic = await loadRoicSeries("SAP.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
 const vowEy = await loadEarningsYield("VOW3.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
-check("SAP.DE ROIC kommt von Yahoo und hat mindestens 3 Punkte", usable(sapRoic.points) >= 3 && sapRoic.source === YAHOO_TS_ROIC_SOURCE, sapRoic.source);
-check("VOW3.DE EY kommt von Yahoo-Quartals-EPS und hat mindestens 3 Punkte", usable(vowEy.points) >= 3 && vowEy.quarters.length >= 3 && vowEy.source === YAHOO_TS_EPS_SOURCE, vowEy.source);
-check(".DE löst keinen FMP-Call aus", fmpCalls === 0, String(fmpCalls));
-check("Yahoo-Punkte sind keine erfundenen Nullen", sapRoic.points.every(p => p.value !== 0) && vowEy.points.every(p => p.value !== 0));
+check("SAP.DE ohne Suche bleibt FMP-n/a und ruft Yahoo nicht", sapRoic.source === "FMP" && sapRoic.note?.includes("FMP-Suche") === true && yahooCalls === 0, sapRoic.source);
+check("VOW3.DE ohne Suche bleibt FMP-n/a und ruft Yahoo nicht", vowEy.source === "FMP" && vowEy.quarters.length === 0 && vowEy.note?.includes("n/a") === true && yahooCalls === 0, vowEy.source);
+check(".DE ohne deps.search löst keinen Statement-Call aus", fmpCalls === 0, String(fmpCalls));
+check("leere .DE-Antwort erfindet keine 0", sapRoic.points.every(p => p.value !== 0) && vowEy.points.every(p => p.value !== 0));
 
 const fmp402 = async () => {
   fmpCalls += 1;
@@ -239,7 +239,7 @@ const yahooDown = await loadRoicSeries("BMW.DE", {
     epsNote: "n/a — Yahoo ohne quarterlyDilutedEPS",
   }),
 });
-check(".DE ohne Yahoo-Daten bleibt n/a mit Grund und ohne FMP", deFmp === 0 && usable(yahooDown.points) === 0 && yahooDown.note?.includes("n/a") === true && yahooDown.source.includes("Yahoo") && yahooDown.points.every(p => p.value !== 0), yahooDown.note ?? "");
+check(".DE ohne Suche bleibt n/a mit FMP-Grund und ohne Statement-Call", deFmp === 0 && usable(yahooDown.points) === 0 && yahooDown.note?.includes("n/a") === true && yahooDown.source === "FMP" && yahooDown.points.every(p => p.value !== 0), yahooDown.note ?? "");
 
 resetSectorPeCacheForTests();
 const sector = await loadSectorPeDisplay({
@@ -322,9 +322,10 @@ for (const [label, body] of [
   ["VOW3.DE ROIC", liveRoicVow],
 ] as const) {
   const n = usable(body.points);
-  check(`${label} ≥ 3 Punkte`, n >= 3, `n=${n} source=${body.source} note=${body.note ?? ""}`);
-  check(`${label} Quelle Yahoo`, body.source.includes("Yahoo"), body.source);
+  check(`${label} Quelle FMP, nicht Yahoo`, body.source.includes("FMP") && !body.source.includes("Yahoo"), `${body.source} ${body.note ?? ""}`);
   check(`${label} ohne erfundene 0-Punkte`, body.points.every(p => p.value !== 0));
+  if (process.env.FMP_API_KEY) check(`${label} ≥ 1 Punkt`, n >= 1, `n=${n} source=${body.source}`);
+  else check(`${label} ohne Key n/a mit Grund`, n === 0 && (body.note ?? "").includes("n/a"), body.note ?? "");
 }
 const liveWithPe = liveSector.sectors.filter(s => s.current != null);
 check("Live sector-pe ≥ 7/9", liveWithPe.length >= 7, `${liveWithPe.length}/9 ` + liveSector.sectors.map(s => `${s.etf}:${s.current ?? "n/a"}`).join(" "));

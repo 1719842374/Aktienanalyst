@@ -695,6 +695,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   currency?: string;
   exchangeFullName?: string;
   exchange?: string;
+  isin?: string;
 }>> {
   if (!query || query.length < 1) return [];
   try {
@@ -717,6 +718,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
         currency: row.currency,
         exchangeFullName: row.exchangeFullName || row.stockExchange || "",
         exchange: row.exchangeShortName || row.exchange,
+        isin: typeof row.isin === "string" ? row.isin : undefined,
       }))
       .slice(0, limit);
   } catch { return []; }
