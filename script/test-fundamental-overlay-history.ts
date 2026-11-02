@@ -108,7 +108,7 @@ check("VOW3.DE: Quartalslücke bildet kein TTM", ttmEpsAt(vowQuarters, "2026-09-
 const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
   earningsYield: null,
   epsQuarters: vowQuarters,
-  ttmPrints: [{ asOf: "2026-09-30", eps: 2.11, currency: "EUR" }],
+  ttmPrints: [{ asOf: "2026-09-30", eps: 2.11, currency: "EUR", source: "Yahoo" }],
   annualEps: [{ asOf: "2025-12-31", eps: 13.29, currency: "EUR" }],
   priceCurrency: "EUR",
   roic: null,
@@ -120,7 +120,32 @@ const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
   showPeerRoic: false,
   showPeerPrice: false,
 });
-check("VOW3.DE: Fallback auf trailing EPS, im Hinweis gekennzeichnet", vowJoined[0].earningsYieldPct != null && Math.abs((vowJoined[0].earningsYieldPct ?? 0) - 2.11) < 1e-9 && vowJoined[0].earningsYieldNote?.includes("Fallback: trailing EPS") === true, `${vowJoined[0].earningsYieldPct} ${vowJoined[0].earningsYieldNote}`);
+check(
+  "VOW3.DE: positives trailing EPS überdeckt das negative Quartal nicht",
+  vowJoined[0].earningsYieldPct == null && vowJoined[0].earningsYieldNote?.includes("n/a") === true && vowJoined[0].earningsYieldNote?.includes("trailing EPS · Quelle: Yahoo") === true && vowJoined[0].earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true,
+  `${vowJoined[0].earningsYieldPct} ${vowJoined[0].earningsYieldNote}`,
+);
+const vowNegativeTrail = joinFundamentalsOntoPrices(["2026-09-30"], {
+  earningsYield: null,
+  epsQuarters: vowQuarters,
+  ttmPrints: [{ asOf: "2026-09-30", eps: -9.29, currency: "EUR", source: "Yahoo" }],
+  annualEps: [],
+  priceCurrency: "EUR",
+  roic: null,
+  peerRoic: null,
+  peerBars: null,
+  subjectCloses: [70.24],
+  showEarningsYield: true,
+  showRoic: false,
+  showPeerRoic: false,
+  showPeerPrice: false,
+});
+const vowNegativeEy = (-9.29 / 70.24) * 100;
+check(
+  "VOW3.DE: negatives trailing EPS bleibt negativ und nennt Quelle und Formel",
+  vowNegativeTrail[0].earningsYieldPct != null && vowNegativeTrail[0].earningsYieldPct < 0 && Math.abs((vowNegativeTrail[0].earningsYieldPct ?? 0) - vowNegativeEy) < 1e-9 && vowNegativeTrail[0].earningsYieldNote?.includes("trailing EPS · Quelle: Yahoo") === true && vowNegativeTrail[0].earningsYieldNote?.includes(EARNINGS_YIELD_FORMULA) === true,
+  `${vowNegativeTrail[0].earningsYieldPct} ${vowNegativeTrail[0].earningsYieldNote}`,
+);
 const vowAnnualOnly = joinFundamentalsOntoPrices(["2025-12-31"], {
   earningsYield: null,
   epsQuarters: vowQuarters.slice(0, 2),

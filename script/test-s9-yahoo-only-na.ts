@@ -50,7 +50,10 @@ globalThis.fetch = (async (input: any, init?: any) => {
   if (url.includes("/v10/finance/quoteSummary/")) return new Response("Unauthorized", { status: 401 });
   const sym = decodeURIComponent((url.match(/\/(?:chart|timeseries)\/([^?]+)/) ?? [])[1] ?? "");
   if (url.includes("/v8/finance/chart/")) {
-    if (sym === "EURUSD=X") return jsonResp({ chart: { result: [{ meta: { currency: "USD", symbol: "EURUSD=X", regularMarketPrice: 1.16 }, timestamp: [], indicators: { quote: [{}] } }] } });
+    if (sym === "EURUSD=X") {
+      const ts = Math.floor(Date.now() / 1000) - 86400;
+      return jsonResp({ chart: { result: [{ meta: { currency: "USD", symbol: "EURUSD=X", regularMarketPrice: 1.16 }, timestamp: [ts], indicators: { quote: [{ open: [1.16], high: [1.16], low: [1.16], close: [1.16], volume: [0] }] } }] } });
+    }
     return FIX[sym] ? jsonResp({ chart: FIX[sym].chart }) : new Response("nf", { status: 404 });
   }
   if (url.includes("/ws/fundamentals-timeseries/")) return FIX[sym] ? jsonResp({ timeseries: FIX[sym].timeseries }) : new Response("nf", { status: 404 });

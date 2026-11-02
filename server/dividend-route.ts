@@ -54,7 +54,8 @@ async function listingCurrencyOf(ticker: string): Promise<string | null> {
 async function fxToUsd(major: string): Promise<number | null> {
   const r = await getFxRateToUsd(major).catch(() => 1);
   if (r > 0 && r !== 1) return r;
-  return fetchYahooFxToUsd(major).catch(() => null);
+  const yahooFx = await fetchYahooFxToUsd(major).catch(() => null);
+  return yahooFx?.rate ?? null;
 }
 
 type DividendDeps = {

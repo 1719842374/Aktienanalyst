@@ -2168,6 +2168,10 @@ function latestOverlayPct(
   noteKey: "earningsYieldNote" | "roicNote" | "peerRoicNote",
 ): { value: number | null; note: string | null } | null {
   if (!series || series.length === 0) return null;
+  const last = series[series.length - 1];
+  const lastValue = last[valueKey];
+  if (lastValue != null && Number.isFinite(lastValue)) return { value: lastValue, note: last[noteKey] ?? null };
+  if (last[noteKey]) return { value: null, note: last[noteKey] };
   for (let i = series.length - 1; i >= 0; i--) {
     const value = series[i][valueKey];
     if (value != null && Number.isFinite(value)) return { value, note: series[i][noteKey] ?? null };
@@ -2204,7 +2208,7 @@ function FundamentalOverlayStatus({
   peerPriceNote: string | null;
 }) {
   const base = "mt-1 text-[10px] text-muted-foreground break-words";
-  const ey = !showEy ? null : eyLoading ? "wird geladen …" : eyLatest.value != null ? `${eyLatest.value.toFixed(1)} %` : (eyLatest.note ?? eyNote ?? "n/a — keine Earnings-Yield-Punkte");
+  const ey = !showEy ? null : eyLoading ? "wird geladen …" : eyLatest.value != null ? `${eyLatest.value.toFixed(1)} %` : "n/a";
   const roic = !showRoic ? null : roicLoading ? "wird geladen …" : roicLatest.value != null ? `${roicLatest.value.toFixed(1)} %` : (roicLatest.note ?? roicNote ?? "n/a — keine ROIC-Punkte");
   let peerRoic: string | null = null;
   let peerPrice: string | null = null;
@@ -2223,7 +2227,7 @@ function FundamentalOverlayStatus({
   const sourceText = (source: string | null) => source ? ` Quelle: ${source}.` : "";
   return (
     <div className={base} data-testid="fundamental-overlay-status">
-      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Formel: {EARNINGS_YIELD_FORMULA}.{eyLatest.note ? ` ${eyLatest.note}` : ""}{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{sourceText(eySource)} Kein Score-Einfluss.</div>}
+      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}.{eyLoading || eyLatest.note?.includes(EARNINGS_YIELD_FORMULA) ? "" : ` Formel: ${EARNINGS_YIELD_FORMULA}.`}{!eyLoading && eyLatest.note ? ` ${eyLatest.note}` : ""}{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{!eyLoading ? sourceText(eySource) : ""} Kein Score-Einfluss.</div>}
       {roic != null && <div data-testid="status-roic">{roicLabel}: {roic}. Formel: {roicFormula}.{roicLatest.note ? ` ${roicLatest.note}` : ""}{roicLatest.value != null && roicNote ? ` ${roicNote}` : ""}{sourceText(roicSource)} Kein Score-Einfluss.</div>}
       {peerRoic != null && <div data-testid="status-fund-peer">Peer-ROIC: {peerRoic}. Formel: {peerRoicFormula}.{sourceText(peerRoicSource)} Kein Score-Einfluss.</div>}
       {peerPrice != null && <div data-testid="status-fund-peer-price">Peer-Kurs: {peerPrice}. Kein Score-Einfluss.</div>}

@@ -257,6 +257,32 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
   return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: sources.length ? `Quelle: ${sources.join(" + ")}` : null, maxAbs };
 }
 
+/** Sichtbarer Kurztext, wenn das trailing EPS die Stelle füllt oder ein positives Fallback sperrt. */
+export function trailingEpsLabel(source: string | null | undefined): string {
+  const src = source?.trim();
+  return src ? `trailing EPS · Quelle: ${src}` : "trailing EPS";
+}
+
+function latestQuarterAt(quarters: EpsQuarter[], asOf: string): EpsQuarter | null {
+  let hit: EpsQuarter | null = null;
+  for (const quarter of quarters) {
+    if (!quarter || quarter.asOf > asOf || !Number.isFinite(quarter.eps)) continue;
+    if (!hit || quarter.periodEnd > hit.periodEnd || (quarter.periodEnd === hit.periodEnd && quarter.asOf >= hit.asOf)) hit = quarter;
+  }
+  return hit;
+}
+
+/**
+ * Positives trailing oder Jahres-EPS darf das zuletzt berichtete negative Quartal nicht als stilles Plus zeichnen.
+ * Eine gebildete negative Quartalssumme bleibt der Zähler. Null ist kein Verlust.
+ */
+export function positiveEpsFallbackBlocked(latestQuarterEps: number | null, candidateEps: number | null, quarterSum: number | null): boolean {
+  if (latestQuarterEps == null || !(latestQuarterEps < 0)) return false;
+  if (candidateEps == null || !(candidateEps > 0)) return false;
+  if (quarterSum != null && quarterSum < 0) return false;
+  return true;
+}
+
 /** Quartals-TTM, sonst trailing EPS, sonst Jahres-EPS. Der Ersatz steht im note. */
 export function epsNumeratorAt(
   quarters: EpsQuarter[],
@@ -266,19 +292,34 @@ export function epsNumeratorAt(
 ): { eps: number | null; currency: string | null; note: string | null } {
   const ttm = ttmEpsAt(quarters, asOf);
   const trail = ttmPrintAt(trailing, asOf);
+  const latest = latestQuarterAt(quarters, asOf);
   const sumAgrees = ttm.eps == null || trail.eps == null || ttm.maxAbs == null || Math.abs(ttm.eps - trail.eps) <= ttm.maxAbs;
+  if (ttm.eps != null && ttm.eps < 0) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
   if (ttm.eps != null && sumAgrees) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
-  if (trail.eps != null) {
+  if (trail.eps != null && !positiveEpsFallbackBlocked(latest?.eps ?? null, trail.eps, ttm.eps)) {
     const why = ttm.eps != null
       ? `Quartalssumme ${ttm.eps} weicht vom berichteten TTM ab`
       : (ttm.note ?? "Quartalsfenster nicht gebildet");
-    const base = `Fallback: trailing EPS (${why})`;
-    return { eps: trail.eps, currency: trail.currency, note: trail.source ? `${base} · Quelle: ${trail.source}` : base };
+    return { eps: trail.eps, currency: trail.currency, note: `Fallback: ${trailingEpsLabel(trail.source)} (${why})` };
+  }
+  if (trail.eps != null && positiveEpsFallbackBlocked(latest?.eps ?? null, trail.eps, ttm.eps)) {
+    return {
+      eps: null,
+      currency: trail.currency,
+      note: `n/a — letztes Quartals-EPS ${latest?.eps} ist negativ, positives trailing EPS ${trail.eps} wird nicht gezeichnet · ${trailingEpsLabel(trail.source)}`,
+    };
   }
   const year = ttmPrintAt(annual, asOf);
-  if (year.eps != null) {
+  if (year.eps != null && !positiveEpsFallbackBlocked(latest?.eps ?? null, year.eps, ttm.eps)) {
     const base = `Fallback: Jahres-EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})`;
     return { eps: year.eps, currency: year.currency, note: year.source ? `${base} · Quelle: ${year.source}` : base };
+  }
+  if (year.eps != null && positiveEpsFallbackBlocked(latest?.eps ?? null, year.eps, ttm.eps)) {
+    return {
+      eps: null,
+      currency: year.currency,
+      note: `n/a — letztes Quartals-EPS ${latest?.eps} ist negativ, positives Jahres-EPS ${year.eps} wird nicht gezeichnet`,
+    };
   }
   return { eps: null, currency: null, note: ttm.note };
 }
