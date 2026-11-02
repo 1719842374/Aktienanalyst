@@ -13,10 +13,13 @@ import {
   EARNINGS_YIELD_SOURCE,
   FUNDAMENTAL_ANNUAL_LIMIT,
   FUNDAMENTAL_QUARTER_LIMIT,
-  ROIC_FORMULA,
+  ROIC_ANNUAL_FORMULA,
+  ROIC_ANNUAL_LABEL,
+  annualizedRoicSeries,
   earningsYieldPct,
   finiteNumber,
   type EpsQuarter,
+  type RoicPeriod,
   type TtmPrint,
 } from "../shared/earnings-yield-roic";
 import { YAHOO_EPS_ASOF_NOTE, YAHOO_TS_EPS_SOURCE, type ReportedSeries } from "../shared/yahoo-fundamental-series";
@@ -295,11 +298,12 @@ export function buildPitRoicPoints(raw: unknown, filings: Map<string, string>): 
   return { points, note: null, field };
 }
 
-function yieldBody(symbol: string, quarters: EpsQuarter[], source: string, note: string | null, ttmPrints: TtmPrint[] = []): EarningsYieldResponse {
+function yieldBody(symbol: string, quarters: EpsQuarter[], source: string, note: string | null, ttmPrints: TtmPrint[] = [], annualEps: TtmPrint[] = []): EarningsYieldResponse {
   return {
     symbol,
     quarters,
     ttmPrints,
+    annualEps,
     points: quarters.map(quarter => ({ date: quarter.asOf, value: quarter.eps, note: null })),
     formula: EARNINGS_YIELD_FORMULA,
     source,
@@ -307,8 +311,21 @@ function yieldBody(symbol: string, quarters: EpsQuarter[], source: string, note:
   };
 }
 
-function roicBody(symbol: string, points: FundamentalPoint[], source: string, note: string | null): RoicSeriesResponse {
-  return { symbol, points, formula: ROIC_FORMULA, source, note };
+function roicBody(symbol: string, points: FundamentalPoint[], source: string, note: string | null, formula = ROIC_ANNUAL_FORMULA, label = ROIC_ANNUAL_LABEL): RoicSeriesResponse {
+  return { symbol, points, formula, label, source, note };
+}
+
+function pitRoicPeriods(raw: unknown, filings: Map<string, string>): RoicPeriod[] {
+  const out: RoicPeriod[] = [];
+  for (const row of asRows(raw)) {
+    const period = dateOf(row);
+    const parsed = roicFromRow(row);
+    if (parsed.value == null) continue;
+    const asOf = firstIso(row.filingDate, row.fillingDate, row.acceptedDate) ?? (period ? filings.get(period) ?? null : null);
+    if (!asOf || !period) continue;
+    out.push({ asOf, periodEnd: period, value: parsed.value });
+  }
+  return out;
 }
 
 function runOptional(
@@ -324,21 +341,30 @@ async function yahooSeries(symbol: string, deps: FundamentalDeps): Promise<Yahoo
   const load = deps.yahooBundle ?? defaultDeps.yahooBundle;
   if (!load) {
     const empty: ReportedSeries = { points: [], source: "Yahoo", note: "n/a — Yahoo nicht verfügbar" };
-    return { earningsYield: empty, roic: empty, epsQuarters: [], epsNote: "n/a — Yahoo nicht verfügbar", ttmPrints: [] };
+    return { earningsYield: empty, roic: empty, epsQuarters: [], epsNote: "n/a — Yahoo nicht verfügbar", ttmPrints: [], annualEps: [] };
   }
   const body = await load(symbol, FUNDAMENTAL_ANNUAL_LIMIT);
-  return { ...body, epsQuarters: body.epsQuarters ?? [], epsNote: body.epsNote ?? null, ttmPrints: body.ttmPrints ?? [] };
+  return {
+    ...body,
+    epsQuarters: body.epsQuarters ?? [],
+    epsNote: body.epsNote ?? null,
+    ttmPrints: body.ttmPrints ?? [],
+    annualEps: body.annualEps ?? [],
+  };
 }
 
 async function earningsYieldFromYahoo(symbol: string, deps: FundamentalDeps, now: number): Promise<EarningsYieldResponse> {
   const yahoo = await yahooSeries(symbol, deps);
   const quarters = yahoo.epsQuarters ?? [];
   const prints = yahoo.ttmPrints ?? [];
-  const source = prints.length > 0 ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS nur im Warmup` : YAHOO_TS_EPS_SOURCE;
-  const body = quarters.length > 0 || prints.length > 0
-    ? yieldBody(symbol, quarters, source, yahoo.epsNote, prints)
-    : yieldBody(symbol, [], source, yahoo.epsNote ?? "n/a — keine Quartals-EPS", prints);
-  if (body.quarters.length > 0 || body.ttmPrints.length > 0) eyCache.set(symbol, { at: now, body });
+  const annualEps = yahoo.annualEps ?? [];
+  const source = prints.length > 0 || annualEps.length > 0
+    ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS oder Jahres-EPS, wenn das Quartalsfenster nicht steht`
+    : YAHOO_TS_EPS_SOURCE;
+  const body = quarters.length > 0 || prints.length > 0 || annualEps.length > 0
+    ? yieldBody(symbol, quarters, source, yahoo.epsNote, prints, annualEps)
+    : yieldBody(symbol, [], source, yahoo.epsNote ?? "n/a — keine Quartals-EPS", prints, annualEps);
+  if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
   return body;
 }
 
@@ -377,35 +403,18 @@ export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = 
     const yahoo = await yahooSeries(symbol, deps);
     const quarters = yahoo.epsQuarters ?? [];
     const prints = yahoo.ttmPrints ?? [];
-    const source = prints.length > 0 ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS nur im Warmup` : YAHOO_TS_EPS_SOURCE;
-    const body = quarters.length > 0 || prints.length > 0
-      ? yieldBody(symbol, quarters, source, yahoo.epsNote, prints)
-      : yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, joinNotes(fmpNote, yahoo.epsNote), prints);
-    if (body.quarters.length > 0 || body.ttmPrints.length > 0) eyCache.set(symbol, { at: now, body });
+    const annualEps = yahoo.annualEps ?? [];
+    const source = prints.length > 0 || annualEps.length > 0
+      ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS oder Jahres-EPS, wenn das Quartalsfenster nicht steht`
+      : YAHOO_TS_EPS_SOURCE;
+    const body = quarters.length > 0 || prints.length > 0 || annualEps.length > 0
+      ? yieldBody(symbol, quarters, source, yahoo.epsNote, prints, annualEps)
+      : yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, joinNotes(fmpNote, yahoo.epsNote), prints, annualEps);
+    if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
     return body;
   } catch (err) {
     return yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, errorNote(err));
   }
-}
-
-interface PitCandidate {
-  points: FundamentalPoint[];
-  note: string | null;
-  field: string | null;
-  source: string;
-  error: string | null;
-}
-
-function preferEarlierRoic(left: PitCandidate, right: PitCandidate): PitCandidate {
-  const leftOk = hasValue(left.points);
-  const rightOk = hasValue(right.points);
-  if (leftOk && !rightOk) return left;
-  if (rightOk && !leftOk) return right;
-  if (!leftOk && !rightOk) return left;
-  const leftStart = left.points.find(point => point.value != null)?.date ?? "";
-  const rightStart = right.points.find(point => point.value != null)?.date ?? "";
-  if (leftStart && rightStart && leftStart !== rightStart) return leftStart < rightStart ? left : right;
-  return left.points.length >= right.points.length ? left : right;
 }
 
 export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<RoicSeriesResponse> {
@@ -430,24 +439,24 @@ export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = def
     ]);
     const quarterFilings = filingMapFromIncome(incomeQ.raw);
     const annualFilings = filingMapFromIncome(incomeA.raw);
-    const candidates: PitCandidate[] = [
-      { ...buildPitRoicPoints(metricsQ.raw, quarterFilings), source: "FMP key-metrics period=quarter", error: metricsQ.error },
-      { ...buildPitRoicPoints(metricsA.raw, annualFilings), source: "FMP key-metrics period=annual", error: metricsA.error },
-      { ...buildPitRoicPoints(ratiosQ.raw, quarterFilings), source: "FMP ratios period=quarter", error: ratiosQ.error },
-      { ...buildPitRoicPoints(ratiosA.raw, annualFilings), source: "FMP ratios period=annual", error: ratiosA.error },
-    ];
-    const metricsPick = preferEarlierRoic(candidates[0], candidates[1]);
-    const ratiosPick = preferEarlierRoic(candidates[2], candidates[3]);
-    const picked = hasValue(metricsPick.points) ? metricsPick : ratiosPick;
+    const metricsSeries = annualizedRoicSeries(
+      pitRoicPeriods(metricsQ.raw, quarterFilings),
+      pitRoicPeriods(metricsA.raw, annualFilings),
+    );
+    const ratiosSeries = annualizedRoicSeries(
+      pitRoicPeriods(ratiosQ.raw, quarterFilings),
+      pitRoicPeriods(ratiosA.raw, annualFilings),
+    );
+    const picked = hasValue(metricsSeries.points) ? metricsSeries : ratiosSeries;
+    const pickedSource = hasValue(metricsSeries.points) ? "FMP key-metrics" : "FMP ratios";
     if (hasValue(picked.points)) {
-      const field = picked.field ?? "returnOnInvestedCapital";
-      const body = roicBody(symbol, picked.points, `${picked.source} ${field}`, picked.note);
+      const body = roicBody(symbol, picked.points, `${pickedSource} ${picked.label}`, picked.note, picked.formula, picked.label);
       roicCache.set(symbol, { at: now, body });
       return body;
     }
     const fmpNote = joinNotes(
-      metricsA.error ? errorNote(new Error(metricsA.error)) : metricsPick.note,
-      picked.note,
+      metricsA.error ? errorNote(new Error(metricsA.error)) : metricsSeries.note,
+      metricsQ.error ? errorNote(new Error(metricsQ.error)) : picked.note,
     );
     const yahoo = await yahooSeries(symbol, deps);
     const series = yahoo.roic;

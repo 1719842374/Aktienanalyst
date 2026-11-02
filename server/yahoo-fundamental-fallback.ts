@@ -25,6 +25,8 @@ import {
   annualsFromTimeseries,
   DAYS_PER_FISCAL_YEAR,
   earningsYieldPointsFromAnnuals,
+  YAHOO_ANNUAL_EPS_TYPE,
+  annualEpsFromTimeseries,
   epsQuartersFromTimeseries,
   ttmPrintsFromTimeseries,
   preferReportedSeries,
@@ -56,6 +58,7 @@ export interface YahooSeriesBundle {
   epsQuarters: EpsQuarter[];
   epsNote: string | null;
   ttmPrints: TtmPrint[];
+  annualEps: TtmPrint[];
 }
 
 export interface YahooTrailingPe {
@@ -271,9 +274,10 @@ async function buildBundle(symbol: string, years: number): Promise<YahooSeriesBu
   };
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - years * DAYS_PER_FISCAL_YEAR * 24 * 60 * 60;
-  const doc = await fetchYahooTimeseriesDocument(sym, [...YAHOO_ANNUAL_TYPES, ...YAHOO_EPS_TYPES], period1, period2);
+  const doc = await fetchYahooTimeseriesDocument(sym, [...YAHOO_ANNUAL_TYPES, ...YAHOO_EPS_TYPES, YAHOO_ANNUAL_EPS_TYPE], period1, period2);
   const eps = doc ? epsQuartersFromTimeseries(doc) : { quarters: [], note: "n/a — Yahoo fundamentals-timeseries nicht verfügbar" };
   const ttmPrints = doc ? ttmPrintsFromTimeseries(doc) : [];
+  const annualEps = doc ? annualEpsFromTimeseries(doc) : [];
   const tsAnnuals = doc ? annualsFromTimeseries(doc) : [];
   const tsEy = earningsYieldPointsFromAnnuals(tsAnnuals);
   const tsRoic = finalizeRoic(roicPointsFromAnnuals(tsAnnuals));
@@ -295,13 +299,14 @@ async function buildBundle(symbol: string, years: number): Promise<YahooSeriesBu
     epsQuarters: eps.quarters,
     epsNote: eps.note,
     ttmPrints,
+    annualEps,
   };
 }
 
 export async function loadYahooFundamentalBundle(symbol: string, years: number): Promise<YahooSeriesBundle> {
   const key = `${symbol.trim().toUpperCase()}|${years}`;
   const hit = bundleCache.get(key);
-  const useful = !!hit && (hasValue(hit.body.earningsYield.points) || hasValue(hit.body.roic.points) || hit.body.epsQuarters.length > 0 || hit.body.ttmPrints.length > 0);
+  const useful = !!hit && (hasValue(hit.body.earningsYield.points) || hasValue(hit.body.roic.points) || hit.body.epsQuarters.length > 0 || hit.body.ttmPrints.length > 0 || hit.body.annualEps.length > 0);
   const fresh = hit && Date.now() - hit.at < (useful ? YAHOO_CACHE_TTL_MS : FAIL_TTL_MS);
   if (hit && fresh) return hit.body;
   const running = bundleInflight.get(key);

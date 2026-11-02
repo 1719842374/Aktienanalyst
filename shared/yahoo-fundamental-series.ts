@@ -23,6 +23,7 @@ const UNIX_MS_CUTOFF = 10_000_000_000;
 export const DAYS_PER_FISCAL_YEAR = 366;
 
 export const YAHOO_EPS_TYPES = ["quarterlyDilutedEPS", "quarterlyBasicEPS", "trailingDilutedEPS"] as const;
+export const YAHOO_ANNUAL_EPS_TYPE = "annualDilutedEPS";
 
 export const YAHOO_ANNUAL_TYPES = [
   "annualEBIT",
@@ -267,6 +268,25 @@ export function ttmPrintsFromTimeseries(json: unknown): TtmPrint[] {
       if (!parsed || !Number.isFinite(parsed.value)) continue;
       const prev = byDate.get(parsed.date);
       if (!prev) byDate.set(parsed.date, { asOf: parsed.date, eps: parsed.value, currency: parsed.currency });
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.asOf.localeCompare(b.asOf));
+}
+
+/** Jahres-EPS. Ersatz nach trailingDilutedEPS, nicht als Quartal summiert. */
+export function annualEpsFromTimeseries(json: unknown): TtmPrint[] {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byDate = new Map<string, TtmPrint>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    const rows = rec?.[YAHOO_ANNUAL_EPS_TYPE];
+    if (!Array.isArray(rows)) continue;
+    for (const cell of rows) {
+      const parsed = readTimeseriesCell(cell);
+      if (!parsed || !Number.isFinite(parsed.value)) continue;
+      if (!byDate.has(parsed.date)) byDate.set(parsed.date, { asOf: parsed.date, eps: parsed.value, currency: parsed.currency });
     }
   }
   return Array.from(byDate.values()).sort((a, b) => a.asOf.localeCompare(b.asOf));

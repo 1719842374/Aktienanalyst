@@ -483,7 +483,11 @@ export function TechnicalChart({
       earningsYield: null,
       epsQuarters: showEy ? (eyQuery.data?.quarters ?? []) : null,
       ttmPrints: showEy ? (eyQuery.data?.ttmPrints ?? []) : null,
+      annualEps: showEy ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
+      priceFx: data.currencyInfo?.converted && data.currencyInfo.fxRate > 0
+        ? { from: data.currencyInfo.reportedCurrency, to: data.currencyInfo.tradingCurrency, rate: data.currencyInfo.fxRate }
+        : null,
       roic: roicQuery.data?.points ?? null,
       roicSeriesNote: roicQuery.data?.note ?? null,
       peerRoic: peerRoicQuery.data?.points ?? null,
@@ -505,7 +509,7 @@ export function TechnicalChart({
       peerRoicPct: peerMode === "roic" ? point.peerRoicKnown : null,
       peerPriceIndexed: peerMode === "price" ? point.peerPriceIndexed : null,
     }));
-  }, [showEy, showRoic, peerOn, peerMode, eyQuery.data, roicQuery.data, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency]);
+  }, [showEy, showRoic, peerOn, peerMode, eyQuery.data, roicQuery.data, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency, data.currencyInfo]);
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -763,12 +767,12 @@ export function TechnicalChart({
               Earnings Yield
             </button>
             <button type="button" onClick={() => setShowRoic(v => !v)} data-testid="button-roic-5y" aria-pressed={showRoic}
-              title={`ROIC 5Y = ${ROIC_FORMULA}, rechte %-Achse, kein Score-Einfluss.${roicQuery.data?.source ? ` Quelle: ${roicQuery.data.source}.` : ""}`}
+              title={`${roicQuery.data?.label ?? "ROIC"} = ${roicQuery.data?.formula ?? ROIC_FORMULA}, rechte %-Achse, kein Score-Einfluss.${roicQuery.data?.source ? ` Quelle: ${roicQuery.data.source}.` : ""}`}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showRoic ? "border-lime-500 text-lime-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               {showRoic ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
-              ROIC 5Y
+              {roicQuery.data?.label ?? "ROIC"}
             </button>
             <button type="button" onClick={() => setShowPeerFund(v => !v)} data-testid="button-fund-peer" aria-pressed={showPeerFund}
               title="Peer als Kurs (Median-Index, linke Achse) oder ROIC (rechte Achse). Kein Score-Einfluss."
@@ -1153,6 +1157,9 @@ export function TechnicalChart({
           eySource={eyQuery.data?.source ?? null}
           roicSource={roicQuery.data?.source ?? null}
           peerRoicSource={peerRoicQuery.data?.source ?? null}
+          roicLabel={roicQuery.data?.label ?? "ROIC"}
+          roicFormula={roicQuery.data?.formula ?? ROIC_FORMULA}
+          peerRoicFormula={peerRoicQuery.data?.formula ?? ROIC_FORMULA}
           eyLatest={latestOverlayPct(fundOverlay, "earningsYieldPct", "earningsYieldNote") ?? { value: null, note: eyQuery.data?.note ?? null }}
           roicLatest={latestOverlayPct(fundOverlay, "roicPct", "roicNote") ?? latestFinite(roicQuery.data?.points)}
           peerRoicLatest={latestOverlayPct(fundOverlay, "peerRoicKnown", "peerRoicNote") ?? latestFinite(peerRoicQuery.data?.points)}
@@ -2137,11 +2144,14 @@ function fmtPctOrNote(v: number | null | undefined, note: string | null | undefi
 function FundTooltipRows({ p }: { p: FundFields }) {
   return (
     <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal">
-      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(p._ey, p._eyNote)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
+      {p._ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
       <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>
-      <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roicNote)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>
+      {p._roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
       <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>
-      <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPctOrNote(p._peerRoicKnown, p._peerRoicNote)}</span></div>
+      <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPctOrNote(p._peerRoicKnown, p._peerRoicKnown != null ? null : p._peerRoicNote)}</span></div>
+      {p._peerRoicKnown != null && p._peerRoicNote ? <div className="text-muted-foreground">{p._peerRoicNote}</div> : null}
       <div className="flex justify-between gap-3"><span className="text-orange-400">Peer-Kurs</span><span className="font-mono">{p._peerPxRaw != null ? p._peerPxRaw.toFixed(2) : fmtPctOrNote(null, p._peerPxNote)}</span></div>
     </div>
   );
@@ -2155,7 +2165,7 @@ function latestOverlayPct(
   if (!series || series.length === 0) return null;
   for (let i = series.length - 1; i >= 0; i--) {
     const value = series[i][valueKey];
-    if (value != null && Number.isFinite(value)) return { value, note: null };
+    if (value != null && Number.isFinite(value)) return { value, note: series[i][noteKey] ?? null };
   }
   for (let i = series.length - 1; i >= 0; i--) {
     const note = series[i][noteKey];
@@ -2165,7 +2175,7 @@ function latestOverlayPct(
 }
 
 function FundamentalOverlayStatus({
-  showEy, showRoic, showPeer, peerMode, peerTicker, eyLoading, roicLoading, peerLoading, eyNote, roicNote, eySource, roicSource, peerRoicSource, eyLatest, roicLatest, peerRoicLatest, peerPriceNote,
+  showEy, showRoic, showPeer, peerMode, peerTicker, eyLoading, roicLoading, peerLoading, eyNote, roicNote, eySource, roicSource, peerRoicSource, roicLabel, roicFormula, peerRoicFormula, eyLatest, roicLatest, peerRoicLatest, peerPriceNote,
 }: {
   showEy: boolean;
   showRoic: boolean;
@@ -2180,6 +2190,9 @@ function FundamentalOverlayStatus({
   eySource: string | null;
   roicSource: string | null;
   peerRoicSource: string | null;
+  roicLabel: string;
+  roicFormula: string;
+  peerRoicFormula: string;
   eyLatest: { value: number | null; note: string | null };
   roicLatest: { value: number | null; note: string | null };
   peerRoicLatest: { value: number | null; note: string | null };
@@ -2205,9 +2218,9 @@ function FundamentalOverlayStatus({
   const sourceText = (source: string | null) => source ? ` Quelle: ${source}.` : "";
   return (
     <div className={base} data-testid="fundamental-overlay-status">
-      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Formel: {EARNINGS_YIELD_FORMULA}.{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{sourceText(eySource)} Kein Score-Einfluss.</div>}
-      {roic != null && <div data-testid="status-roic">ROIC 5Y: {roic}. Formel: {ROIC_FORMULA}.{roicLatest.value != null && roicNote ? ` ${roicNote}` : ""}{sourceText(roicSource)} Kein Score-Einfluss.</div>}
-      {peerRoic != null && <div data-testid="status-fund-peer">Peer-ROIC: {peerRoic}. Formel: {ROIC_FORMULA}.{sourceText(peerRoicSource)} Kein Score-Einfluss.</div>}
+      {ey != null && <div data-testid="status-earnings-yield">Earnings Yield: {ey}. Formel: {EARNINGS_YIELD_FORMULA}.{eyLatest.note ? ` ${eyLatest.note}` : ""}{eyLatest.value != null && eyNote ? ` ${eyNote}` : ""}{sourceText(eySource)} Kein Score-Einfluss.</div>}
+      {roic != null && <div data-testid="status-roic">{roicLabel}: {roic}. Formel: {roicFormula}.{roicLatest.note ? ` ${roicLatest.note}` : ""}{roicLatest.value != null && roicNote ? ` ${roicNote}` : ""}{sourceText(roicSource)} Kein Score-Einfluss.</div>}
+      {peerRoic != null && <div data-testid="status-fund-peer">Peer-ROIC: {peerRoic}. Formel: {peerRoicFormula}.{sourceText(peerRoicSource)} Kein Score-Einfluss.</div>}
       {peerPrice != null && <div data-testid="status-fund-peer-price">Peer-Kurs: {peerPrice}. Kein Score-Einfluss.</div>}
     </div>
   );

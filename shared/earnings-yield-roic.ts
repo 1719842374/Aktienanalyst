@@ -9,14 +9,17 @@ export const EARNINGS_YIELD_SOURCE = "FMP income-statement period=quarter epsDil
 export const ROIC_SOURCE = "FMP key-metrics returnOnInvestedCapital";
 export const EARNINGS_YIELD_FORMULA = "TTM-EPS / Kurs";
 export const ROIC_FORMULA = "letzter berichteter ROIC zum Filing-Datum";
+export const ROIC_TTM_FORMULA = "Summe der Quartals-ROIC über das aus den Abständen abgeleitete Jahresfenster";
+export const ROIC_ANNUAL_FORMULA = "Jahres-ROIC zum Filing-Datum";
+export const ROIC_TTM_LABEL = "ROIC TTM";
+export const ROIC_ANNUAL_LABEL = "ROIC Jahr";
 
-/** Quartale, die ein TTM-EPS bilden. Warmup wie bei einer MA: vorher kein Wert. */
+/** Nur die Abruf-Tiefe (Jahre × dieses Fenster). Die Mindestzahl der Quartale einer Serie kommt aus den Abständen. */
 export const TTM_QUARTER_COUNT = 4;
-/**
- * Abstand zweier Periodenenden in Tagen, bis zu dem sie als aufeinanderfolgende
- * Quartale gelten. Darüber ist eine Lücke: kein TTM, nichts wird aufgefüllt.
- */
-export const QUARTER_MAX_GAP_DAYS = 140;
+/** Kalendertage, aus denen die Quartalszahl eines Jahresfensters abgeleitet wird. */
+export const FISCAL_YEAR_DAYS = 365;
+/** Ein Folgeschritt gilt als dasselbe Raster, solange er höchstens das Vielfache des Median-Abstands ist. */
+export const PERIOD_GAP_FACTOR = 1.6;
 /** Sichtbare Chart-Spanne, die die Fundamentalhistorie abdecken können muss. */
 export const OVERLAY_HISTORY_YEARS = 10;
 /** Zusätzliche Jahre, damit das TTM am linken Rand des 10Y-Fensters schon steht. */
@@ -53,8 +56,10 @@ export interface EarningsYieldResponse {
   /** date = asOf, value = Quartals-EPS. Der Yield wird je Kerze daraus gerechnet. */
   points: FundamentalPoint[];
   quarters: EpsQuarter[];
-  /** Fertiges TTM, nur solange vier Quartale noch nicht bekannt sind. */
+  /** Fertiges TTM. Ersatz, wenn das Quartalsfenster nicht steht. */
   ttmPrints: TtmPrint[];
+  /** Jahres-EPS. Ersatz nach dem trailing EPS. */
+  annualEps: TtmPrint[];
   formula: string;
   source: string;
   note: string | null;
@@ -62,11 +67,25 @@ export interface EarningsYieldResponse {
 
 export interface RoicSeriesResponse {
   symbol: string;
-  /** date = Filing-Datum, value = ROIC in %. */
+  /** date = Filing-Datum, value = ROIC in % (TTM-Summe oder Jahreswert). */
   points: FundamentalPoint[];
   formula: string;
+  label: string;
   source: string;
   note: string | null;
+}
+
+/** Listing-FX der Kursserie: EPS in `from` × rate = EPS in `to` (Kurswährung). */
+export interface PriceFx {
+  from: string;
+  to: string;
+  rate: number;
+}
+
+export interface RoicPeriod {
+  asOf: string;
+  periodEnd: string;
+  value: number;
 }
 
 export interface FundJoinPoint {
@@ -151,9 +170,25 @@ function isoDayNumber(iso: string): number {
 }
 
 /**
- * TTM-EPS aus den letzten Quartalen, deren Filing-Datum am Stichtag schon bekannt ist.
- * Weniger als TTM_QUARTER_COUNT ist Warmup. Eine Lücke zwischen den Periodenenden
- * lässt den Wert leer, ohne ein Quartal zu schätzen.
+ * Jahresfenster aus dem Median der Periodenabstände. Zwei Punkte reichen zum Ableiten.
+ * Kein fester Quartalszähler: ein Jahresraster ergibt 1, ein Quartalsraster etwa 4.
+ */
+export function derivedQuarterWindow(periodEnds: string[]): { count: number; maxGapDays: number } | null {
+  const ends = Array.from(new Set(periodEnds.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))).sort((a, b) => a.localeCompare(b));
+  const gaps: number[] = [];
+  for (let i = 1; i < ends.length; i++) {
+    const gap = isoDayNumber(ends[i]) - isoDayNumber(ends[i - 1]);
+    if (gap > 0) gaps.push(gap);
+  }
+  const med = medianOf(gaps);
+  if (med == null || !(med > 0)) return null;
+  const count = Math.max(1, Math.round(FISCAL_YEAR_DAYS / med));
+  return { count, maxGapDays: med * PERIOD_GAP_FACTOR };
+}
+
+/**
+ * TTM-EPS aus den letzten Perioden, deren Filing am Stichtag bekannt ist.
+ * Die Fensterlänge kommt aus den Abständen. Eine Lücke lässt die Summe leer.
  */
 export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | null; currency: string | null; note: string | null } {
   const known = new Map<string, EpsQuarter>();
@@ -163,13 +198,17 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
     if (!prev || quarter.asOf >= prev.asOf) known.set(quarter.periodEnd, quarter);
   }
   const ordered = Array.from(known.values()).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
-  if (ordered.length < TTM_QUARTER_COUNT) {
-    return { eps: null, currency: null, note: `n/a — Warmup, weniger als ${TTM_QUARTER_COUNT} Quartale` };
+  const window = derivedQuarterWindow(ordered.map(q => q.periodEnd));
+  if (!window) {
+    return { eps: null, currency: null, note: "n/a — Warmup, Abstand der Quartale nicht ableitbar" };
   }
-  const last = ordered.slice(-TTM_QUARTER_COUNT);
+  if (ordered.length < window.count) {
+    return { eps: null, currency: null, note: `n/a — Warmup, weniger als ${window.count} Quartale` };
+  }
+  const last = ordered.slice(-window.count);
   for (let i = 1; i < last.length; i++) {
     const gap = isoDayNumber(last[i].periodEnd) - isoDayNumber(last[i - 1].periodEnd);
-    if (!(gap > 0 && gap <= QUARTER_MAX_GAP_DAYS)) {
+    if (!(gap > 0 && gap <= window.maxGapDays)) {
       return { eps: null, currency: null, note: "n/a — Lücke in der Quartalshistorie, TTM nicht gebildet" };
     }
   }
@@ -178,6 +217,26 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
   const eps = last.reduce((sum, quarter) => sum + quarter.eps, 0);
   if (!Number.isFinite(eps)) return { eps: null, currency: null, note: "n/a — TTM-EPS nicht berechenbar" };
   return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: null };
+}
+
+/** Quartals-TTM, sonst trailing EPS, sonst Jahres-EPS. Der Ersatz steht im note. */
+export function epsNumeratorAt(
+  quarters: EpsQuarter[],
+  trailing: TtmPrint[],
+  annual: TtmPrint[],
+  asOf: string,
+): { eps: number | null; currency: string | null; note: string | null } {
+  const ttm = ttmEpsAt(quarters, asOf);
+  if (ttm.eps != null) return { eps: ttm.eps, currency: ttm.currency, note: null };
+  const trail = ttmPrintAt(trailing, asOf);
+  if (trail.eps != null) {
+    return { eps: trail.eps, currency: trail.currency, note: `Fallback: trailing EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})` };
+  }
+  const year = ttmPrintAt(annual, asOf);
+  if (year.eps != null) {
+    return { eps: year.eps, currency: year.currency, note: `Fallback: Jahres-EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})` };
+  }
+  return { eps: null, currency: null, note: ttm.note };
 }
 
 /** Letzter berichteter TTM-Druck mit asOf <= Stichtag. Kein Auffüllen zwischen den Drucken über eine Schätzung. */
@@ -190,20 +249,101 @@ export function ttmPrintAt(prints: TtmPrint[], asOf: string): { eps: number | nu
   return hit ? { eps: hit.eps, currency: hit.currency } : { eps: null, currency: null };
 }
 
+function ccyCode(value: string | null | undefined): string {
+  return value?.trim().toUpperCase() ?? "";
+}
+
 export function earningsYieldFromTtm(
   ttmEps: number,
   close: number,
   epsCurrency: string | null,
   priceCurrency: string | null,
+  fx: PriceFx | null = null,
 ): { value: number | null; note: string | null } {
   if (!Number.isFinite(ttmEps)) return { value: null, note: "n/a — TTM-EPS fehlt" };
   if (!Number.isFinite(close) || close <= 0) return { value: null, note: "n/a — Kurs fehlt oder nicht positiv" };
-  const epsCode = epsCurrency?.trim().toUpperCase() ?? "";
-  const priceCode = priceCurrency?.trim().toUpperCase() ?? "";
+  const epsCode = ccyCode(epsCurrency);
+  const priceCode = ccyCode(priceCurrency);
+  let eps = ttmEps;
+  let fxNote: string | null = null;
   if (epsCode && priceCode && epsCode !== priceCode) {
-    return { value: null, note: `n/a — EPS in ${epsCurrency}, Kurs in ${priceCurrency}` };
+    const from = ccyCode(fx?.from);
+    const to = ccyCode(fx?.to);
+    if (fx && from === epsCode && to === priceCode && fx.rate > 0) {
+      eps = ttmEps * fx.rate;
+      fxNote = `Fallback: EPS ${epsCurrency} × ${fx.from}${fx.to} ${fx.rate} auf Kurswährung ${priceCurrency}`;
+    } else {
+      return { value: null, note: `n/a — EPS in ${epsCurrency}, Kurs in ${priceCurrency}` };
+    }
   }
-  return { value: (ttmEps / close) * 100, note: null };
+  const value = (eps / close) * 100;
+  if (!Number.isFinite(value)) return { value: null, note: "n/a — Earnings Yield nicht berechenbar" };
+  return { value, note: fxNote };
+}
+
+const ROIC_ANNUAL_FALLBACK = "Fallback: Jahres-ROIC, Quartalsfenster unvollständig";
+
+/**
+ * Quartals-ROIC als TTM-Summe, sobald das abgeleitete Jahresfenster lückenlos bekannt ist.
+ * Davor und bei Lücken der letzte Jahreswert. Reine Jahresreihe bleibt Jahres-ROIC.
+ * Stichtag ist das Filing, nicht das Periodenende.
+ */
+export function annualizedRoicSeries(quarters: RoicPeriod[], annuals: RoicPeriod[]): {
+  points: FundamentalPoint[];
+  formula: string;
+  label: string;
+  note: string | null;
+} {
+  const q = quarters.filter(row => row.asOf && row.periodEnd && Number.isFinite(row.value))
+    .sort((a, b) => a.asOf.localeCompare(b.asOf) || a.periodEnd.localeCompare(b.periodEnd));
+  const a = annuals.filter(row => row.asOf && Number.isFinite(row.value))
+    .sort((a1, b1) => a1.asOf.localeCompare(b1.asOf) || a1.periodEnd.localeCompare(b1.periodEnd));
+  const dates = Array.from(new Set([...q.map(row => row.asOf), ...a.map(row => row.asOf)])).sort((x, y) => x.localeCompare(y));
+  const points: FundamentalPoint[] = [];
+  let sawTtm = false;
+  let sawAnnualFallback = false;
+  for (const date of dates) {
+    const known = q.filter(row => row.asOf <= date).sort((x, y) => x.periodEnd.localeCompare(y.periodEnd));
+    const window = derivedQuarterWindow(known.map(row => row.periodEnd));
+    let value: number | null = null;
+    let note: string | null = null;
+    if (window && known.length >= window.count) {
+      const last = known.slice(-window.count);
+      let open = false;
+      for (let i = 1; i < last.length; i++) {
+        const gap = isoDayNumber(last[i].periodEnd) - isoDayNumber(last[i - 1].periodEnd);
+        if (!(gap > 0 && gap <= window.maxGapDays)) open = true;
+      }
+      if (!open) {
+        value = +last.reduce((sum, row) => sum + row.value, 0).toFixed(1);
+        sawTtm = true;
+      }
+    }
+    if (value == null) {
+      const year = a.filter(row => row.asOf <= date).pop();
+      if (year) {
+        value = year.value;
+        note = q.length > 0 ? ROIC_ANNUAL_FALLBACK : null;
+        if (q.length > 0) sawAnnualFallback = true;
+      }
+    }
+    if (value == null || !Number.isFinite(value)) continue;
+    const prev = points[points.length - 1];
+    if (prev && prev.date === date) {
+      points[points.length - 1] = { date, value, note };
+    } else if (!prev || prev.value !== value || prev.note !== note) {
+      points.push({ date, value, note });
+    }
+  }
+  if (points.length === 0) {
+    return { points: [], formula: ROIC_ANNUAL_FORMULA, label: ROIC_ANNUAL_LABEL, note: "n/a — ROIC nicht annualisierbar" };
+  }
+  const note = sawTtm && sawAnnualFallback
+    ? "Wo das Quartalsfenster fehlt, steht der Jahres-ROIC (Fallback)."
+    : null;
+  return sawTtm
+    ? { points, formula: ROIC_TTM_FORMULA, label: ROIC_TTM_LABEL, note }
+    : { points, formula: ROIC_ANNUAL_FORMULA, label: ROIC_ANNUAL_LABEL, note: null };
 }
 
 function asofLatest<T extends { date: string }>(sorted: T[], date: string, cursor: { i: number; last: T | null }): T | null {
@@ -233,7 +373,9 @@ export function joinFundamentalsOntoPrices(
     earningsYield: FundamentalPoint[] | null;
     epsQuarters?: EpsQuarter[] | null;
     ttmPrints?: TtmPrint[] | null;
+    annualEps?: TtmPrint[] | null;
     priceCurrency?: string | null;
+    priceFx?: PriceFx | null;
     roic: FundamentalPoint[] | null;
     roicSeriesNote?: string | null;
     peerRoic: FundamentalPoint[] | null;
@@ -267,16 +409,12 @@ export function joinFundamentalsOntoPrices(
     let earningsYieldNote: string | null = null;
     if (args.showEarningsYield) {
       if (useQuarters) {
-        const ttm = ttmEpsAt(args.epsQuarters ?? [], row.date);
-        const warmup = ttm.eps == null && ttm.note?.includes("Warmup") === true;
-        const printed = warmup ? ttmPrintAt(args.ttmPrints ?? [], row.date) : { eps: null, currency: null };
-        const yieldHit = ttm.eps != null
-          ? earningsYieldFromTtm(ttm.eps, row.close, ttm.currency, args.priceCurrency ?? null)
-          : printed.eps != null
-            ? earningsYieldFromTtm(printed.eps, row.close, printed.currency, args.priceCurrency ?? null)
-            : { value: null, note: ttm.note };
+        const numerator = epsNumeratorAt(args.epsQuarters ?? [], args.ttmPrints ?? [], args.annualEps ?? [], row.date);
+        const yieldHit = numerator.eps == null
+          ? { value: null, note: numerator.note }
+          : earningsYieldFromTtm(numerator.eps, row.close, numerator.currency, args.priceCurrency ?? null, args.priceFx ?? null);
         earningsYieldPct = yieldHit.value;
-        earningsYieldNote = yieldHit.note;
+        earningsYieldNote = [numerator.note, yieldHit.note].filter((part): part is string => !!part).join(" · ") || null;
       } else {
         const eyHit = asofLatest(ey, row.date, cEy);
         const yieldHit = finitePointNote(eyHit, ey.length > 0, "n/a — keine Earnings-Yield-Punkte", "n/a — noch kein Earnings-Yield-Stichtag");

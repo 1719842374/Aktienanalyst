@@ -13,11 +13,15 @@
 import { readFileSync } from "node:fs";
 import {
   EARNINGS_YIELD_FORMULA,
+  FISCAL_YEAR_DAYS,
   FUNDAMENTAL_ANNUAL_LIMIT,
   FUNDAMENTAL_QUARTER_LIMIT,
-  QUARTER_MAX_GAP_DAYS,
+  PERIOD_GAP_FACTOR,
   ROIC_FORMULA,
+  ROIC_TTM_LABEL,
   TTM_QUARTER_COUNT,
+  annualizedRoicSeries,
+  derivedQuarterWindow,
   earningsYieldFromTtm,
   joinFundamentalsOntoPrices,
   ttmEpsAt,
@@ -45,7 +49,9 @@ const quarters: EpsQuarter[] = [
   { periodEnd: "2024-03-31", asOf: "2024-04-25", eps: 2, currency: "USD" },
 ];
 
-check("Fenster und Perioden sind benannt", TTM_QUARTER_COUNT === 4 && QUARTER_MAX_GAP_DAYS === 140 && FUNDAMENTAL_ANNUAL_LIMIT === 12 && FUNDAMENTAL_QUARTER_LIMIT === 48);
+check("Fenster und Perioden sind benannt", TTM_QUARTER_COUNT === 4 && FISCAL_YEAR_DAYS === 365 && PERIOD_GAP_FACTOR === 1.6 && FUNDAMENTAL_ANNUAL_LIMIT === 12 && FUNDAMENTAL_QUARTER_LIMIT === 48);
+const quarterWindow = derivedQuarterWindow(quarters.map(q => q.periodEnd));
+check("Quartalszahl kommt aus dem Median-Abstand, nicht aus einer festen 4", quarterWindow?.count === 4 && (quarterWindow?.maxGapDays ?? 0) > 100, JSON.stringify(quarterWindow));
 const warmup = ttmEpsAt(quarters, "2023-12-15");
 check("Warmup vor dem vierten Filing bleibt leer", warmup.eps === null && warmup.note?.includes("Warmup") === true, warmup.note ?? "");
 const hidden = ttmEpsAt(quarters, "2024-01-15");
@@ -86,6 +92,65 @@ const joined = joinFundamentalsOntoPrices(["2024-01-15", "2024-01-30"], {
 });
 check("Yield vor dem TTM-Filing ist leer und nennt den Grund", joined[0].earningsYieldPct === null && joined[0].earningsYieldNote?.startsWith("n/a") === true, joined[0].earningsYieldNote ?? "");
 check("Yield am Filing-Tag ist 4 / 80", joined[1].earningsYieldPct === 5, String(joined[1].earningsYieldPct));
+
+const sapFx = earningsYieldFromTtm(6.91, 235.9, "EUR", "USD", { from: "EUR", to: "USD", rate: 1.08 });
+check("SAP.DE: EPS EUR und Kurs USD mit Listing-FX, nicht n/a", sapFx.value != null && Math.abs(sapFx.value - (6.91 * 1.08 / 235.9) * 100) < 1e-9 && sapFx.note?.startsWith("Fallback:") === true, `${sapFx.value} ${sapFx.note}`);
+check("ohne Listing-FX bleibt die Währungsabweichung n/a", earningsYieldFromTtm(6.91, 235.9, "EUR", "USD").value === null);
+
+const vowQuarters: EpsQuarter[] = [
+  { periodEnd: "2025-03-31", asOf: "2025-03-31", eps: 3.63, currency: "EUR" },
+  { periodEnd: "2025-06-30", asOf: "2025-06-30", eps: 4.34, currency: "EUR" },
+  { periodEnd: "2026-03-31", asOf: "2026-03-31", eps: 2.55, currency: "EUR" },
+  { periodEnd: "2026-06-30", asOf: "2026-06-30", eps: 2.56, currency: "EUR" },
+  { periodEnd: "2026-09-30", asOf: "2026-09-30", eps: -9.29, currency: "EUR" },
+];
+check("VOW3.DE: Quartalslücke bildet kein TTM", ttmEpsAt(vowQuarters, "2026-09-30").note?.includes("Lücke") === true);
+const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
+  earningsYield: null,
+  epsQuarters: vowQuarters,
+  ttmPrints: [{ asOf: "2026-09-30", eps: 2.11, currency: "EUR" }],
+  annualEps: [{ asOf: "2025-12-31", eps: 13.29, currency: "EUR" }],
+  priceCurrency: "EUR",
+  roic: null,
+  peerRoic: null,
+  peerBars: null,
+  subjectCloses: [100],
+  showEarningsYield: true,
+  showRoic: false,
+  showPeerRoic: false,
+  showPeerPrice: false,
+});
+check("VOW3.DE: Fallback auf trailing EPS, im Hinweis gekennzeichnet", vowJoined[0].earningsYieldPct != null && Math.abs((vowJoined[0].earningsYieldPct ?? 0) - 2.11) < 1e-9 && vowJoined[0].earningsYieldNote?.includes("Fallback: trailing EPS") === true, `${vowJoined[0].earningsYieldPct} ${vowJoined[0].earningsYieldNote}`);
+const vowAnnualOnly = joinFundamentalsOntoPrices(["2025-12-31"], {
+  earningsYield: null,
+  epsQuarters: vowQuarters.slice(0, 2),
+  ttmPrints: [],
+  annualEps: [{ asOf: "2025-12-31", eps: 13.29, currency: "EUR" }],
+  priceCurrency: "EUR",
+  roic: null,
+  peerRoic: null,
+  peerBars: null,
+  subjectCloses: [100],
+  showEarningsYield: true,
+  showRoic: false,
+  showPeerRoic: false,
+  showPeerPrice: false,
+});
+check("VOW3.DE: ohne trailing EPS fällt der Jahreswert ein und ist gekennzeichnet", vowAnnualOnly[0].earningsYieldNote?.includes("Fallback: Jahres-EPS") === true && vowAnnualOnly[0].earningsYieldPct != null, vowAnnualOnly[0].earningsYieldNote ?? "");
+
+const roicTtm = annualizedRoicSeries(
+  [
+    { asOf: "2024-09-15", periodEnd: "2024-06-30", value: 2.2 },
+    { asOf: "2024-12-15", periodEnd: "2024-09-30", value: 2.0 },
+    { asOf: "2025-03-15", periodEnd: "2024-12-31", value: 1.9 },
+    { asOf: "2025-06-15", periodEnd: "2025-03-31", value: 1.9 },
+  ],
+  [{ asOf: "2024-08-01", periodEnd: "2024-06-30", value: 8.0 }],
+);
+const roicLast = roicTtm.points[roicTtm.points.length - 1];
+check("ROIC-Quartale werden zur TTM-Summe, nicht als Einzelquartal gezeichnet", roicTtm.label === ROIC_TTM_LABEL && roicLast?.value === 8 && roicLast?.date === "2025-06-15", JSON.stringify(roicTtm.points));
+check("vor dem vollen Fenster bleibt der Jahres-ROIC und heißt Fallback", roicTtm.points[0]?.value === 8 && roicTtm.points[0]?.note?.startsWith("Fallback:") === true, JSON.stringify(roicTtm.points[0]));
+check("ROIC-Formel nennt die Summe, nicht den Quartalswert", roicTtm.formula.includes("Summe") && ROIC_FORMULA.length > 0);
 const printed = joinFundamentalsOntoPrices(["2022-12-01"], {
   earningsYield: null,
   epsQuarters: quarters.slice(0, 2),
