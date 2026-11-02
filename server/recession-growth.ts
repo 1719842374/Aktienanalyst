@@ -12,6 +12,7 @@ import {
   EPS_BASIS,
   FMP_LEGACY_NOTE,
   FORWARD_FORMULA_EPS,
+  FORWARD_HORIZON,
   FORWARD_FORMULA_YAHOO_GROWTH,
   FORWARD_FORMULA_YAHOO_HTML,
   GROWTH_BOOKS,
@@ -298,12 +299,13 @@ function datedForward(
   consensus: number,
   ttm: number,
   fyEnd: string,
-  days: number,
+  daysToFyEnd: number,
+  tDays: number,
   source: string,
 ): { gFwdPct: number; via: string } | { reason: string } {
-  const adj = annualizedFwdPct(consensus, ttm, days);
+  const adj = annualizedFwdPct(consensus, ttm, tDays);
   if ("reason" in adj) return { reason: adj.reason };
-  const horizon = `Horizont t=${Math.round(days)} Tage bis FY-Ende ${fyEnd}, g_ann = (Konsens/adjTTM)^(365/t)−1, g ungedämpft`;
+  const horizon = `Horizont t=${Math.round(tDays)} Tage = ${Math.round(daysToFyEnd)} Tage bis FY-Ende ${fyEnd} + ${FORWARD_HORIZON.midYearDays}, g_ann = (Konsens/adjTTM)^(365/t)−1, g ungedämpft`;
   return { gFwdPct: adj.gFwdPct, via: `${source} · ${horizon}` };
 }
 
@@ -334,6 +336,7 @@ async function annualizedFromConsensus(
       aligned.consensus,
       aligned.ttm,
       consensus.date,
+      consensus.daysToFyEnd,
       consensus.horizonDays,
       `${basis} · ${aligned.note}`,
     );
@@ -481,6 +484,7 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
             indexWeight: 1,
             weight: horizonWeightFactor(consensus.horizonDays),
             tDays: consensus.horizonDays,
+            source: grown.via,
             excludeReason: null,
           }],
         },
@@ -553,6 +557,7 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
           weight: row.weight,
           gFwdPct: grown.gFwdPct,
           tDays: grown.tDays,
+          source: grown.via || null,
           excludeReason: grown.excludeReason,
         });
       }

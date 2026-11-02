@@ -123,13 +123,13 @@ Der Tester liest US P_rez12 als 40, auf diesem Stand und auf Prod. **Soll ist 40
 
 ---
 
-## Growth Gap: Horizont, adjTTM, Gewicht (Philip 22:38)
+## Growth Gap: Horizont, adjTTM, Gewicht (Philip, Mitte-zu-Mitte)
 
 Dieser Abschnitt ergänzt die Datei. Der Name bleibt `Fertig_WORK_RECESSION_SOURCES.md`.
 
 ### Definition
 
-t = Abstand Mitte TTM zu Mitte Konsens-FY = Tage von heute bis zum FY-Ende der Konsenszeile (FMP `date`). Es gibt keinen 90-Tage-Floor und keinen Exponenten-Deckel. Ein nahes FY, auch ein Stub, bleibt das gewählte FY.
+t ist der Abstand Mitte zu Mitte: Tage bis zum FY-Ende der Konsenszeile (FMP `date`) plus 182. Annualisiert wird mit dem Exponenten 365/t. Keine Schwelle, keine Regel fürs nächste FY, kein Floor und kein Cap. Ein nahes FY, auch ein Stub und ein FY das heute endet, bleibt das gewählte FY.
 
 \[
 g_{\text{ann}} = \left(\frac{\text{consensus}}{\text{adjTTM}}\right)^{365/t} - 1
@@ -143,7 +143,7 @@ adjTTM ≤ 0 oder Konsens ≤ 0: der Ticker ist nicht im Mittel, der Grund steht
 
 ### Technische Stabilisierung
 
-Die Stabilisierung sitzt im Aggregationsgewicht, nicht in g.
+Die Stabilisierung sitzt im Aggregationsgewicht, nicht in g. t in der Formel ist der neue Abstand Mitte zu Mitte.
 
 \[
 w_i = w^{\text{Index}}_i \times \min\left(1, \frac{t_i}{365}\right) \times h_i
@@ -155,19 +155,19 @@ h ist das Huber-Gewicht auf dem MAD-z von g_ann: 1 bei |z| ≤ 2,5, sonst 2,5/|z
 g_{\text{fwd}} = \frac{\sum_i w_i \, g_{\text{ann},i}}{\sum_i w_i}
 \]
 
-Die Karte zeigt pro Ticker g, Gewicht und t. Die Abdeckung bleibt sichtbar.
+Die Karte zeigt pro Ticker g, t, Gewicht und Quelle. Die Abdeckung bleibt sichtbar.
 
-Der frühere ASHR-Wert +13,4 % war der harte Schnitt bei |z| > 2,5. Diese Freigabe ersetzt den Schnitt durch Huber-Gewichte. Dieselben neun g-Werte, ohne bekanntes t, ergeben im Mittel etwa +28,6 %. Das ist der neue Rechenweg, nicht ein stiller Rückfall auf +68 %.
+Der frühere ASHR-Wert +13,4 % war der harte Schnitt bei |z| > 2,5. Die Freigabe von 22:38 ersetzt den Schnitt durch Huber-Gewichte. Dieselben neun g-Werte, ohne bekanntes t, ergeben im Mittel etwa +28,6 %. Das ist der alte Rechenweg ohne Horizont, nicht der Stand mit t = Tage bis FY-Ende + 182.
 
 ### Soll-Ist
 
 | Punkt | Soll | Ist auf `cursor/eurostat-growth-gap-59aa` |
 |---|---|---|
-| t und g_ann | Tage bis FY-Ende, Potenz 365/t, g ungedämpft, kein 90-Tage-Floor | `consensusForOneYear`, `annualizedFwdPct` in `shared/recession-growth.ts` |
+| t und g_ann | t = Tage bis FY-Ende + 182, Potenz 365/t, kein Floor, kein Cap, kein Folgejahr | `midToMidDays`, `consensusForOneYear`, `annualizedFwdPct` in `shared/recession-growth.ts` |
 | adjTTM | Summe der letzten 4 `epsActual`, Fallback mit Quelle, kein GAAP-`ratios-ttm` | `adjTtmFromEarnings`, `adjTtmOf` in `server/recession-growth.ts` |
 | ≤ 0 | Ticker raus mit Grund, Gewicht in der Abdeckung | `excludeReason`, Abdeckungstext und Zeile in der Karte |
-| Gewicht | Index × min(1, t/365) × Huber(MAD-z), symmetrisch | `horizonWeightFactor`, `weightedHoldingsForward` |
-| Karte | pro Ticker g, Gewicht, t | `ForwardHoldingLine` über `useRecessionGrowth` → `GET /api/recession/growth-gap/:index` → `RecessionGrowthSection` |
-| Tests | t = 40, 84, 449, negatives EPS, AMZN/GOOGL GAAP > Konsens, AVGO-Stub | `script/test-recession-growth.ts` |
+| Gewicht | Index × min(1, t/365) × Huber(MAD-z), mit dem neuen t | `horizonWeightFactor`, `weightedHoldingsForward` |
+| Karte | pro Ticker g, t, Gewicht, Quelle, plus Abdeckung | `ForwardHoldingLine.source` über `useRecessionGrowth` → `GET /api/recession/growth-gap/:index` → `RecessionGrowthSection` |
+| Tests | NVDA 84→t=266, META 59→t=241, t=40 und t=449, AMZN/GOOGL GAAP gegen adjusted | `script/test-recession-growth.ts` |
 | US P_rez12 | 40, unverändert | dieser Abschnitt fasst den US-Katalog nicht an |
-| Pins, tsc, `analyze-route.ts`, `researcher.ts` | Pins unverändert, tsc bleibt 101, die beiden Dateien unberührt | nicht angefasst |
+| Pins, tsc, `analyze-route.ts`, `researcher.ts`, `shared/schema.ts` | Pins unverändert, tsc bleibt 101, die drei Dateien byte-gleich | nicht angefasst |

@@ -238,7 +238,7 @@ export function RecessionGrowthSection({ number }: { number: number }) {
             {gaps.forward.available && gaps.forward.lines && gaps.forward.lines.length > 0 && (
               <div className="rounded-md border border-border px-3 py-2" data-testid="recession-growth-holdings">
                 <p className="text-[10px] text-muted-foreground">
-                  Technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber(MAD-z). g ist ungedämpft.
+                  t = Tage bis FY-Ende + 182. Technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber(MAD-z). g ist ungedämpft.
                 </p>
                 <ul className="mt-1 space-y-1">
                   {gaps.forward.lines.map(line => (
@@ -250,6 +250,8 @@ export function RecessionGrowthSection({ number }: { number: number }) {
                       {line.weight != null ? holdingWeightPct(line.weight, line.indexWeight) : `raus (Index ${holdingWeightPct(line.indexWeight, line.indexWeight)})`}
                       {" · t "}
                       {line.tDays != null ? `${Math.round(line.tDays)} Tage` : "n/a"}
+                      {" · Quelle "}
+                      {line.source ?? "n/a"}
                     </li>
                   ))}
                 </ul>

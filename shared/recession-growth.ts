@@ -65,14 +65,16 @@ export const GROWTH_HOLDINGS_PARAMS = {
 } as const;
 
 /**
- * t = Tage von heute bis zum FY-Ende der Konsenszeile (FMP `date`).
- * Das ist der Abstand Mitte TTM zu Mitte Konsens-FY.
- * g_ann = (consensus / adjTTM) ^ (oneYearDays / t) − 1. g wird nicht gedämpft.
- * Das Aggregationsgewicht ist Index-Gewicht × min(1, t/oneYearDays) × Huber. Das ist technische Stabilisierung.
+ * t ist der Abstand Mitte TTM zu Mitte Konsens-FY: Tage bis zum FY-Ende (FMP `date`) + midYearDays.
+ * g_ann = (consensus / adjTTM) ^ (oneYearDays / t) − 1. Keine Schwelle, kein Folgejahr, kein Floor, kein Cap.
+ * g wird nicht gedämpft.
+ * Das Aggregationsgewicht ist Index-Gewicht × min(1, t/oneYearDays) × Huber, mit diesem t. Das ist technische Stabilisierung.
  * Yahoo forwardEps hat auf der Quote-Seite kein FY-Ende und bleibt der 1J-Quotient.
  */
 export const FORWARD_HORIZON = {
   oneYearDays: 365,
+  /** Halbes Jahr, von Philip festgelegt. t = Tage bis FY-Ende + midYearDays. */
+  midYearDays: 182,
 } as const;
 
 /** adjTTM = Summe der letzten reportedQuarters gemeldeten epsActual. */
@@ -97,10 +99,10 @@ export const EPS_CURRENCY = {
   pencePerPound: 100,
 } as const;
 
-export const FORWARD_FORMULA_EPS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende";
+export const FORWARD_FORMULA_EPS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende + 182";
 /** Unannualisierter Quotient. Nur Yahoo-Felder ohne FY-Ende, nicht der FMP-Konsens. */
 export const FORWARD_FORMULA_LEVEL = "g_fwd = EPS_consensus / EPS_TTM − 1";
-export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i · min(1, t_i/365) · h_i · g_ann,i) / Σ (w_i · min(1, t_i/365) · h_i); g_ann ungedämpft; h = Huber(|MAD-z|, symmetrisch); technische Stabilisierung";
+export const FORWARD_FORMULA_HOLDINGS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende + 182; g_fwd = Σ (w_i · min(1, t_i/365) · h_i · g_ann,i) / Σ (w_i · min(1, t_i/365) · h_i); g_ann ungedämpft; h = Huber(|MAD-z|, symmetrisch); technische Stabilisierung";
 export const FORWARD_FORMULA_YAHOO_RATIO = "g_fwd = earningsTrend[+1y].avg / trailingEps − 1";
 export const FORWARD_FORMULA_YAHOO_GROWTH = "g_fwd = earningsTrend[+1y].growth (Yahoo-YoY, nicht Konsens/TTM)";
 export const FORWARD_FORMULA_YAHOO_HTML = "g_fwd = forwardEps / trailingEps − 1";
@@ -165,7 +167,7 @@ export type ForwardReading =
       formula: string;
       /** Set when the sample is thinner than warnCoverage but still published. */
       coverageWarn?: string | null;
-      /** Pro Ticker: ungedämpftes g, Aggregationsgewicht und t. */
+      /** Pro Ticker: ungedämpftes g, Aggregationsgewicht, t und Quelle. */
       lines?: ForwardHoldingLine[];
     }
   | NaReading;
@@ -178,7 +180,10 @@ export interface ForwardHoldingLine {
   indexWeight: number;
   /** Index-Gewicht × min(1, t/365) × Huber. null, wenn der Ticker nicht im Mittel ist. */
   weight: number | null;
+  /** t = Tage bis FY-Ende + 182. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
   tDays: number | null;
+  /** Herkunft von g und t. null, wenn keine Quelle vorliegt. */
+  source: string | null;
   excludeReason: string | null;
 }
 
@@ -427,6 +432,11 @@ export function horizonDays(from: string, to: string): number {
   return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000;
 }
 
+/** t = Tage bis FY-Ende + 182. Reine Summe, kein Floor und kein Cap. */
+export function midToMidDays(daysToFyEnd: number): number {
+  return daysToFyEnd + FORWARD_HORIZON.midYearDays;
+}
+
 /** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
 export function nextConsensusEps(raw: unknown, asOf: string): { date: string; eps: number } | null {
   const row = consensusRows(raw).find(r => r.date >= asOf);
@@ -434,19 +444,24 @@ export function nextConsensusEps(raw: unknown, asOf: string): { date: string; ep
 }
 
 /**
- * Nächstes FY mit t > 0. t = Tage bis FY-Ende. Ein nahes FY bleibt, der Exponent wird nicht gedeckelt.
- * t ≤ 0 ist keine Division. Ein nicht positives eps bleibt die gewählte Zeile und fällt in annualizedFwdPct heraus.
+ * Nächstes FY-Ende ab asOf, einschließlich heute. Kein Sprung ins Folgejahr und keine Schwelle.
+ * t = Tage bis FY-Ende + 182. Ein nicht positives eps bleibt die gewählte Zeile und fällt in annualizedFwdPct heraus.
  */
 export function consensusForOneYear(raw: unknown, asOf: string): {
   date: string;
   eps: number;
   currency: string | null;
+  /** Kalendertage von asOf bis zum FY-Ende. 0, wenn das FY heute endet. */
+  daysToFyEnd: number;
+  /** t = daysToFyEnd + 182. */
   horizonDays: number;
 } | null {
   const rows = consensusRows(raw)
     .filter(row => row.date >= asOf)
-    .map(row => ({ ...row, horizonDays: horizonDays(asOf, row.date) }))
-    .filter(row => row.horizonDays > 0);
+    .map(row => {
+      const daysToFyEnd = horizonDays(asOf, row.date);
+      return { ...row, daysToFyEnd, horizonDays: midToMidDays(daysToFyEnd) };
+    });
   return rows[0] ?? null;
 }
 
@@ -856,8 +871,10 @@ export interface HoldingGrowthRow {
   symbol: string;
   weight: number;
   gFwdPct: number | null;
-  /** Tage bis FY-Ende. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
+  /** t = Tage bis FY-Ende + 182. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
   tDays?: number | null;
+  /** Herkunft von g und t. Bleibt an der Zeile, auch wenn der Ticker nicht im Mittel ist. */
+  source?: string | null;
   /** Gesetzter Grund: nicht im Mittel, das Index-Gewicht bleibt im Abdeckungstext. */
   excludeReason?: string | null;
 }
@@ -1010,6 +1027,7 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
       indexWeight: row.weight,
       weight: inMean ? row.weight * scaleW : null,
       tDays: row.tDays ?? null,
+      source: row.source ?? null,
       excludeReason: inMean ? null : (row.excludeReason ?? null),
     };
   });
