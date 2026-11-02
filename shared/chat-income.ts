@@ -412,18 +412,50 @@ export function incomeBriefFromFmp(symbol: string, rows: unknown): IncomeStateme
   };
 }
 
-/** Teilt Filing-Fließtext in Sätze. Dezimalpunkte ("$4.1 billion") trennen nicht. */
+/** Seitenkopf im Filing-Text ("35 PART I Item 2"): beginnt einen neuen Abschnitt, keinen Satzteil. */
+const FILING_PAGE_HEADER = /\d+\s+PART\s+[IV]+\b/;
+/** Spaltenkopf einer Periodentabelle ("Three Months Ended … Compared with …") vor dem Satz. */
+const FILING_PERIOD_HEADING = /^(?:(?:Three|Six|Nine|Twelve) Months|(?:Fiscal )?Years?) Ended\b/i;
+/** Tabellenzeile: zwei Zahlen direkt hintereinander ("282 (4,923)", "$38 $(3,660)"), nicht "30, 2026". */
+const FILING_TABLE_ROW = /\d\)?\s+\$?\(?\d[\d,.]*\)?(?=\s|$)/g;
+
+/** Inline-XBRL setzt Leerzeichen in Beträge ("$ 272", "( 4,923 )"); vereinheitlicht für Vergleich und Dubletten. */
+function normalizeFilingSpacing(s: string): string {
+  return s.replace(/\$\s+(?=[\d(])/g, "$").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")");
+}
+
+/** Teilt Filing-Fließtext in Sätze. Dezimalpunkte ("$4.1 billion") trennen nicht, Seitenköpfe schon. */
 export function splitFilingSentences(text: string): string[] {
-  return text.split(/(?<=[.!?])\s+(?=[A-Z“"(])/).map(s => s.trim()).filter(s => s.length > 20);
+  const boundary = new RegExp(`(?<=[.!?])\\s+(?=[A-Z“"(]|${FILING_PAGE_HEADER.source})`);
+  return text.split(boundary).map(s => normalizeFilingSpacing(s.trim())).filter(s => s.length > 20);
+}
+
+function firstTermIndex(s: string, terms: readonly RegExp[]): number {
+  const hits = terms.map(t => s.search(t)).filter(i => i >= 0);
+  return hits.length ? Math.min(...hits) : -1;
 }
 
 /**
- * Satz, der den Posten nennt. Läuft eine Tabelle ohne Satzzeichen in den Satz hinein (zu lang oder
+ * Satz, der den Posten nennt. Steht ein Perioden-Spaltenkopf davor, beginnt er bei der ersten
+ * Nennung. Steht vor der Begründung eine Tabellenzeile, beginnt er bei der nächsten Nennung danach
+ * (keine Nennung: kein Satz). Läuft eine Tabelle ohne Satzzeichen in den Satz hinein (zu lang oder
  * mit Seitenkopf " | "), zählt nur der Rest ab der letzten Nennung des Postens.
  */
-function explanationCandidate(s: string, terms: readonly RegExp[]): string | null {
+function explanationCandidate(raw: string, terms: readonly RegExp[]): string | null {
   const clean = (x: string) => x.length <= INCOME_EXPLANATION_MAX_CHARS && !x.includes(" | ");
-  if (!terms.some(t => t.test(s))) return null;
+  const first = firstTermIndex(raw, terms);
+  if (first < 0) return null;
+  let s = FILING_PERIOD_HEADING.test(raw.slice(0, first)) ? raw.slice(first) : raw;
+  const cue = s.search(EXPLANATION_CUE);
+  const rowEnd = Math.max(0, ...Array.from(s.matchAll(FILING_TABLE_ROW))
+    .filter(m => cue < 0 || (m.index ?? 0) < cue)
+    .map(m => (m.index ?? 0) + m[0].length));
+  if (rowEnd > 0) {
+    const rest = s.slice(rowEnd);
+    const at = firstTermIndex(rest, terms);
+    if (at < 0) return null;
+    s = rest.slice(at);
+  }
   if (clean(s)) return s;
   let at = -1;
   for (const t of terms) {
