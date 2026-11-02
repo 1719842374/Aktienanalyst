@@ -16,6 +16,7 @@ import {
   isFmpAvailable,
 } from "./fmp";
 import { fetchFredVolWithYahooFallback, fetchVstoxxVol } from "./recession-markets";
+import { FACTPACK_YAHOO_NA, defaultSpyYahooDeps, yahooFundamentalsWhenFmpEmpty } from "./factpack-yahoo";
 import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import {
   CHART_BOOKS,
@@ -408,14 +409,27 @@ async function loadValuation(
     }
   }
 
-  const core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
+  let core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
   const valuationLabel = valuationLabelFor(chosen, book.etf);
   const sourceNotes = (chosen.symbol === book.etf ? etfSources.notes : fallbackSources?.notes ?? etfSources.notes);
   const gaps: string[] = [];
   if (valuationLabel !== "ETF-Proxy") {
     gaps.push(`Formel auf ${chosen.symbol} (Kurs und EPS), nicht auf ${book.etf}`);
   }
-  if (core.pe == null) {
+  if (book.etf === "SPY" && core.pe == null && bar.close > 0) {
+    try {
+      const yahoo = await yahooFundamentalsWhenFmpEmpty("SPY", bar.close, defaultSpyYahooDeps());
+      if (yahoo.pe != null) {
+        core = { ...core, pe: yahoo.pe };
+        gaps.push(`PE aus ${yahoo.source} (FMP leer)`);
+      } else if (yahoo.naReason) {
+        gaps.push(yahoo.naReason);
+      }
+    } catch {
+      gaps.push(FACTPACK_YAHOO_NA);
+    }
+  }
+  if (core.pe == null && !gaps.some(gap => gap.startsWith("n/a —"))) {
     const why = [...sourceNotes, ...priceNotes].filter(Boolean);
     gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
   }

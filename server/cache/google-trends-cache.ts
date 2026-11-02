@@ -1,10 +1,18 @@
 /**
- * One in-memory layer for the SerpApi Google Trends "Recession" print.
+ * One cache for the SerpApi Google Trends "Recession" print.
  * Fresh hits (under 12h) skip SerpApi. A 429, empty timeline, or timeout
  * keeps the last good print for 48h. The zone weights are not stored here.
+ *
+ * The print also sits in a local JSON file so a process restart can read it
+ * back. F5-08 Redis is not wired (braucht Philip). The value-chain limiter
+ * keeps its own store. A Trends Redis would be a new store.
  */
+import fs from "node:fs";
+import path from "node:path";
 
 export const GOOGLE_TRENDS_CACHE_KEY = "google-trends-recession";
+/** File name under the local cache directory. Not Redis. */
+export const GOOGLE_TRENDS_DISK_NAME = "google-trends-recession.json";
 /** Top of the 6–12h band. At this age the next run asks SerpApi again. */
 export const GOOGLE_TRENDS_FRESH_MS = 12 * 60 * 60 * 1000;
 /** Future_4: a print older than this is not a market value. */
@@ -43,28 +51,96 @@ export interface AcceptedGoogleTrends {
 }
 
 let memory: GoogleTrendsCacheEntry | null = null;
+let diskDir: string | null = path.join(process.cwd(), ".cache");
 
-export function resetGoogleTrendsCache(): void {
+/** Tests point this at a temp directory. `null` keeps the print in memory only. */
+export function setGoogleTrendsDiskDirForTests(dir: string | null): void {
+  diskDir = dir;
+}
+
+/** Drops the process copy and leaves the file, so a later read acts like a restart. */
+export function forgetGoogleTrendsMemoryForTests(): void {
   memory = null;
 }
 
-export function readGoogleTrendsCache(): GoogleTrendsCacheEntry | null {
-  if (!memory) return null;
-  return {
-    value: memory.value,
-    timestamp: memory.timestamp,
-    source: memory.source,
-    ...(memory.points?.length ? { points: memory.points.map(p => ({ date: p.date, value: p.value })) } : {}),
-  };
+function diskFile(): string | null {
+  if (!diskDir) return null;
+  return path.join(diskDir, GOOGLE_TRENDS_DISK_NAME);
 }
 
-export function writeGoogleTrendsCache(entry: GoogleTrendsCacheEntry): void {
-  memory = {
+function copyEntry(entry: GoogleTrendsCacheEntry): GoogleTrendsCacheEntry {
+  return {
     value: entry.value,
     timestamp: entry.timestamp,
     source: entry.source,
     ...(entry.points?.length ? { points: entry.points.map(p => ({ date: p.date, value: p.value })) } : {}),
   };
+}
+
+function entryFromUnknown(raw: unknown): GoogleTrendsCacheEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as { value?: unknown; timestamp?: unknown; source?: unknown; points?: unknown };
+  if (typeof row.value !== "number" || !Number.isFinite(row.value)) return null;
+  if (typeof row.timestamp !== "number" || !Number.isFinite(row.timestamp)) return null;
+  if (typeof row.source !== "string" || row.source.length === 0) return null;
+  const points: { date: string; value: number }[] = [];
+  if (Array.isArray(row.points)) {
+    for (const point of row.points) {
+      const item = point as { date?: unknown; value?: unknown } | null;
+      if (typeof item?.date === "string" && typeof item.value === "number" && Number.isFinite(item.value)) {
+        points.push({ date: item.date, value: item.value });
+      }
+    }
+  }
+  return { value: row.value, timestamp: row.timestamp, source: row.source, ...(points.length ? { points } : {}) };
+}
+
+function readDisk(): GoogleTrendsCacheEntry | null {
+  const file = diskFile();
+  if (!file) return null;
+  try {
+    return entryFromUnknown(JSON.parse(fs.readFileSync(file, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function writeDisk(entry: GoogleTrendsCacheEntry): void {
+  const file = diskFile();
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(entry));
+    fs.renameSync(tmp, file);
+  } catch {
+    // The local file is optional. The process copy still holds the print.
+  }
+}
+
+export function resetGoogleTrendsCache(): void {
+  memory = null;
+  const file = diskFile();
+  if (!file) return;
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    // Already absent.
+  }
+}
+
+export function readGoogleTrendsCache(): GoogleTrendsCacheEntry | null {
+  if (!memory) {
+    const disk = readDisk();
+    if (disk) memory = disk;
+  }
+  if (!memory) return null;
+  return copyEntry(memory);
+}
+
+export function writeGoogleTrendsCache(entry: GoogleTrendsCacheEntry): void {
+  memory = copyEntry(entry);
+  writeDisk(memory);
 }
 
 export function googleTrendsFreshness(ageMs: number): GoogleTrendsFreshness {

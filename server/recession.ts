@@ -25,6 +25,7 @@ import {
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
 } from "./cache/google-trends-cache";
+import { PYTRENDS_TIMEOUT_MS, PYTRENDS_USER_AGENT, readPytrendsRecession } from "./cache/google-trends-pytrends";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
@@ -530,6 +531,16 @@ function scoreGoogleTrends(): IndicatorResult {
     }
   } catch (err: any) {
     console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
+  }
+
+  if (!fetched) {
+    const py = readPytrendsRecession(url => fetchUrl(url, PYTRENDS_TIMEOUT_MS, { "User-Agent": PYTRENDS_USER_AGENT }));
+    if (py) {
+      fetched = { value: py.value, source: py.source, ...(py.points.length ? { points: py.points } : {}) };
+      console.log(`  Google Trends pytrends: avg=${py.value}, latest=${py.latest}, peak=${py.peak}`);
+    } else {
+      console.log("  Google Trends pytrends: n/a — kein Verlauf");
+    }
   }
 
   const decided = acceptGoogleTrendsFetch(fetched, cached, now);
