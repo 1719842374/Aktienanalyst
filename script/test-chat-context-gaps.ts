@@ -85,7 +85,8 @@ check("Anzeige-Nummern == Formeln inkl. TA (#284, 4 Kombinationen)", same);
 const withTa = [...cc.RECESSION_SECTION_DEFS];
 if (!withTa.some(d => d.key === "ta")) withTa.splice(withTa.findIndex(d => d.key === "markt") + 1, 0, { key: "ta", label: "Technische Analyse" }); // #284: bereits in den DEFS
 const nrTa = Object.fromEntries(withTa.filter(d => d.when !== "fazit").map((d, i) => [d.key, i + 1]));
-check("#284-Simulation: TA = 11, Buffett 12, Quellen 15 (mit Regionen+Fazit)", Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).ta === 11 && Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).buffett === 12 && Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).quellen === 15 && withTa.length === 17);
+check("#284-Simulation: TA = 11, Buffett 12, Quellen 15 (mit Regionen+Fazit)", Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).ta === 11 && Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).buffett === 12 && Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).quellen === 15 && withTa.length === 18);
+check("gewinn 18 mit Regionen+Fazit, 16 ohne", cc.recessionSectionNumbers(true, true).gewinn === 18 && cc.recessionSectionNumbers(true, true).makroSchicht === 17 && cc.recessionSectionNumbers(false, false).gewinn === 16 && cc.recessionSectionNumbers(false, false).makroSchicht === 15);
 check("Schlüssel stabil, nur Nummer verschiebt sich", nrTa.buffett === cc.recessionSectionNumbers(false, false).buffett + 1 && nrTa.buffett === 12 && withTa.some(d => d.key === "buffett"));
 check("Rezession-Kontext trägt key je Sektion", rec.sections.every((s: any) => typeof s.key === "string"));
 // Widget-Bindung über key: nach Umnummerierung zeigt dieselbe Bindung auf dieselbe Sektion.
