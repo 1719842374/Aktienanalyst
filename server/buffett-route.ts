@@ -8,6 +8,7 @@
  * Benchmark-Kurs und BIP fortgeschrieben (EU ^STOXX, ersatzweise VGK; CN ASHR).
  */
 import type { Express, Request, Response } from "express";
+import { buffettOverlayFromLoaded, type RecessionTaBuffett } from "../shared/recession-ta";
 import { registerTradeBalanceRoute } from "./trade-balance-route";
 import {
   applyTrend,
@@ -622,6 +623,17 @@ export async function loadUsBuffettRatios(): Promise<{ date: string; ratio: numb
   } catch (err: any) {
     console.error("[buffett] US series", err?.message?.substring(0, 200));
     return [];
+  }
+}
+
+/** F1-42: dieselbe Reihe wie die Buffett-Route, Fehler als n/a statt 502, damit der TA-Abruf steht. */
+export async function loadBuffettOverlay(region: RegionId): Promise<RecessionTaBuffett> {
+  try {
+    const body = await loadRegion(region);
+    return buffettOverlayFromLoaded(body, null);
+  } catch (err) {
+    const reason = String((err as Error)?.message ?? err).slice(0, 180);
+    return buffettOverlayFromLoaded(null, reason);
   }
 }
 

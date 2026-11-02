@@ -71,4 +71,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerPodcastTranscriptRoute(app);
   const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
   registerAttraktivNotifyRoute(app);
+  // POST /api/balance-screen (FW-27, CSV im Body, nur Anzeige, kein Score)
+  const { registerBalanceScreenRoute } = await import("./balance-screen-route");
+  registerBalanceScreenRoute(app);
 }
