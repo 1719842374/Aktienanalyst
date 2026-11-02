@@ -810,6 +810,15 @@ function deFixed(v: number, digits: number): string {
   return sign + Math.abs(v).toFixed(digits).replace(".", ",");
 }
 
+/** Sichtbarer Hinweis. Der Parametername warnCoverage bleibt intern. */
+function lowCoverageBanner(coverage: number, excluded: string[]): string {
+  const pct = deFixed(coverage, 1);
+  const limit = (GROWTH_HOLDINGS_PARAMS.warnCoverage * 100).toFixed(0);
+  if (!excluded.length) return `Geringe Abdeckung: ${pct} % < ${limit} %`;
+  const z = deFixed(FORWARD_OUTLIER.robustZMax, 1);
+  return `Geringe Abdeckung nach Outlier-Filter (z>${z}): ${pct} % < ${limit} %, ausgeschlossen: ${excluded.join(", ")}`;
+}
+
 type OutlierScale = "mad" | "meanAD" | "suspended";
 
 /** MAD, or madZeroFallback when MAD is 0. A zero meanAD suspends the filter. */
@@ -898,8 +907,12 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   const note = coverage != null
     ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${outlierNote}`
     : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position${outlierNote}`;
+  const missing = listed
+    .filter(row => !used.some(kept => kept.symbol === row.symbol) && !dropped.includes(row.symbol))
+    .map(row => row.symbol);
+  const excluded = [...dropped, ...missing];
   const coverageWarn = coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.warnCoverage
-    ? `Hinweis: Deckung ${deFixed(coverage, 1)} % < warnCoverage ${(GROWTH_HOLDINGS_PARAMS.warnCoverage * 100).toFixed(0)} %. g_fwd ist die auf die belegten Namen renormierte Stichprobe, nicht der ganze Fonds.`
+    ? lowCoverageBanner(coverage, excluded)
     : null;
   return {
     available: true,

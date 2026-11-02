@@ -256,13 +256,19 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               />
               <Reading
                 testId="recession-growth-forward"
-                label="Forward-Konsens"
+                label="g_fwd (Forward-Konsens)"
                 value={gaps.forward.available ? signedPct(gaps.forward.gFwdPct) : gaps.forward.reason}
                 detail={gaps.forward.available
                   ? `${gaps.forward.formula} · Stand ${gaps.forward.asOf} · ${gaps.forward.source}`
                   : "n/a"}
               />
-              <GapCard testId="recession-growth-gap" label="Growth Gap" gap={gaps.growthGap} formula="g_fwd − g_realized" />
+              <GapCard
+                testId="recession-growth-gap"
+                label="Growth Gap (g_fwd − g_realized)"
+                gap={gaps.growthGap}
+                formula="g_fwd − g_realized"
+                naLead={gaps.forward.available ? "g_fwd ist gesetzt. g_realized fehlt, die Differenz bleibt n/a." : undefined}
+              />
               <GapCard testId="recession-growth-implied" label="Implied Gap" gap={gaps.impliedGap} formula="g* − g_realized" />
               <Reading
                 testId="recession-growth-gstar"
@@ -315,16 +321,23 @@ function Reading({ testId, label, value, detail }: { testId: string; label: stri
   );
 }
 
-function GapCard({ testId, label, gap, formula }: { testId: string; label: string; gap: GapReading; formula: string }) {
+function GapCard({ testId, label, gap, formula, naLead }: {
+  testId: string;
+  label: string;
+  gap: GapReading;
+  formula: string;
+  naLead?: string;
+}) {
   const na = gap as NaReading;
+  const naValue = naLead ? `${naLead} ${na.reason}` : na.reason;
   return (
     <Reading
       testId={testId}
       label={label}
-      value={gap.available ? signedPct(gap.gapPp) : na.reason}
+      value={gap.available ? signedPct(gap.gapPp) : naValue}
       detail={gap.available
         ? `${formula} · z ${deNum(gap.z, 2)} · ${gapMeaning(gap.direction)}${gap.warn ? " · Warnung" : ""}`
-        : "n/a"}
+        : formula}
     />
   );
 }

@@ -412,7 +412,8 @@ await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () 
   assert.equal(two.available, true);
   if (two.available) {
     assert.ok(Math.abs(two.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-9);
-    assert.match(two.coverageWarn ?? "", /warnCoverage/);
+    assert.match(two.coverageWarn ?? "", /Geringe Abdeckung: 30,0 % < 50 %/);
+    assert.equal((two.coverageWarn ?? "").includes("warnCoverage"), false);
   }
   const thin = weightedHoldingsForward([
     { symbol: "AAA", weight: 0.05, gFwdPct: 20 },
@@ -480,6 +481,71 @@ await ok("MAD 0 schaltet auf meanAD um und wirft nicht jeden Nicht-Median hinaus
     assert.deepEqual(identical.dropped, []);
     assert.ok(Math.abs(identical.gFwdPct - 10) < 1e-9);
   }
+});
+
+await ok("ASHR-Banner und Growth-Gap-Beschriftung stehen im gerenderten Output", async () => {
+  const weighted = weightedHoldingsForward([
+    { symbol: "300308.SZ", weight: 0.0364, gFwdPct: 184.7 },
+    { symbol: "600519.SS", weight: 0.0318, gFwdPct: 10.7 },
+    { symbol: "300750.SZ", weight: 0.0312, gFwdPct: 21.6 },
+    { symbol: "601318.SS", weight: 0.0229, gFwdPct: null },
+    { symbol: "300502.SZ", weight: 0.0221, gFwdPct: 242.1 },
+    { symbol: "600036.SS", weight: 0.0208, gFwdPct: 7.7 },
+    { symbol: "601899.SS", weight: 0.0199, gFwdPct: 29.0 },
+    { symbol: "603259.SS", weight: 0.0169, gFwdPct: 13.6 },
+    { symbol: "000333.SZ", weight: 0.0162, gFwdPct: 2.1 },
+    { symbol: "600900.SS", weight: 0.0142, gFwdPct: 0.5 },
+  ]);
+  assert.equal(weighted.available, true);
+  if (!weighted.available) return;
+  assert.ok(Math.abs(weighted.gFwdPct - 13.393377483443711) < 1e-6, String(weighted.gFwdPct));
+  const banner = "Geringe Abdeckung nach Outlier-Filter (z>2,5): 15,1 % < 50 %, ausgeschlossen: 300308.SZ, 300502.SZ, 601318.SS";
+  assert.equal(weighted.coverageWarn, banner);
+  const body = buildGrowthBody({
+    index: "ASHR",
+    price: [{ date: "2025-10-31", close: 30 }],
+    priceSource: "yahoo",
+    priceError: null,
+    realized: [],
+    realizedSource: "FMP",
+    realizedError: "n/a — GET /stable/income-statement?symbol=ASHR ohne YoY-Paar",
+    realizedFrequency: null,
+    forward: {
+      available: true,
+      gFwdPct: weighted.gFwdPct,
+      epsConsensus: null,
+      epsTtm: null,
+      asOf: "2026-11-02",
+      source: "Yahoo Quote-HTML",
+      formula: "g_fwd = Σ (w_i / Σ w) · (EPS_consensus,i / EPS_TTM,i − 1)",
+      coverageWarn: weighted.coverageWarn,
+    },
+    vixPoints: [],
+    vixSource: "FRED VIXCLS",
+    vixError: "n/a — VIX nur am S&P",
+  });
+  assert.equal(body.forward.available, true);
+  assert.equal(body.growthGap.available, false);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+  });
+  client.setQueryData(["/api/recession/earnings-growth", "SPY"], body);
+  client.setQueryData(["/api/recession/growth-gap", "SPY"], body);
+  const { RecessionGrowthSection } = await import("../client/src/components/recession/RecessionGrowthSection");
+  const html = renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client }, React.createElement(RecessionGrowthSection, { number: 17 })),
+  );
+  const visible = html.replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+  const bannerAt = visible.indexOf("recession-growth-coverage");
+  assert.ok(bannerAt >= 0, "Banner fehlt im gerenderten Output");
+  assert.ok(visible.slice(bannerAt, bannerAt + 500).includes(banner), visible.slice(bannerAt, bannerAt + 500));
+  assert.equal(visible.includes("warnCoverage"), false);
+  assert.match(visible, /g_fwd \(Forward-Konsens\)/);
+  assert.match(visible, /\+13,4 %/);
+  const gapAt = visible.indexOf("recession-growth-gap");
+  const gapHtml = visible.slice(gapAt, gapAt + 700);
+  assert.match(gapHtml, /Growth Gap \(g_fwd − g_realized\)/);
+  assert.match(gapHtml, /g_fwd ist gesetzt\. g_realized fehlt, die Differenz bleibt n\/a\./);
 });
 
 await ok("Fazit liest Median-z an nearZeroSigma und coneSigma, nicht an festen Pp", () => {

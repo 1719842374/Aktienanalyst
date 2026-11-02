@@ -112,3 +112,11 @@ SONST Standard-Risiko
 ```
 
 Öl-Schock-Flag: `z(Δ WTI 4w) > 1.5` aus `DCOILWTICO`, nicht Hormuz-String.
+
+---
+
+## US-Wert 2026-11-02, nicht Teil der Freigabe
+
+Philip hat nur drei Bewegungen freigegeben: Eurozone 70→45, Blended 40→35, ASHR g_fwd +68 %→+13 %. Den US-Wert ändert dieser Stand nicht.
+
+Der Tester liest US P_rez12 als 40, auf diesem Stand und auf Prod. **Soll ist 40, unverändert.** Die 30 im vorherigen PR-Text war keine Freigabe. Sie war eine lokale Lesart des Handlungsbuchs `recession_full` und ist nicht der US-Katalog. Die Kachel „Katalog Rez.“ der USA (`catalog-rez-US`) bleibt der Prod-Wert 40. Handlungstext P_rez12 und P_korr12 bleiben die US-Bücher; ihr Rechenweg wird hier nicht angefasst.
