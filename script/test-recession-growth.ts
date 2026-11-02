@@ -16,8 +16,15 @@ import {
   emptyGrowthBody,
   epsPairFromYahooHtml,
   FORWARD_FORMULA_YAHOO_HTML,
+  FORWARD_HORIZON,
+  FORWARD_OUTLIER,
+  GROWTH_HOLDINGS_PARAMS,
+  alignConsensusToTtm,
+  annualizedFwdPct,
+  consensusForOneYear,
   forwardFromEps,
   forwardFromYahooQuoteSummary,
+  yahooEpsContext,
   gapReading,
   growthChartPoints,
   growthFazit,
@@ -354,6 +361,47 @@ await ok("Yahoo +1y/trailingEps ist der Quotient, fehlendes Modul bleibt n/a", (
   }
 });
 
+await ok("Horizont über ein Jahr wird auf ein Jahr gerechnet, der nächste Stub nicht", () => {
+  const raw = [
+    { date: "2026-12-31", epsAvg: 105 },
+    { date: "2027-12-31", epsAvg: 121 },
+    { date: "2024-12-31", epsAvg: 80 },
+  ];
+  const picked = consensusForOneYear(raw, "2026-11-02");
+  assert.equal(picked?.date, "2027-12-31");
+  assert.ok(picked != null && picked.horizonDays <= FORWARD_HORIZON.annualizeAfterDays);
+  const plain = annualizedFwdPct(121, 100, picked?.horizonDays ?? 0);
+  assert.equal(plain.annualized, false);
+  assert.ok(Math.abs(plain.gFwdPct - 21) < 1e-9);
+  const long = annualizedFwdPct(121, 100, FORWARD_HORIZON.annualizeAfterDays + 40);
+  assert.equal(long.annualized, true);
+  const years = (FORWARD_HORIZON.annualizeAfterDays + 40) / FORWARD_HORIZON.oneYearDays;
+  assert.ok(Math.abs(long.gFwdPct - ((1.21 ** (1 / years) - 1) * 100)) < 1e-9);
+});
+
+await ok("unterschiedliche EPS-Währungen werden umgerechnet, Pence gegen Pfund auch", () => {
+  const pence = alignConsensusToTtm(140, "GBp", 1.4, "GBP", null);
+  assert.ok(!("error" in pence));
+  if (!("error" in pence)) {
+    assert.ok(Math.abs(pence.consensus - 1.4) < 1e-9);
+    assert.equal(pence.currency, "GBP");
+  }
+  const fx = alignConsensusToTtm(10, "EUR", 10, "USD", { EUR: 0.8, USD: 1 });
+  assert.ok(!("error" in fx));
+  if (!("error" in fx)) {
+    assert.ok(Math.abs(fx.consensus - 12.5) < 1e-9);
+    assert.equal(fx.currency, "USD");
+  }
+  const missing = alignConsensusToTtm(10, "EUR", 10, "CNY", null);
+  assert.ok("error" in missing);
+  const html = String.raw`\"currency\":\"GBp\",\"symbol\":\"HSBA.L\" \"financialCurrency\":\"USD\" \"trailingEps\":{\"raw\":1.14},\"forwardEps\":{\"raw\":1.4}`;
+  const ctx = yahooEpsContext(html, "HSBA.L");
+  assert.equal(ctx.quoteCurrency, "GBp");
+  assert.equal(ctx.financialCurrency, "USD");
+  assert.equal(ctx.trailing, 1.14);
+  assert.equal(ctx.forward, 1.4);
+});
+
 await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () => {
   const one = weightedHoldingsForward([{ symbol: "AAA", weight: 0.2, gFwdPct: 5 }]);
   assert.equal(one.available, false);
@@ -362,7 +410,31 @@ await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () 
     { symbol: "BBB", weight: 0.1, gFwdPct: 10 },
   ]);
   assert.equal(two.available, true);
-  if (two.available) assert.ok(Math.abs(two.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-9);
+  if (two.available) {
+    assert.ok(Math.abs(two.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-9);
+    assert.match(two.coverageWarn ?? "", /warnCoverage/);
+  }
+  const thin = weightedHoldingsForward([
+    { symbol: "AAA", weight: 0.05, gFwdPct: 20 },
+    { symbol: "BBB", weight: 0.05, gFwdPct: 10 },
+  ]);
+  assert.equal(thin.available, false);
+  if (!thin.available) assert.match(thin.reason, /minCoverage/);
+  const basket = weightedHoldingsForward([
+    { symbol: "A", weight: 0.1, gFwdPct: 10 },
+    { symbol: "B", weight: 0.1, gFwdPct: 12 },
+    { symbol: "C", weight: 0.1, gFwdPct: 11 },
+    { symbol: "D", weight: 0.1, gFwdPct: 9 },
+    { symbol: "E", weight: 0.1, gFwdPct: 400 },
+  ]);
+  assert.equal(basket.available, true);
+  if (basket.available) {
+    assert.deepEqual(basket.dropped, ["E"]);
+    assert.ok(Math.abs(basket.gFwdPct - (10 + 12 + 11 + 9) / 4) < 1e-9);
+    assert.ok(basket.note.includes(String(FORWARD_OUTLIER.robustZMax)));
+  }
+  assert.equal(GROWTH_HOLDINGS_PARAMS.minCoverage, 0.15);
+  assert.equal(GROWTH_HOLDINGS_PARAMS.warnCoverage, 0.5);
 });
 
 await ok("Fazit liest Median-z an nearZeroSigma und coneSigma, nicht an festen Pp", () => {

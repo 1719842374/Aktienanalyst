@@ -230,6 +230,16 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               <p className="break-words text-sm text-foreground">{gaps.fazit.text}</p>
               <p className="break-words text-[11px] text-muted-foreground">{gaps.fazit.formula}</p>
             </div>
+            {gaps.forward.available && gaps.forward.coverageWarn && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-coverage">
+                {gaps.forward.coverageWarn}
+              </p>
+            )}
+            {!gaps.forward.available && gaps.forward.reason.includes("minCoverage") && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-coverage">
+                {gaps.forward.reason}
+              </p>
+            )}
             {gaps.growthGap.available && gaps.growthGap.warn && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-warn">
                 Warnung: |Growth Gap| ≥ {GROWTH_GAP_PARAMS.coneSigma}σ. {gapMeaning(gaps.growthGap.direction)}

@@ -27,7 +27,9 @@ import {
   blendWeighted,
   bookProbability,
   laborSlot,
+  CATALOG_MISSING_INPUT,
   parseEurostatSeries,
+  parseEurostatSdmxCsv,
   sahmGapPp,
   yoyByMonth,
   type DatedPoint,
@@ -111,6 +113,15 @@ console.log("\n=== Eurostat JSON and YoY ===");
     dimension: { time: { category: { index: { "2026-08": 1, "2026-07": 0 } } } },
   });
   check("time index becomes month-start points", parsed.length === 2 && parsed[0].date === "2026-07-01" && parsed[1].value === 6.4);
+  const asArray = parseEurostatSeries({
+    version: "2.0",
+    value: [6.1, 6.4],
+    dimension: { time: { category: { index: ["2026-07", "2026-08"] } } },
+  });
+  check("JSON-stat 2.0 label array still becomes month-start points", asArray.length === 2 && asArray[0].date === "2026-07-01" && asArray[1].value === 6.4);
+  const csv = parseEurostatSdmxCsv("DATAFLOW,TIME_PERIOD,OBS_VALUE\nESTAT:UNE_RT_M,2026-08,6.4\nESTAT:UNE_RT_M,2026-09,6.5\n");
+  check("SDMX-CSV keeps the month", csv.length === 2 && csv[1].date === "2026-09-01" && csv[1].value === 6.5);
+  check("a SOAP fault is not a series", parseEurostatSdmxCsv("<S:Fault></S:Fault>").length === 0);
   const yoy = yoyByMonth([
     { date: "2025-07-01", value: 100 },
     { date: "2025-08-01", value: 110 },
@@ -303,6 +314,34 @@ console.log("\n=== Blend drops a null region; US slots do not invent a max ===")
   check("empty EZ and JP drop out of the blend", catalog.blendedRecession12m === 40 && catalog.blendedCorrection12m === 35, `${catalog.blendedRecession12m}/${catalog.blendedCorrection12m}`);
   const emptyLabor = catalog.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
   check("missing EZ unemployment names EA20 and stays closed", emptyLabor.source === "Eurostat une_rt_m EA20" && !emptyLabor.available);
+  const ezEmpty = catalog.regions.find(region => region.id === "EZ")!;
+  check(
+    "missing inputs stay on renorm_available and name the dropped slots",
+    ezEmpty.missingInputPolicy === CATALOG_MISSING_INPUT
+      && ezEmpty.recessionDropped?.includes("ALQ Eurozone")
+      && ezEmpty.recessionDropped?.includes("Aktivität EZ"),
+    (ezEmpty.recessionDropped ?? []).join(","),
+  );
+  const staleLabor = scoreRegionalCatalogs({
+    prints: prints({
+      ezUnemployment: {
+        geo: "EA",
+        points: months("2022-01", 20, () => 6.5),
+        source: "FRED LRHUTTTTEZM156S · Sahm-Analog 3M−min(12M) · Eurostat leer",
+      },
+    }),
+    usSlots: [],
+    usRecession12m: 40,
+    usCorrection12m: 35,
+    today: TODAY,
+    scorers: scorers(),
+  });
+  const staleLaborSlot = staleLabor.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
+  check(
+    "a stale unemployment fallback is shown and not scored",
+    !staleLaborSlot.available && staleLaborSlot.value.includes("2023-08") && staleLaborSlot.source.includes("LRHUTTTTEZM156S") && staleLaborSlot.maxWeighted === 0,
+    `${staleLaborSlot.value} ${staleLaborSlot.source}`,
+  );
 }
 
 console.log("\n=== Public adapters: iShares KGV, OECD IP, newer series ===");

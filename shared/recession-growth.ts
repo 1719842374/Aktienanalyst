@@ -57,6 +57,33 @@ export const GROWTH_GAP_PARAMS = {
 export const GROWTH_HOLDINGS_PARAMS = {
   maxNames: 10,
   percentAbove: 1,
+  /** Fund fraction. Below this the weighted g_fwd is n/a. */
+  minCoverage: 0.15,
+  /** Below this the value stays, and the UI names the thin sample. */
+  warnCoverage: 0.5,
+} as const;
+
+/**
+ * FMP `date` is the fiscal-year end of that row.
+ * A year ending inside minHorizonDays is the current stub, not the one-year-ahead consensus.
+ * A year ending past annualizeAfterDays is converted to a one-year rate with oneYearDays.
+ * Yahoo forwardEps has no period end on the quote page; it is the next fiscal year (1J).
+ */
+export const FORWARD_HORIZON = {
+  oneYearDays: 365.25,
+  minHorizonDays: 180,
+  annualizeAfterDays: 548,
+} as const;
+
+/** Robust z = madScale · (g − median) / MAD. Names past robustZMax leave the mean. */
+export const FORWARD_OUTLIER = {
+  robustZMax: 2.5,
+  madScale: 0.6745,
+  minNames: 4,
+} as const;
+
+export const EPS_CURRENCY = {
+  pencePerPound: 100,
 } as const;
 
 export const FORWARD_FORMULA_EPS = "g_fwd = EPS_consensus / EPS_TTM − 1";
@@ -123,6 +150,8 @@ export type ForwardReading =
       asOf: string;
       source: string;
       formula: string;
+      /** Set when the sample is thinner than warnCoverage but still published. */
+      coverageWarn?: string | null;
     }
   | NaReading;
 
@@ -312,6 +341,30 @@ export function holdingsFromYahooHtml(html: string): HoldingWeightRow[] {
   return weightsFromHoldingsPayload(out);
 }
 
+/**
+ * trailingEps and forwardEps from the quote page, plus the currency those EPS use.
+ * financialCurrency is the reporting currency of both EPS fields.
+ * quoteCurrency is the trading currency and can differ (GBp quote, USD EPS).
+ */
+export function yahooEpsContext(html: string, symbol: string): {
+  trailing: number | null;
+  forward: number | null;
+  financialCurrency: string | null;
+  quoteCurrency: string | null;
+} {
+  const pair = epsPairFromYahooHtml(html);
+  const text = unescapeYahooHtml(html);
+  const fin = text.match(/"financialCurrency":"([A-Za-z]{3})"/);
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const quote = text.match(new RegExp(`"currency":"([A-Za-z]{3})","symbol":"${escaped}"`));
+  return {
+    trailing: pair.trailing,
+    forward: pair.forward,
+    financialCurrency: fin?.[1] ?? null,
+    quoteCurrency: quote?.[1] ?? null,
+  };
+}
+
 /** trailingEps und forwardEps aus der eingebetteten Quote-Summary der Quote-Seite. */
 export function epsPairFromYahooHtml(html: string): { trailing: number | null; forward: number | null } {
   if (!html) return { trailing: null, forward: null };
@@ -324,10 +377,9 @@ export function epsPairFromYahooHtml(html: string): { trailing: number | null; f
   return { trailing: read("trailingEps"), forward: read("forwardEps") };
 }
 
-/** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
-export function nextConsensusEps(raw: unknown, asOf: string): { date: string; eps: number } | null {
-  if (!Array.isArray(raw)) return null;
-  const rows: { date: string; eps: number }[] = [];
+function consensusRows(raw: unknown): { date: string; eps: number; currency: string | null }[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: { date: string; eps: number; currency: string | null }[] = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const r = row as Record<string, unknown>;
@@ -336,10 +388,93 @@ export function nextConsensusEps(raw: unknown, asOf: string): { date: string; ep
       .map(v => (typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN))
       .find(v => Number.isFinite(v) && v > 0);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
-    rows.push({ date, eps });
+    const currencyRaw = r.currency ?? r.reportedCurrency ?? r.epsCurrency;
+    const currency = typeof currencyRaw === "string" && currencyRaw.trim() ? currencyRaw.trim() : null;
+    rows.push({ date, eps, currency });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
-  return rows.find(r => r.date >= asOf) ?? null;
+  return rows;
+}
+
+export function horizonDays(from: string, to: string): number {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000;
+}
+
+/** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
+export function nextConsensusEps(raw: unknown, asOf: string): { date: string; eps: number } | null {
+  const row = consensusRows(raw).find(r => r.date >= asOf);
+  return row ? { date: row.date, eps: row.eps } : null;
+}
+
+/**
+ * The one-year consensus is the soonest fiscal year that still ends at least
+ * minHorizonDays ahead. A nearer stub is the current year. A lone row past
+ * annualizeAfterDays stays here; annualizedFwdPct compresses it.
+ */
+export function consensusForOneYear(raw: unknown, asOf: string): { date: string; eps: number; currency: string | null; horizonDays: number } | null {
+  const rows = consensusRows(raw)
+    .filter(row => row.date >= asOf)
+    .map(row => ({ ...row, horizonDays: horizonDays(asOf, row.date) }));
+  if (!rows.length) return null;
+  return rows.find(row => row.horizonDays >= FORWARD_HORIZON.minHorizonDays) ?? rows[0];
+}
+
+/** CAGR onto oneYearDays when the fiscal year ends past annualizeAfterDays. */
+export function annualizedFwdPct(consensus: number, ttm: number, days: number): { gFwdPct: number; annualized: boolean } {
+  const plain = (consensus / ttm - 1) * GROWTH_GAP_PARAMS.percentScale;
+  if (!(days > FORWARD_HORIZON.annualizeAfterDays) || !(ttm > 0) || !(consensus > 0)) {
+    return { gFwdPct: plain, annualized: false };
+  }
+  const years = days / FORWARD_HORIZON.oneYearDays;
+  return {
+    gFwdPct: ((consensus / ttm) ** (1 / years) - 1) * GROWTH_GAP_PARAMS.percentScale,
+    annualized: true,
+  };
+}
+
+function majorCurrency(amount: number, code: string): { amount: number; code: string } {
+  const trimmed = code.trim();
+  if (trimmed === "GBp" || trimmed === "GBX") {
+    return { amount: amount / EPS_CURRENCY.pencePerPound, code: "GBP" };
+  }
+  return { amount, code: trimmed.toUpperCase() };
+}
+
+/**
+ * Put consensus into the TTM currency. Same code, or GBp versus GBP, needs no FX table.
+ * Differing majors need usdPerUnit (units of that currency for 1 USD, USD itself is 1).
+ */
+export function alignConsensusToTtm(
+  consensus: number,
+  consensusCcy: string | null,
+  ttm: number,
+  ttmCcy: string | null,
+  usdPerUnit: Record<string, number> | null,
+): { consensus: number; ttm: number; currency: string; note: string } | { error: string } {
+  if (!consensusCcy || !ttmCcy) return { error: "Währung fehlt auf einer EPS-Seite" };
+  const cons = majorCurrency(consensus, consensusCcy);
+  const trail = majorCurrency(ttm, ttmCcy);
+  if (cons.code === trail.code) {
+    const scaled = consensusCcy.trim() !== ttmCcy.trim();
+    return {
+      consensus: cons.amount,
+      ttm: trail.amount,
+      currency: cons.code,
+      note: scaled ? `${consensusCcy} und ${ttmCcy} auf ${cons.code} (pencePerPound ${EPS_CURRENCY.pencePerPound})` : cons.code,
+    };
+  }
+  const rates: Record<string, number> | null = usdPerUnit ? { USD: 1, ...usdPerUnit } : null;
+  const from = rates ? rates[cons.code] : undefined;
+  const to = rates ? rates[trail.code] : undefined;
+  if (from == null || to == null || !(from > 0) || !(to > 0)) {
+    return { error: `keine FX für ${cons.code}→${trail.code}` };
+  }
+  return {
+    consensus: (cons.amount / from) * to,
+    ttm: trail.amount,
+    currency: trail.code,
+    note: `${cons.code}→${trail.code} via USD (Frankfurter/ECB)`,
+  };
 }
 
 function median(xs: number[]): number {
@@ -653,7 +788,16 @@ export interface HoldingGrowthRow {
 }
 
 export type WeightedForward =
-  | { available: true; gFwdPct: number; fundFraction: number | null; used: string[]; formula: string; note: string }
+  | {
+      available: true;
+      gFwdPct: number;
+      fundFraction: number | null;
+      used: string[];
+      dropped: string[];
+      formula: string;
+      note: string;
+      coverageWarn: string | null;
+    }
   | { available: false; reason: string };
 
 function deFixed(v: number, digits: number): string {
@@ -661,16 +805,38 @@ function deFixed(v: number, digits: number): string {
   return sign + Math.abs(v).toFixed(digits).replace(".", ",");
 }
 
+function robustZ(values: number[]): number[] {
+  const med = median(values);
+  const mad = median(values.map(value => Math.abs(value - med)));
+  if (!(mad > 0)) return values.map(value => value === med ? 0 : Number.POSITIVE_INFINITY);
+  return values.map(value => FORWARD_OUTLIER.madScale * (value - med) / mad);
+}
+
 /**
  * Gewichtetes Mittel. Ein Holding ohne g zählt nicht als 0.
- * Die Veröffentlichung scheitert, wenn das belegte Gewicht nicht breiter ist als die größte Position.
+ * Ab minNames fliegen Ausreißer über robustZMax heraus, die Gewichte werden neu normiert.
+ * Die Veröffentlichung scheitert, wenn das belegte Gewicht nicht breiter ist als die größte Position
+ * oder die Deckung unter minCoverage liegt. Darunter warnCoverage bleibt der Wert, mit Hinweis.
  * Der nicht gelistete Rest des Fonds ist keine einzelne Aktie und kippt die Regel nicht.
  */
 export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForward {
   const listed = rows.filter(r => Number.isFinite(r.weight) && r.weight > 0);
   if (!listed.length) return { available: false, reason: "n/a — Holdings ohne positives Gewicht" };
-  const used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
+  let used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
   if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
+  const dropped: string[] = [];
+  if (used.length >= FORWARD_OUTLIER.minNames) {
+    const z = robustZ(used.map(row => row.gFwdPct as number));
+    const kept: HoldingGrowthRow[] = [];
+    used.forEach((row, index) => {
+      if (Math.abs(z[index]) > FORWARD_OUTLIER.robustZMax) dropped.push(row.symbol);
+      else kept.push(row);
+    });
+    used = kept;
+  }
+  if (!used.length) {
+    return { available: false, reason: `n/a — alle Holdings über robustZMax ${FORWARD_OUTLIER.robustZMax}` };
+  }
   const included = used.reduce((s, r) => s + r.weight, 0);
   const largest = used.reduce((m, r) => Math.max(m, r.weight), 0);
   if (!(included > largest)) {
@@ -680,16 +846,28 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   const maxListed = listed.reduce((m, r) => Math.max(m, r.weight), 0);
   const fundFraction = maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? included / 100 : included;
   const coverage = fundFraction <= 1.05 ? fundFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  if (coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.minCoverage) {
+    return {
+      available: false,
+      reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %`,
+    };
+  }
+  const outlierNote = dropped.length ? `, Ausreißer robustZMax ${FORWARD_OUTLIER.robustZMax}: ${dropped.join(", ")}` : "";
   const note = coverage != null
-    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position`
-    : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position`;
+    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${outlierNote}`
+    : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position${outlierNote}`;
+  const coverageWarn = coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.warnCoverage
+    ? `Hinweis: Deckung ${deFixed(coverage, 1)} % < warnCoverage ${(GROWTH_HOLDINGS_PARAMS.warnCoverage * 100).toFixed(0)} %. g_fwd ist die auf die belegten Namen renormierte Stichprobe, nicht der ganze Fonds.`
+    : null;
   return {
     available: true,
     gFwdPct: g,
     fundFraction: coverage != null ? fundFraction : null,
     used: used.map(r => r.symbol),
+    dropped,
     formula: FORWARD_FORMULA_HOLDINGS,
     note,
+    coverageWarn,
   };
 }
 
