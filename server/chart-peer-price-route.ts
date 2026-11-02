@@ -12,6 +12,9 @@ import { resolveGermanListingDefault } from "./fmp-listing-resolve";
 import { currencyFromTickerSuffix } from "../shared/listing-units";
 import { isGermanXetraTicker } from "./yahoo-fetcher";
 
+/** Peer-Kurs nutzt dasselbe 10Y-Fenster wie der Hauptchart. from/to schneiden die Antwort. */
+const PEER_PRICE_TIMEFRAME = "10Y";
+
 function isPeerSymbol(raw: string): boolean {
   return /^[A-Z0-9.]{1,15}$/.test(raw.trim().toUpperCase());
 }
@@ -125,7 +128,7 @@ export async function loadPeerPrice(symbol: string, from: string, to: string): P
   const failures: string[] = [];
   const history = await fetchDailyHistory({
     symbol,
-    timeframe: "10Y",
+    timeframe: PEER_PRICE_TIMEFRAME,
     fetchFrom: from,
     fmpFetch: async (start, end) => {
       try {

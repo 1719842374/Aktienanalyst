@@ -7,6 +7,8 @@ import { fmpProfile, fmpSearchTicker } from "./fmp";
 export const XETRA_EXCHANGE = /xetra/i;
 /** Obergrenze der Profil-Abrufe je Auflösung. */
 export const MAX_LISTING_CANDIDATES = 8;
+/** Namensabgleich erst ab mehr als 3 Zeichen. Kürzere Reste treffen zu oft zufällig. */
+const NAME_MATCH_MIN_CHARS = 3;
 
 export interface FmpSearchHit {
   symbol: string;
@@ -46,7 +48,7 @@ function isXetra(exchange: string | null): boolean {
 function namesMatch(a: string | null, b: string | null): boolean {
   const left = (a ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const right = (b ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  return left.length > 3 && right.length > 3 && (left.includes(right) || right.includes(left));
+  return left.length > NAME_MATCH_MIN_CHARS && right.length > NAME_MATCH_MIN_CHARS && (left.includes(right) || right.includes(left));
 }
 
 function describe(hit: { symbol: string; exchange: string | null; currency: string | null; isin: string | null }, why: string): string {

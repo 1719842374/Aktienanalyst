@@ -53,6 +53,8 @@ import {
 
 export const FUNDAMENTAL_CACHE_MS = 6 * 60 * 60 * 1000;
 const ROIC_DECIMAL_FIELDS = ["returnOnInvestedCapital"] as const;
+/** ratios.roic ist eine Dezimalquote. |Wert| über 1 wird nicht als Quote gelesen. */
+const ROIC_RATIO_ABS_MAX = 1;
 
 type Row = Record<string, unknown>;
 
@@ -276,7 +278,7 @@ function roicFromRow(row: Row): { value: number | null; field: string | null; no
   if (row.roic != null && row.roic !== "") {
     const raw = finiteNumber(row.roic);
     if (raw == null) return { value: null, field: "roic", note: "n/a — Feld roic nicht numerisch" };
-    if (Math.abs(raw) > 1) {
+    if (Math.abs(raw) > ROIC_RATIO_ABS_MAX) {
       return { value: null, field: "roic", note: "n/a — Feld roic ist keine Dezimalquote (returnOnInvestedCapital fehlt)" };
     }
     const pct = sanitizeRoic(raw * 100);
