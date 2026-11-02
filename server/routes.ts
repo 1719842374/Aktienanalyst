@@ -92,6 +92,7 @@ import { PEER_SET_MIN } from "../shared/peer-material";
 import { PEER_RATING_EXTENSIONS, selectExtendedPeerSet } from "../shared/peer-rating-extensions";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
+import { registerMacroAdaptiveLayerRoute } from "./macro-adaptive-layer-route";
 import { registerRegressionScanRoutes } from "./regression-scan";
 import { thesisStrengthCache, catalystSignature } from "./thesis-strength-cache";
 import { callLLMJson } from "./llm-openrouter";
@@ -569,4 +570,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 21. GET /api/gold/backtest-cross — F10-33, MA-Cross-Backtest auf Yahoo GC=F, nur Anzeige, kein Score.
   (await import("./gold-backtest-cross")).registerGoldBacktestCrossRoute(app);
+
+  // 22. POST /api/macro/adaptive-layer — F9-08/14/18, nur nach dem Knopf, kein Score.
+  registerMacroAdaptiveLayerRoute(app);
 }
