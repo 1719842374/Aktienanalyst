@@ -2,35 +2,51 @@
  * Lädt Kurs, Multpl-YoY, optional FMP-Forward und VIX für die Growth-Karte.
  * Nur Anzeige. Fehlende Quelle → n/a mit Grund, kein Ersatzwert.
  */
-import { isFmpAvailable, fmpAnalystEstimates, fmpIncomeStatement, fmpRatiosTtm } from "./fmp";
+import { isFmpAvailable, fmpIncomeStatement, fmpObserved } from "./fmp";
 import { fetchFredVolSeries } from "./recession-markets";
 import { loadEtfBars } from "./recession-ta-route";
+import { fetchYahooQuoteSummaryResult, type YahooCallDiag } from "./yahoo-fetcher";
 import { ttmEpsFromRatiosTtmRow, epsPrintFromRow } from "../shared/recession-market-charts";
 import {
+  FMP_LEGACY_NOTE,
+  FORWARD_FORMULA_YAHOO_GROWTH,
   GROWTH_BOOKS,
   GROWTH_GAP_PARAMS,
+  GROWTH_HOLDINGS_PARAMS,
   buildGrowthBody,
+  describeAnalystEstimates,
+  describeEarningsRows,
   forwardFromEps,
+  forwardFromYahooQuoteSummary,
   multplGrowthPrints,
   nextConsensusEps,
+  weightsFromHoldingsPayload,
+  weightedHoldingsForward,
   yoyFromAnnualEps,
   type ForwardReading,
   type GrowthBuildInput,
   type GrowthFrequency,
   type GrowthIndex,
   type GrowthPrint,
+  type HoldingGrowthRow,
   type RecessionGrowthBody,
 } from "../shared/recession-growth";
 
 export const MULTPL_GROWTH_URL = "https://www.multpl.com/s-p-500-earnings-growth/table/by-quarter";
 export const MULTPL_GROWTH_SOURCE = "Multpl S&P 500 Earnings Growth (current dollars, quarterly)";
 
+export interface FmpProbeResult {
+  status: number;
+  json: unknown | null;
+  detail: string;
+}
+
 export interface GrowthDeps {
   loadBars: (symbol: string) => Promise<{ bars: { date: string; close: number }[]; source: "fmp" | "yahoo" | null; error: string | null }>;
   fetchMultpl: () => Promise<string | null>;
-  loadEstimates: (symbol: string) => Promise<unknown>;
-  loadTtm: (symbol: string) => Promise<unknown>;
+  probeFmp: (path: string, params: Record<string, string>) => Promise<FmpProbeResult>;
   loadIncome: (symbol: string) => Promise<unknown>;
+  loadYahooSummary: (symbol: string, modules: readonly string[], sink?: YahooCallDiag[]) => Promise<unknown | null>;
   loadVix: (cosd: string) => Promise<{ date: string; value: number }[]>;
   fmpAvailable: boolean;
   today: string;
@@ -57,9 +73,9 @@ export function defaultGrowthDeps(today = new Date().toISOString().slice(0, 10))
   return {
     loadBars: loadEtfBars,
     fetchMultpl: defaultFetchMultpl,
-    loadEstimates: symbol => fmpAnalystEstimates(symbol, 8),
-    loadTtm: symbol => fmpRatiosTtm(symbol),
+    probeFmp: (path, params) => fmpObserved(path, params),
     loadIncome: symbol => fmpIncomeStatement(symbol, 40),
+    loadYahooSummary: (symbol, modules, sink) => fetchYahooQuoteSummaryResult(symbol, modules, sink),
     loadVix: cosd => fetchFredVolSeries("VIXCLS", cosd),
     fmpAvailable: isFmpAvailable(),
     today,
@@ -129,23 +145,227 @@ async function loadRealized(
   };
 }
 
-async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<ForwardReading> {
-  if (!deps.fmpAvailable) return { available: false, reason: "n/a — Forward-Konsens: FMP nicht konfiguriert" };
-  const notes: string[] = [];
-  for (const symbol of GROWTH_BOOKS[index].fmpSymbols) {
-    const estimateCall = `GET /stable/analyst-estimates?symbol=${symbol}&period=annual`;
-    const ttmCall = `GET /stable/ratios-ttm?symbol=${symbol}`;
+function callLabel(path: string, params: Record<string, string>): string {
+  const q = new URLSearchParams(params).toString();
+  return `GET /stable${path}${q ? `?${q}` : ""}`;
+}
+
+function memoProbe(probe: GrowthDeps["probeFmp"]): GrowthDeps["probeFmp"] {
+  const cache = new Map<string, Promise<FmpProbeResult>>();
+  return (path, params) => {
+    const key = `${path}?${new URLSearchParams(params).toString()}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const pending = probe(path, params);
+    cache.set(key, pending);
+    return pending;
+  };
+}
+
+/** Stabiler Konsens. Bei HTTP 402 zusätzlich ohne limit und ohne period, damit das Symbol vom Parameter zu trennen ist. */
+async function probeConsensus(symbol: string, deps: GrowthDeps, notes: string[]): Promise<unknown | null> {
+  const variants: Record<string, string>[] = [
+    { symbol, period: "annual", limit: "8" },
+    { symbol, period: "annual" },
+    { symbol, limit: "8" },
+    { symbol },
+  ];
+  let saw402 = false;
+  for (let i = 0; i < variants.length; i++) {
+    if (i > 0 && !saw402) break;
+    const params = variants[i];
+    const label = callLabel("/analyst-estimates", params);
     try {
-      const consensus = nextConsensusEps(await deps.loadEstimates(symbol), deps.today);
-      const ttm = ttmEpsFromRatiosTtmRow(await deps.loadTtm(symbol));
-      const forward = forwardFromEps(consensus?.eps ?? null, ttm, consensus?.date ?? deps.today, `FMP ${estimateCall} + ${ttmCall}`);
-      if (forward.available) return forward;
-      notes.push(`${symbol}: ${forward.reason.replace(/^n\/a — /, "")}`);
+      const res = await deps.probeFmp("/analyst-estimates", params);
+      const shape = res.status === 200 ? describeAnalystEstimates(res.json, deps.today) : res.detail;
+      notes.push(`${label} HTTP ${res.status || "n/a"}${shape ? `: ${shape}` : ""}`);
+      if (res.status === 402) saw402 = true;
+      else saw402 = false;
+      if (res.status === 200 && nextConsensusEps(res.json, deps.today)) return res.json;
+      if (res.status !== 402) break;
     } catch (err) {
-      notes.push(`${symbol}: ${clip(err)}`);
+      notes.push(`${label} fehlgeschlagen (${clip(err)})`);
+      break;
     }
   }
-  return { available: false, reason: `n/a — Forward-Konsens: ${notes.join("; ")}` };
+  const fin = { symbol, period: "annual", limit: "8" };
+  const finLabel = callLabel("/financial-estimates", fin);
+  try {
+    const res = await deps.probeFmp("/financial-estimates", fin);
+    const shape = res.status === 200 ? describeAnalystEstimates(res.json, deps.today) : res.detail;
+    notes.push(`${finLabel} HTTP ${res.status || "n/a"}${shape ? `: ${shape}` : ""}`);
+    if (res.status === 200 && nextConsensusEps(res.json, deps.today)) return res.json;
+  } catch (err) {
+    notes.push(`${finLabel} fehlgeschlagen (${clip(err)})`);
+  }
+  return null;
+}
+
+async function ttmOf(symbol: string, deps: GrowthDeps, notes: string[]): Promise<number | null> {
+  const label = callLabel("/ratios-ttm", { symbol });
+  try {
+    const res = await deps.probeFmp("/ratios-ttm", { symbol });
+    const ttm = ttmEpsFromRatiosTtmRow(res.json);
+    if (res.status !== 200 || ttm == null) {
+      notes.push(`${label} HTTP ${res.status || "n/a"}: ${res.status === 200 ? "kein netIncomePerShareTTM" : res.detail}`);
+    }
+    return ttm;
+  } catch (err) {
+    notes.push(`${label} fehlgeschlagen (${clip(err)})`);
+    return null;
+  }
+}
+
+function yahooMiss(symbol: string, sink: YahooCallDiag[]): string {
+  const detail = sink.map(d => `${d.stage} ${d.status ?? "-"} ${d.detail}`).join("; ");
+  return detail
+    ? `n/a — Yahoo quoteSummary ${symbol}: ${detail}`
+    : `n/a — Yahoo quoteSummary ${symbol} leer`;
+}
+
+async function yahooForward(symbol: string, deps: GrowthDeps): Promise<ForwardReading> {
+  const source = `Yahoo quoteSummary earningsTrend + defaultKeyStatistics.trailingEps ${symbol} (keyless)`;
+  const sink: YahooCallDiag[] = [];
+  try {
+    const raw = await deps.loadYahooSummary(symbol, ["earningsTrend", "defaultKeyStatistics"], sink);
+    if (!raw) return { available: false, reason: yahooMiss(symbol, sink) };
+    return forwardFromYahooQuoteSummary(raw, deps.today, source);
+  } catch (err) {
+    return { available: false, reason: `n/a — Yahoo earningsTrend ${symbol} fehlgeschlagen (${clip(err)})` };
+  }
+}
+
+async function growthForHolding(
+  symbol: string,
+  deps: GrowthDeps,
+  notes: string[],
+): Promise<{ gFwdPct: number | null; via: string }> {
+  const raw = await probeConsensus(symbol, deps, notes);
+  const consensus = raw ? nextConsensusEps(raw, deps.today) : null;
+  let yahooHit: ForwardReading | null = null;
+  const yahooOnce = async () => {
+    if (!yahooHit) yahooHit = await yahooForward(symbol, deps);
+    return yahooHit;
+  };
+  if (consensus) {
+    const ttm = await ttmOf(symbol, deps, notes);
+    if (ttm != null) {
+      const forward = forwardFromEps(consensus.eps, ttm, consensus.date, "FMP");
+      if (forward.available) return { gFwdPct: forward.gFwdPct, via: "FMP" };
+      notes.push(`${symbol}: ${forward.reason}`);
+    } else {
+      const yahooTtm = await yahooOnce();
+      if (yahooTtm.available && yahooTtm.epsTtm != null) {
+        const forward = forwardFromEps(consensus.eps, yahooTtm.epsTtm, consensus.date, "FMP epsAvg + Yahoo trailingEps");
+        if (forward.available) return { gFwdPct: forward.gFwdPct, via: "FMP epsAvg + Yahoo trailingEps" };
+      }
+    }
+  }
+  const yahoo = await yahooOnce();
+  if (yahoo.available) {
+    const via = yahoo.formula === FORWARD_FORMULA_YAHOO_GROWTH ? "Yahoo earningsTrend growth" : "Yahoo earningsTrend";
+    return { gFwdPct: yahoo.gFwdPct, via };
+  }
+  notes.push(`${symbol}: ${yahoo.reason}`);
+  return { gFwdPct: null, via: "" };
+}
+
+async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forward: ForwardReading; trace: string }> {
+  const notes: string[] = [FMP_LEGACY_NOTE];
+  const book = GROWTH_BOOKS[index];
+  const probe = memoProbe(deps.probeFmp);
+  const local: GrowthDeps = { ...deps, probeFmp: probe };
+  if (!deps.fmpAvailable) {
+    notes.push("FMP nicht konfiguriert");
+  } else {
+    for (const symbol of book.fmpSymbols) {
+      const raw = await probeConsensus(symbol, local, notes);
+      const consensus = raw ? nextConsensusEps(raw, deps.today) : null;
+      if (!consensus) continue;
+      const ttm = await ttmOf(symbol, local, notes);
+      const forward = forwardFromEps(
+        consensus.eps,
+        ttm,
+        consensus.date,
+        `FMP ${callLabel("/analyst-estimates", { symbol, period: "annual", limit: "8" })} + ${callLabel("/ratios-ttm", { symbol })}`,
+      );
+      if (forward.available) return { forward, trace: notes.join("; ") };
+      notes.push(`${symbol}: ${forward.reason}`);
+    }
+    const earnLabel = callLabel("/earnings", { symbol: book.etf });
+    try {
+      const earned = await probe("/earnings", { symbol: book.etf });
+      const shape = earned.status === 200 ? describeEarningsRows(earned.json, deps.today) : earned.detail;
+      notes.push(`${earnLabel} HTTP ${earned.status || "n/a"}${shape ? `: ${shape}` : ""}`);
+    } catch (err) {
+      notes.push(`${earnLabel} fehlgeschlagen (${clip(err)})`);
+    }
+    let weights: { symbol: string; weight: number }[] = [];
+    let weightOrigin = "";
+    const holdLabel = callLabel("/etf/holdings", { symbol: book.etf });
+    try {
+      const held = await probe("/etf/holdings", { symbol: book.etf });
+      const parsed = weightsFromHoldingsPayload(held.json).slice(0, GROWTH_HOLDINGS_PARAMS.maxNames);
+      if (held.status === 200 && parsed.length) {
+        weights = parsed;
+        weightOrigin = "FMP /stable/etf/holdings";
+        notes.push(`${holdLabel} HTTP 200, ${parsed.length} Gewichte`);
+      } else {
+        notes.push(`${holdLabel} HTTP ${held.status || "n/a"}: ${held.detail || "keine Gewichte"}`);
+      }
+    } catch (err) {
+      notes.push(`${holdLabel} fehlgeschlagen (${clip(err)})`);
+    }
+    if (!weights.length) {
+      try {
+        const sink: YahooCallDiag[] = [];
+        const yahoo = await deps.loadYahooSummary(book.etf, ["topHoldings"], sink);
+        const parsed = weightsFromHoldingsPayload(yahoo).slice(0, GROWTH_HOLDINGS_PARAMS.maxNames);
+        if (parsed.length) {
+          weights = parsed;
+          weightOrigin = "Yahoo quoteSummary topHoldings";
+          notes.push(`Yahoo topHoldings ${book.etf}: ${parsed.length} Gewichte`);
+        } else {
+          notes.push(sink.length ? yahooMiss(book.etf, sink) : `Yahoo topHoldings ${book.etf}: keine Gewichte`);
+        }
+      } catch (err) {
+        notes.push(`Yahoo topHoldings ${book.etf} fehlgeschlagen (${clip(err)})`);
+      }
+    }
+    if (weights.length) {
+      const rows: HoldingGrowthRow[] = [];
+      const vias = new Set<string>();
+      for (const row of weights) {
+        const grown = await growthForHolding(row.symbol, local, notes);
+        if (grown.via) vias.add(grown.via);
+        rows.push({ symbol: row.symbol, weight: row.weight, gFwdPct: grown.gFwdPct });
+      }
+      const weighted = weightedHoldingsForward(rows);
+      if (weighted.available) {
+        const via = Array.from(vias).join(" + ") || "FMP";
+        return {
+          forward: {
+            available: true,
+            gFwdPct: weighted.gFwdPct,
+            epsConsensus: null,
+            epsTtm: null,
+            asOf: deps.today,
+            source: `${via} · Gewichte ${weightOrigin} · ${weighted.note} · ${weighted.used.join(", ")}`,
+            formula: weighted.formula,
+          },
+          trace: notes.join("; "),
+        };
+      }
+      notes.push(weighted.reason);
+    }
+  }
+  for (const symbol of book.fmpSymbols) {
+    const yahoo = await yahooForward(symbol, deps);
+    if (yahoo.available) return { forward: yahoo, trace: notes.join("; ") };
+    notes.push(`${symbol}: ${yahoo.reason}`);
+  }
+  const reason = `n/a — Forward-Konsens: ${notes.join("; ")}`;
+  return { forward: { available: false, reason }, trace: notes.join("; ") };
 }
 
 export async function loadRecessionGrowth(index: GrowthIndex, deps: GrowthDeps = defaultGrowthDeps()): Promise<RecessionGrowthBody> {
@@ -173,7 +393,8 @@ export async function loadRecessionGrowth(index: GrowthIndex, deps: GrowthDeps =
     realizedSource: realized.source,
     realizedError: realized.error,
     realizedFrequency: realized.frequency,
-    forward,
+    forward: forward.forward,
+    consensusTrace: forward.trace,
     vixPoints: vix.points,
     vixSource: "FRED VIXCLS",
     vixError: vix.error,

@@ -15,6 +15,7 @@ export function resetRecessionGrowthCache(): void {
 }
 
 function worthCaching(body: RecessionGrowthBody): boolean {
+  if (!body.forward.available && /HTTP 429|HTTP 503/.test(body.forward.reason)) return false;
   if (body.realized.length > 0 && body.chart.length > 0) return true;
   return body.chart.length > 0 && !!body.realizedError && /nicht konfiguriert/.test(body.realizedError);
 }

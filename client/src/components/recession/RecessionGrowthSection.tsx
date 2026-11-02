@@ -15,6 +15,7 @@ import {
   GROWTH_BOOKS,
   GROWTH_GAP_PARAMS,
   GROWTH_INDEXES,
+  REALIZED_FORMULA,
   sliceGrowthChart,
   type GapDirection,
   type GapReading,
@@ -83,6 +84,8 @@ function chatFacts(body: RecessionGrowthBody): Record<string, ChatFactValue> {
   }
   facts.gStar = body.gStar.available ? round1(body.gStar.gStarPct) : body.gStar.reason;
   facts.impliedGap = body.impliedGap.available ? round1(body.impliedGap.gapPp) : body.impliedGap.reason;
+  facts.fazit = body.fazit.text;
+  if (body.consensusTrace) facts.konsensSpur = body.consensusTrace.slice(0, 400);
   if (body.vix.available) {
     facts.vixZ = round1(body.vix.z);
     facts.vixSchock = body.vix.shock;
@@ -160,6 +163,9 @@ export function RecessionGrowthSection({ number }: { number: number }) {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-[#a78bfa]" />EPS YoY</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 border-t border-dashed border-[#eab308]" />Median {GROWTH_GAP_PARAMS.medianWindowYears}J</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 border-t border-dashed border-[#64748b]" />±{GROWTH_GAP_PARAMS.coneSigma}σ</span>
+          {gaps?.forward.available && (
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 border-t border-dashed border-[#10b981]" />Forward</span>
+          )}
         </div>
 
         {series && visible.length > 0 && (
@@ -219,6 +225,11 @@ export function RecessionGrowthSection({ number }: { number: number }) {
 
         {gaps && (
           <>
+            <div className="rounded-md border border-border bg-muted/30 px-3 py-2" data-testid="recession-growth-fazit">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Fazit</div>
+              <p className="break-words text-sm text-foreground">{gaps.fazit.text}</p>
+              <p className="break-words text-[11px] text-muted-foreground">{gaps.fazit.formula}</p>
+            </div>
             {gaps.growthGap.available && gaps.growthGap.warn && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-warn">
                 Warnung: |Growth Gap| ≥ {GROWTH_GAP_PARAMS.coneSigma}σ. {gapMeaning(gaps.growthGap.direction)}
@@ -230,7 +241,7 @@ export function RecessionGrowthSection({ number }: { number: number }) {
                 label="Realisiertes EPS-YoY"
                 value={gaps.stats.available ? signedPct(gaps.stats.realizedPct) : gaps.stats.reason}
                 detail={gaps.stats.available
-                  ? `Stand ${gaps.stats.asOf} · Median ${signedPct(gaps.stats.median10y)} · Abstand ${signedPct(gaps.stats.distanceToMedianPp)} · Perzentil ${deNum(gaps.stats.percentile, 1)} % · z ${deNum(gaps.stats.z, 2)}`
+                  ? `${REALIZED_FORMULA} · ${gaps.realizedSource} · Stand ${gaps.stats.asOf} · Median ${signedPct(gaps.stats.median10y)} · Abstand ${signedPct(gaps.stats.distanceToMedianPp)} · Perzentil ${deNum(gaps.stats.percentile, 1)} % · z ${deNum(gaps.stats.z, 2)}`
                   : "n/a"}
               />
               <Reading
@@ -238,7 +249,7 @@ export function RecessionGrowthSection({ number }: { number: number }) {
                 label="Forward-Konsens"
                 value={gaps.forward.available ? signedPct(gaps.forward.gFwdPct) : gaps.forward.reason}
                 detail={gaps.forward.available
-                  ? `g_fwd = Konsens / TTM − 1 · Stand ${gaps.forward.asOf} · ${gaps.forward.source}`
+                  ? `${gaps.forward.formula} · Stand ${gaps.forward.asOf} · ${gaps.forward.source}`
                   : "n/a"}
               />
               <GapCard testId="recession-growth-gap" label="Growth Gap" gap={gaps.growthGap} formula="g_fwd − g_realized" />
@@ -259,6 +270,10 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               />
             </div>
           </>
+        )}
+
+        {gaps?.consensusTrace && (
+          <p className="break-words text-[10px] text-muted-foreground" data-testid="recession-growth-trace">{gaps.consensusTrace}</p>
         )}
 
         <p className="text-[10px] text-muted-foreground" data-testid="recession-growth-sources">

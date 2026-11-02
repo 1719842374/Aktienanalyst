@@ -49,6 +49,25 @@ export const GROWTH_GAP_PARAMS = {
   ranges: GROWTH_RANGES,
 } as const;
 
+/**
+ * Holdings-Konsens. maxNames ist die Länge der Yahoo-Top-Liste und die Obergrenze der FMP-Abfragen.
+ * percentAbove trennt Prozent (8,3) von Fondsanteil (0,083). Beides sind Einheiten, keine Pp-Schwellen.
+ * Veröffentlicht wird nur, wenn das belegte Gewicht breiter ist als die größte einzelne Position.
+ */
+export const GROWTH_HOLDINGS_PARAMS = {
+  maxNames: 10,
+  percentAbove: 1,
+} as const;
+
+export const FORWARD_FORMULA_EPS = "g_fwd = EPS_consensus / EPS_TTM − 1";
+export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i / Σ w) · (EPS_consensus,i / EPS_TTM,i − 1)";
+export const FORWARD_FORMULA_YAHOO_RATIO = "g_fwd = earningsTrend[+1y].avg / trailingEps − 1";
+export const FORWARD_FORMULA_YAHOO_GROWTH = "g_fwd = earningsTrend[+1y].growth (Yahoo-YoY, nicht Konsens/TTM)";
+export const REALIZED_FORMULA = "g_t = EPS_t / EPS_{t−1} − 1";
+export const FAZIT_FORMULA =
+  "(EPS-YoY − Median_10J) / σ_10J und (g_fwd − g_realized) / σ_10J; Bänder nearZeroSigma und coneSigma";
+export const FMP_LEGACY_NOTE = "v3 nicht abgefragt: /api/v3 ist für Abos nach 2025-08-31 Legacy";
+
 export const GSTAR_NA_REASON =
   "n/a — g* = WACC − FCF/EV braucht Index-FCF, EV und eine datengetriebene WACC. Keine gesetzte WACC. Top-Holdings-Aggregation ist eine kostenpflichtige Mehrfachabfrage (braucht Philip)";
 
@@ -94,8 +113,23 @@ export interface PricePoint {
 export type NaReading = { available: false; reason: string };
 
 export type ForwardReading =
-  | { available: true; gFwdPct: number; epsConsensus: number; epsTtm: number; asOf: string; source: string }
+  | {
+      available: true;
+      gFwdPct: number;
+      /** null, wenn der Konsens eine gewichtete Summe ohne ein einziges EPS ist. */
+      epsConsensus: number | null;
+      epsTtm: number | null;
+      asOf: string;
+      source: string;
+      formula: string;
+    }
   | NaReading;
+
+export type SigmaBand = "innerhalb_nearZero" | "zwischen_nearZero_und_cone" | "ausserhalb_cone";
+
+export type GrowthFazit =
+  | { available: true; text: string; realizedBand: SigmaBand; gapBand: SigmaBand | null; formula: string }
+  | { available: false; text: string; realizedBand: null; gapBand: null; formula: string };
 
 export type GStarReading =
   | { available: true; gStarPct: number; asOf: string; source: string }
@@ -154,6 +188,9 @@ export interface RecessionGrowthBody {
   impliedGap: GapReading;
   vix: VixShockReading;
   llm: NaReading;
+  fazit: GrowthFazit;
+  /** Jeder Versuch des Forward-Konsens, inklusive HTTP-Status. Leer nur bei einem leeren Fehlerkörper. */
+  consensusTrace: string;
   sources: string[];
 }
 
@@ -250,6 +287,7 @@ export function forwardFromEps(
     epsTtm: ttm,
     asOf,
     source,
+    formula: FORWARD_FORMULA_EPS,
   };
 }
 
@@ -415,6 +453,275 @@ export function sliceGrowthChart(points: GrowthChartPoint[], range: GrowthRange,
   }
 }
 
+const EPS_FIELD_KEYS = ["epsAvg", "estimatedEpsAvg", "estimatedEpsDiluted", "estimatedEps"] as const;
+
+function finiteField(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
+export function positiveEpsField(row: Record<string, unknown>): number | null {
+  for (const key of EPS_FIELD_KEYS) {
+    const n = finiteField(row[key]);
+    if (n != null && n > 0) return n;
+  }
+  return null;
+}
+
+/** Zeilenzahl und ob ein künftiges epsAvg da ist. Steht im n/a-Grund, wenn der Konsens fehlt. */
+export function describeAnalystEstimates(raw: unknown, asOf: string): string {
+  if (!Array.isArray(raw)) return raw == null ? "leer" : "Antwort ist kein Array";
+  if (raw.length === 0) return "0 Zeilen";
+  let withEps = 0;
+  let future = 0;
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const date = String(r.date ?? "").slice(0, 10);
+    const eps = positiveEpsField(r);
+    if (eps != null) withEps++;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && date >= asOf && eps != null) future++;
+  }
+  const base = `${raw.length} Zeilen, ${withEps} mit epsAvg, ${future} künftige Konsenszeilen ab ${asOf}`;
+  if (withEps > 0) return base;
+  const keys = new Set<string>();
+  for (const row of raw.slice(0, 3)) {
+    if (!row || typeof row !== "object") continue;
+    for (const key of Object.keys(row as Record<string, unknown>)) {
+      if (/eps|earn/i.test(key)) keys.add(key);
+    }
+  }
+  return `${base}${keys.size ? `, EPS-Felder: ${Array.from(keys).join(", ")}` : ", keine EPS-Felder"}`;
+}
+
+/** /stable/earnings liefert Berichtstermine. Ein Quartals-epsEstimated ist kein Jahreskonsens. */
+export function describeEarningsRows(raw: unknown, asOf: string): string {
+  if (!Array.isArray(raw)) return "Antwort ist kein Array";
+  let future = 0;
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const date = String(r.date ?? "").slice(0, 10);
+    const est = finiteField(r.epsEstimated);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && date >= asOf && est != null) future++;
+  }
+  if (future === 0) return `${raw.length} Zeilen, kein zukünftiges epsEstimated`;
+  return `${future} zukünftige epsEstimated. Das sind Berichtstermine, kein Jahreskonsens EPS_consensus/EPS_TTM, deshalb kein g_fwd`;
+}
+
+function yahooRaw(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v && typeof v === "object" && "raw" in v) return finiteField((v as { raw: unknown }).raw);
+  return null;
+}
+
+interface YahooTrendRow {
+  period: string;
+  endDate: string;
+  avg: number | null;
+  growth: number | null;
+}
+
+function readYahooTrend(raw: unknown): YahooTrendRow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const trend = (raw as { earningsTrend?: { trend?: unknown } }).earningsTrend?.trend;
+  if (!Array.isArray(trend)) return [];
+  const out: YahooTrendRow[] = [];
+  for (const row of trend) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const est = r.earningsEstimate;
+    const estObj = est && typeof est === "object" ? est as Record<string, unknown> : {};
+    out.push({
+      period: String(r.period ?? ""),
+      endDate: String(r.endDate ?? "").slice(0, 10),
+      avg: yahooRaw(estObj.avg),
+      growth: yahooRaw(estObj.growth) ?? yahooRaw(r.growth),
+    });
+  }
+  return out;
+}
+
+/**
+ * Yahoo quoteSummary earningsTrend. Bei ETF und Index fehlt das Modul (live geprüft).
+ * +1y-avg / trailingEps ist der Spec-Quotient. Fehlt trailingEps, bleibt das Yahoo-growth-Feld
+ * mit eigener Formel sichtbar, nicht still als Konsens/TTM ausgegeben.
+ */
+export function forwardFromYahooQuoteSummary(raw: unknown, asOf: string, source: string): ForwardReading {
+  if (!raw || typeof raw !== "object") return { available: false, reason: "n/a — Yahoo quoteSummary leer" };
+  const rows = readYahooTrend(raw);
+  if (!rows.length) {
+    return { available: false, reason: "n/a — Yahoo earningsTrend fehlt (bei ETF und Index liefert Yahoo das Modul nicht)" };
+  }
+  const plus = rows.find(r => r.period === "+1y");
+  const current = rows.find(r => r.period === "0y" && (!r.endDate || r.endDate >= asOf));
+  const pick = plus ?? current ?? null;
+  if (!pick) return { available: false, reason: "n/a — Yahoo earningsTrend ohne +1y und ohne laufendes Jahr" };
+  const trailing = yahooRaw((raw as { defaultKeyStatistics?: { trailingEps?: unknown } }).defaultKeyStatistics?.trailingEps);
+  if (pick.avg != null && pick.avg > 0 && trailing != null && trailing > 0) {
+    return {
+      available: true,
+      gFwdPct: (pick.avg / trailing - 1) * GROWTH_GAP_PARAMS.percentScale,
+      epsConsensus: pick.avg,
+      epsTtm: trailing,
+      asOf: pick.endDate || asOf,
+      source,
+      formula: FORWARD_FORMULA_YAHOO_RATIO,
+    };
+  }
+  if (pick.growth != null) {
+    return {
+      available: true,
+      gFwdPct: pick.growth * GROWTH_GAP_PARAMS.percentScale,
+      epsConsensus: pick.avg,
+      epsTtm: trailing,
+      asOf: pick.endDate || asOf,
+      source,
+      formula: FORWARD_FORMULA_YAHOO_GROWTH,
+    };
+  }
+  return { available: false, reason: "n/a — Yahoo earningsTrend ohne avg/trailingEps und ohne growth" };
+}
+
+export interface HoldingWeightRow {
+  symbol: string;
+  weight: number;
+}
+
+/** FMP-Holdings-Array oder Yahoo topHoldings. Gewicht bleibt in der Einheit der Quelle. */
+export function weightsFromHoldingsPayload(raw: unknown): HoldingWeightRow[] {
+  const rows = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray((raw as { holdings?: unknown }).holdings)
+      ? (raw as { holdings: unknown[] }).holdings
+      : raw && typeof raw === "object" && Array.isArray((raw as { topHoldings?: { holdings?: unknown } }).topHoldings?.holdings)
+        ? ((raw as { topHoldings: { holdings: unknown[] } }).topHoldings.holdings)
+        : [];
+  const out: HoldingWeightRow[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const symbol = String(r.symbol ?? r.asset ?? r.assetSymbol ?? "").trim().toUpperCase();
+    if (!symbol || /\s/.test(symbol) || symbol.startsWith("^")) continue;
+    const weight = yahooRaw(r.holdingPercent) ?? yahooRaw(r.weightPercentage) ?? yahooRaw(r.weight) ?? yahooRaw(r.weightPercent);
+    if (weight == null || !(weight > 0)) continue;
+    out.push({ symbol, weight });
+  }
+  out.sort((a, b) => b.weight - a.weight);
+  const seen = new Set<string>();
+  return out.filter(row => (seen.has(row.symbol) ? false : (seen.add(row.symbol), true)));
+}
+
+export interface HoldingGrowthRow {
+  symbol: string;
+  weight: number;
+  gFwdPct: number | null;
+}
+
+export type WeightedForward =
+  | { available: true; gFwdPct: number; fundFraction: number | null; used: string[]; formula: string; note: string }
+  | { available: false; reason: string };
+
+function deFixed(v: number, digits: number): string {
+  const sign = v < 0 ? "−" : "";
+  return sign + Math.abs(v).toFixed(digits).replace(".", ",");
+}
+
+/**
+ * Gewichtetes Mittel. Ein Holding ohne g zählt nicht als 0.
+ * Die Veröffentlichung scheitert, wenn das belegte Gewicht nicht breiter ist als die größte Position.
+ * Der nicht gelistete Rest des Fonds ist keine einzelne Aktie und kippt die Regel nicht.
+ */
+export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForward {
+  const listed = rows.filter(r => Number.isFinite(r.weight) && r.weight > 0);
+  if (!listed.length) return { available: false, reason: "n/a — Holdings ohne positives Gewicht" };
+  const used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
+  if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
+  const included = used.reduce((s, r) => s + r.weight, 0);
+  const largest = used.reduce((m, r) => Math.max(m, r.weight), 0);
+  if (!(included > largest)) {
+    return { available: false, reason: "n/a — belegtes Gewicht ist nicht breiter als die größte Position" };
+  }
+  const g = used.reduce((s, r) => s + r.weight * (r.gFwdPct as number), 0) / included;
+  const maxListed = listed.reduce((m, r) => Math.max(m, r.weight), 0);
+  const fundFraction = maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? included / 100 : included;
+  const coverage = fundFraction <= 1.05 ? fundFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  const note = coverage != null
+    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position`
+    : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position`;
+  return {
+    available: true,
+    gFwdPct: g,
+    fundFraction: coverage != null ? fundFraction : null,
+    used: used.map(r => r.symbol),
+    formula: FORWARD_FORMULA_HOLDINGS,
+    note,
+  };
+}
+
+export function sigmaBand(absZ: number): SigmaBand {
+  if (absZ >= GROWTH_GAP_PARAMS.coneSigma) return "ausserhalb_cone";
+  if (absZ >= GROWTH_GAP_PARAMS.nearZeroSigma) return "zwischen_nearZero_und_cone";
+  return "innerhalb_nearZero";
+}
+
+function bandPhrase(band: SigmaBand): string {
+  switch (band) {
+    case "innerhalb_nearZero":
+      return `innerhalb nearZeroSigma (${GROWTH_GAP_PARAMS.nearZeroSigma}σ)`;
+    case "zwischen_nearZero_und_cone":
+      return `zwischen nearZeroSigma (${GROWTH_GAP_PARAMS.nearZeroSigma}σ) und coneSigma (${GROWTH_GAP_PARAMS.coneSigma}σ)`;
+    case "ausserhalb_cone":
+      return `außerhalb coneSigma (${GROWTH_GAP_PARAMS.coneSigma}σ)`;
+    default: {
+      const neverBand: never = band;
+      return neverBand;
+    }
+  }
+}
+
+function signedDe(v: number, digits: number): string {
+  if (v > 0) return `+${deFixed(v, digits)}`;
+  return deFixed(v, digits);
+}
+
+function gapSentence(direction: GapDirection): string {
+  switch (direction) {
+    case "positiv":
+      return "Markt erwartet mehr Wachstum als zuletzt realisiert";
+    case "negativ":
+      return "Markt erwartet weniger als zuletzt realisiert";
+    case "nahe_null":
+      return "Erwartung und Realität im Takt";
+    default: {
+      const neverDir: never = direction;
+      return neverDir;
+    }
+  }
+}
+
+/** Kurze Einordnung. Schwellen sind nearZeroSigma und coneSigma aus der eigenen 10J-Streuung, keine festen Pp. */
+export function growthFazit(stats: RealizedStats, gap: GapReading): GrowthFazit {
+  if (!stats.available) {
+    return { available: false, text: stats.reason, realizedBand: null, gapBand: null, formula: FAZIT_FORMULA };
+  }
+  const medianZ = (stats.realizedPct - stats.median10y) / stats.std10y;
+  const realizedBand = sigmaBand(Math.abs(medianZ));
+  const side = medianZ >= GROWTH_GAP_PARAMS.nearZeroSigma
+    ? "über"
+    : medianZ <= -GROWTH_GAP_PARAMS.nearZeroSigma
+      ? "unter"
+      : "nahe";
+  const realized = `EPS-YoY ${signedDe(stats.realizedPct, 1)} % liegt ${side} dem ${GROWTH_GAP_PARAMS.medianWindowYears}J-Median ${signedDe(stats.median10y, 1)} % (Abstand ${signedDe(stats.distanceToMedianPp, 1)} Pp, Perzentil ${deFixed(stats.percentile, 1)} %, Median-z ${signedDe(medianZ, 2)}, Band ${bandPhrase(realizedBand)}; Kegel ±${GROWTH_GAP_PARAMS.coneSigma}σ von ${signedDe(stats.coneLow, 1)} % bis ${signedDe(stats.coneHigh, 1)} %).`;
+  if (!gap.available) {
+    return { available: true, text: `${realized} Growth Gap ${gap.reason}`, realizedBand, gapBand: null, formula: FAZIT_FORMULA };
+  }
+  const gapBand = sigmaBand(Math.abs(gap.z));
+  const gapText = `Growth Gap ${signedDe(gap.gapPp, 1)} Pp (z ${signedDe(gap.z, 2)}, Band ${bandPhrase(gapBand)}): ${gapSentence(gap.direction)}.`;
+  return { available: true, text: `${realized} ${gapText}`, realizedBand, gapBand, formula: FAZIT_FORMULA };
+}
+
 export interface GrowthBuildInput {
   index: GrowthIndex;
   price: PricePoint[];
@@ -428,6 +735,7 @@ export interface GrowthBuildInput {
   vixPoints: { date: string; value: number }[];
   vixSource: string;
   vixError: string | null;
+  consensusTrace?: string;
 }
 
 export function buildGrowthBody(input: GrowthBuildInput): RecessionGrowthBody {
@@ -446,6 +754,7 @@ export function buildGrowthBody(input: GrowthBuildInput): RecessionGrowthBody {
     : monthEndCloses(input.price).map(p => ({ date: p.date, close: p.close, yoyPct: null }));
   const sources = [input.priceSource, input.realizedSource, input.forward.available ? input.forward.source : null, vix.available ? vix.source : null]
     .filter((s): s is string => !!s);
+  const fazit = growthFazit(stats, growthGap);
   return {
     index: input.index,
     label: book.label,
@@ -464,6 +773,8 @@ export function buildGrowthBody(input: GrowthBuildInput): RecessionGrowthBody {
     impliedGap,
     vix,
     llm: { available: false, reason: LLM_NA_REASON },
+    fazit,
+    consensusTrace: input.consensusTrace ?? "",
     sources,
   };
 }
@@ -488,6 +799,8 @@ export function emptyGrowthBody(reason: string): RecessionGrowthBody {
     impliedGap: { available: false, reason: GSTAR_NA_REASON },
     vix: na,
     llm: { available: false, reason: LLM_NA_REASON },
+    fazit: { available: false, text: reason, realizedBand: null, gapBand: null, formula: FAZIT_FORMULA },
+    consensusTrace: reason,
     sources: [],
   };
 }
