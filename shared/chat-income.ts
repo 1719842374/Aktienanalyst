@@ -381,6 +381,59 @@ function priorLabel(p: IncomePeriod, kind: "quarter" | "year"): string {
   return kind === "year" ? `FY${p.fiscalYear - 1}` : `${p.fiscalPeriod} FY${p.fiscalYear - 1}`;
 }
 
+/** SEC submissions.fiscalYearEnd ("MMDD", z. B. ORCL "0531"). Ungültig oder fehlend: null. */
+export function secFiscalYearEnd(submissions: unknown): string | null {
+  const v = (submissions as { fiscalYearEnd?: unknown } | null)?.fiscalYearEnd;
+  if (typeof v !== "string" || !/^\d{4}$/.test(v)) return null;
+  const mm = Number(v.slice(0, 2)), dd = Number(v.slice(2));
+  return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31 ? v : null;
+}
+
+function fiscalYearEndDate(year: number, mmdd: string): number {
+  const mm = Number(mmdd.slice(0, 2)) - 1;
+  const lastDay = new Date(Date.UTC(year, mm + 1, 0)).getUTCDate();
+  return Date.UTC(year, mm, Math.min(Number(mmdd.slice(2)), lastDay));
+}
+
+/**
+ * Geschäftsjahr und Quartal aus dem Periodenende und dem Geschäftsjahresende des Unternehmens.
+ * Das Geschäftsjahr heißt nach dem Kalenderjahr, in dem es endet (ORCL: Jun–Aug 2026 → Q1 FY2027);
+ * INCOME_PERIOD_TOLERANCE_DAYS deckt 52/53-Wochen-Jahre ab (AAPL, RL). Das XBRL-Feld fy ist dafür
+ * nicht verlässlich: ORCL meldet für Jun–Aug 2026 fy=2026.
+ */
+export function fiscalPeriodOf(end: string, kind: "quarter" | "year", fiscalYearEnd: string): { fiscalYear: number; fiscalPeriod: string | null; label: string } | null {
+  const t = Date.parse(end);
+  if (!Number.isFinite(t)) return null;
+  const y = new Date(t).getUTCFullYear();
+  const tol = INCOME_PERIOD_TOLERANCE_DAYS * DAY_MS;
+  const fy = [y - 1, y, y + 1].find(c => t <= fiscalYearEndDate(c, fiscalYearEnd) + tol);
+  if (fy == null) return null;
+  if (kind === "year") return { fiscalYear: fy, fiscalPeriod: "FY", label: `FY${fy}` };
+  const startOfYear = fiscalYearEndDate(fy - 1, fiscalYearEnd);
+  const quarter = Math.min(4, Math.max(1, Math.round((t - startOfYear) / DAY_MS / (365.25 / 4))));
+  return { fiscalYear: fy, fiscalPeriod: `Q${quarter}`, label: `Q${quarter} FY${fy}` };
+}
+
+/**
+ * Periodenlabels nach dem Geschäftsjahresende aus den SEC submissions statt nach XBRL fy/fp.
+ * Ohne Geschäftsjahresende bleibt das XBRL-Label und ein Hinweis sagt es.
+ */
+export function withFiscalYearEnd(brief: IncomeStatementBrief, fiscalYearEnd: string | null): IncomeStatementBrief {
+  if (brief.status !== "ok" || !brief.period) return brief;
+  if (!fiscalYearEnd) return { ...brief, notes: [...brief.notes, "Geschäftsjahresende fehlt in den SEC submissions; Periodenlabel laut XBRL (fy/fp)"] };
+  const kind: "quarter" | "year" = brief.form && (INCOME_FORMS_QUARTER as readonly string[]).includes(brief.form) ? "quarter" : "year";
+  const fiscal = fiscalPeriodOf(brief.period.end, kind, fiscalYearEnd);
+  if (!fiscal) return brief;
+  const period: IncomePeriod = { ...brief.period, ...fiscal };
+  const priorPeriod: IncomePeriod | null = brief.priorPeriod
+    ? { ...brief.priorPeriod, fiscalYear: fiscal.fiscalYear - 1, fiscalPeriod: fiscal.fiscalPeriod, label: kind === "year" ? `FY${fiscal.fiscalYear - 1}` : `${fiscal.fiscalPeriod} FY${fiscal.fiscalYear - 1}` }
+    : null;
+  const notes = fiscal.label !== brief.period.label
+    ? [...brief.notes, `Periodenlabel nach Geschäftsjahresende ${fiscalYearEnd.slice(2)}.${fiscalYearEnd.slice(0, 2)}. (XBRL meldet ${brief.period.label})`]
+    : brief.notes;
+  return { ...brief, period, priorPeriod, notes };
+}
+
 /** GuV aus FMP-Quartalszeilen (zweite Quelle). Vorjahr = gleiches Quartal, Geschäftsjahr − 1. */
 export function incomeBriefFromFmp(symbol: string, rows: unknown): IncomeStatementBrief {
   if (!Array.isArray(rows) || !rows.length) return incomeBriefNa(symbol, "n/a — FMP lieferte keine Quartals-GuV");

@@ -6,7 +6,7 @@
  */
 import type { Express, Request, Response } from "express";
 import {
-  incomeBriefFromCompanyFacts, incomeBriefFromFmp, incomeBriefNa, withFilingExplanations,
+  incomeBriefFromCompanyFacts, incomeBriefFromFmp, incomeBriefNa, secFiscalYearEnd, withFilingExplanations, withFiscalYearEnd,
   type IncomeStatementBrief,
 } from "../shared/chat-income";
 import type { SecFiler } from "./sec-edgar";
@@ -61,12 +61,15 @@ async function secBrief(key: string, deps: IncomeBriefDeps): Promise<IncomeState
   const viaAdr = filer.secTicker !== key ? [`SEC-Filer ist ${filer.secTicker} (ADR von ${key})`] : [];
   let url: string | null = null;
   let urlWhy = "n/a — Filing nicht in den SEC submissions";
+  let submissions: unknown = null;
   try {
-    url = deps.filingDocUrl(filer.cik10, await deps.submissions(filer.cik10), base.accession);
+    submissions = await deps.submissions(filer.cik10);
+    url = deps.filingDocUrl(filer.cik10, submissions, base.accession);
   } catch (err) {
     urlWhy = `n/a — SEC submissions (${errText(err)})`;
   }
-  const withUrl: IncomeStatementBrief = { ...base, filingUrl: url, notes: [...viaAdr, ...base.notes] };
+  const fiscal = withFiscalYearEnd(base, secFiscalYearEnd(submissions));
+  const withUrl: IncomeStatementBrief = { ...fiscal, filingUrl: url, notes: [...viaAdr, ...fiscal.notes] };
   if (!url) return withFilingExplanations(withUrl, null, `${urlWhy}; ohne Filing-Text keine Erklärung`);
   try {
     return withFilingExplanations(withUrl, await deps.filingText(url), "n/a — Filing-Text leer");
