@@ -158,6 +158,11 @@ export interface GBMMonteCarloResult {
    * Die Response selbst trägt kein Monte-Carlo-Feld. Bestehende Kennzahlen bleiben dieselben.
    */
   terminalPrices: number[];
+  /**
+   * Handelstage dieser Ziehung, derselbe Wert wie `params.tradingDays`.
+   * Nur durchgereicht, die Schleife bleibt unverändert.
+   */
+  horizonDays: number;
 }
 
 function boxMuller(): number {
@@ -251,6 +256,7 @@ export function gbmMonteCarlo(
     histogram, downsideProb, downsideProb10, downsideProb20,
     analystPTProb, maxDrawdownMean, expectedReturn, paths: samplePaths,
     terminalPrices: finalPrices,
+    horizonDays: tradingDays,
   };
 }
 

@@ -26,6 +26,7 @@ import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
   CONE_FORMULA, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
+  type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
@@ -54,10 +55,10 @@ interface Props {
   rangePresets?: readonly TimeRange[];
   defaultRange?: TimeRange;
   /**
-   * Endkurse der S18-Ziehung aus Dashboard. Die Analyze-Response enthält sie nicht.
-   * null = diese Quelle fehlt, der Kegel geht zu S17 und danach zur Log-Regression.
+   * S18-Ziehung aus Dashboard: Endkurse und der Horizont aus dem Ergebnis.
+   * null = keine Ziehung, der Kegel bleibt beim Katalysator-Horizont und die PoS ist die Log-Regression.
    */
-  monteCarloTerminals?: readonly number[] | null;
+  monteCarlo?: ConeMonteCarlo | null;
 }
 
 const STOCK_RANGE_PRESETS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"] as const;
@@ -185,7 +186,7 @@ export function TechnicalChart({
   extraPanes,
   rangePresets = STOCK_RANGE_PRESETS,
   defaultRange = "1Y",
-  monteCarloTerminals = null,
+  monteCarlo = null,
 }: Props) {
   const narrow = useIsNarrow();
   const stockPlotMinWidth = taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX);
@@ -364,8 +365,8 @@ export function TechnicalChart({
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
     if (!last || !Number.isFinite(last.close) || last.close <= 0) return null;
-    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarloTerminals);
-  }, [showCone, data, aBuilt.points, monteCarloTerminals]);
+    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarlo);
+  }, [showCone, data, aBuilt.points, monteCarlo]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
@@ -1094,7 +1095,7 @@ export function TechnicalChart({
           {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
           {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
           {" "}· 50%-Band und 80%-Band
-          {" "}· {scenarioCone.markers.map(m => `${m.eventLabel} ${m.price != null ? `${ccy}${m.price.toFixed(2)}` : "n/a"} · ${m.posText}${m.fallback ? " · Fallback" : ""}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
+          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${ccy}${m.price.toFixed(2)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
           {" "}· {CONE_SOURCE}
           {" "}· nur Anzeige, kein Score
           <div data-testid="cone-probability-hint">{CONE_PROBABILITY_HINT}</div>
@@ -1387,7 +1388,7 @@ function ConeEndLabels({
             fontSize={priceFontPx}
             fill={markerFill(m.id)}
           >
-            {m.fallback ? `${m.eventLabel} ${m.posText} · Fallback` : `${m.eventLabel} ${m.posText}`}
+            {m.caption}
           </text>
         );
       })}

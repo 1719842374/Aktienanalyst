@@ -98,7 +98,6 @@ export const CONE_EVENT_LABEL = {
 
 export const CONE_POS_SOURCE = {
   monteCarlo: "Monte Carlo S18",
-  catalysts: "Katalysatoren S17",
   regression: "Fallback Log-Regression",
 } as const;
 
@@ -106,8 +105,6 @@ export const CONE_POS_FORMULA = {
   monteCarloBull: "Anteil der S18-Endkurse ≥ Bull-Ziel",
   monteCarloBase: "Anteil der S18-Endkurse im Intervall Base ± 50-%-Halbband (z_inner·σ_η·√H)",
   monteCarloBear: "Anteil der S18-Endkurse ≤ Bear-Ziel",
-  catalystBull: "Summe der positiven Katalysator-PoS (S17) / 100",
-  catalystBear: "Summe der negativen Katalysator-PoS (S17) / 100",
   regression: CONE_FORMULA,
 } as const;
 
@@ -323,8 +320,12 @@ export interface ScenarioMarker {
   sourceLabel: string | null;
   /** Formel genau dieser Zahl. null bei n/a. */
   formula: string | null;
-  /** true nur bei der Log-Regression, nachdem Monte Carlo und Katalysatoren fehlen. */
+  /** true nur bei der Log-Regression, wenn keine S18-Ziehung mit Horizont vorliegt. */
   fallback: boolean;
+  /** Handelstage der S18-Ziehung, nur wenn diese Quelle die Zahl liefert. */
+  shownHorizon: number | null;
+  /** Sichtbarer Text am Kegel, inklusive Horizont bei S18. */
+  caption: string;
   /** null, wenn probability eine Zahl ist. Sonst der n/a-Grund. */
   posReason: string | null;
 }
@@ -384,14 +385,19 @@ export interface ScenarioConeInput {
   probabilityBear: number | null;
   /** Handelstage aus der Response. null = kein Vorlauf, nur der Anker. */
   horizonDays: number | null;
-  /** S17-Katalysatoren. PoS in Prozent. */
+  /** S17 bleibt für den Horizont-Median der Timelines. PoS wird daraus nicht summiert. */
   catalysts?: readonly ConeCatalyst[] | null;
   /**
-   * Endkurse von S18. Die Analyze-Response hat kein Monte-Carlo-Feld;
-   * Dashboard übergibt die Endkurse der einen S18-Ziehung. Stehen sie
-   * doch an der Response (`monteCarlo.terminalPrices`), gehen die vor.
+   * S18-Ziehung. Endkurse allein reichen nicht: ohne horizonDays aus dem
+   * Ergebnis bleibt der Kegel beim Katalysator-Horizont und die PoS fällt
+   * auf die Log-Regression. Kein festes 252 im Kegel.
    */
-  monteCarloTerminals?: readonly number[] | null;
+  monteCarlo?: ConeMonteCarlo | null;
+}
+
+export interface ConeMonteCarlo {
+  terminalPrices?: readonly number[] | null;
+  horizonDays?: number | null;
 }
 
 export interface ConeCatalyst {
@@ -407,6 +413,12 @@ function finiteOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function markerCaption(id: ScenarioMarkerId, posText: string, shownHorizon: number | null, fallback: boolean): string {
+  const horizon = shownHorizon != null ? ` · ${shownHorizon} Handelstage` : "";
+  const fb = fallback ? " · Fallback" : "";
+  return `${CONE_EVENT_LABEL[id]} ${posText}${horizon}${fb}`;
+}
+
 function marker(
   id: ScenarioMarkerId,
   price: number | null,
@@ -415,49 +427,32 @@ function marker(
   sourceLabel: string | null,
   formula: string | null,
   fallback: boolean,
+  shownHorizon: number | null,
 ): ScenarioMarker {
   const usable = price != null && Number.isFinite(price) ? price : null;
   const p = probability != null && Number.isFinite(probability) ? probability : null;
+  const useFallback = p != null && fallback;
+  const horizon = p != null ? shownHorizon : null;
+  const posText = formatPos(p);
   return {
     id,
     name: MARKER_NAME[id],
     price: usable,
     probability: p,
-    posText: formatPos(p),
+    posText,
     eventLabel: CONE_EVENT_LABEL[id],
     sourceLabel: p == null ? null : sourceLabel,
     formula: p == null ? null : formula,
-    fallback: p != null && fallback,
+    fallback: useFallback,
+    shownHorizon: horizon,
+    caption: markerCaption(id, posText, horizon, useFallback),
     posReason: p == null ? posReason : null,
   };
 }
 
-/** S17-Schnitt wie die Katalysatorliste: negativ über Richtung, Flag, Upside, Sentiment, Tags. */
-function catalystIsNegative(c: ConeCatalyst): boolean {
-  const direction = String(c.direction ?? "").toLowerCase();
-  const flag = String(c.flag ?? "");
-  if (direction === "negative" || direction === "down" || direction === "bearish") return true;
-  if (flag === "▼" || flag.includes("▼")) return true;
-  if (String(c.newsSentiment ?? "").toLowerCase() === "bearish") return true;
-  if (typeof c.bruttoUpside === "number" && Number.isFinite(c.bruttoUpside) && c.bruttoUpside < 0) return true;
-  if (Array.isArray(c.tags) && c.tags.some(t => /downside|negative|bear/i.test(String(t)))) return true;
-  return false;
-}
-
-/** Summe der PoS (Prozent) einer Seite, als Anteil. Keine Seite → null. */
-export function catalystPosShare(catalysts: readonly ConeCatalyst[] | null | undefined, side: "positive" | "negative"): number | null {
-  if (!catalysts || catalysts.length === 0) return null;
-  let sum = 0;
-  let any = false;
-  for (const c of catalysts) {
-    const pos = finiteOrNull(c?.pos);
-    if (pos == null) continue;
-    const negative = catalystIsNegative(c);
-    if (side === "negative" ? !negative : negative) continue;
-    sum += pos / CONE_PARAMS.percent;
-    any = true;
-  }
-  return any ? sum : null;
+function unitProbability(p: number | null): number | null {
+  if (p == null || !Number.isFinite(p) || p < 0 || p > 1) return null;
+  return p;
 }
 
 /** Preisintervall Base ± 50-%-Halbband. σ oder Horizont fehlt → null. */
@@ -573,31 +568,27 @@ export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null
   };
   const prices: Record<ScenarioMarkerId, number | null> = { bull: bullPrice, base: basePrice, bear: bearPrice };
   const band = baseIntervalPrices(basePrice, fit.residualSigma, horizon);
-  const mc = monteCarloScenarioShares(input.monteCarloTerminals, {
+  const mc = monteCarloScenarioShares(input.monteCarlo?.terminalPrices, {
     bull: bullPrice,
     bear: bearPrice,
     baseLow: band.low,
     baseHigh: band.high,
   });
-  const catalystBull = catalystPosShare(input.catalysts, "positive");
-  const catalystBear = catalystPosShare(input.catalysts, "negative");
+  const mcHorizon = input.monteCarlo?.horizonDays != null && input.monteCarlo.horizonDays > 0 ? input.monteCarlo.horizonDays : null;
   const markers = MARKER_ORDER.map(id => {
     const given = explicit[id];
-    if (given != null && Number.isFinite(given)) return marker(id, prices[id], given, null, null, null, false);
-    if (mc[id] != null) {
-      const formula = id === "bull" ? CONE_POS_FORMULA.monteCarloBull : id === "bear" ? CONE_POS_FORMULA.monteCarloBear : CONE_POS_FORMULA.monteCarloBase;
-      return marker(id, prices[id], mc[id], null, CONE_POS_SOURCE.monteCarlo, formula, false);
-    }
-    const catalystShare = id === "bull" ? catalystBull : id === "bear" ? catalystBear : null;
-    if (prices[id] != null && prices[id]! > 0 && catalystShare != null) {
-      const formula = id === "bull" ? CONE_POS_FORMULA.catalystBull : CONE_POS_FORMULA.catalystBear;
-      return marker(id, prices[id], catalystShare, null, CONE_POS_SOURCE.catalysts, formula, false);
+    if (given != null && Number.isFinite(given)) return marker(id, prices[id], given, null, null, null, false, null);
+    const mcShare = unitProbability(mc[id]);
+    if (mcHorizon != null && mcShare != null) {
+      const baseFormula = id === "bull" ? CONE_POS_FORMULA.monteCarloBull : id === "bear" ? CONE_POS_FORMULA.monteCarloBear : CONE_POS_FORMULA.monteCarloBase;
+      return marker(id, prices[id], mcShare, null, CONE_POS_SOURCE.monteCarlo, `${baseFormula} · Horizont ${mcHorizon} Handelstage`, false, mcHorizon);
     }
     const derived = scenarioProbability(id, prices[id], last, fit.slope, fit.residualSigma, horizon);
-    if (derived.probability != null) {
-      return marker(id, prices[id], derived.probability, null, CONE_POS_SOURCE.regression, CONE_POS_FORMULA.regression, true);
+    const reg = unitProbability(derived.probability);
+    if (reg != null) {
+      return marker(id, prices[id], reg, null, CONE_POS_SOURCE.regression, CONE_POS_FORMULA.regression, true, null);
     }
-    return marker(id, prices[id], null, derived.reason, null, null, false);
+    return marker(id, prices[id], null, derived.reason, null, null, false, null);
   });
   return {
     anchorPrice: last,
@@ -624,7 +615,7 @@ export interface ConeAnalysisInput {
   risks?: readonly { expectedDamage?: number | null }[] | null;
   catalysts?: readonly (ConeCatalyst & { timeline?: string | null })[] | null;
   /** Steht nur, wenn die Response selbst Endkurse trägt. Sonst null. */
-  monteCarlo?: { terminalPrices?: readonly number[] | null } | null;
+  monteCarlo?: ConeMonteCarlo | null;
 }
 
 /**
@@ -641,10 +632,18 @@ export function closesUntil(series: readonly { date: string; close: number }[], 
   return slice.map(p => p.close);
 }
 
+function usableMonteCarlo(mc: ConeMonteCarlo | null | undefined): { terminalPrices: readonly number[]; horizonDays: number } | null {
+  const prices = mc?.terminalPrices;
+  const horizon = mc?.horizonDays;
+  if (!prices || prices.length === 0) return null;
+  if (horizon == null || !Number.isFinite(horizon) || horizon <= 0) return null;
+  return { terminalPrices: prices, horizonDays: horizon };
+}
+
 export function scenarioConeFromAnalysis(
   data: ConeAnalysisInput,
   anchor: { date: string; close: number },
-  monteCarloTerminals?: readonly number[] | null,
+  monteCarlo?: ConeMonteCarlo | null,
 ): ScenarioCone | null {
   const ohlcv = data.ohlcvData;
   const series = ohlcv && ohlcv.length > 0 ? ohlcv : (data.historicalPrices ?? []);
@@ -665,8 +664,9 @@ export function scenarioConeFromAnalysis(
     if (any) damage = sum;
   }
   const timelines = Array.isArray(data.catalysts) ? data.catalysts.map(c => c?.timeline) : [];
-  const fromResponse = data.monteCarlo?.terminalPrices;
-  const terminals = fromResponse && fromResponse.length > 0 ? fromResponse : (monteCarloTerminals ?? null);
+  const fromResponse = usableMonteCarlo(data.monteCarlo);
+  const fromSection = usableMonteCarlo(monteCarlo);
+  const chosen = fromResponse ?? fromSection;
   return buildScenarioCone({
     closes: closes.length > 0 ? closes : [anchor.close],
     anchorPrice: anchor.close,
@@ -674,13 +674,13 @@ export function scenarioConeFromAnalysis(
     gStarPct: gStar,
     forwardConsensusPrice: finiteOrNull(data.analystPT?.median),
     expectedDamagePct: damage,
-    // Kein Bull/Base/Bear-PoS-Feld in StockAnalysis. Reihenfolge: S18-Endkurse, dann S17-PoS, dann Log-Regression.
+    // Kein Bull/Base/Bear-PoS-Feld in StockAnalysis. S18 nur mit Endkursen und Horizont aus dem Ergebnis, sonst Log-Regression.
     probabilityBull: null,
     probabilityBase: null,
     probabilityBear: null,
-    horizonDays: horizonTradingDays(timelines),
+    horizonDays: chosen ? chosen.horizonDays : horizonTradingDays(timelines),
     catalysts: data.catalysts ?? null,
-    monteCarloTerminals: terminals,
+    monteCarlo: chosen,
   });
 }
 
@@ -704,7 +704,7 @@ function markerPlot(cone: ScenarioCone): Required<Pick<ConePlotFields, "coneBull
   };
   for (const m of cone.markers) {
     if (m.price == null || !Number.isFinite(m.price)) continue;
-    const label = m.fallback ? `${m.eventLabel} ${m.posText} · Fallback` : `${m.eventLabel} ${m.posText}`;
+    const label = m.caption;
     if (m.id === "bull") { blank.coneBull = m.price; blank.coneBullLabel = label; }
     else if (m.id === "base") { blank.coneBase = m.price; blank.coneBaseLabel = label; }
     else { blank.coneBear = m.price; blank.coneBearLabel = label; }

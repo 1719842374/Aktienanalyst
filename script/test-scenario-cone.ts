@@ -210,8 +210,18 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(attachConeSeries(same, null), same);
 }
 
+function assertDisplayedUnit(cone: { markers: { id: string; probability: number | null; posText: string }[] }) {
+  for (const m of cone.markers) {
+    if (m.probability == null) {
+      assert.equal(m.posText, POS_NA);
+      continue;
+    }
+    assert.ok(m.probability >= 0 && m.probability <= 1, `${m.id} ${m.probability} ${m.posText}`);
+  }
+}
+
 // MSFT: letzter Close, Bull = Konsens-Kurs, Base = Close·(1+g*), Bear = Close·(1−Schaden).
-// PoS aus der Log-Regression, nicht 50/30/20 und nicht null, solange Ziel und Historie da sind.
+// Ohne S18-Horizont ist die PoS die Log-Regression und liegt in [0, 1]. Mit S18 übernimmt der Kegel deren Horizont.
 {
   const msft = json("script/fixtures/analysis-MSFT.json");
   const last = msft.historicalPrices[msft.historicalPrices.length - 1];
@@ -234,25 +244,43 @@ assert.equal(conePlotScale(252, 126), (252 + 126) / 252);
   assert.equal(cone.formula, CONE_FORMULA);
   assert.equal(cone.source, CONE_SOURCE);
   assert.equal(cone.bandReason, null);
-  const posSum = msft.catalysts.reduce((s: number, c: { pos: number }) => s + c.pos, 0) / CONE_PARAMS.percent;
-  assert.equal(bull.eventLabel, CONE_EVENT_LABEL.bull);
-  assert.equal(bull.sourceLabel, CONE_POS_SOURCE.catalysts);
-  assert.equal(bull.fallback, false);
-  assert.ok(Math.abs(bull.probability! - posSum) < 1e-9);
-  assert.equal(bull.formula?.includes("S17"), true);
-  for (const m of [base, bear]) {
+  const catalystHorizon = horizonTradingDays(msft.catalysts.map((c: { timeline: string }) => c.timeline));
+  assert.equal(cone.horizonDays, catalystHorizon);
+  assert.notEqual(catalystHorizon, 252);
+  for (const m of cone.markers) {
     const derived = scenarioProbability(m.id, m.price, last.close, cone.driftPerDay, cone.sigmaDaily, cone.horizonDays);
     assert.equal(m.probability, derived.probability);
     assert.equal(m.sourceLabel, CONE_POS_SOURCE.regression);
     assert.equal(m.fallback, true);
-    assert.equal(m.posReason, null);
-    assert.ok(m.posText.endsWith("%"));
+    assert.equal(m.shownHorizon, null);
+    assert.match(m.caption, /Fallback/);
+    assert.doesNotMatch(m.caption, /S17|Katalysator/);
   }
+  assertDisplayedUnit(cone);
   assert.ok(!(cone.markers[0].probability === 0.5 && cone.markers[1].probability === 0.3 && cone.markers[2].probability === 0.2));
-  const withMc = scenarioConeFromAnalysis(msft, last, [100, 600, 700, 800]);
-  assert.equal(withMc!.markers.find(m => m.id === "bull")!.sourceLabel, CONE_POS_SOURCE.monteCarlo);
-  assert.equal(withMc!.markers.find(m => m.id === "bull")!.fallback, false);
-  assert.ok(Math.abs(withMc!.markers.find(m => m.id === "bull")!.probability! - 0.75) < 1e-9);
+  const mcHorizon = (catalystHorizon ?? 0) - 50;
+  assert.ok(mcHorizon > 0 && mcHorizon !== catalystHorizon);
+  const withMc = scenarioConeFromAnalysis(msft, last, { terminalPrices: [100, 600, 700, 800], horizonDays: mcHorizon });
+  assert.ok(withMc);
+  assert.equal(withMc.horizonDays, mcHorizon);
+  assert.equal(withMc.points.length, mcHorizon + 1);
+  const mcBull = withMc.markers.find(m => m.id === "bull")!;
+  assert.equal(mcBull.sourceLabel, CONE_POS_SOURCE.monteCarlo);
+  assert.equal(mcBull.fallback, false);
+  assert.equal(mcBull.shownHorizon, mcHorizon);
+  assert.match(mcBull.caption, new RegExp(`${mcHorizon} Handelstage`));
+  assert.ok(Math.abs(mcBull.probability! - 0.75) < 1e-9);
+  assertDisplayedUnit(withMc);
+  const viaResponse = scenarioConeFromAnalysis(
+    { ...msft, monteCarlo: { terminalPrices: [100, 600, 700, 800], horizonDays: mcHorizon - 10 } },
+    last,
+    { terminalPrices: [1, 2, 3], horizonDays: 10 },
+  );
+  assert.equal(viaResponse!.horizonDays, mcHorizon - 10);
+  assert.equal(viaResponse!.points.length, mcHorizon - 9);
+  const noHorizon = scenarioConeFromAnalysis(msft, last, { terminalPrices: [100, 600, 700, 800], horizonDays: null });
+  assert.equal(noHorizon!.horizonDays, catalystHorizon);
+  assert.equal(noHorizon!.markers.find(m => m.id === "bull")!.sourceLabel, CONE_POS_SOURCE.regression);
   const t = 20;
   assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, cone.driftPerDay!)) < 1e-6);
   assert.ok(Math.abs(cone.points[t].innerHigh - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.inner.z, t, cone.driftPerDay!)) < 1e-6);
@@ -388,7 +416,7 @@ assertSeparated([
   assert.match(ui, /const CONE_VIEWPORT_SCALE = 1/);
   assert.match(ui, /\{CONE_PROBABILITY_HINT\}/);
   assert.match(lib, /Einzelwahrscheinlichkeiten, Summe ≠ 100 %/);
-  assert.match(ui, /m\.eventLabel/);
+  assert.match(ui, /m\.caption/);
   assert.match(lib, /P\(≥ Bull-Ziel\)/);
   assert.match(lib, /P\(Base ± Intervall\)/);
   assert.match(lib, /P\(≤ Bear-Ziel\)/);
