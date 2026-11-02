@@ -6,12 +6,16 @@ import { readFileSync } from "node:fs";
 import {
   EARNINGS_YIELD_FORMULA,
   ROIC_5Y_LABEL,
+  earningsYieldFromTtm,
+  epsNumeratorAt,
   joinFundamentalsOntoPrices,
   rollingRoicSeries,
+  ttmPrintAt,
   type EpsQuarter,
   type RoicPeriod,
 } from "../shared/earnings-yield-roic";
-import { loadEarningsYield, loadRoicSeries, resetFundamentalCacheForTests } from "../server/earnings-yield-roic-route";
+import { loadEarningsYield, resetFundamentalCacheForTests } from "../server/earnings-yield-roic-route";
+import { yahooFetch } from "../server/history-fallback";
 
 let failures = 0;
 function check(label: string, cond: boolean, detail = ""): void {
@@ -114,21 +118,30 @@ const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25
 };
 check("MSFT-Pin 4.058138", Number(pin.MSFT.overallScore).toFixed(6) === "4.058138");
 
-console.log("\n=== Live: MSFT und SAP.DE, 10Y und 3M ===");
+/** Doublecheck: EY darf vom Kehrwert des berichteten KGV höchstens so weit abweichen. */
+const EY_VERSUS_REPORTED_PE_BAND = 0.1;
+const EY_PE_DATES = ["2026-06-30", "2026-08-03", "2026-10-30"] as const;
+
+console.log("\n=== EY gegen 1/KGV, Kurs aus Yahoo, nicht aus einem Festwert ===");
 resetFundamentalCacheForTests();
-for (const symbol of ["MSFT", "SAP.DE"]) {
+for (const symbol of ["MSFT", "ORCL", "SAP.DE"]) {
   const ey = await loadEarningsYield(symbol);
-  const roic = await loadRoicSeries(symbol);
+  const bars = await yahooFetch(symbol, "2026-06-01", "2026-11-03");
   const priceCcy = ey.quarters.find(row => row.currency)?.currency ?? ey.ttmPrints.find(row => row.currency)?.currency ?? null;
-  const rolled = { points: roic.points, formula: roic.formula, label: roic.label, note: roic.note };
-  const ten = joinWindow(["2016-10-24", "2026-11-02"], ey.quarters, rolled, ey.ttmPrints, ey.annualEps, priceCcy);
-  const three = joinWindow(["2026-08-03", "2026-11-02"], ey.quarters, rolled, ey.ttmPrints, ey.annualEps, priceCcy);
-  console.log(`${symbol} 10Y Start 2016-10-24 | EY ${ten[0].earningsYieldPct == null ? "n/a" : ten[0].date} | ROIC ${ten[0].roicPct == null ? "n/a" : ten[0].date}`);
-  console.log(`${symbol} 3M Start 2026-08-03 | EY ${three[0].earningsYieldPct == null ? "n/a" : three[0].date} | ROIC ${three[0].roicPct == null ? "n/a" : three[0].date}`);
-  console.log(`  EY-Quelle: ${ey.source}${ey.note ? ` | ${ey.note}` : ""}`);
-  console.log(`  ROIC-Quelle: ${roic.source}${roic.note ? ` | ${roic.note}` : ""}`);
-  console.log(`  gezeichnet 10Y EY ${ten[0].earningsYieldPct ?? "n/a"} (${ten[0].earningsYieldNote ?? ""}) ROIC ${ten[0].roicPct ?? "n/a"} (${ten[0].roicNote ?? ""})`);
-  console.log(`  gezeichnet 3M EY ${three[0].earningsYieldPct ?? "n/a"} (${three[0].earningsYieldNote ?? ""}) ROIC ${three[0].roicPct ?? "n/a"} (${three[0].roicNote ?? ""})`);
+  for (const date of EY_PE_DATES) {
+    const bar = [...bars].reverse().find(row => row.date <= date);
+    const numerator = epsNumeratorAt(ey.quarters, ey.ttmPrints, ey.annualEps, date);
+    const reported = ttmPrintAt(ey.ttmPrints, date);
+    const yieldHit = numerator.eps != null && bar
+      ? earningsYieldFromTtm(numerator.eps, bar.close, numerator.currency, priceCcy)
+      : { value: null, note: numerator.note };
+    const kgv = reported.eps != null && bar && reported.eps !== 0 ? bar.close / reported.eps : null;
+    const implied = kgv != null && kgv !== 0 ? 100 / kgv : null;
+    const gap = yieldHit.value != null && implied != null && implied !== 0 ? Math.abs(yieldHit.value - implied) / Math.abs(implied) : null;
+    const line = `${symbol} ${date} Kurs ${bar?.close?.toFixed(2) ?? "n/a"} TTM ${numerator.eps?.toFixed(2) ?? "n/a"} EY ${yieldHit.value?.toFixed(2) ?? "n/a"} % KGV ${kgv?.toFixed(2) ?? "n/a"} 1/KGV ${implied?.toFixed(2) ?? "n/a"} % Abweichung ${gap == null ? "n/a" : `${(gap * 100).toFixed(1)} %`} ${numerator.note ?? ""}`;
+    console.log(line);
+    check(`${symbol} ${date} EY nahe 1/KGV`, gap != null && gap < EY_VERSUS_REPORTED_PE_BAND, line);
+  }
 }
 
 if (failures > 0) {
