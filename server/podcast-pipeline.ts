@@ -94,7 +94,7 @@ export async function runPodcastProbe(deps: {
   progress.push({
     step: "audio",
     status: audio.status,
-    detail: audio.status === "ok" ? "Audio liegt vor" : "kein dokumentierter Sprach-Endpoint",
+    detail: audio.reason,
   });
 
   const remembered = spoken.trim()
