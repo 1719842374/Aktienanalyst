@@ -142,7 +142,7 @@ const FLAG_TEXT: Record<string, string> = {
 /** Dieselben Knöpfe wie die Technische Analyse. Hashrate ist kalendertäglich, der Schnitt bleibt in Kalendertagen. */
 export type MinerTimeRange = BtcTaRange;
 const RANGE_DAYS: Record<Exclude<MinerTimeRange, "Max">, number> = {
-  "3M": 90, "6M": 180, "1Y": 365, "3Y": 1095, "5Y": 1825, "10Y": 3653,
+  "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825, "10Y": 3653,
 };
 
 /**

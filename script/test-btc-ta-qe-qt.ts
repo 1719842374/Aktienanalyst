@@ -3,9 +3,9 @@
  * Dividende n/a. Pins und die drei Blobs bleiben.
  * Ausführen: npx tsx --tsconfig script/tsconfig.jsx.json script/test-btc-ta-qe-qt.ts
  */
+import React, { createElement } from "react";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildBiasDecision } from "../shared/bias-fixes";
 import { goldQeQtView } from "../shared/gold-qe-qt";
@@ -27,6 +27,8 @@ import {
   qeQtUnavailableText,
   useQeQtOverlay,
 } from "../client/src/components/qeQtBands";
+
+(globalThis as any).React = React;
 
 let failed = 0;
 const check = (name: string, ok: boolean, info?: unknown) => {
@@ -81,12 +83,12 @@ for (const range of BTC_TA_RANGES) {
 const dash = readFileSync("client/src/pages/BTCDashboard.tsx", "utf8");
 check("Dashboard nutzt den gemeinsamen Hook, nicht eine zweite goldQeQtView-Kopie",
   dash.includes("useQeQtOverlay") && dash.includes("qeQtBandNodes") && !dash.includes("function goldQeQtView") && !dash.includes("changeWindowDays"));
-check("Preset-Knöpfe ohne 2Y", dash.includes("BTC_TA_RANGES.map") && !dash.includes('["3M", "6M", "1Y", "2Y", "3Y", "5Y"]'));
+check("Preset-Knöpfe enthalten 2Y", (BTC_TA_RANGES as readonly string[]).includes("2Y") && BTC_TA_CUTOFF["2Y"] === 504 && dash.includes("BTC_TA_RANGES.map"));
 check("MA50/MA200 verbinden keine Lücken", dash.includes("connectNulls={!sma}"));
 check("Dividenden-Chip ist der n/a-Baustein", dash.includes("<BtcDividendNa"));
 
 const miner = readFileSync("client/src/components/sections/Section13Miner.tsx", "utf8");
-check("Miner teilt die Knopfleiste und kennt Max", miner.includes("BTC_TA_RANGES.map") && miner.includes('timeRange === "Max"'));
+check("Miner teilt die Knopfleiste und kennt 2Y und Max", miner.includes("BTC_TA_RANGES.map") && miner.includes('"2Y": 730') && miner.includes('timeRange === "Max"'));
 
 const points = Array.from({ length: 220 }, (_, i) => ({
   date: day(i),

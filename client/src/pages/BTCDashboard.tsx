@@ -1279,7 +1279,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // Format helpers
   const formatDate = (date: string) => {
     const parts = date.split("-");
-    if (timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") {
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") {
       return `${parts[1]}/${parts[0].slice(2)}`;
     }
     return `${parts[1]}/${parts[2]}`;

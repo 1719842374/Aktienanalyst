@@ -2,7 +2,7 @@
  * BTC-Zeitfenster der Technischen Analyse.
  * Dieselbe Handelstage-Zählung wie TechnicalChart TIME_RANGE_CUTOFF (#428):
  * letzte N Bars, nicht Kalendertage ab heute. Max ist die ganze Reihe.
- * 2Y gibt es hier nicht.
+ * 2Y = 504, wie TechnicalChart TIME_RANGE_CUTOFF.
  *
  * Die SMA liegt schon auf der vollen Reihe (btcAnalysis calcSMA, Vorlauf
  * vor dem Schnitt). Angezeigt wird nur das Fenster. Fehlen vor dem ersten
@@ -12,6 +12,7 @@ export const BTC_TA_CUTOFF = {
   "3M": 63,
   "6M": 126,
   "1Y": 252,
+  "2Y": 504,
   "3Y": 756,
   "5Y": 1260,
   "10Y": 2520,
@@ -20,7 +21,7 @@ export const BTC_TA_CUTOFF = {
 
 export type BtcTaRange = keyof typeof BTC_TA_CUTOFF;
 
-export const BTC_TA_RANGES = ["3M", "6M", "1Y", "3Y", "5Y", "10Y", "Max"] as const satisfies readonly BtcTaRange[];
+export const BTC_TA_RANGES = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const satisfies readonly BtcTaRange[];
 
 /** Wie TechnicalChart isHistoryTruncated: 95 %, weil die Barzahl je Jahr schwankt. */
 export const BTC_TA_COVERAGE = 0.95;
