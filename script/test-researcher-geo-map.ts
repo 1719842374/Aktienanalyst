@@ -251,7 +251,16 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   assert.ok(standortLine, "Zählzeile Standorte fehlt");
   assert.match(standortLine[0], /minerSites\.length/);
   assert.doesNotMatch(standortLine[0], /regions/);
-  assert.match(panel, /minerSites\.map/);
+  // Blasen kommen aus minerSites, nicht aus den leeren regions.
+  // Ohne Koordinate (Vega) filtert die Zeichenfunktion vor dem map, sonst würde ein Pin bei null entstehen.
+  assert.match(panel, /const drawable = minerSites\.filter/);
+  assert.match(panel, /typeof site\.lat === "number"/);
+  assert.match(panel, /typeof site\.lon === "number"/);
+  assert.match(panel, /Number\.isFinite\(site\.lat\)/);
+  assert.match(panel, /Number\.isFinite\(site\.lon\)/);
+  assert.match(panel, /return drawable\.map\(site => \(\{ site, dx:/);
+  assert.match(panel, /<GeoMinerBubbles minerSites=\{minerSites\}/);
+  assert.doesNotMatch(panel, /minerSites\.map/);
   assert.doesNotMatch(panel, /minerData\.regions\.map/);
   assert.match(panel, /function minerBubbleRadius/);
   assert.match(panel, /bubble\?\.radiusPx/);
@@ -266,8 +275,14 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     return typeof radiusPx === "number" && Number.isFinite(radiusPx) ? radiusPx : MINER_MAP_RADIUS.naPx;
   };
   const proj = geoEqualEarth().translate([400, 200]).scale(160);
-  const placed = decorated.filter(site => typeof site.lat === "number" && typeof site.lon === "number");
-  assert.ok(placed.length < decorated.length, "Vega ohne Koordinate bleibt ohne Pin");
+  const hasPin = (site: { lat: number | null; lon: number | null }) =>
+    typeof site.lat === "number" && typeof site.lon === "number" && Number.isFinite(site.lat) && Number.isFinite(site.lon);
+  const placed = decorated.filter(hasPin);
+  const unplaced = decorated.filter(site => !hasPin(site));
+  assert.deepEqual(unplaced.map(site => site.id), ["us-tx-vega"]);
+  assert.ok(placed.some(site => site.id === "kz-archive"));
+  assert.ok(placed.some(site => site.id === "us-tx-barber-lake"));
+  assert.equal(placed.length + unplaced.length, decorated.length);
   const points = placed.map(site => {
     const xy = proj([site.lon as number, site.lat as number]);
     assert.ok(xy, site.id);
@@ -666,6 +681,90 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   assert.match(panelSrc, /Quelle: \{goldData\.source\}<\/div>/);
   assert.doesNotMatch(panelSrc, /goldData\.source\}\./);
   assert.match(panelSrc, /spreadMarkerOffsets/);
+}
+
+// Ø 2026-Q2 der Chart-Linie: nur NEM, Barrick, Agnico. mapOnly (KGC, WPM, FNV) zählt nicht mit.
+{
+  const { buildGoldAiscSeries } = await import("../shared/gold-aisc");
+  const file = JSON.parse(readFileSync("server/data/gold-aisc.json", "utf8"));
+  const q2 = file.values.filter((row: { quarter: string }) => row.quarter === "2026-Q2");
+  assert.deepEqual(q2.map((row: { company: string }) => row.company).sort(), ["AEM", "B", "NEM"]);
+  const byCompany = Object.fromEntries(q2.map((row: { company: string; aisc: number }) => [row.company, row.aisc]));
+  const mean = Math.round((byCompany.NEM + byCompany.B + byCompany.AEM) / q2.length);
+  assert.equal(byCompany.NEM, 1621);
+  assert.equal(byCompany.B, 1866);
+  assert.equal(byCompany.AEM, 1459);
+  assert.equal(mean, 1649);
+  const series = buildGoldAiscSeries(file);
+  assert.equal(series.quarters.find(q => q.quarter === "2026-Q2")?.aisc, mean);
+  assert.equal(series.quarters.find(q => q.quarter === "2026-Q2")?.count, 3);
+  const mapOnly = file.mapOnly as { code: string; aisc: number }[];
+  assert.ok(mapOnly.some(row => row.code === "KGC" && row.aisc === 1917));
+  assert.ok(mapOnly.some(row => row.code === "WPM" && row.aisc === 568));
+  assert.ok(mapOnly.some(row => row.code === "FNV" && row.aisc === 347));
+  assert.equal(file.values.some((row: { company: string }) => ["KGC", "WPM", "FNV"].includes(row.company)), false);
+}
+
+// Kette MinerMapPanel → useMinerMap → GET /api/btc/miner-map → buildMinerMap → buildMinerMapBody.
+{
+  const routesSrc = readFileSync("server/routes.ts", "utf8");
+  const minerRoute = readFileSync("server/miner-map.ts", "utf8");
+  const hookSrc = readFileSync("client/src/hooks/useMinerMap.ts", "utf8");
+  const minerPanel = readFileSync("client/src/components/researcher/MinerMapPanel.tsx", "utf8");
+  assert.match(routesSrc, /app\.get\("\/api\/btc\/miner-map"/);
+  assert.match(routesSrc, /res\.json\(await buildMinerMap\(\)\)/);
+  assert.match(minerRoute, /return buildMinerMapBody\(pipeline/);
+  assert.match(hookSrc, /queryKey: \["\/api\/btc\/miner-map"\]/);
+  assert.match(minerPanel, /useMinerMap/);
+  assert.match(minerPanel, /sites\.filter/);
+  assert.match(minerPanel, /drawable\.map/);
+  assert.match(panel, /<MinerMapPanel \/>/);
+  const { buildMinerMap } = await import("../server/miner-map");
+  const { decorateMinerSites } = await import("../shared/miner-map");
+  const app = express();
+  app.get("/api/btc/miner-map", async (_req, res) => {
+    try {
+      res.json(await buildMinerMap({
+        fetchMiner: async () => ({
+          currentHashrateEH: 880,
+          hashprice: 1e-7,
+          breakevenPrice: 39000,
+          puellMultiple: null,
+          hashrateSource: "mempool.space",
+          lastUpdated: "2026-11-01T00:00:00.000Z",
+        }),
+        waitMs: 1000,
+        now: () => Date.parse("2026-11-01T12:00:00.000Z"),
+      }));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "miner-map failed" });
+    }
+  });
+  const server = app.listen(0);
+  try {
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/btc/miner-map`;
+    const response = await fetch(base);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") || "", /json/);
+    assert.equal(body.layer, "miner");
+    assert.equal(body.pipeline.networkHashrateEH, 880);
+    const decorated = decorateMinerSites((await import("../shared/miner-map")).MINER_MAP_SITES);
+    assert.equal(body.sites.length, decorated.length);
+    for (const site of decorated) {
+      const got = body.sites.find((row: { id: string }) => row.id === site.id);
+      assert.ok(got, site.id);
+      assert.equal(got.bubble.radiusPx, site.bubble.radiusPx, site.id);
+    }
+    const vega = body.sites.find((row: { id: string }) => row.id === "us-tx-vega");
+    assert.equal(vega.lat, null);
+    assert.equal(vega.capacityMw.value, 205);
+    assert.equal(body.sites.find((row: { id: string }) => row.id === "us-tx-barber-lake").capacityMw.value, 300);
+    assert.equal(body.countryShares.find((row: { iso2: string }) => row.iso2 === "KZ").sharePct, 13.22);
+    assert.match(body.countryShareNote, /^Schätzung \/ keine Primärquelle/);
+  } finally {
+    server.close();
+  }
 }
 
 console.log("test-researcher-geo-map: OK");
