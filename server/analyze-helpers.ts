@@ -14,7 +14,7 @@ import {
 import { indicatorWarmupFromDate } from "./history-fallback";
 import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
 import { minorUnitInfo, listingCurrencyOf, normalizeListingToUsd } from "../shared/listing-units";
-import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE, type YahooFxPrint } from "./yahoo-fetcher";
+import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
 // #265 v2: SAP.DE/VOW3.DE (FMP 402) über das US-/ADR-Symbol; Bausteine in fmp-adr-map.ts.
 import { adrCandidatesFor, checkAdrPlausibility, detectPerShareUnit, adrBundleHasData, adrBundleToLocalListing, type AdrSourceInfo } from "./fmp-adr-map";
 
@@ -617,10 +617,7 @@ const defaultAdrDeps: FmpViaAdrDeps = {
   fetchAdr: (symbol) => getFmpFallbackData(symbol, { yahooOn402: false }),
   fxToUsd: async (cur) => {
     let fx = await getFxRateToUsd(cur).catch(() => 1);
-    if (!(fx > 0) || fx === 1) {
-      const yahooFx = await fetchYahooFxToUsd(cur).catch(() => null);
-      if (yahooFx) fx = yahooFx.rate;
-    }
+    if (!(fx > 0) || fx === 1) fx = (await fetchYahooFxToUsd(cur).catch(() => null)) ?? fx;
     return fx;
   },
   toUsd: (ticker, data) => listingToUsd(ticker, data, { barsInMajor: true }),
@@ -717,22 +714,12 @@ async function listingToUsd<T extends Parameters<typeof normalizeListingToUsd>[0
   const minor = minorUnitInfo(code);
   const major = minor?.major ?? code.toUpperCase();
   let majorToUsd = await getFxRateToUsd(major).catch(() => 1);
-  let yahooFx: YahooFxPrint | null = null;
   if (!(majorToUsd > 0) || majorToUsd === 1) {
-    // FMP ohne FX-Kurs (getFxRateToUsd → 1) → Yahoo-Tageskurs als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
+    // FMP ohne FX-Kurs (getFxRateToUsd → 1) → Yahoo-FX als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
     const y = await fetchYahooFxToUsd(major).catch(() => null);
-    if (y != null) {
-      console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y.rate} am ${y.date}, Quelle ${y.source}`);
-      majorToUsd = y.rate;
-      yahooFx = y;
-    }
+    if (y != null) { console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y}`); majorToUsd = y; }
   }
   const norm = normalizeListingToUsd(data, majorToUsd, FX_CONVERTIBLE_FIELDS, opts);
-  const listingFx = (norm.profile as { _listingFx?: { sourceNote?: string } } | null | undefined)?._listingFx;
-  if (yahooFx && listingFx) {
-    const stamp = `${yahooFx.source} ${yahooFx.rate} am ${yahooFx.date}`;
-    listingFx.sourceNote = listingFx.sourceNote ? `${listingFx.sourceNote} ${stamp}` : stamp;
-  }
   const fx = (norm.profile as any)?._listingFx;
   if (fx?.converted) console.log(`[FX-LISTING] ${ticker}: ${code} → USD @ ${major}USD ${majorToUsd}${minor ? ` (÷${minor.factor})` : ""}`);
   else if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FX-LISTING] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${code}, Statements USD wie bisher)`);

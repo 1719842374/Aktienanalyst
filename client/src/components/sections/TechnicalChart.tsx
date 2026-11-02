@@ -30,7 +30,7 @@ import {
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, TTM_INCOMPLETE_BADGE, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, QUARTER_ANNUALIZED_BADGE, ROIC_FORMULA, TTM_INCOMPLETE_BADGE, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -2173,7 +2173,7 @@ function FundTooltipRows({ p }: { p: FundFields }) {
       <div className="flex justify-between gap-3"><span className={p._ey != null && p._ey < 0 ? "text-red-500" : "text-sky-500"}>Earnings Yield</span><span className={`font-mono${p._ey != null && p._ey < 0 ? " text-red-500" : ""}`}>{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
       {p._eyEps != null && <div data-testid="earnings-yield-eps">EPS {p._eyEps} am {p._eyEpsDate ?? "—"}</div>}
       {p._eySource ? <div data-testid="earnings-yield-source">Quelle: {p._eySource}</div> : null}
-      {p._eyBadge === TTM_INCOMPLETE_BADGE ? <div data-testid="earnings-yield-incomplete-badge">{TTM_INCOMPLETE_BADGE}</div> : null}
+      {p._eyBadge === TTM_INCOMPLETE_BADGE || p._eyBadge === QUARTER_ANNUALIZED_BADGE ? <div data-testid="earnings-yield-incomplete-badge">{p._eyBadge}</div> : null}
       {p._ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
       {p._eyNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>}
       <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>

@@ -19,6 +19,8 @@ import {
   PERIOD_GAP_FACTOR,
   ROIC_FORMULA,
   ROIC_TTM_LABEL,
+  QUARTER_ANNUALIZATION_FACTOR,
+  QUARTER_ANNUALIZED_BADGE,
   TTM_INCOMPLETE_BADGE,
   TTM_QUARTER_COUNT,
   annualizedRoicSeries,
@@ -124,7 +126,7 @@ const vowJoined = joinFundamentalsOntoPrices(["2026-09-30"], {
 });
 check(
   "VOW3.DE: jüngeres negatives Quartal wird gezeichnet, nicht vom positiven trailing verdeckt",
-  vowJoined[0].earningsYieldPct != null && vowJoined[0].earningsYieldPct < 0 && Math.abs((vowJoined[0].earningsYieldPct ?? 0) - (-9.29)) < 1e-9 && vowJoined[0].earningsYieldEps === -9.29 && vowJoined[0].earningsYieldEpsDate === "2026-09-30" && vowJoined[0].earningsYieldSource === "Yahoo" && vowJoined[0].earningsYieldBadge === "Schätzung / TTM unvollständig" && vowJoined[0].earningsYieldNote?.includes("Quelle: Yahoo") === true && vowJoined[0].earningsYieldNote?.includes("jüngstes Quartals-EPS / Kurs") === true,
+  vowJoined[0].earningsYieldPct != null && vowJoined[0].earningsYieldPct < 0 && Math.abs((vowJoined[0].earningsYieldPct ?? 0) - (-9.29 * QUARTER_ANNUALIZATION_FACTOR)) < 1e-9 && QUARTER_ANNUALIZATION_FACTOR === 4 && vowJoined[0].earningsYieldEps === -9.29 && vowJoined[0].earningsYieldEpsDate === "2026-09-30" && vowJoined[0].earningsYieldSource === "Yahoo" && vowJoined[0].earningsYieldBadge === QUARTER_ANNUALIZED_BADGE && QUARTER_ANNUALIZED_BADGE === "Schätzung: Quartal annualisiert" && vowJoined[0].earningsYieldNote?.includes("Quelle: Yahoo") === true && vowJoined[0].earningsYieldNote?.includes(`jüngstes Quartals-EPS × ${QUARTER_ANNUALIZATION_FACTOR} / Kurs`) === true,
   `${vowJoined[0].earningsYieldPct} ${vowJoined[0].earningsYieldNote}`,
 );
 const vowNegativeTrail = joinFundamentalsOntoPrices(["2026-09-30"], {

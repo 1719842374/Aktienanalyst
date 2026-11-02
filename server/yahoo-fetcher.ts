@@ -20,7 +20,6 @@
 import { minorUnitInfo as chartMetaMinorUnit } from "../shared/listing-units";
 import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
 import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
-import { fxObservationAt, type FxObservation } from "../shared/earnings-yield-roic";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 export const YAHOO_BROWSER_UA = UA;
@@ -243,45 +242,17 @@ async function fetchQuoteSummary(symbol: string): Promise<Partial<YahooSnapshot>
   };
 }
 
-/** Obergrenze wie getFxRateToUsd. Darüber ist der Kurs kein Major→USD. */
-export const FX_TO_USD_MAX_RATE = 1000;
 /**
- * Kalendertage vor dem Stichtag. Deckt ein Wochenende und einen Feiertag,
- * damit der letzte Handelsschluss ein Datum trägt.
- */
-export const FX_TO_USD_LOOKBACK_DAYS = 10;
-
-/** Tageskurs des FX-Ersatzes. Dieselbe Form wie die Chart-Historie in #423: Kurs, Datum, Quelle. */
-export interface YahooFxPrint {
-  rate: number;
-  date: string;
-  source: string;
-}
-
-function shiftIsoDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * DCF-FX: Wechselkurs Major → USD über Yahoo (`EURUSD=X`), nur als Ersatz, wenn FMP keinen FX-Kurs liefert.
- * Tagesreihe wie die Chart-FX-Historie: letzter Schluss am oder vor dem Stichtag, mit Datum und Quelle.
+ * DCF-FX: Wechselkurs Major → USD über Yahoo (EURUSD=X), nur als Ersatz, wenn FMP keinen FX-Kurs liefert
+ * (z. B. Plan ohne Forex). Kurs aus der v8-Chart-Meta über fetchYahooChartMetaWithPrice (#264).
  * Plausibilitätsband wie fmp.ts getFxRateToUsd; sonst null (nie 1 raten).
  */
-export async function fetchYahooFxToUsd(major: string, asOf?: string): Promise<YahooFxPrint | null> {
+export async function fetchYahooFxToUsd(major: string): Promise<number | null> {
   const cur = String(major || "").toUpperCase();
   if (!/^[A-Z]{3}$/.test(cur) || cur === "USD") return null;
-  const day = asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : new Date().toISOString().slice(0, 10);
-  const from = shiftIsoDays(day, -FX_TO_USD_LOOKBACK_DAYS);
-  const pair = `${cur}USD`;
-  const source = `Yahoo ${pair}=X`;
-  const bars = await yahooFetch(`${pair}=X`, from, day).catch(() => []);
-  const history: FxObservation[] = bars
-    .filter(bar => bar.close > 0 && bar.close < FX_TO_USD_MAX_RATE)
-    .map(bar => ({ date: bar.date, rate: bar.close, source }));
-  const hit = fxObservationAt(history, day);
-  return hit ? { rate: hit.rate, date: hit.date, source: hit.source } : null;
+  const meta = await fetchYahooChartMetaWithPrice(`${cur}USD=X`);
+  const rate = meta?.price ?? null;
+  return rate != null && rate > 0 && rate < 1000 ? rate : null;
 }
 
 /**

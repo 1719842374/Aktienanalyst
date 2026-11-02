@@ -32,10 +32,7 @@ globalThis.fetch = (async (input: any) => {
     if (url.includes("fc.yahoo.com")) return new Response("", { status: 404, headers: { "set-cookie": "A3=t; Domain=.yahoo.com" } });
     if (url.includes("getcrumb")) return QS === "empty" ? new Response("", { status: 401 }) : new Response("crumb", { status: 200 });
     const sym = decodeURIComponent((url.match(/\/(?:chart|quoteSummary)\/([^?]+)/) ?? [])[1] ?? "");
-    if (sym === "EURUSD=X") {
-      const ts = Math.floor(Date.parse("2026-11-02T00:00:00Z") / 1000);
-      return json({ chart: { result: [{ meta: { currency: "USD", regularMarketPrice: 1.1 }, timestamp: [ts], indicators: { quote: [{ open: [1.1], high: [1.1], low: [1.1], close: [1.1], volume: [0] }] } }] } });
-    }
+    if (sym === "EURUSD=X") return json({ chart: { result: [{ meta: { currency: "USD", regularMarketPrice: 1.1 }, timestamp: [], indicators: { quote: [{}] } }] } });
     if (sym !== "VOW3.DE" && sym !== "XYZ.DE") return json({ chart: { result: null } }, 404);
     if (url.includes("quoteSummary")) {
       if (QS === "empty") return json({ quoteSummary: { result: null } }, 401);
@@ -157,8 +154,7 @@ globalThis.fetch = (async (input: any) => {
   check("Name aus Chart-Meta", ye.profile.companyName === "Volkswagen AG Vz.", ye.profile.companyName);
   check("Bars × 1.1242", near(ye.ohlcv[0].close, 68.68 * 1.1242, 1e-6));
   // getFxRateToUsd cacht EUR schon (fmp.ts) → Yahoo-FX-Ersatz direkt prüfen.
-  const eurFx = await Y.fetchYahooFxToUsd("EUR", "2026-11-02");
-  check("Yahoo-FX-Ersatz EURUSD=X mit Kurs, Datum und Quelle", eurFx?.rate === 1.1 && eurFx.date === "2026-11-02" && eurFx.source === "Yahoo EURUSD=X" && (await Y.fetchYahooFxToUsd("USD")) === null, JSON.stringify(eurFx));
+  check("Yahoo-FX-Ersatz EURUSD=X (für FMP ohne FX)", (await Y.fetchYahooFxToUsd("EUR")) === 1.1 && (await Y.fetchYahooFxToUsd("USD")) === null);
   Y.clearYahooCache?.();
   const yx: any = await yahooFallbackData("XYZ.DE");
   // Stabschef 18.10.2026 (4): .DE ohne Chart-Meta → Währung null wie #264 (kein Suffix für .DE); Suffix nur für andere Börsen.

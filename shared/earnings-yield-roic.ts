@@ -271,8 +271,17 @@ export function trailingEpsLabel(source: string | null | undefined): string {
 
 /** Badge, wenn das Fenster nicht vollständig ist oder ein Quartal aus dem Jahres-EPS geschätzt wird. */
 export const TTM_INCOMPLETE_BADGE = "Schätzung / TTM unvollständig";
-/** Formel, wenn das jüngste Quartal den Zähler stellt, weil kein vollständiges TTM bis dahin reicht. */
-export const QUARTER_EPS_FORMULA = "jüngstes Quartals-EPS / Kurs";
+/**
+ * Ein einzelnes Quartal auf die TTM-Skala heben. Vier Quartale sind das Jahresfenster,
+ * derselbe Zähler wie eine Quartalssumme. Kein stiller Faktor.
+ */
+export const QUARTER_ANNUALIZATION_FACTOR = 4;
+/** Badge, wenn der Yield aus einem annualisierten Einzelquartal kommt. */
+export const QUARTER_ANNUALIZED_BADGE = "Schätzung: Quartal annualisiert";
+
+export function quarterAnnualizedFormula(factor: number = QUARTER_ANNUALIZATION_FACTOR): string {
+  return `jüngstes Quartals-EPS × ${factor} / Kurs`;
+}
 /** Herkunft eines Quartals, das als Rest aus Jahres-EPS und den bekannten Quartalen steht. */
 export const ANNUAL_RESIDUAL_SOURCE = "Schätzung: Jahres-EPS minus bekannte Quartale";
 
@@ -286,6 +295,9 @@ export interface EpsNumerator {
   formula: string;
   /** true, wenn das Fenster nicht voll ist oder ein Quartal geschätzt wurde. */
   incomplete: boolean;
+  badge: string | null;
+  /** Roh-EPS für den Tooltip, wenn der Zähler annualisiert ist. */
+  displayEps: number | null;
 }
 
 function latestQuarterAt(quarters: EpsQuarter[], asOf: string): EpsQuarter | null {
@@ -412,8 +424,8 @@ export function latestCompleteQuarterSum(quarters: EpsQuarter[], asOf: string): 
   return null;
 }
 
-function numeratorFrom(eps: number | null, currency: string | null, asOf: string | null, source: string | null, formula: string, incomplete: boolean, note: string | null): EpsNumerator {
-  return { eps, currency, asOf, source, formula, incomplete, note };
+function numeratorFrom(eps: number | null, currency: string | null, asOf: string | null, source: string | null, formula: string, incomplete: boolean, note: string | null, badge: string | null = null, displayEps: number | null = null): EpsNumerator {
+  return { eps, currency, asOf, source, formula, incomplete, note, badge, displayEps };
 }
 
 /**
@@ -436,25 +448,28 @@ export function epsNumeratorAt(
   const endsAtLatest = complete != null && latest != null && complete.periodEnd === latest.periodEnd;
   if (complete && endsAtLatest && (agrees || complete.eps < 0 || complete.incomplete)) {
     const badge = complete.incomplete ? TTM_INCOMPLETE_BADGE : null;
-    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null);
+    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null, badge);
   }
   const positiveTrailWouldCover = latest != null && latest.eps < 0 && trail.eps != null && trail.eps > 0 && trail.asOf != null && latest.asOf >= trail.asOf;
   const olderWindow = complete != null && latest != null && latest.eps < 0 && complete.periodEnd < latest.periodEnd;
   if (latest && latest.eps < 0 && (positiveTrailWouldCover || olderWindow || (complete == null && (trail.eps == null || trail.eps > 0)))) {
     const src = latest.source ?? null;
+    const annualized = latest.eps * QUARTER_ANNUALIZATION_FACTOR;
     return numeratorFrom(
-      latest.eps,
+      annualized,
       latest.currency,
       latest.asOf,
       src,
-      QUARTER_EPS_FORMULA,
+      quarterAnnualizedFormula(),
       true,
-      [`EPS ${latest.eps} am ${latest.asOf}`, src ? `Quelle: ${src}` : null, TTM_INCOMPLETE_BADGE].filter((part): part is string => !!part).join(" · "),
+      [`EPS ${latest.eps} am ${latest.asOf}`, src ? `Quelle: ${src}` : null, QUARTER_ANNUALIZED_BADGE].filter((part): part is string => !!part).join(" · "),
+      QUARTER_ANNUALIZED_BADGE,
+      latest.eps,
     );
   }
   if (complete && agrees) {
     const badge = complete.incomplete ? TTM_INCOMPLETE_BADGE : null;
-    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null);
+    return numeratorFrom(complete.eps, complete.currency, complete.asOf, complete.source, EARNINGS_YIELD_FORMULA, complete.incomplete, [complete.note, badge].filter((part): part is string => !!part).join(" · ") || null, badge);
   }
   if (trail.eps != null) {
     const why = reported.eps != null
@@ -766,10 +781,10 @@ export function joinFundamentalsOntoPrices(
         earningsYieldPct = yieldHit.value;
         const bits = [`Formel: ${numerator.formula}`, numerator.note, yieldHit.note].filter((part): part is string => !!part);
         earningsYieldNote = bits.filter((part, index) => bits.indexOf(part) === index).join(" · ") || null;
-        earningsYieldEps = numerator.eps;
+        earningsYieldEps = numerator.displayEps ?? numerator.eps;
         earningsYieldEpsDate = numerator.asOf;
         earningsYieldSource = numerator.source;
-        earningsYieldBadge = numerator.incomplete ? TTM_INCOMPLETE_BADGE : null;
+        earningsYieldBadge = numerator.badge;
       } else {
         const eyHit = asofLatest(ey, row.date, cEy);
         const yieldHit = finitePointNote(eyHit, ey.length > 0, "n/a — keine Earnings-Yield-Punkte", "n/a — noch kein Earnings-Yield-Stichtag");
