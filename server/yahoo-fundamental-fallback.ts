@@ -183,7 +183,7 @@ function quotePageSession(): http2.ClientHttp2Session {
   return client;
 }
 
-function fetchQuoteHtml(symbol: string): Promise<{ status: number | null; html: string | null; error: string | null }> {
+export function fetchYahooQuoteHtml(symbol: string): Promise<{ status: number | null; html: string | null; error: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
     let held = false;
@@ -323,7 +323,7 @@ export async function loadYahooEtfTrailingPe(symbol: string): Promise<YahooTrail
   }
 
   await spaceYahooCall();
-  const page = await fetchQuoteHtml(sym);
+  const page = await fetchYahooQuoteHtml(sym);
   const fromPage = page.html ? trailingPeFromYahooHtml(page.html) : null;
   const htmlDetail = fromPage != null
     ? "ok"

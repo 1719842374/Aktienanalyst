@@ -86,6 +86,61 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
   throw lastErr ?? new Error(`FMP fetch failed: ${path}`);
 }
 
+function redactFmpText(text: string, key: string): string {
+  const stripped = key ? text.split(key).join("") : text;
+  return stripped.replace(/apikey=[^&\s]+/gi, "apikey=").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+/**
+ * Dieselbe Stable-Basis wie fmpFetch, aber mit HTTP-Status und Vendor-Text.
+ * Der Key steht weder im Detail noch in einem Log. Für die Growth-Karte, damit ein 402
+ * vom Symbol oder vom Endpunkt unterscheidbar bleibt, ohne den Score-Pfad zu ändern.
+ */
+export async function fmpObserved(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<{ status: number; json: unknown | null; detail: string }> {
+  const key = getApiKey();
+  if (!key) return { status: 0, json: null, detail: "FMP_API_KEY not set" };
+  const url = new URL(`${FMP_BASE}${path}`);
+  url.searchParams.set("apikey", key);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  let lastStatus = 0;
+  let lastDetail = "";
+  for (let attempt = 0; attempt <= FMP_CONFIG.maxRetries; attempt++) {
+    await spaceOutgoingCall();
+    trackFmpCall(1);
+    try {
+      const resp = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(15000),
+        headers: { "User-Agent": "StockAnalystPro/1.0" },
+      });
+      const text = await resp.text();
+      const detail = redactFmpText(text, key);
+      if ((resp.status === 429 || resp.status === 503) && attempt < FMP_CONFIG.maxRetries) {
+        lastStatus = resp.status;
+        lastDetail = detail;
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      if (!resp.ok) return { status: resp.status, json: null, detail };
+      try {
+        return { status: resp.status, json: JSON.parse(text) as unknown, detail: "" };
+      } catch {
+        return { status: resp.status, json: null, detail: "JSON nicht lesbar" };
+      }
+    } catch (err: any) {
+      const detail = redactFmpText(String(err?.message ?? err), key);
+      if (attempt < FMP_CONFIG.maxRetries && (err?.name === "AbortError" || err?.name === "TimeoutError")) {
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      return { status: lastStatus, json: null, detail: detail || lastDetail || "FMP fetch failed" };
+    }
+  }
+  return { status: lastStatus, json: null, detail: lastDetail || "FMP fetch failed" };
+}
+
 // Cheap guard for /api/analyze — returns true when a full analysis run would
 // exceed the daily budget. isFmpBudgetLow re-uses the same tracker as trackFmpCall.
 export function wouldExceedBudget(callsPerAnalysis = FMP_CONFIG.callsPerAnalysis): boolean {

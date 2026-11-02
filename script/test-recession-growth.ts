@@ -12,14 +12,21 @@ import {
   GROWTH_GAP_PARAMS,
   LLM_NA_REASON,
   buildGrowthBody,
+  describeAnalystEstimates,
   emptyGrowthBody,
+  epsPairFromYahooHtml,
+  FORWARD_FORMULA_YAHOO_HTML,
   forwardFromEps,
+  forwardFromYahooQuoteSummary,
   gapReading,
   growthChartPoints,
+  growthFazit,
+  holdingsFromYahooHtml,
   multplGrowthPrints,
   nextConsensusEps,
   realizedStats,
   sliceGrowthChart,
+  weightedHoldingsForward,
   yoyFromAnnualEps,
   type RecessionGrowthBody,
 } from "../shared/recession-growth";
@@ -66,7 +73,10 @@ await ok("Jahres-YoY überspringt ein fehlendes Jahr und eine nicht positive Bas
 await ok("Forward ist Konsens/TTM − 1, sonst n/a ohne 0", () => {
   const g = forwardFromEps(110, 100, "2026-12-31", "FMP Test");
   assert.equal(g.available, true);
-  if (g.available) assert.ok(Math.abs(g.gFwdPct - 10) < 1e-9);
+  if (g.available) {
+    assert.ok(Math.abs(g.gFwdPct - 10) < 1e-9);
+    assert.match(g.formula, /EPS_consensus \/ EPS_TTM/);
+  }
   const zero = forwardFromEps(10, 0, "2026-12-31", "x");
   assert.equal(zero.available, false);
   assert.match(zero.available ? "" : zero.reason, /nicht positiv/);
@@ -233,6 +243,8 @@ function multplTable(): string {
 await ok("HTTP-Kette: beide Pfade, n/a ohne erfundene Lücke", async () => {
   const express = (await import("express")).default;
   const { registerRecessionGrowthRoutes, resetRecessionGrowthCache } = await import("../server/recession-growth-route");
+  const { setYahooHtmlEnabledForTests } = await import("../server/recession-growth");
+  setYahooHtmlEnabledForTests(false);
   resetRecessionGrowthCache();
   const orig = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL | Request) => {
@@ -272,6 +284,8 @@ await ok("HTTP-Kette: beide Pfade, n/a ohne erfundene Lücke", async () => {
     assert.match(other.priceError ?? "", /unbekannter Index/);
     assert.equal(JSON.stringify(gap.growthGap).includes("\"gapPp\":0"), false);
   } finally {
+    const { setYahooHtmlEnabledForTests } = await import("../server/recession-growth");
+    setYahooHtmlEnabledForTests(true);
     globalThis.fetch = orig;
     await new Promise(resolve => server.close(() => resolve(null)));
   }
@@ -306,6 +320,139 @@ await ok("Karte zeigt den Gap-Grund und kein erfundenes g*", async () => {
   assert.match(html, /braucht Philip/);
   assert.equal(html.includes(">+0,0 %<") || html.includes(">0,0 %<"), false);
   assert.match(html, /data-testid="recession-growth-gap"/);
+  assert.match(html, /data-testid="recession-growth-fazit"/);
+  assert.match(html, /nearZeroSigma|coneSigma/);
+  assert.match(html, /EPS_t \/ EPS_/);
+});
+
+await ok("Yahoo +1y/trailingEps ist der Quotient, fehlendes Modul bleibt n/a", () => {
+  const raw = {
+    defaultKeyStatistics: { trailingEps: { raw: 8.72 } },
+    earningsTrend: { trend: [{ period: "+1y", endDate: "2027-09-30", earningsEstimate: { avg: { raw: 9.5687 }, growth: { raw: 0.0806 } } }] },
+  };
+  const g = forwardFromYahooQuoteSummary(raw, "2026-11-02", "Yahoo Test");
+  assert.equal(g.available, true);
+  if (g.available) {
+    assert.ok(Math.abs(g.gFwdPct - (9.5687 / 8.72 - 1) * 100) < 1e-9);
+    assert.match(g.formula, /trailingEps/);
+  }
+  const missing = forwardFromYahooQuoteSummary({ defaultKeyStatistics: {} }, "2026-11-02", "Yahoo Test");
+  assert.equal(missing.available, false);
+  if (!missing.available) assert.match(missing.reason, /earningsTrend fehlt/);
+  assert.equal(describeAnalystEstimates([], "2026-11-02"), "0 Zeilen");
+  assert.match(describeAnalystEstimates([{ date: "2027-12-31", revenueAvg: 1 }], "2026-11-02"), /keine EPS-Felder/);
+  const html = String.raw`{\"symbol\":\"NVDA\",\"holdingName\":\"Nvidia\",\"holdingPercent\":{\"raw\":0.0836162,\"fmt\":\"8.36%\"}},{\"symbol\":\"AAPL\",\"holdingName\":\"Apple Inc\",\"holdingPercent\":{\"raw\":0.0735303}}`;
+  const rows = holdingsFromYahooHtml(html);
+  assert.deepEqual(rows.map(r => r.symbol), ["NVDA", "AAPL"]);
+  assert.ok(Math.abs(rows[0].weight - 0.0836162) < 1e-9);
+  const pair = epsPairFromYahooHtml(String.raw`\"trailingEps\":{\"raw\":8.72},\"forwardEps\":{\"raw\":9.55226}`);
+  const fromHtml = forwardFromEps(pair.forward, pair.trailing, "2026-11-02", "Yahoo Quote-HTML", FORWARD_FORMULA_YAHOO_HTML);
+  assert.equal(fromHtml.available, true);
+  if (fromHtml.available) {
+    assert.ok(Math.abs(fromHtml.gFwdPct - (9.55226 / 8.72 - 1) * 100) < 1e-9);
+    assert.equal(fromHtml.formula, FORWARD_FORMULA_YAHOO_HTML);
+  }
+});
+
+await ok("ein einzelnes Holding bleibt n/a, zwei Holdings werden gewichtet", () => {
+  const one = weightedHoldingsForward([{ symbol: "AAA", weight: 0.2, gFwdPct: 5 }]);
+  assert.equal(one.available, false);
+  const two = weightedHoldingsForward([
+    { symbol: "AAA", weight: 0.2, gFwdPct: 20 },
+    { symbol: "BBB", weight: 0.1, gFwdPct: 10 },
+  ]);
+  assert.equal(two.available, true);
+  if (two.available) assert.ok(Math.abs(two.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-9);
+});
+
+await ok("Fazit liest Median-z an nearZeroSigma und coneSigma, nicht an festen Pp", () => {
+  const stats = realizedStats(quarterly());
+  assert.equal(stats.available, true);
+  if (!stats.available) return;
+  const calm = growthFazit(stats, gapReading(stats.realizedPct, "", stats));
+  assert.equal(calm.available, true);
+  if (calm.available) {
+    assert.match(calm.text, /nearZeroSigma/);
+    assert.match(calm.text, /coneSigma/);
+    assert.equal(calm.gapBand, "innerhalb_nearZero");
+  }
+  const hot = growthFazit(stats, gapReading(stats.realizedPct + stats.std10y * (GROWTH_GAP_PARAMS.coneSigma + 0.5), "", stats));
+  assert.equal(hot.available, true);
+  if (hot.available) assert.equal(hot.gapBand, "ausserhalb_cone");
+  const missing = growthFazit(stats, { available: false, reason: "n/a — Forward-Konsens: Test" });
+  assert.equal(missing.available, true);
+  if (missing.available) {
+    assert.equal(missing.gapBand, null);
+    assert.match(missing.text, /Forward-Konsens: Test/);
+  }
+});
+
+await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holdings nicht", async () => {
+  const { loadRecessionGrowth } = await import("../server/recession-growth");
+  const probes: string[] = [];
+  const probe = async (path: string, params: Record<string, string>) => {
+    probes.push(`${path}:${params.symbol ?? ""}:${params.period ?? ""}:${params.limit ?? ""}`);
+    const symbol = params.symbol;
+    if (path === "/analyst-estimates" && symbol === "SPY") return { status: 200, json: [], detail: "" };
+    if (path === "/analyst-estimates" && symbol === "^GSPC") return { status: 402, json: null, detail: "Premium Query Parameter: symbol" };
+    if (path === "/financial-estimates") return { status: 402, json: null, detail: "Premium Query Parameter" };
+    if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
+    if (path === "/earnings") return { status: 200, json: [{ date: "2026-12-31", epsEstimated: 2 }], detail: "" };
+    if (path === "/analyst-estimates" && (symbol === "AAA" || symbol === "BBB")) {
+      return { status: 200, json: [{ date: "2027-12-31", epsAvg: symbol === "AAA" ? 12 : 22 }], detail: "" };
+    }
+    if (path === "/ratios-ttm" && (symbol === "AAA" || symbol === "BBB")) {
+      return { status: 200, json: [{ netIncomePerShareTTM: symbol === "AAA" ? 10 : 20 }], detail: "" };
+    }
+    return { status: 404, json: null, detail: "unbekannt" };
+  };
+  const deps = {
+    loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
+    fetchMultpl: async () => multplTable(),
+    probeFmp: probe,
+    loadIncome: async () => [],
+    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "AAA", holdingPercent: { raw: 0.2 } },
+          { symbol: "BBB", holdingPercent: { raw: 0.1 } },
+        ] } };
+      }
+      return { defaultKeyStatistics: {} };
+    },
+    loadVix: async () => [],
+    fmpAvailable: true,
+    today: "2026-11-02",
+  };
+  const mixed = await loadRecessionGrowth("SPY", deps);
+  assert.equal(mixed.forward.available, true);
+  if (mixed.forward.available) {
+    assert.ok(Math.abs(mixed.forward.gFwdPct - (0.2 * 20 + 0.1 * 10) / 0.3) < 1e-6);
+    assert.match(mixed.forward.formula, /Σ/);
+    assert.match(mixed.forward.source, /Yahoo quoteSummary topHoldings/);
+  }
+  assert.match(mixed.consensusTrace, /HTTP 402/);
+  assert.match(mixed.consensusTrace, /Premium Query Parameter/);
+  assert.match(mixed.consensusTrace, /v3 nicht abgefragt/);
+  assert.match(mixed.consensusTrace, /Berichtstermine/);
+  assert.equal(probes.some(p => p.startsWith("/analyst-estimates:^GSPC") && p.endsWith(":")), true);
+  assert.equal(mixed.growthGap.available, true);
+  assert.equal(mixed.fazit.available, true);
+  if (mixed.fazit.available) assert.match(mixed.fazit.text, /Growth Gap/);
+
+  const directProbes: string[] = [];
+  const direct = await loadRecessionGrowth("SPY", {
+    ...deps,
+    probeFmp: async (path, params) => {
+      directProbes.push(path);
+      if (path === "/analyst-estimates" && params.symbol === "SPY") return { status: 200, json: [{ date: "2027-12-31", epsAvg: 110 }], detail: "" };
+      if (path === "/ratios-ttm" && params.symbol === "SPY") return { status: 200, json: [{ netIncomePerShareTTM: 100 }], detail: "" };
+      return { status: 500, json: null, detail: "soll nicht laufen" };
+    },
+  });
+  assert.equal(direct.forward.available, true);
+  if (direct.forward.available) assert.ok(Math.abs(direct.forward.gFwdPct - 10) < 1e-9);
+  assert.equal(directProbes.includes("/etf/holdings"), false);
 });
 
 await ok("Pins und Score-Pfade bleiben", () => {
