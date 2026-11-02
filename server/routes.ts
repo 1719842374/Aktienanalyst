@@ -546,6 +546,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
   (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
+  // GET /api/recession/earnings-growth/:index und /api/recession/growth-gap/:index — nur Anzeige, kein Score.
+  const { registerRecessionGrowthRoutes } = await import("./recession-growth-route");
+  registerRecessionGrowthRoutes(app);
   const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
 
   // 18. GET /api/chat/earnings-brief/:symbol — letzter Earnings Call für den KI-Chat. Kein Score.
