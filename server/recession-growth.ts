@@ -20,6 +20,8 @@ import {
   adjTtmFromEarnings,
   adjTtmFromYahooAdjusted,
   alignConsensusToTtm,
+  completeEpsCurrencies,
+  resolveAdjustedFmpQuarters,
   annualizedFwdPct,
   consensusForOneYear,
   consensusFromYahooAdjusted,
@@ -245,36 +247,38 @@ async function adjTtmOf(symbol: string, deps: GrowthDeps, notes: string[]): Prom
   ttm: number | null;
   currency: string | null;
   cite: string;
+  raw: unknown;
   unusableReason: string | null;
 }> {
   const label = callLabel("/earnings", { symbol });
+  const empty = { ttm: null, currency: null, cite: label, raw: null, unusableReason: null };
   try {
     const res = await deps.probeFmp("/earnings", { symbol });
     if (res.status !== 200) {
       notes.push(`${label} HTTP ${res.status || "n/a"}: ${res.detail}`);
-      return { ttm: null, currency: null, cite: label, unusableReason: null };
+      return empty;
     }
     const parsed = adjTtmFromEarnings(res.json, deps.today);
     const currency = assumedCurrency(symbol, rowCurrency(res.json));
     if (parsed.unusableReason) {
       notes.push(`${label} HTTP 200: ${parsed.unusableReason}`);
-      return { ttm: null, currency, cite: label, unusableReason: parsed.unusableReason };
+      return { ttm: null, currency, cite: label, raw: res.json, unusableReason: parsed.unusableReason };
     }
     if (parsed.adjTtm == null) {
       notes.push(`${label} HTTP 200: ${parsed.quarters.length} gemeldete epsActual, keine ${EPS_BASIS.reportedQuarters}`);
-      return { ttm: null, currency, cite: label, unusableReason: null };
+      return { ttm: null, currency, cite: label, raw: res.json, unusableReason: null };
     }
-    const shown = parsed.adjTtm.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
-    notes.push(`${label} HTTP 200: adjTTM Summe letzter ${EPS_BASIS.reportedQuarters} epsActual = ${shown}`);
+    notes.push(`${label} HTTP 200: ${parsed.quarters.length} gemeldete epsActual`);
     return {
       ttm: parsed.adjTtm,
       currency,
-      cite: `${label} · adjTTM Summe letzter ${EPS_BASIS.reportedQuarters} epsActual = ${shown}`,
+      cite: label,
+      raw: res.json,
       unusableReason: null,
     };
   } catch (err) {
     notes.push(`${label} fehlgeschlagen (${clip(err)})`);
-    return { ttm: null, currency: null, cite: label, unusableReason: null };
+    return empty;
   }
 }
 
@@ -316,6 +320,7 @@ interface YahooAdjHit {
   cite: string;
   consensus: ConsensusFy | null;
   unusableReason: string | null;
+  raw: unknown;
 }
 
 const YAHOO_ADJ_MODULES = ["earningsHistoryNonGaap", "earningsTrendNonGaap", "earningsNonGaap"] as const;
@@ -328,7 +333,7 @@ function shownEps(value: number): string {
 }
 
 async function loadYahooAdjusted(symbol: string, deps: GrowthDeps, notes: string[]): Promise<YahooAdjHit> {
-  const empty: YahooAdjHit = { ttm: null, currency: null, cite: "", consensus: null, unusableReason: null };
+  const empty: YahooAdjHit = { ttm: null, currency: null, cite: "", consensus: null, unusableReason: null, raw: null };
   let raw: unknown = null;
   let origin = "";
   const sink: YahooCallDiag[] = [];
@@ -371,6 +376,7 @@ async function loadYahooAdjusted(symbol: string, deps: GrowthDeps, notes: string
     cite,
     consensus,
     unusableReason: parsed.unusableReason,
+    raw,
   };
 }
 
@@ -384,47 +390,42 @@ async function annualizedFromConsensus(
 ): Promise<{ gFwdPct: number; via: string; epsConsensus: number; epsTtm: number } | { excludeReason: string } | null> {
   const ttm = await adjTtmOf(symbol, deps, notes);
   if (ttm.unusableReason) return { excludeReason: ttm.unusableReason };
-  const consensusCcy = assumedCurrency(symbol, consensus.currency);
-  const apply = (amount: number, ccy: string, basis: string) => {
-    if (!consensusCcy) {
-      notes.push(`${symbol}: Währung fehlt`);
-      return null;
-    }
-    const aligned = alignConsensusToTtm(consensus.eps, consensusCcy, amount, ccy, rates);
-    if ("error" in aligned) {
-      notes.push(`${symbol}: ${aligned.error}`);
-      return null;
-    }
-    const forward = datedForward(
-      aligned.consensus,
-      aligned.ttm,
-      consensus.date,
-      consensus.daysToFyEnd,
-      consensus.horizonDays,
-      `${basis} · ${aligned.note}`,
-    );
-    if ("reason" in forward) return { excludeReason: forward.reason };
-    return { gFwdPct: forward.gFwdPct, via: forward.via, epsConsensus: aligned.consensus, epsTtm: aligned.ttm };
-  };
-  if (ttm.ttm != null && ttm.currency) {
-    const got = apply(ttm.ttm, ttm.currency, `FMP ${ttm.cite}`);
-    if (got && "excludeReason" in got) return got;
-    if (got) return got;
-    return { excludeReason: "n/a — keine vergleichbare EPS-Währung" };
-  }
-  if (ttm.ttm == null && consensusCcy) {
-    const yahooTtm = await loadYahoo();
+  const yahooTtm = await loadYahoo();
+  const resolved = resolveAdjustedFmpQuarters(ttm.raw, yahooTtm.raw, deps.today);
+  if (resolved.unusableReason) return { excludeReason: resolved.unusableReason };
+  const amount = resolved.adjTtm ?? yahooTtm.ttm;
+  const amountCcy = resolved.adjTtm != null ? (ttm.currency ?? yahooTtm.currency) : yahooTtm.currency;
+  const basis = resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite;
+  if (amount == null) {
     if (yahooTtm.unusableReason) return { excludeReason: yahooTtm.unusableReason };
-    if (yahooTtm.ttm != null && yahooTtm.currency) {
-      const got = apply(yahooTtm.ttm, yahooTtm.currency, yahooTtm.cite);
-      if (got && "excludeReason" in got) return got;
-      if (got) return got;
-      return { excludeReason: "n/a — keine vergleichbare EPS-Währung" };
-    }
     return { excludeReason: NO_ADJ_QUARTERS };
   }
-  notes.push(`${symbol}: Währung fehlt`);
-  return { excludeReason: "n/a — Währung fehlt auf einer EPS-Seite" };
+  const filled = completeEpsCurrencies(
+    consensus.eps,
+    assumedCurrency(symbol, consensus.currency),
+    amount,
+    amountCcy,
+  );
+  if (filled.inferred) notes.push(`${symbol}: ${filled.inferred}`);
+  if (!filled.consensusCcy || !filled.ttmCcy) {
+    notes.push(`${symbol}: Währung fehlt`);
+    return { excludeReason: "n/a — Währung fehlt auf einer EPS-Seite" };
+  }
+  const aligned = alignConsensusToTtm(consensus.eps, filled.consensusCcy, amount, filled.ttmCcy, rates);
+  if ("error" in aligned) {
+    notes.push(`${symbol}: ${aligned.error}`);
+    return { excludeReason: `n/a — ${aligned.error}` };
+  }
+  const forward = datedForward(
+    aligned.consensus,
+    aligned.ttm,
+    consensus.date,
+    consensus.daysToFyEnd,
+    consensus.horizonDays,
+    `${basis} · ${aligned.note}`,
+  );
+  if ("reason" in forward) return { excludeReason: forward.reason };
+  return { gFwdPct: forward.gFwdPct, via: forward.via, epsConsensus: aligned.consensus, epsTtm: aligned.ttm };
 }
 
 function yahooMiss(symbol: string, sink: YahooCallDiag[]): string {

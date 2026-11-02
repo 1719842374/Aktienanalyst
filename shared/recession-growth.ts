@@ -83,6 +83,23 @@ export const EPS_BASIS = {
 } as const;
 
 /**
+ * Abgleich eines FMP-epsActual mit dem adjusted Druck.
+ * samePrint: relativer Abstand, darunter sind FMP und Yahoo NonGaap derselbe Wert.
+ * plausibleSurprise: |epsActual/epsEstimated − 1| darüber, ohne Yahoo-NonGaap, ist das Quartal nicht adjusted.
+ * Kein Ticker, keine feste EPS-Zahl.
+ */
+export const EPS_ADJUSTED_CHECK = {
+  samePrint: 0.02,
+  plausibleSurprise: 0.25,
+} as const;
+
+/** Verhältnis, in dem zwei EPS-Seiten GBp gegen GBP sind. */
+export const EPS_PENCE_RATIO = {
+  min: 50,
+  max: 150,
+} as const;
+
+/**
  * Robust z = madScale · (g − median) / MAD.
  * Huber-Gewicht = 1 bei |z| ≤ robustZMax, sonst robustZMax / |z|. Symmetrisch, kein harter Ausschluss.
  * madZeroFallback gilt bei MAD 0 (mindestens die Hälfte sitzt auf dem Median).
@@ -516,6 +533,156 @@ export function adjTtmFromEarnings(raw: unknown, asOf: string): {
   const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
   if (!(adjTtm > 0)) return { adjTtm, quarters, unusableReason: "n/a — adjTTM ≤ 0" };
   return { adjTtm, quarters, unusableReason: null };
+}
+
+export interface ResolvedQuarter {
+  date: string;
+  eps: number;
+  fmpEps: number;
+  source: "fmp" | "yahoo-nongaap";
+}
+
+/**
+ * FMP-epsActual nur, wenn es der adjusted Druck ist.
+ * Yahoo NonGaap am selben Datum ersetzt einen abweichenden FMP-Druck.
+ * Ohne Yahoo entscheidet der Quartalskonsens epsEstimated. Liegt der Abstand
+ * über plausibleSurprise, ist das Quartal n/a. Ohne beide Gegenproben bleibt
+ * der FMP-Druck, weil nichts ihn als GAAP ausweist.
+ */
+export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | null, asOf: string): {
+  adjTtm: number | null;
+  quarters: ResolvedQuarter[];
+  unusableReason: string | null;
+  cite: string;
+} {
+  const fmp = fmpQuarterRows(fmpRaw, asOf);
+  if (fmp.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters: [], unusableReason: null, cite: "" };
+  }
+  const yahooByDate = new Map(adjTtmFromYahooAdjusted(yahooRaw, asOf).quarters.map(row => [row.date, row.eps]));
+  const resolved: ResolvedQuarter[] = [];
+  for (const row of fmp) {
+    const yahooEps = yahooByDate.get(row.date);
+    if (yahooEps != null) {
+      const same = relativeGap(row.eps, yahooEps) <= EPS_ADJUSTED_CHECK.samePrint;
+      resolved.push({
+        date: row.date,
+        eps: same ? row.eps : yahooEps,
+        fmpEps: row.eps,
+        source: same ? "fmp" : "yahoo-nongaap",
+      });
+      continue;
+    }
+    if (row.estimate != null && row.estimate !== 0) {
+      const surprise = Math.abs(row.eps / row.estimate - 1);
+      if (surprise > EPS_ADJUSTED_CHECK.plausibleSurprise) {
+        const actual = shownPlain(row.eps);
+        const estimate = shownPlain(row.estimate);
+        return {
+          adjTtm: null,
+          quarters: resolved,
+          unusableReason: `n/a — Quartal ${row.date} epsActual ${actual} gegen Konsens ${estimate} nicht als adjusted geklärt`,
+          cite: "",
+        };
+      }
+    }
+    resolved.push({ date: row.date, eps: row.eps, fmpEps: row.eps, source: "fmp" });
+  }
+  const adjTtm = resolved.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) {
+    return { adjTtm, quarters: resolved, unusableReason: "n/a — adjTTM ≤ 0", cite: "" };
+  }
+  const parts = resolved.map(row => {
+    const value = shownPlain(row.eps);
+    return row.source === "yahoo-nongaap"
+      ? `${row.date} Yahoo NonGaap ${value} (FMP epsActual ${shownPlain(row.fmpEps)})`
+      : `${row.date} epsActual ${value}`;
+  });
+  return {
+    adjTtm,
+    quarters: resolved,
+    unusableReason: null,
+    cite: `adjTTM Summe letzter ${EPS_BASIS.reportedQuarters} adjusted = ${shownPlain(adjTtm)} (${parts.join(" + ")})`,
+  };
+}
+
+interface FmpQuarterRow {
+  date: string;
+  eps: number;
+  estimate: number | null;
+}
+
+function fmpQuarterRows(raw: unknown, asOf: string): FmpQuarterRow[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const byDate = new Map<string, FmpQuarterRow>();
+  for (const row of list) {
+    if (isFullYearPeriod(row)) continue;
+    const parsed = epsPrintFromEarningsRow(row);
+    if (!parsed || parsed.date > asOf) continue;
+    const estimate = row && typeof row === "object"
+      ? finiteLoose((row as Record<string, unknown>).epsEstimated)
+      : null;
+    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, eps: parsed.eps, estimate });
+  }
+  return Array.from(byDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, EPS_BASIS.reportedQuarters)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function finiteLoose(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
+function relativeGap(a: number, b: number): number {
+  const scale = Math.max(Math.abs(a), Math.abs(b));
+  if (!(scale > 0)) return 0;
+  return Math.abs(a - b) / scale;
+}
+
+function shownPlain(value: number): string {
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * Fehlende EPS-Währung. GBp gegen GBP (Faktor 100) wird beschriftet, nicht verworfen.
+ * Eine bekannte Filingswährung wird auf die leere Seite übernommen, außer das
+ * Größenverhältnis liegt im Pence-Band und eine Seite ist GBP oder GBp.
+ */
+export function completeEpsCurrencies(
+  consensus: number,
+  consensusCcy: string | null,
+  ttm: number,
+  ttmCcy: string | null,
+): { consensusCcy: string | null; ttmCcy: string | null; inferred: string | null } {
+  if (consensusCcy && ttmCcy) return { consensusCcy, ttmCcy, inferred: null };
+  const known = consensusCcy ?? ttmCcy;
+  if (!known) return { consensusCcy, ttmCcy, inferred: null };
+  if (isSterling(known) && nearPenceRatio(consensus, ttm)) {
+    const consensusIsLarger = Math.abs(consensus) > Math.abs(ttm);
+    return {
+      consensusCcy: consensusCcy ?? (consensusIsLarger ? "GBp" : "GBP"),
+      ttmCcy: ttmCcy ?? (consensusIsLarger ? "GBP" : "GBp"),
+      inferred: "GBp gegen GBP, Faktor 100",
+    };
+  }
+  return {
+    consensusCcy: consensusCcy ?? known,
+    ttmCcy: ttmCcy ?? known,
+    inferred: `fehlende EPS-Währung ${known}`,
+  };
+}
+
+function isSterling(code: string): boolean {
+  return code === "GBp" || code === "GBX" || code.toUpperCase() === "GBP";
+}
+
+function nearPenceRatio(a: number, b: number): boolean {
+  if (!(Math.abs(a) > 0) || !(Math.abs(b) > 0)) return false;
+  const ratio = Math.max(Math.abs(a), Math.abs(b)) / Math.min(Math.abs(a), Math.abs(b));
+  return ratio >= EPS_PENCE_RATIO.min && ratio <= EPS_PENCE_RATIO.max;
 }
 
 export interface YahooAdjQuarter {
