@@ -183,7 +183,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
         <ProbabilityEstimates subgroups={data.subgroups} />
       </SectionCard>
       {regions && (
-        <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
+        <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Asien)">
           <RegionalCatalogSection catalogs={regions} />
         </SectionCard>
       )}
