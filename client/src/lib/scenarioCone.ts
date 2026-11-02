@@ -115,7 +115,63 @@ export const CONE_STYLE = {
   bull: "#22c55e",
   base: "#38bdf8",
   bear: "#ef4444",
+  /** Fläche zwischen P10 und P90, halbtransparent wie der Python-Forecast. */
+  outerFill: "#8b7cf6",
+  outerFillOpacity: 0.28,
+  outerStroke: "#a78bfa",
+  /** Inneres Band P25–P75, etwas dichter, damit beide Intervalle lesbar bleiben. */
+  innerFill: "#6d28d9",
+  innerFillOpacity: 0.38,
+  innerStroke: "#c4b5fd",
+  /** Prognose-Mittellinie P50. Deutlich, durchgezogen, nicht die graue Bandlinie. */
+  midline: "#38bdf8",
+  midlineWidth: 2.25,
+  /** Senkrechte Marke am letzten Close. Bild 3: gestrichelt. */
+  forecastStart: "#f43f5e",
+  forecastDash: "4 3",
+  forecastWidth: 1.25,
+  /** Upside gegenüber dem letzten Kurs. Nur die Farbe der Anzeige. */
+  upside: "#22c55e",
+  /** Downside gegenüber dem letzten Kurs. Nur die Farbe der Anzeige. */
+  downside: "#ef4444",
+  /** Gerundete Änderung 0 %. Weder grün noch rot. */
+  flat: "#64748b",
 } as const;
+
+/** Namen der Kanten. Die Perzentile stehen in CONE_PARAMS, nicht hier als zweite Zahl. */
+export const CONE_EDGE_LABEL = {
+  p10: "P10",
+  p25: "P25",
+  p50: "P50",
+  p75: "P75",
+  p90: "P90",
+} as const;
+
+/** Sichtbarer Szenarioname am Horizont. Base ist das Trendszenario aus g*. */
+export const CONE_HORIZON_NAME: Record<ScenarioMarkerId, string> = {
+  bull: "Bull",
+  base: "Base",
+  bear: "Bear",
+};
+
+export const CONE_LEGEND = {
+  midline: "Prognose P50",
+  forecastStart: "Prognosestart",
+} as const;
+
+/**
+ * „80 %-Intervall (P10–P90)“ aus CONE_PARAMS.confidence.
+ * Unteres Perzentil = (1 − Niveau) / 2, oberes = 1 − das.
+ * outer 0.8 → P10–P90, inner 0.5 → P25–P75.
+ */
+export function coneIntervalLegend(which: keyof typeof CONE_PARAMS.confidence): string {
+  const level = CONE_PARAMS.confidence[which].level;
+  const tail = (1 - level) / 2;
+  const low = Math.round(tail * CONE_PARAMS.percent);
+  const high = Math.round((1 - tail) * CONE_PARAMS.percent);
+  const pct = Math.round(level * CONE_PARAMS.percent);
+  return `${pct} %-Intervall (P${low}–P${high})`;
+}
 
 export const POS_NA = "PoS n/a";
 
@@ -304,6 +360,99 @@ export function formatPos(probability: number | null | undefined): string {
   if (probability == null || !Number.isFinite(probability)) return POS_NA;
   const pct = Math.round(probability * CONE_PARAMS.percent * 10) / 10;
   return Number.isInteger(pct) ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
+}
+
+/**
+ * PoS im Horizont-Label, dieselbe Rundung wie formatPos, mit Komma und Abstand.
+ * Fehlende Wahrscheinlichkeit bleibt „PoS n/a“, kein eingesetzter Prozentwert.
+ */
+export function formatConePosDe(probability: number | null | undefined): string {
+  if (probability == null || !Number.isFinite(probability)) return POS_NA;
+  const pct = Math.round(probability * CONE_PARAMS.percent * 10) / 10;
+  const body = Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1).replace(".", ",");
+  return `${body} %`;
+}
+
+/** Kurs im Horizont-Label. factor ist nur die Anzeige (Euro-Achse), nicht der Score. */
+export function formatConeDePrice(symbol: string, value: number, factor = 1): string {
+  const shown = value * factor;
+  if (!Number.isFinite(shown)) return "";
+  return `${symbol}${shown.toFixed(2).replace(".", ",")}`;
+}
+
+/**
+ * Anzeige: (Kurs − letzter Close) / letzter Close, in Prozent.
+ * Dieselben Kurse, die der Kegel schon hat. Kein neues Ziel und kein Score.
+ */
+export function conePriceMovePct(anchor: number, price: number): number | null {
+  if (!(typeof anchor === "number" && Number.isFinite(anchor) && anchor > 0)) return null;
+  if (!(typeof price === "number" && Number.isFinite(price))) return null;
+  return (price - anchor) / anchor * CONE_PARAMS.percent;
+}
+
+export type ConeMoveDirection = "up" | "down" | "flat";
+
+/** Vorzeichen der gerundeten Anzeige. 0,5 rundet auf die nächste ganze Zahl. */
+export function coneMoveDirection(pct: number | null): ConeMoveDirection | null {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  const rounded = Math.round(pct);
+  if (rounded > 0) return "up";
+  if (rounded < 0) return "down";
+  return "flat";
+}
+
+export function coneMoveColor(direction: ConeMoveDirection): string {
+  switch (direction) {
+    case "up":
+      return CONE_STYLE.upside;
+    case "down":
+      return CONE_STYLE.downside;
+    case "flat":
+      return CONE_STYLE.flat;
+    default: {
+      const unknown: never = direction;
+      return unknown;
+    }
+  }
+}
+
+/** „+68 %“ oder „-17 %“. Plus ist grün, Minus rot, über coneMoveColor. */
+export function formatConeMovePct(pct: number): string {
+  const rounded = Math.round(pct);
+  if (!Number.isFinite(rounded)) return "";
+  if (rounded > 0) return `+${rounded} %`;
+  if (rounded < 0) return `${rounded} %`;
+  return `0 %`;
+}
+
+export interface ConeHorizonLabel {
+  /** „Bull 6,1 % · $164,64 · “ ohne die Änderung. */
+  lead: string;
+  /** „+68 %“. Die Farbe hängt am Vorzeichen. */
+  move: string;
+  direction: ConeMoveDirection;
+  /** lead + move. */
+  text: string;
+}
+
+/**
+ * Eine Zeile am Horizont: Name, PoS, Kurs, Änderung gegen den letzten Close.
+ * Die Zahlen kommen aus probability, price und anchor. Nichts davon ist fest eingesetzt.
+ */
+export function coneHorizonLabel(input: {
+  name: string;
+  probability: number | null;
+  price: number;
+  anchor: number;
+  symbol: string;
+  factor?: number;
+}): ConeHorizonLabel | null {
+  const pct = conePriceMovePct(input.anchor, input.price);
+  const direction = coneMoveDirection(pct);
+  if (pct == null || direction == null || !Number.isFinite(input.price)) return null;
+  const move = formatConeMovePct(pct);
+  const lead = `${input.name} ${formatConePosDe(input.probability)} · ${formatConeDePrice(input.symbol, input.price, input.factor ?? 1)} · `;
+  return { lead, move, direction, text: `${lead}${move}` };
 }
 
 export interface ScenarioMarker {
