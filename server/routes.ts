@@ -576,4 +576,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 22. POST /api/macro/adaptive-layer — F9-08/14/18, nur nach dem Knopf, kein Score.
   registerMacroAdaptiveLayerRoute(app);
+
+  // 23. Segment-YoY-Lücken und TAM-Schätzung mit Quelle. Kein Score, kein Schema.
+  const { registerSegmentGrowthRoute } = await import("./segment-growth-route");
+  registerSegmentGrowthRoute(app);
+  const { registerSegmentTamEstimateRoute } = await import("./segment-tam-estimate-route");
+  registerSegmentTamEstimateRoute(app);
 }

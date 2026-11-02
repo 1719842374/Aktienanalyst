@@ -589,6 +589,29 @@ export async function fmpGeoSegments(symbol: string): Promise<FmpSegmentRow[]> {
   }
 }
 
+/**
+ * Rohzeilen der Segment-Endpunkte, jährlich oder quartalsweise.
+ * Die Jahres-Normalisierung in fmpSegments()/fmpGeoSegments() bleibt unverändert.
+ * period=quarter ist derselbe FMP-Stable-Parameter wie bei den Statements.
+ */
+export async function fmpSegmentationRows(
+  kind: "product" | "geographic",
+  symbol: string,
+  period: "annual" | "quarter",
+): Promise<unknown[]> {
+  const path = kind === "product" ? "/revenue-product-segmentation" : "/revenue-geographic-segmentation";
+  const params: Record<string, string> = { symbol };
+  if (period === "quarter") params.period = "quarter";
+  try {
+    const raw = await fmpFetch(path, params);
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw?.data)) return raw.data;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fmpPeers(symbol: string): Promise<any[]> {
   try {
     // GET /stable/stock-peers?symbol=AAPL

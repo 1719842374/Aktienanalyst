@@ -16,6 +16,7 @@
  */
 
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import type { PeerGrowthAnchor } from "../shared/peer-growth-anchor";
 import {
   TAM_NA_COLUMN_HEADER,
   applicableTamNaFills,
@@ -42,6 +43,8 @@ export interface TamNaFillArgs {
   description?: string;
   /** Fact catalog coverage from the existing analysis. Echoed, never recomputed. */
   coveragePct?: number | null;
+  /** Optionaler Peer-Median. Fehlt er, schätzt der Prompt nicht relativ. */
+  peerAnchor?: PeerGrowthAnchor | null;
   segments: TamNaFillRequestSegment[];
 }
 
@@ -134,7 +137,12 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
     ? `Rest-Zeile (sichtbar): ${REST_ROW_LABEL}\n`
     : "";
   const profile = clip(args.description, 500);
+  const anchor = args.peerAnchor;
+  const peerLine = anchor && anchor.medianRevenueYoyPct != null
+    ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
+    : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
   return `Schätze nur die n/a-Zellen der Tabelle Segment-TAM-Analyse. Fact-Zahlen nicht überschreiben.
+${peerLine}
 
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
@@ -146,7 +154,7 @@ ${rest}
 ${lines}
 
 Antworte ausschließlich mit JSON. segmentName ist exakt der Wert aus der Spalte Segment:
-{"fills":[{"segmentName":"<Segment>","segmentGrowth":<YoY % nur wenn Wachstum n/a>,"tamSize":<Mrd. USD nur wenn TAM n/a>,"tamCAGR":<Branchen-CAGR % nur wenn CAGR n/a>,"tamLabel":"<Marktname nur wenn TAM n/a>","tamSource":"<Quelle nur wenn TAM n/a>","confidence":"low"|"med"|"high","rationale":"<max 140 Zeichen>"}]}
+{"fills":[{"segmentName":"<Segment>","segmentGrowth":<YoY % nur wenn Wachstum n/a>,"tamSize":<Mrd. USD nur wenn TAM n/a>,"tamCAGR":<Branchen-CAGR % nur wenn CAGR n/a>,"tamLabel":"<Marktname nur wenn TAM n/a>","tamSource":"<Quelle nur wenn TAM n/a>","formula":"<Formel oder relative Begründung>","confidence":"low"|"med"|"high","rationale":"<max 140 Zeichen>"}]}
 
 REGELN:
 - Jede Zeile mit n/a in Wachstum, TAM oder CAGR soll in fills stehen, soweit eine belegbare Zahl vorliegt. Zeilen ohne Beleg weglassen; die übrigen fills bleiben gültig.
@@ -154,7 +162,8 @@ REGELN:
 - tamSize mappt auf TAM, tamCAGR auf CAGR. Nur wenn die Zelle n/a ist. tamSize ist die Marktgröße in Milliarden USD, nicht Rev.
 - Anteil am TAM und vs. TAM sind lokale Formeln. Nicht schätzen und nicht ins JSON schreiben. Kein Über, kein Unter.
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
-- Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.`;
+- Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
+- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.`;
 }
 
 export async function requestTamNaFills(
