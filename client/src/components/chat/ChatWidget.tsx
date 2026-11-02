@@ -221,6 +221,14 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
               {earningsBrief?.summary && earningsBrief.reason && (
                 <p className="mt-1 text-muted-foreground/80">{earningsBrief.reason}</p>
               )}
+              {earningsBrief?.status === "ok" && earningsBrief.source && (
+                <p className="mt-1 text-muted-foreground/80" data-testid="chat-earnings-source">
+                  {earningsBrief.kind === "earnings-release" ? "Earnings Release, kein Call-Transkript · " : ""}Quelle:{" "}
+                  {earningsBrief.sourceUrl && /^https?:\/\//i.test(earningsBrief.sourceUrl)
+                    ? <a href={earningsBrief.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">{earningsBrief.source}</a>
+                    : earningsBrief.source}
+                </p>
+              )}
             </div>
           )}
 

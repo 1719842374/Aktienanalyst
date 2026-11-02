@@ -58,10 +58,11 @@ import { ChatWidget } from "@/components/chat/ChatWidget";
 import { PodcastTranscript } from "@/components/podcast/PodcastTranscript";
 import { visibleTopOf } from "@/lib/activeSection";
 import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
-import { buildStockChatContext, enrichChatContext, withEarningsBriefFacts } from "@shared/chat-context";
+import { buildStockChatContext, enrichChatContext, withEarningsBriefFacts, withIncomeStatementFacts } from "@shared/chat-context";
 import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import { useEarningsBrief } from "@/hooks/useEarningsBrief";
+import { useIncomeStatementBrief } from "@/hooks/useIncomeStatementBrief";
 import { PODCAST_MARKET_SYMBOL } from "@shared/podcast-transcript";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
@@ -419,7 +420,8 @@ export default function Dashboard() {
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
   const earningsBrief = useEarningsBrief(data && !isEtfOrFund(data) ? data.ticker : null);
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withEarningsBriefFacts(withFazitEntryChatFacts(buildStockChatContext(data), data), earningsBrief), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive, earningsBrief]);
+  const incomeBrief = useIncomeStatementBrief(data && !isEtfOrFund(data) ? data.ticker : null);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withIncomeStatementFacts(withEarningsBriefFacts(withFazitEntryChatFacts(buildStockChatContext(data), data), earningsBrief), incomeBrief), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive, earningsBrief, incomeBrief]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
@@ -776,7 +778,7 @@ export default function Dashboard() {
         sections={chatSections}
         getActiveSectionId={getActiveSectionId}
         onJumpToSection={scrollToSection}
-        suggestions={["Gib das Big Picture: Treiber, Wettbewerb, Makro, Fazit.", "Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks."]}
+        suggestions={["Gib das Big Picture: Treiber, Wettbewerb, Makro, Fazit.", "Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks.", "Schlüssle die sonstigen Erträge und Aufwendungen der GuV auf (Quartal gegen Vorjahr)."]}
         earningsBrief={data && !isEtfOrFund(data) ? earningsBrief : undefined}
       />
     </div>
