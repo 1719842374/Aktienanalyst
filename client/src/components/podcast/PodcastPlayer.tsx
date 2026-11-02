@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Mic, Moon, Pause, Play, RotateCcw, RotateCw } from "lucide-react";
 import {
-  PLAYER_PARAMS, audioStatusLine, chapterListLabel, estimateSentenceMs, playableChapters, spokenForm,
+  PLAYER_PARAMS, audioStatusLine, chapterListLabels, estimateSentenceMs, playableChapters, spokenForm,
   type PlayerChapter, type PlayerEpisode, type PlayerSpeed, type SleepChoice, type TtsChapterAudio,
   type TtsEpisodeRequest, type TtsEpisodeStatus,
 } from "@shared/podcast-player";
@@ -72,6 +72,7 @@ export function PodcastPlayer({
 }) {
   const tts = usePodcastAudio(scope, episode);
   const chapters = useMemo(() => playableChapters(episode), [episode]);
+  const listLabels = useMemo(() => chapterListLabels(episode.chapters.map(c => c.title)), [episode]);
   const timelines = useMemo(() => {
     const byId = new Map((tts?.chapters ?? []).map(a => [a.chapterId, a]));
     return chapters.map(c => timelineOf(c, byId.get(c.id)));
@@ -462,12 +463,12 @@ export function PodcastPlayer({
             <li key={c.id} className={`rounded-md border px-2 py-1.5 text-[12px] ${active ? "border-primary/60 bg-primary/10" : "border-border"}`}>
               {idx >= 0 ? (
                 <button type="button" onClick={() => seekGlobal(offsetOf(idx))} className="w-full text-left flex items-start justify-between gap-2">
-                  <span className="min-w-0 font-medium text-foreground">{chapterListLabel(i, c.title)}</span>
+                  <span className="min-w-0 font-medium text-foreground">{listLabels[i]}</span>
                   <span className="shrink-0 tabular-nums text-foreground/70">{timelines[idx].audio ? "" : "≈ "}{formatPlayerTime(timelines[idx].durationMs)}</span>
                 </button>
               ) : (
                 <div className="text-foreground">
-                  <span className="font-medium">{chapterListLabel(i, c.title)}</span>
+                  <span className="font-medium">{listLabels[i]}</span>
                   <span className="block text-[11px] text-foreground/80">{c.reason ?? "n/a"}</span>
                 </div>
               )}

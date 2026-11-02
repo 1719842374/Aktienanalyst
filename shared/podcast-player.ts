@@ -102,9 +102,15 @@ export function playableChapters(episode: PlayerEpisode): PlayerChapter[] {
   return episode.chapters.filter(c => c.status === "ok" && c.sentences.length > 0);
 }
 
-/** Listenzeile eines Kapitels. Titel mit eigener Nummer („1. Gold AISC“, Treiber-Rang) bekommen keine zweite. */
-export function chapterListLabel(index: number, title: string): string {
-  return /^\d+\.\s/.test(title) ? title : `${index + 1}. ${title}`;
+const OWN_NUMBER = /^\d+\.\s/;
+
+/**
+ * Listenzeilen der Kapitel. Tragen Titel eine eigene Nummer („1. Gold AISC“, Treiber-Rang), nummeriert
+ * der Player gar nicht, damit Rang und Listenposition nicht nebeneinander stehen.
+ */
+export function chapterListLabels(titles: string[]): string[] {
+  if (titles.some(t => OWN_NUMBER.test(t))) return titles;
+  return titles.map((t, i) => `${i + 1}. ${t}`);
 }
 
 /**

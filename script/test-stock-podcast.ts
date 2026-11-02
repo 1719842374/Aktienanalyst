@@ -19,7 +19,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildStockChatContext, fitChatContextBudget } from "../shared/chat-context";
 import {
-  PLAYER_PARAMS, audioStatusLine, sentencesOfParagraphs, spokenForm, splitSentences,
+  PLAYER_PARAMS, audioStatusLine, chapterListLabels, sentencesOfParagraphs, spokenForm, splitSentences,
   type PlayerEpisode, type TtsEpisodeStatus,
 } from "../shared/podcast-player";
 import { researcherPodcastEpisode } from "../shared/researcher-podcast-episode";
@@ -454,7 +454,8 @@ async function main() {
   assert.ok(panelHtml.includes('data-testid="podcast-player"'));
   assert.ok(panelHtml.includes("1. Gold AISC"));
   assert.equal(panelHtml.includes("2. 1. Gold AISC"), false);
-  assert.ok(panelHtml.includes("1. Einstieg"));
+  assert.equal(panelHtml.includes("1. Einstieg"), false);
+  assert.deepEqual(chapterListLabels(["Earnings Call Q1", "KI-Gesamtanalyse"]), ["1. Earnings Call Q1", "2. KI-Gesamtanalyse"]);
   assert.ok(panelHtml.includes("Audio: ok — Piper · de_DE-thorsten-high"));
   const page = readFileSync("client/src/pages/Researcher.tsx", "utf8");
   assert.match(page, /setPodcastPlayRequest\(n => n \+ 1\)/);
