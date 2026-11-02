@@ -3,7 +3,8 @@
  *
  * Additive Route: liest nur den vom Dashboard mitgeschickten Kontext (shared/chat-context.ts),
  * ruft das LLM über das bestehende callLLMJson (OpenRouter) mit EIGENEM Zeitlimit auf
- * (Muster Makro-Ebene) und eigener Modellkette CHAT_LLM_MODELS und gibt eine Textantwort zurück.
+ * (Muster Makro-Ebene) und eigener Modellkette chatLlmModels() (OPENROUTER_CHAT_MODEL, sonst
+ * Code-Default, dahinter Fallback) und gibt eine Textantwort zurück.
  * Kein Score-, Gate- oder Analyse-Einfluss; server/analyze-route.ts wird nicht berührt.
  * Kein Key → status "no-key" mit klarem Text, keine erfundene Antwort.
  * Es werden keine Keys und keine Chat-Inhalte geloggt (nur Längen/Status).
@@ -11,7 +12,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
-  CHAT_DASHBOARDS, CHAT_LIMITS, chatContextTrimReport, fitChatContextBudget,
+  CHAT_DASHBOARDS, CHAT_LIMITS, CHAT_REQUEST_TIMEOUT_MS, chatContextTrimReport, fitChatContextBudget,
   type ChatContext, type ChatContextTrimEntry, type ChatRequestBody, type ChatResponseBody,
 } from "../shared/chat-context";
 import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
@@ -20,19 +21,42 @@ import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 export const CHAT_LLM_TIMEOUT_MS = 30_000;
 export const CHAT_RATE_LIMIT = { windowMs: 60_000, max: 20 } as const;
 
-/** Chat-Modell (OpenRouter-ID laut https://openrouter.ai/api/v1/models). */
-export const CHAT_LLM_MODEL = "anthropic/claude-opus-5.5";
+/**
+ * Env-Variable (Render) für das Chat-Modell. Eigene Variable, weil OPENROUTER_MODEL in
+ * callWithFallback für alle Analyse-Calls gilt; Analyse und Podcast bleiben darauf.
+ */
+export const CHAT_MODEL_ENV = "OPENROUTER_CHAT_MODEL";
+/** Code-Default, wenn OPENROUTER_CHAT_MODEL leer ist (OpenRouter-ID laut https://openrouter.ai/api/v1/models). */
+export const CHAT_LLM_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 /** Bisheriges Chat-Modell (erstes Glied von MODEL_FALLBACK_CHAIN); springt bei 402/404/429 oder leerer Antwort ein. */
 export const CHAT_LLM_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
-export const CHAT_LLM_MODELS: readonly string[] = [CHAT_LLM_MODEL, CHAT_LLM_FALLBACK_MODEL];
+/** OpenRouter-ID "anbieter/modell[:variante]". Eine falsch geschriebene ID beantwortet OpenRouter mit 400, und 400 fällt nicht auf den Fallback. */
+const OPENROUTER_MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i;
+
+const warnedChatModels = new Set<string>();
+
+/** Modellkette des Chats: Env-Wert vor Code-Default, dahinter der Fallback. Wird je Anfrage gelesen. */
+export function chatLlmModels(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  const configured = env[CHAT_MODEL_ENV]?.trim() ?? "";
+  const valid = OPENROUTER_MODEL_ID.test(configured);
+  if (configured && !valid && !warnedChatModels.has(configured)) {
+    warnedChatModels.add(configured);
+    console.warn(`[CHAT] ${CHAT_MODEL_ENV}="${configured.slice(0, 80)}" ist keine OpenRouter-ID; nutze ${CHAT_LLM_DEFAULT_MODEL}`);
+  }
+  const primary = valid ? configured : CHAT_LLM_DEFAULT_MODEL;
+  return primary === CHAT_LLM_FALLBACK_MODEL ? [primary] : [primary, CHAT_LLM_FALLBACK_MODEL];
+}
+
+/** Abstand zum Client-Timeout, damit der Server zuerst mit status "timeout" antwortet. */
+export const CHAT_ANSWER_TIMEOUT_HEADROOM_MS = 3_000;
 /**
  * Zeitlimit der Chat-Antwort. Tabelle, Vorjahresvergleich und Quelle brauchen mit Opus länger als
- * CHAT_LLM_TIMEOUT_MS (das der Podcast mitnutzt); bleibt unter dem 45-s-Timeout von useDashboardChat.
+ * CHAT_LLM_TIMEOUT_MS (das der Podcast mitnutzt); liegt um den Abstand unter CHAT_REQUEST_TIMEOUT_MS.
  */
-export const CHAT_ANSWER_TIMEOUT_MS = 42_000;
+export const CHAT_ANSWER_TIMEOUT_MS = CHAT_REQUEST_TIMEOUT_MS - CHAT_ANSWER_TIMEOUT_HEADROOM_MS;
 /** Platz für Kernsatz, Posten-Tabelle, Ausreißer-Satz und Quellenlink im JSON. */
 export const CHAT_LLM_MAX_TOKENS = 1_800;
-/** Opus 5.5 ignoriert temperature (OpenRouter supported_parameters); der Fallback nutzt sie. */
+/** Modelle ohne temperature in den OpenRouter supported_parameters (z. B. Opus 5.5) ignorieren den Wert; Haiku nutzt ihn. */
 export const CHAT_LLM_TEMPERATURE = 0.3;
 
 type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string; models?: readonly string[] }) =>
@@ -190,7 +214,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   try {
     const call = deps.llm({
       prompt: buildChatPrompt(body), systemPrompt: CHAT_SYSTEM_PROMPT,
-      maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models: CHAT_LLM_MODELS,
+      maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models: chatLlmModels(),
     });
     call.catch(() => undefined);
     const raced = await withTimeout(call, timeoutMs);

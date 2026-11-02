@@ -18,6 +18,8 @@ const SYMBOL = /^[A-Za-z0-9.\-]{1,24}$/;
 export const EARNINGS_BRIEF_SOURCE = "fmp/earning-call-transcript";
 /** Neue Quartalszahlen kommen alle paar Wochen; nach dieser Zeit wird neu geholt. */
 export const EARNINGS_BRIEF_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+/** Zusammenfassung nah am Text. Läuft über die Analyse-Kette (OPENROUTER_MODEL), nicht über das Chat-Modell. */
+export const EARNINGS_SUMMARY_TEMPERATURE = 0.2;
 
 type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string }) =>
   Promise<{ data: any; modelUsed: string } | null>;
@@ -65,7 +67,7 @@ const SUMMARY_PROMPT: Record<NonNullable<EarningsCallBrief["kind"]>, string> = {
 async function summarize(excerpt: string, kind: NonNullable<EarningsCallBrief["kind"]>, deps: EarningsBriefDeps): Promise<{ summary: string | null; reason: string | null }> {
   if (!deps.llmAvailable()) return { summary: null, reason: "n/a — keine KI-Zusammenfassung, OpenRouter-Key fehlt; der Auszug steht im Kontext" };
   try {
-    const res = await deps.llm({ systemPrompt: SUMMARY_PROMPT[kind], prompt: excerpt, temperature: 0.2 });
+    const res = await deps.llm({ systemPrompt: SUMMARY_PROMPT[kind], prompt: excerpt, temperature: EARNINGS_SUMMARY_TEMPERATURE });
     const text = typeof res?.data?.summary === "string" ? res.data.summary.trim() : "";
     if (!text) return { summary: null, reason: "n/a — OpenRouter lieferte keine Zusammenfassung; der Auszug steht im Kontext" };
     return { summary: clipTranscriptExcerpt(text, chatEarningsPartChars("zusammenfassung")).excerpt, reason: null };

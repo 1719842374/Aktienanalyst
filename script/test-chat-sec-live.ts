@@ -28,7 +28,7 @@ import { extractTranscriptQuotes, type EarningsCallBrief } from "../shared/chat-
 import { registerChatIncomeRoute } from "../server/chat-income-route";
 import { registerChatEarningsRoute } from "../server/chat-earnings-route";
 import {
-  buildChatPrompt, CHAT_LLM_MODEL, CHAT_LLM_MODELS, CHAT_SYSTEM_PROMPT, handleChat, validateChatRequest,
+  buildChatPrompt, CHAT_MODEL_ENV, CHAT_SYSTEM_PROMPT, chatLlmModels, handleChat, validateChatRequest,
 } from "../server/chat-route";
 import { callLLMJson, isLLMAvailable } from "../server/llm-openrouter";
 import { isFmpAvailable } from "../server/fmp";
@@ -137,7 +137,7 @@ async function main() {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const fmpKey = isFmpAvailable();
   const llmKey = isLLMAvailable();
-  console.log(`FMP_API_KEY ${fmpKey ? "vorhanden" : "fehlt"}, OPENROUTER_API_KEY ${llmKey ? "vorhanden" : "fehlt"}, Chat-Modell ${CHAT_LLM_MODEL}`);
+  console.log(`FMP_API_KEY ${fmpKey ? "vorhanden" : "fehlt"}, OPENROUTER_API_KEY ${llmKey ? "vorhanden" : "fehlt"}, Chat-Modellkette ${chatLlmModels().join(" → ")} (${process.env[CHAT_MODEL_ENV]?.trim() ? CHAT_MODEL_ENV : "Code-Default"})`);
 
   try {
     assert.ok(/guv_/.test(CHAT_SYSTEM_PROMPT) && /guvFilingUrl/.test(CHAT_SYSTEM_PROMPT) && /guvAusreisser_/.test(CHAT_SYSTEM_PROMPT));
@@ -216,7 +216,7 @@ async function main() {
 
     console.log("\nEchte Chat-Antwort:");
     if (!llmKey) {
-      skip(`LLM-Antwort (${CHAT_LLM_MODELS.join(" → ")})`, "OPENROUTER_API_KEY fehlt in dieser Umgebung");
+      skip(`LLM-Antwort (${chatLlmModels().join(" → ")})`, "OPENROUTER_API_KEY fehlt in dieser Umgebung");
     } else {
       for (const symbol of INCOME_SYMBOLS) {
         const res = await handleChat(requestOf(msftCtx[symbol], CHAT_INCOME_SECTION_ID, "Breakdown the other expenses in the income statement."), { llmAvailable: isLLMAvailable, llm: callLLMJson });

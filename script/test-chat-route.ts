@@ -6,9 +6,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { buildStockChatContext, CHAT_LIMITS, STOCK_SECTION_LABELS, type ChatRequestBody } from "../shared/chat-context";
+import { buildStockChatContext, CHAT_LIMITS, CHAT_REQUEST_TIMEOUT_MS, STOCK_SECTION_LABELS, type ChatRequestBody } from "../shared/chat-context";
 import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
-import { buildChatPrompt, CHAT_SYSTEM_PROMPT, handleChat, registerChatRoute, validateChatRequest, chatRateLimited, CHAT_RATE_LIMIT } from "../server/chat-route";
+import {
+  buildChatPrompt, CHAT_SYSTEM_PROMPT, handleChat, registerChatRoute, validateChatRequest, chatRateLimited, CHAT_RATE_LIMIT,
+  CHAT_ANSWER_TIMEOUT_MS, CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL, CHAT_LLM_MAX_TOKENS, CHAT_LLM_TEMPERATURE, CHAT_MODEL_ENV, chatLlmModels,
+} from "../server/chat-route";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
@@ -70,6 +73,32 @@ async function main() {
 
   let rl = 0; for (let i = 0; i < CHAT_RATE_LIMIT.max + 1; i++) if (chatRateLimited("t", 1000)) rl++;
   assert.equal(rl, 1); assert.equal(chatRateLimited("t", 1000 + CHAT_RATE_LIMIT.windowMs + 1), false); ok("Rate-Limit pro Client");
+
+  assert.equal(CHAT_MODEL_ENV, "OPENROUTER_CHAT_MODEL");
+  assert.deepEqual(chatLlmModels({}), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "   " }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
+  assert.deepEqual(chatLlmModels({ OPENROUTER_MODEL: "deepseek/deepseek-v3.2" }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
+  ok(`leere ${CHAT_MODEL_ENV}: Code-Default ${CHAT_LLM_DEFAULT_MODEL}, OPENROUTER_MODEL (Analyse) wirkt nicht auf den Chat`);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: " openai/gpt-5.1 " }), ["openai/gpt-5.1", CHAT_LLM_FALLBACK_MODEL]);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: CHAT_LLM_FALLBACK_MODEL }), [CHAT_LLM_FALLBACK_MODEL]);
+  ok(`${CHAT_MODEL_ENV} hat Vorrang, ${CHAT_LLM_FALLBACK_MODEL} bleibt Fallback`);
+  assert.deepEqual(chatLlmModels({ [CHAT_MODEL_ENV]: "claude opus 5.5" }), [CHAT_LLM_DEFAULT_MODEL, CHAT_LLM_FALLBACK_MODEL]);
+  ok("ungültige Modell-ID in der Env: Code-Default statt OpenRouter-400");
+
+  const prevEnv = process.env[CHAT_MODEL_ENV];
+  let seen: { models?: readonly string[]; temperature?: number; maxTokens?: number } | null = null;
+  try {
+    process.env[CHAT_MODEL_ENV] = "x-ai/grok-4";
+    await handleChat(body, { llmAvailable: () => true, llm: async (o) => { seen = o; return { data: { answer: "a" }, modelUsed: "x-ai/grok-4" }; } });
+  } finally {
+    if (prevEnv === undefined) delete process.env[CHAT_MODEL_ENV]; else process.env[CHAT_MODEL_ENV] = prevEnv;
+  }
+  assert.deepEqual(seen!.models, ["x-ai/grok-4", CHAT_LLM_FALLBACK_MODEL]);
+  assert.equal(seen!.temperature, CHAT_LLM_TEMPERATURE);
+  assert.equal(seen!.maxTokens, CHAT_LLM_MAX_TOKENS);
+  ok("handleChat liest die Env je Anfrage und übergibt Kette, temperature und maxTokens aus den benannten Parametern");
+  assert.ok(CHAT_ANSWER_TIMEOUT_MS < CHAT_REQUEST_TIMEOUT_MS);
+  ok(`Server-Timeout ${CHAT_ANSWER_TIMEOUT_MS} ms < Client-Timeout ${CHAT_REQUEST_TIMEOUT_MS} ms`);
 
   const app = express(); app.use(express.json({ limit: "10mb" }));
   registerChatRoute(app, { llmAvailable: () => false, llm: async () => null });

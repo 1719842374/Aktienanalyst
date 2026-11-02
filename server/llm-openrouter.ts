@@ -61,7 +61,8 @@ async function callWithFallback(
   opts?: { online?: boolean; signal?: AbortSignal; models?: readonly string[] },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
-  // Eine vom Aufrufer fest gewählte Kette (z. B. KI-Chat) hat Vorrang vor OPENROUTER_MODEL.
+  // Eine vom Aufrufer übergebene Kette hat Vorrang vor OPENROUTER_MODEL. Der KI-Chat übergibt
+  // seine aus OPENROUTER_CHAT_MODEL (server/chat-route.ts chatLlmModels).
   const chain = opts?.models?.length ? opts.models : override ? [override] : MODEL_FALLBACK_CHAIN;
   let lastErr: any;
   for (const model of chain) {

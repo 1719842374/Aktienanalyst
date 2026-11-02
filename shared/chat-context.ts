@@ -109,6 +109,9 @@ export interface ChatResponseBody {
 /** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */
 export const CHAT_CONTEXT_BUDGET = 36_000;
 
+/** Client-Zeitlimit für POST /api/chat (useDashboardChat). Der Server bricht das LLM vorher ab. */
+export const CHAT_REQUEST_TIMEOUT_MS = 45_000;
+
 /**
  * WORK_KI_CHAT_BIG_PICTURE: so viele Schlagzeilen stehen im Prompt („News: Top 5“).
  * Fenster, kein Score-Schwellenwert.

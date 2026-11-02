@@ -7,7 +7,7 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
-import { CHAT_LIMITS, type ChatContext, type ChatContextTrimEntry, type ChatMessage, type ChatResponseBody } from "@shared/chat-context";
+import { CHAT_LIMITS, CHAT_REQUEST_TIMEOUT_MS, type ChatContext, type ChatContextTrimEntry, type ChatMessage, type ChatResponseBody } from "@shared/chat-context";
 
 export interface ChatEntry extends ChatMessage {
   sectionRefs?: number[];
@@ -30,7 +30,7 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
     setPending(true);
     const reqId = ++reqRef.current;
     try {
-      const res = await apiRequest("POST", "/api/chat", { dashboard: context.dashboard, sectionId, context, messages: history }, 45000);
+      const res = await apiRequest("POST", "/api/chat", { dashboard: context.dashboard, sectionId, context, messages: history }, CHAT_REQUEST_TIMEOUT_MS);
       const body = (await res.json().catch(() => null)) as ChatResponseBody | null;
       if (reqId !== reqRef.current) return;
       setContextTrimmed(body?.contextTrimmed?.length ? body.contextTrimmed : undefined);
