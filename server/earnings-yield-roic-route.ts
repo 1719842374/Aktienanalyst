@@ -2,7 +2,8 @@
  * GET /api/chart/earnings-yield/:symbol und GET /api/chart/roic/:symbol.
  * Nur Anzeige. analyze-route wird nicht berührt. Fehlendes = n/a, nie 0.
  * Earnings Yield = Quartals-EPS (TTM rechnet der Chart je Kerze). ROIC point-in-time
- * ab dem Filing-Datum. .DE (Xetra) kommt von Yahoo, ohne FMP-Call.
+ * ab dem Filing-Datum. .DE (Xetra): zuerst Yahoo, dann FMP nur für fehlende
+ * Perioden derselben Währung. Die Quelle steht am Wert.
  * Andere Ticker: FMP, bei 402 oder leerer Serie Yahoo.
  * 6h-Memory-Cache nur bei mindestens einem belastbaren Punkt.
  */
@@ -18,6 +19,8 @@ import {
   annualizedRoicSeries,
   earningsYieldPct,
   finiteNumber,
+  supplementPrints,
+  supplementQuarters,
   type EpsQuarter,
   type RoicPeriod,
   type TtmPrint,
@@ -61,7 +64,7 @@ export interface FundamentalDeps {
   keyMetricsQuarterly?: (symbol: string, limit: number) => Promise<unknown>;
   ratios?: (symbol: string, limit: number) => Promise<unknown>;
   ratiosQuarterly?: (symbol: string, limit: number) => Promise<unknown>;
-  /** Kostenlose Ersatzquelle bei FMP 402 oder leerer Serie. Nicht für .DE. */
+  /** .DE zuerst. Sonst Ersatz, wenn FMP leer ist oder 402 liefert. */
   yahooBundle?: (symbol: string, years: number) => Promise<YahooSeriesBundle>;
   /** .DE: Suche und Profil, um das FMP-Symbol datengetrieben zu finden. */
   search?: (query: string) => Promise<FmpSearchHit[]>;
@@ -428,9 +431,145 @@ async function germanFmpSymbol(symbol: string, deps: FundamentalDeps, now: numbe
   return { fetchSymbol: listing.fmpSymbol, listing, miss: null };
 }
 
+function tagQuarters(rows: EpsQuarter[], source: string): EpsQuarter[] {
+  return rows.map(row => ({ ...row, source: row.source ?? source }));
+}
+
+function tagPrints(rows: TtmPrint[], source: string): TtmPrint[] {
+  return rows.map(row => ({ ...row, source: row.source ?? source }));
+}
+
+function annualEpsFromIncomeRows(raw: unknown, currency: string | null, source: string): TtmPrint[] {
+  const out: TtmPrint[] = [];
+  for (const row of asRows(raw)) {
+    const kind = String(row.period ?? "").toUpperCase();
+    if (kind.startsWith("Q")) continue;
+    const period = dateOf(row);
+    const eps = finiteNumber(row.epsDiluted) ?? finiteNumber(row.epsdiluted) ?? finiteNumber(row.eps);
+    const asOf = firstIso(row.filingDate, row.fillingDate, row.acceptedDate) ?? period;
+    if (!asOf || eps == null) continue;
+    const rowCcy = typeof row.reportedCurrency === "string" && row.reportedCurrency.trim() ? row.reportedCurrency.trim() : currency;
+    out.push({ asOf, eps, currency: rowCcy, source });
+  }
+  return out;
+}
+
+async function loadGermanEarningsYield(symbol: string, deps: FundamentalDeps, now: number): Promise<EarningsYieldResponse> {
+  const yahoo = await yahooSeries(symbol, deps);
+  let quarters = tagQuarters(yahoo.epsQuarters ?? [], "Yahoo");
+  let prints = tagPrints(yahoo.ttmPrints ?? [], "Yahoo");
+  let annual = tagPrints(yahoo.annualEps ?? [], "Yahoo");
+  const yahooHas = (yahoo.epsQuarters?.length ?? 0) + (yahoo.ttmPrints?.length ?? 0) + (yahoo.annualEps?.length ?? 0) > 0;
+  const parts = [yahooHas
+    ? (prints.length || annual.length ? `${YAHOO_TS_EPS_SOURCE}; trailingDilutedEPS oder Jahres-EPS, wenn das Quartalsfenster nicht steht` : YAHOO_TS_EPS_SOURCE)
+    : "Yahoo ohne EPS"];
+  let heldBack: string | null = null;
+  if (deps.search && deps.profile) {
+    const listing = await resolveGermanListing(symbol, deps.search, deps.profile, now);
+    if (listing) {
+      const incomeQ = await runOptional(deps.incomeQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT);
+      const built = epsQuartersFromIncomeRows(incomeQ.raw);
+      const fmpQuarters = tagQuarters(built.quarters.map(row => row.currency ? row : { ...row, currency: listing.currency }), listing.source);
+      const mergedQ = supplementQuarters(quarters, fmpQuarters);
+      quarters = mergedQ.quarters;
+      if (mergedQ.heldBack) heldBack = mergedQ.heldBack;
+      const incomeA = await captureCall(() => deps.income(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT));
+      const fmpAnnual = annualEpsFromIncomeRows(incomeA.raw, listing.currency, listing.source);
+      const mergedA = supplementPrints(annual, fmpAnnual);
+      annual = mergedA.prints;
+      if (mergedA.heldBack) heldBack = heldBack ?? mergedA.heldBack;
+      if (mergedQ.added > 0 || mergedA.added > 0) parts.push(`ergänzt um ${listing.source}`);
+      else if (!quarters.length && !prints.length && !annual.length) parts.push(listing.source);
+      else parts.push(`${listing.source} ohne zusätzliche Periode`);
+    } else {
+      parts.push("FMP-Auflösung ohne XETRA-Treffer");
+    }
+  }
+  if (heldBack) parts.push(heldBack);
+  const source = parts.filter((part): part is string => !!part).join("; ") || "Yahoo";
+  const note = joinNotes(yahoo.epsNote, heldBack);
+  const body = quarters.length || prints.length || annual.length
+    ? yieldBody(symbol, quarters, source, note, prints, annual)
+    : yieldBody(symbol, [], source, note ?? "n/a — weder Yahoo noch FMP mit EPS", prints, annual);
+  if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
+  return body;
+}
+
+function sourcedNote(note: string | null | undefined, basis: string, source: string): string {
+  const text = note && note.trim() ? note.trim() : basis;
+  const withBasis = text === basis || text.includes(basis) ? text : `${basis} · ${text}`;
+  return withBasis.includes("Quelle:") ? withBasis : `${withBasis} · Quelle: ${source}`;
+}
+
+async function loadGermanRoic(symbol: string, deps: FundamentalDeps, now: number): Promise<RoicSeriesResponse> {
+  const yahoo = await yahooSeries(symbol, deps);
+  const yahooPoints = (yahoo.roic.points ?? []).map(point => (
+    point.value == null ? point : { ...point, note: sourcedNote(point.note, ROIC_ANNUAL_LABEL, "Yahoo") }
+  ));
+  let points = yahooPoints;
+  let source = hasValue(yahooPoints) ? yahoo.roic.source : "Yahoo";
+  let note = hasValue(yahooPoints) ? (yahoo.roic.note ?? YAHOO_EPS_ASOF_NOTE) : yahoo.roic.note;
+  let formula = ROIC_ANNUAL_FORMULA;
+  let label = ROIC_ANNUAL_LABEL;
+  if (deps.search && deps.profile) {
+    const listing = await resolveGermanListing(symbol, deps.search, deps.profile, now);
+    if (listing) {
+      const [metricsQ, metricsA, ratiosQ, ratiosA, incomeQ, incomeA] = await Promise.all([
+        runOptional(deps.keyMetricsQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+        captureCall(() => deps.keyMetrics(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
+        runOptional(deps.ratiosQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+        runOptional(deps.ratios, listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT),
+        runOptional(deps.incomeQuarterly, listing.fmpSymbol, FUNDAMENTAL_QUARTER_LIMIT),
+        captureCall(() => deps.income(listing.fmpSymbol, FUNDAMENTAL_ANNUAL_LIMIT)),
+      ]);
+      const quarterFilings = filingMapFromIncome(incomeQ.raw);
+      const annualFilings = filingMapFromIncome(incomeA.raw);
+      const metricsSeries = annualizedRoicSeries(pitRoicPeriods(metricsQ.raw, quarterFilings), pitRoicPeriods(metricsA.raw, annualFilings));
+      const ratiosSeries = annualizedRoicSeries(pitRoicPeriods(ratiosQ.raw, quarterFilings), pitRoicPeriods(ratiosA.raw, annualFilings));
+      const picked = hasValue(metricsSeries.points) ? metricsSeries : ratiosSeries;
+      if (hasValue(picked.points)) {
+        const have = new Set(points.filter(point => point.value != null).map(point => point.date));
+        const extra = picked.points.filter(point => point.value != null && !have.has(point.date)).map(point => {
+          const basis = point.note && point.note.includes("Jahres") ? ROIC_ANNUAL_LABEL : picked.label;
+          return { ...point, note: sourcedNote(point.note, basis, listing.source) };
+        });
+        if (extra.length > 0) {
+          points = [...points, ...extra].sort((a, b) => a.date.localeCompare(b.date));
+          source = hasValue(yahooPoints) ? `${yahoo.roic.source}; ergänzt um ${listing.source}` : listing.source;
+          const latest = [...points].reverse().find(point => point.value != null);
+          if (!hasValue(yahooPoints) || (latest != null && extra.some(point => point.date === latest.date))) {
+            formula = picked.formula;
+            label = picked.label;
+          }
+        } else if (!hasValue(yahooPoints)) {
+          points = picked.points.map(point => {
+            const basis = point.note && point.note.includes("Jahres") ? ROIC_ANNUAL_LABEL : picked.label;
+            return { ...point, note: sourcedNote(point.note, basis, listing.source) };
+          });
+          source = listing.source;
+          formula = picked.formula;
+          label = picked.label;
+        } else {
+          source = `${yahoo.roic.source}; ${listing.source} ohne zusätzliches Filing`;
+        }
+        note = joinNotes(note, picked.note);
+      } else if (!hasValue(points)) {
+        source = listing.source;
+        note = picked.note ?? "n/a — FMP ohne ROIC";
+      }
+    } else if (!hasValue(points)) {
+      note = joinNotes(note, "n/a — kein FMP-Symbol für XETRA aufgelöst");
+    }
+  }
+  const body = roicBody(symbol, points, source, note, formula, label);
+  if (hasValue(points)) roicCache.set(symbol, { at: now, body });
+  return body;
+}
+
 export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<EarningsYieldResponse> {
   const hit = eyCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
+  if (isGermanXetraTicker(symbol)) return loadGermanEarningsYield(symbol, deps, now);
   const german = await germanFmpSymbol(symbol, deps, now);
   if (german.miss) return german.miss;
   const fetchSymbol = german.fetchSymbol;
@@ -467,6 +606,7 @@ export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = 
 export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<RoicSeriesResponse> {
   const hit = roicCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
+  if (isGermanXetraTicker(symbol)) return loadGermanRoic(symbol, deps, now);
   const german = await germanFmpSymbol(symbol, deps, now);
   if (german.miss) return roicBody(symbol, [], "FMP", german.miss.note);
   const fetchSymbol = german.fetchSymbol;

@@ -42,6 +42,8 @@ export interface EpsQuarter {
   asOf: string;
   eps: number;
   currency: string | null;
+  /** Sichtbare Herkunft dieses Quartals, z. B. Yahoo oder FMP-Symbol. */
+  source?: string | null;
 }
 
 /** Bereits summiertes TTM-EPS (z. B. Yahoo trailingDilutedEPS). Kein Quartal, wird nicht noch einmal addiert. */
@@ -49,6 +51,7 @@ export interface TtmPrint {
   asOf: string;
   eps: number;
   currency: string | null;
+  source?: string | null;
 }
 
 export interface EarningsYieldResponse {
@@ -216,7 +219,8 @@ export function ttmEpsAt(quarters: EpsQuarter[], asOf: string): { eps: number | 
   if (currencies.size > 1) return { eps: null, currency: null, note: "n/a — Währung der Quartals-EPS weicht ab" };
   const eps = last.reduce((sum, quarter) => sum + quarter.eps, 0);
   if (!Number.isFinite(eps)) return { eps: null, currency: null, note: "n/a — TTM-EPS nicht berechenbar" };
-  return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: null };
+  const sources = Array.from(new Set(last.map(q => q.source).filter((s): s is string => !!s && s.trim() !== "")));
+  return { eps, currency: last.find(q => q.currency)?.currency ?? null, note: sources.length ? `Quelle: ${sources.join(" + ")}` : null };
 }
 
 /** Quartals-TTM, sonst trailing EPS, sonst Jahres-EPS. Der Ersatz steht im note. */
@@ -227,26 +231,71 @@ export function epsNumeratorAt(
   asOf: string,
 ): { eps: number | null; currency: string | null; note: string | null } {
   const ttm = ttmEpsAt(quarters, asOf);
-  if (ttm.eps != null) return { eps: ttm.eps, currency: ttm.currency, note: null };
+  if (ttm.eps != null) return { eps: ttm.eps, currency: ttm.currency, note: ttm.note };
   const trail = ttmPrintAt(trailing, asOf);
   if (trail.eps != null) {
-    return { eps: trail.eps, currency: trail.currency, note: `Fallback: trailing EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})` };
+    const base = `Fallback: trailing EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})`;
+    return { eps: trail.eps, currency: trail.currency, note: trail.source ? `${base} · Quelle: ${trail.source}` : base };
   }
   const year = ttmPrintAt(annual, asOf);
   if (year.eps != null) {
-    return { eps: year.eps, currency: year.currency, note: `Fallback: Jahres-EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})` };
+    const base = `Fallback: Jahres-EPS (${ttm.note ?? "Quartalsfenster nicht gebildet"})`;
+    return { eps: year.eps, currency: year.currency, note: year.source ? `${base} · Quelle: ${year.source}` : base };
   }
   return { eps: null, currency: null, note: ttm.note };
 }
 
+function sameCurrency(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = (a ?? "").trim().toUpperCase();
+  const right = (b ?? "").trim().toUpperCase();
+  if (!left || !right) return true;
+  return left === right;
+}
+
+/** Ergänzt fehlende Perioden. Eine andere Währung wird nicht in die Reihe gemischt. */
+export function supplementQuarters(primary: EpsQuarter[], extra: EpsQuarter[]): { quarters: EpsQuarter[]; added: number; heldBack: string | null } {
+  const have = new Set(primary.map(q => q.periodEnd));
+  const primaryCcy = primary.find(q => q.currency)?.currency ?? null;
+  const added: EpsQuarter[] = [];
+  let foreign: string | null = null;
+  for (const row of extra) {
+    if (!row.periodEnd || have.has(row.periodEnd)) continue;
+    if (!sameCurrency(primaryCcy, row.currency)) {
+      foreign = `FMP-Währung ${row.currency} nicht mit ${primaryCcy} gemischt`;
+      continue;
+    }
+    added.push(row);
+    have.add(row.periodEnd);
+  }
+  const quarters = [...primary, ...added].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd) || a.asOf.localeCompare(b.asOf));
+  return { quarters, added: added.length, heldBack: added.length > 0 ? null : foreign };
+}
+
+export function supplementPrints(primary: TtmPrint[], extra: TtmPrint[]): { prints: TtmPrint[]; added: number; heldBack: string | null } {
+  const have = new Set(primary.map(p => p.asOf));
+  const primaryCcy = primary.find(p => p.currency)?.currency ?? null;
+  const added: TtmPrint[] = [];
+  let foreign: string | null = null;
+  for (const row of extra) {
+    if (!row.asOf || have.has(row.asOf)) continue;
+    if (!sameCurrency(primaryCcy, row.currency)) {
+      foreign = `FMP-Währung ${row.currency} nicht mit ${primaryCcy} gemischt`;
+      continue;
+    }
+    added.push(row);
+    have.add(row.asOf);
+  }
+  return { prints: [...primary, ...added].sort((a, b) => a.asOf.localeCompare(b.asOf)), added: added.length, heldBack: added.length > 0 ? null : foreign };
+}
+
 /** Letzter berichteter TTM-Druck mit asOf <= Stichtag. Kein Auffüllen zwischen den Drucken über eine Schätzung. */
-export function ttmPrintAt(prints: TtmPrint[], asOf: string): { eps: number | null; currency: string | null } {
+export function ttmPrintAt(prints: TtmPrint[], asOf: string): { eps: number | null; currency: string | null; source: string | null } {
   let hit: TtmPrint | null = null;
   for (const print of prints) {
     if (!print || print.asOf > asOf || !Number.isFinite(print.eps)) continue;
     if (!hit || print.asOf >= hit.asOf) hit = print;
   }
-  return hit ? { eps: hit.eps, currency: hit.currency } : { eps: null, currency: null };
+  return hit ? { eps: hit.eps, currency: hit.currency, source: hit.source ?? null } : { eps: null, currency: null, source: null };
 }
 
 function ccyCode(value: string | null | undefined): string {

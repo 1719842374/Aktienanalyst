@@ -4,6 +4,8 @@
  */
 import { readFileSync } from "node:fs";
 import { pickFmpListing, type FmpProfileHit, type FmpSearchHit } from "../server/fmp-listing-resolve";
+import { combinePriceBars } from "../server/chart-peer-price-route";
+import type { DailyBar } from "../server/history-fallback";
 import { loadEarningsYield, loadRoicSeries, resetFundamentalCacheForTests } from "../server/earnings-yield-roic-route";
 
 let failures = 0;
@@ -55,6 +57,12 @@ check("zwei Namensgleiche ohne ISIN bleiben unaufgelöst", twoNames === null);
 
 check("Auflöser importiert keine ADR-Tabelle", !readFileSync("server/fmp-listing-resolve.ts", "utf8").includes("FMP_ADR_MAP"));
 
+const bar = (date: string, close: number, source: DailyBar["source"]): DailyBar => ({ date, open: close, high: close, low: close, close, volume: 1, source });
+const mixed = combinePriceBars("2016-10-24", [bar("2021-01-04", 100, "fmp")], [bar("2016-10-24", 40, "yahoo"), bar("2021-01-04", 90, "yahoo")], "USD", "EUR");
+check("FMP-USD zu kurz: Yahoo-EUR wird nicht angehängt, sondern als eigene Serie genommen", mixed.source.includes("Yahoo") && mixed.bars[0]?.date === "2016-10-24" && mixed.note?.includes("nicht mit") === true, mixed.note ?? "");
+const covered = combinePriceBars("2016-10-24", [bar("2016-10-24", 40, "fmp"), bar("2026-11-02", 100, "fmp")], [], "EUR", "EUR");
+check("FMP deckt Von ab: kein Yahoo nötig", covered.bars.length === 2 && covered.source.startsWith("FMP"));
+
 resetFundamentalCacheForTests();
 let yahoo = 0;
 const ey = await loadEarningsYield("SAP.DE", {
@@ -64,9 +72,31 @@ const ey = await loadEarningsYield("SAP.DE", {
   incomeQuarterly: async (sym) => sym === "SAP" ? [{ date: "2024-09-30", period: "Q1", epsDiluted: 1.2, filingDate: "2024-10-20" }] : [],
   search: async () => hits,
   profile: async (sym) => profiles.find(p => p.symbol === sym) ?? { symbol: sym, name: null, currency: null, exchange: null, isin: null, ok: false },
-  yahooBundle: async () => { yahoo += 1; return { earningsYield: { points: [], source: "Yahoo", note: null }, roic: { points: [], source: "Yahoo", note: null }, epsQuarters: [], epsNote: null, ttmPrints: [], annualEps: [] }; },
+  yahooBundle: async () => {
+    yahoo += 1;
+    return { earningsYield: { points: [], source: "Yahoo", note: null }, roic: { points: [], source: "Yahoo", note: null }, epsQuarters: [], epsNote: "n/a — Yahoo ohne Quartal", ttmPrints: [], annualEps: [] };
+  },
 });
-check("SAP.DE EY kommt von FMP-Symbol SAP, Währung USD, ohne Yahoo", yahoo === 0 && ey.source.includes("FMP SAP") && ey.source.includes("USD") && ey.quarters[0]?.currency === "USD" && ey.quarters[0]?.eps === 1.2, ey.source);
+check("SAP.DE: Yahoo zuerst, fehlendes EPS kommt von FMP mit Profilwährung USD", yahoo === 1 && ey.source.includes("Yahoo") && ey.source.includes("FMP SAP") && ey.source.includes("USD") && ey.quarters[0]?.currency === "USD" && ey.quarters[0]?.eps === 1.2 && ey.quarters[0]?.source?.includes("FMP SAP") === true, ey.source);
+
+resetFundamentalCacheForTests();
+const kept = await loadEarningsYield("SAP.DE", {
+  income: async () => [],
+  enterpriseValues: async () => [],
+  keyMetrics: async () => [],
+  incomeQuarterly: async () => [{ date: "2020-03-31", period: "Q1", epsDiluted: 9, filingDate: "2020-04-20" }],
+  search: async () => hits,
+  profile: async (sym) => profiles.find(p => p.symbol === sym) ?? { symbol: sym, name: null, currency: null, exchange: null, isin: null, ok: false },
+  yahooBundle: async () => ({
+    earningsYield: { points: [], source: "Yahoo", note: null },
+    roic: { points: [], source: "Yahoo", note: null },
+    epsQuarters: [{ periodEnd: "2024-09-30", asOf: "2024-10-20", eps: 1.5, currency: "EUR" }],
+    epsNote: null,
+    ttmPrints: [],
+    annualEps: [],
+  }),
+});
+check("Yahoo-EUR bleibt, FMP-USD wird nicht dazugemischt", kept.quarters.length === 1 && kept.quarters[0]?.currency === "EUR" && kept.source.includes("nicht mit") === true, kept.source);
 
 resetFundamentalCacheForTests();
 const roic = await loadRoicSeries("SAP.DE", {
@@ -75,9 +105,50 @@ const roic = await loadRoicSeries("SAP.DE", {
   keyMetrics: async (sym) => sym === "SAP" ? [{ date: "2024-09-30", returnOnInvestedCapital: 0.2 }] : [],
   search: async () => hits,
   profile: async (sym) => profiles.find(p => p.symbol === sym) ?? { symbol: sym, name: null, currency: null, exchange: null, isin: null, ok: false },
-  yahooBundle: async () => { yahoo += 1; throw new Error("Yahoo darf für .DE nicht laufen"); },
+  yahooBundle: async () => {
+    yahoo += 1;
+    return {
+      earningsYield: { points: [], source: "Yahoo", note: null },
+      roic: { points: [{ date: "2023-01-30", value: 15, note: null }], source: "Yahoo ROIC", note: null },
+      epsQuarters: [],
+      epsNote: null,
+      ttmPrints: [],
+      annualEps: [],
+    };
+  },
 });
-check("SAP.DE ROIC kommt vom aufgelösten FMP-Symbol und nennt die Quelle", roic.points.length === 1 && roic.points[0]?.date === "2024-10-20" && roic.source.includes("SAP") && roic.source.includes("FMP") && yahoo === 0, roic.source);
+check("ROIC: Yahoo bleibt, FMP ergänzt das fehlende Filing und nennt beide Quellen", yahoo >= 1 && roic.points.some(p => p.date === "2023-01-30" && p.note?.includes("Yahoo") === true && p.note?.includes("ROIC Jahr") === true) && roic.points.some(p => p.date === "2024-10-20" && p.note?.includes("FMP SAP") === true && p.note?.includes("ROIC Jahr") === true) && roic.source.includes("ergänzt um") === true && roic.label === "ROIC Jahr", roic.source);
+
+resetFundamentalCacheForTests();
+const roicTtm = await loadRoicSeries("SAP.DE", {
+  income: async () => [],
+  enterpriseValues: async () => [],
+  keyMetrics: async () => [],
+  incomeQuarterly: async (sym) => sym === "SAP" ? [
+    { date: "2024-03-31", period: "Q1", filingDate: "2024-04-25" },
+    { date: "2024-06-30", period: "Q2", filingDate: "2024-07-25" },
+    { date: "2024-09-30", period: "Q3", filingDate: "2024-10-25" },
+    { date: "2024-12-31", period: "Q4", filingDate: "2025-01-25" },
+  ] : [],
+  keyMetricsQuarterly: async (sym) => sym === "SAP" ? [
+    { date: "2024-03-31", returnOnInvestedCapital: 0.022 },
+    { date: "2024-06-30", returnOnInvestedCapital: 0.020 },
+    { date: "2024-09-30", returnOnInvestedCapital: 0.019 },
+    { date: "2024-12-31", returnOnInvestedCapital: 0.019 },
+  ] : [],
+  search: async () => hits,
+  profile: async (sym) => profiles.find(p => p.symbol === sym) ?? { symbol: sym, name: null, currency: null, exchange: null, isin: null, ok: false },
+  yahooBundle: async () => ({
+    earningsYield: { points: [], source: "Yahoo", note: null },
+    roic: { points: [{ date: "2023-01-30", value: 15, note: null }], source: "Yahoo ROIC", note: null },
+    epsQuarters: [],
+    epsNote: null,
+    ttmPrints: [],
+    annualEps: [],
+  }),
+});
+const ttmPoint = roicTtm.points.find(p => p.date === "2025-01-25");
+check("ROIC: letzter FMP-Punkt ist die TTM-Summe und trägt dieses Label", roicTtm.label === "ROIC TTM" && ttmPoint?.value === 8 && ttmPoint.note?.includes("ROIC TTM") === true && ttmPoint.note?.includes("FMP SAP") === true && roicTtm.points.some(p => p.date === "2023-01-30" && p.note?.includes("ROIC Jahr") === true), `${roicTtm.label} ${ttmPoint?.value ?? "—"} ${ttmPoint?.note ?? ""}`);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead as {
   VWAGY: { overallScore: number }; SAP: { overallScore: number }; MSFT: { overallScore: number };

@@ -1,12 +1,15 @@
 /**
  * GET /api/chart/peer-price/:symbol?from=&to=
  * Dieselbe Kurshistorie wie der Hauptchart: FMP, Lücken nach links über Yahoo und dann Stooq.
+ * .DE: FMP des aufgelösten Symbols. Yahoo/Stooq nur, wenn FMP leer ist oder vor `from` endet.
+ * Weichen die Währungen ab, werden die Serien nicht aneinandergesetzt.
  * Der Analyse-Handler bleibt unberührt. /api/ohlcv bleibt bei seinem 5-Jahres-Fenster.
  */
 import type { Express, Request, Response } from "express";
 import { altFetchYahooThenStooq, fetchDailyHistory, type DailyBar } from "./history-fallback";
 import { fmpHistoricalPrices } from "./fmp";
 import { resolveGermanListingDefault } from "./fmp-listing-resolve";
+import { currencyFromTickerSuffix } from "../shared/listing-units";
 import { isGermanXetraTicker } from "./yahoo-fetcher";
 
 function isPeerSymbol(raw: string): boolean {
@@ -69,20 +72,55 @@ function toDailyBars(raw: unknown): DailyBar[] {
   return bars;
 }
 
+/** FMP-Kurse, Yahoo nur wenn FMP leer ist oder vor `from` aufhört. Unterschiedliche Währungen werden nicht aneinandergesetzt. */
+export function combinePriceBars(
+  from: string,
+  fmp: DailyBar[],
+  yahoo: DailyBar[],
+  fmpCurrency: string | null,
+  yahooCurrency: string | null,
+): { bars: DailyBar[]; source: string; note: string | null } {
+  const fmpSorted = [...fmp].filter(bar => bar.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const yahooSorted = [...yahoo].filter(bar => bar.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const fmpCovers = fmpSorted.length > 0 && fmpSorted[0].date <= from;
+  const codesDiffer = !!fmpCurrency && !!yahooCurrency && fmpCurrency.toUpperCase() !== yahooCurrency.toUpperCase();
+  if (fmpCovers || (fmpSorted.length > 0 && codesDiffer && (yahooSorted.length === 0 || yahooSorted[0].date >= fmpSorted[0].date))) {
+    return { bars: fmpSorted, source: `FMP${fmpCurrency ? ` ${fmpCurrency}` : ""}`, note: codesDiffer && !fmpCovers ? `FMP-Kurse in ${fmpCurrency} nicht mit Yahoo ${yahooCurrency} gemischt` : null };
+  }
+  if (fmpSorted.length === 0) {
+    return { bars: yahooSorted, source: yahooSorted.length ? `Yahoo${yahooCurrency ? ` ${yahooCurrency}` : ""}` : "Yahoo", note: yahooSorted.length === 0 ? "n/a — weder FMP noch Yahoo mit Kursen" : null };
+  }
+  if (codesDiffer) {
+    const yahooReaches = yahooSorted.length > 0 && yahooSorted[0].date < fmpSorted[0].date;
+    return yahooReaches
+      ? { bars: yahooSorted, source: `Yahoo ${yahooCurrency}`, note: `FMP in ${fmpCurrency} zu kurz und nicht mit Yahoo ${yahooCurrency} gemischt` }
+      : { bars: fmpSorted, source: `FMP ${fmpCurrency}`, note: `Yahoo ${yahooCurrency} nicht angehängt` };
+  }
+  const byDate = new Map(fmpSorted.map(bar => [bar.date, bar]));
+  for (const bar of yahooSorted) if (!byDate.has(bar.date)) byDate.set(bar.date, { ...bar, source: "yahoo" });
+  const bars = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  return { bars, source: "FMP + Yahoo", note: bars[0].date > from ? `Peer-Kurs beginnt am ${bars[0].date}` : null };
+}
+
 export async function loadPeerPrice(symbol: string, from: string, to: string): Promise<PeerPriceResponse> {
   if (isGermanXetraTicker(symbol)) {
-    const listing = await resolveGermanListingDefault(symbol);
-    if (!listing) {
-      return { symbol, from, to, bars: [], source: "FMP", note: "n/a — kein FMP-Symbol für XETRA aufgelöst" };
+    const listing = await resolveGermanListingDefault(symbol).catch(() => null);
+    let fmpBars: DailyBar[] = [];
+    if (listing) {
+      try {
+        fmpBars = toDailyBars(await fmpHistoricalPrices(listing.fmpSymbol, from, to))
+          .sort((a, b) => a.date.localeCompare(b.date));
+      } catch {
+        fmpBars = [];
+      }
     }
-    try {
-      const bars = toDailyBars(await fmpHistoricalPrices(listing.fmpSymbol, from, to));
-      const body = peerPriceFromBars(symbol, from, to, bars);
-      return { ...body, source: listing.source, note: body.bars.length === 0 ? `n/a — FMP ohne Kurse für ${listing.fmpSymbol}` : body.note };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { symbol, from, to, bars: [], source: listing.source, note: `n/a — Peer-Kurs nicht geladen: ${message.slice(0, 160)}` };
-    }
+    const yahooCcy = currencyFromTickerSuffix(symbol);
+    const needsYahoo = fmpBars.length === 0 || fmpBars[0].date > from;
+    const yahooBars = needsYahoo ? await altFetchYahooThenStooq(symbol, from, to).catch(() => []) : [];
+    const chosen = combinePriceBars(from, fmpBars, yahooBars, listing?.currency ?? null, yahooCcy);
+    const source = listing ? `${listing.source}. ${chosen.source}` : chosen.source;
+    const body = peerPriceFromBars(symbol, from, to, chosen.bars);
+    return { ...body, source, note: body.bars.length === 0 ? (chosen.note ?? body.note) : (chosen.note ?? body.note) };
   }
   const failures: string[] = [];
   const history = await fetchDailyHistory({
