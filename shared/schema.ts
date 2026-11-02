@@ -1200,8 +1200,3 @@ export type {
 // ─── Sektor-KGV (Anzeige, Researcher) ────────────────────────────────────────
 // GET /api/researcher/sector-pe. Getrennt von pe/pe10y der Sektorrotation.
 export type { SectorPeDisplay, SectorPeResponse } from "./sector-pe-display";
-
-/** F9-08 / F9-14 / F9-18. Anzeige. scoreSwitch bleibt aus. */
-export type { MacroAdaptiveLayer } from "./macro-adaptive-layer";
-export type { HyperscalerCapexView } from "./hyperscaler-capex";
-export type { EuropeMacroFallbacks } from "./europe-macro-fallbacks";
