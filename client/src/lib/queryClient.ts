@@ -33,7 +33,7 @@ function computeApiBase(): string {
   return "";
 }
 
-const API_BASE = computeApiBase();
+export const API_BASE = computeApiBase();
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {

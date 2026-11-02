@@ -10,6 +10,7 @@ import { useDividendKpi } from "@/lib/useDividendHistory";
 import { listingFxWarning } from "@shared/listing-units";
 import { isYahooOnly, yahooValueMissing, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
 import { YahooNoValuationNotice } from "../YahooNoValuationCard";
+import { StockPodcastCard } from "../podcast/StockPodcastCard";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -173,6 +174,8 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </button>
         {flash && <span className="text-[10px] text-emerald-400 ml-auto">{flash}</span>}
       </div>
+
+      <StockPodcastCard data={data} />
 
       <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
         <KPI label="Price" value={formatCurrency(data.currentPrice, 2, priceCcy)} sub={new Date(data.priceTimestamp).toLocaleString()} />
