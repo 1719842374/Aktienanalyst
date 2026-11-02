@@ -22,6 +22,8 @@ import {
   FORWARD_OUTLIER,
   GROWTH_HOLDINGS_PARAMS,
   adjTtmFromEarnings,
+  adjTtmFromYahooAdjusted,
+  consensusFromYahooAdjusted,
   alignConsensusToTtm,
   annualizedFwdPct,
   consensusForOneYear,
@@ -853,7 +855,7 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
   assert.equal(directProbes.includes("/ratios-ttm"), false);
 });
 
-await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeile sichtbar", async () => {
+await ok("Deckung unter minCoverage bleibt n/a, Yahoo +1y mit t=null hebt den Index nicht", async () => {
   const { loadRecessionGrowth } = await import("../server/recession-growth");
   const yahooTrend = {
     defaultKeyStatistics: { trailingEps: { raw: 10 } },
@@ -896,12 +898,13 @@ await ok("Deckung unter minCoverage bleibt am Yahoo-Fallback und in der n/a-Zeil
       return { defaultKeyStatistics: {} };
     },
   });
-  assert.equal(shown.forward.available, true);
-  if (shown.forward.available) {
-    assert.ok(Math.abs(shown.forward.gFwdPct - 10) < 1e-9);
-    assert.match(shown.forward.coverageWarn ?? "", /minCoverage/);
-    assert.match(shown.forward.coverageWarn ?? "", /Deckung/);
-    assert.match(shown.forward.source, /minCoverage/);
+  assert.equal(shown.forward.available, false);
+  if (!shown.forward.available) {
+    assert.match(shown.forward.reason, /minCoverage/);
+    assert.match(shown.forward.reason, /Deckung/);
+    assert.equal("gFwdPct" in shown.forward, false);
+    assert.equal(JSON.stringify(shown.forward).includes("trailingEps"), false);
+    assert.ok((shown.forward.lines ?? []).some(line => line.symbol === "AAA" && line.gAnnPct != null));
   }
   const hidden = await loadRecessionGrowth("ASHR", {
     ...base,
@@ -1059,6 +1062,135 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
   assert.match(visible, /epsActual/);
   assert.match(visible, /data-testid="recession-growth-coverage"/);
   assert.match(visible, /adjTTM ≤ 0/);
+});
+
+await ok("META adjTTM ist die non-GAAP-Summe 29,77, nicht der GAAP-Mix 32,90", () => {
+  const asOf = "2026-11-02";
+  const raw = {
+    earningsHistoryGaap: { history: [
+      { epsActual: { raw: 8.88 }, quarter: { fmt: "2025-12-31" }, currency: "USD" },
+      { epsActual: { raw: 10.44 }, quarter: { fmt: "2026-03-31" }, currency: "USD" },
+      { epsActual: { raw: 6.18 }, quarter: { fmt: "2026-06-30" }, currency: "USD" },
+      { epsActual: { raw: 3.83 }, quarter: { fmt: "2026-09-30" }, currency: "USD" },
+    ] },
+    earningsHistoryNonGaap: { history: [
+      { epsActual: { raw: 8.88 }, quarter: { fmt: "2025-12-31" }, currency: "USD" },
+      { epsActual: { raw: 7.31 }, quarter: { fmt: "2026-03-31" }, currency: "USD" },
+      { epsActual: { raw: 6.18 }, quarter: { fmt: "2026-06-30" }, currency: "USD" },
+      { epsActual: { raw: 7.4 }, quarter: { fmt: "2026-09-30" }, currency: "USD" },
+    ] },
+    earningsTrendNonGaap: { trend: [
+      { period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: 29.7896 }, earningsCurrency: "USD" } },
+      { period: "+1y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 35.42861 }, earningsCurrency: "USD" } },
+    ] },
+    defaultKeyStatistics: { trailingEps: { raw: 29.31 } },
+  };
+  const parsed = adjTtmFromYahooAdjusted(raw, asOf);
+  assert.equal(parsed.unusableReason, null);
+  assert.deepEqual(parsed.quarters.map(row => row.eps), [7.4, 6.18, 7.31, 8.88]);
+  assert.ok(Math.abs((parsed.adjTtm ?? 0) - 29.77) < 1e-9, String(parsed.adjTtm));
+  const mixed = 8.88 + 10.44 + 6.18 + 7.4;
+  assert.ok(Math.abs(mixed - 32.9) < 1e-9);
+  assert.ok(Math.abs((parsed.adjTtm ?? 0) - mixed) > 1);
+  const fy = consensusFromYahooAdjusted(raw, asOf);
+  assert.equal(fy?.date, "2026-12-31");
+  assert.equal(fy?.eps, 29.7896);
+  assert.equal(fy?.horizonDays, 241);
+  assert.ok((parsed.adjTtm ?? 0) < 29.7896);
+  assert.ok(mixed > 29.7896);
+});
+
+await ok("Ticker ohne 4 Quartale adjusted und ohne t bleibt n/a, Yahoo-4Q zählt mit Quelle", async () => {
+  const asOf = "2026-11-02";
+  const { loadRecessionGrowth } = await import("../server/recession-growth");
+  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, epsActual: each }));
+  const yahoo4 = {
+    earningsHistoryNonGaap: { history: quarters(1).map(row => ({ epsActual: { raw: row.epsActual }, quarter: { fmt: row.date }, currency: "USD" })) },
+    earningsTrendNonGaap: { trend: [
+      { period: "0y", endDate: "2027-06-30", earningsEstimate: { avg: { raw: 5 }, earningsCurrency: "USD" } },
+      { period: "+1y", endDate: "2028-06-30", earningsEstimate: { avg: { raw: 9 }, earningsCurrency: "USD" } },
+    ] },
+    defaultKeyStatistics: { trailingEps: { raw: 99 } },
+  };
+  const body = await loadRecessionGrowth("SPY", {
+    loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
+    fetchMultpl: async () => multplTable(),
+    probeFmp: async (path, params) => {
+      const symbol = params.symbol;
+      if (path === "/analyst-estimates" && (symbol === "SPY" || symbol === "^GSPC")) return { status: 200, json: [], detail: "" };
+      if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
+      if (path === "/etf/holdings") return { status: 402, json: null, detail: "" };
+      if (path === "/earnings" && symbol === "SPY") return { status: 200, json: [], detail: "" };
+      if (path === "/analyst-estimates" && symbol === "AAA") return { status: 200, json: [{ date: "2027-12-31", epsAvg: 12 }], detail: "" };
+      if (path === "/earnings" && symbol === "AAA") return { status: 200, json: quarters(2.5), detail: "" };
+      if (path === "/earnings" && symbol === "Y4") return { status: 200, json: [], detail: "" };
+      if (path === "/analyst-estimates" && (symbol === "Y4" || symbol === "NA" || symbol === "NONE")) return { status: 200, json: [], detail: "" };
+      if (path === "/earnings") return { status: 200, json: [], detail: "" };
+      return { status: 404, json: null, detail: "unbekannt" };
+    },
+    loadIncome: async () => [],
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "AAA", holdingPercent: { raw: 0.25 } },
+          { symbol: "Y4", holdingPercent: { raw: 0.2 } },
+          { symbol: "NA", holdingPercent: { raw: 0.08 } },
+          { symbol: "NONE", holdingPercent: { raw: 0.05 } },
+        ] } };
+      }
+      if (symbol === "Y4" && modules.includes("earningsHistoryNonGaap")) return yahoo4;
+      if (symbol === "NA") {
+        return {
+          defaultKeyStatistics: { trailingEps: { raw: 10 } },
+          earningsTrend: { trend: [{ period: "+1y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 11 }, growth: { raw: 0.1 } } }] },
+        };
+      }
+      return { defaultKeyStatistics: { trailingEps: { raw: 10 } } };
+    },
+    loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
+    loadVix: async () => [],
+    fmpAvailable: true,
+    today: asOf,
+  });
+  assert.equal(body.forward.available, true);
+  if (!body.forward.available) return;
+  const line = Object.fromEntries((body.forward.lines ?? []).map(row => [row.symbol, row]));
+  const y4t = midToMidDays(horizonDays(asOf, "2027-06-30"));
+  const y4 = annualizedFwdPct(5, 4, y4t);
+  assert.ok("gFwdPct" in y4);
+  if ("gFwdPct" in y4) assert.ok(Math.abs((line.Y4.gAnnPct ?? NaN) - y4.gFwdPct) < 1e-6, String(line.Y4.gAnnPct));
+  assert.match(line.Y4.source ?? "", /earningsHistoryNonGaap/);
+  assert.match(line.Y4.source ?? "", /2026-09-30=1/);
+  assert.equal((line.Y4.source ?? "").includes("trailingEps"), false);
+  assert.equal(line.Y4.tDays, y4t);
+  assert.equal(line.NA.gAnnPct, null);
+  assert.equal(line.NA.weight, null);
+  assert.match(line.NA.excludeReason ?? "", /keine 4 Quartale adjusted und kein Horizont t/);
+  assert.equal(line.NONE.gAnnPct, null);
+  assert.match(line.NONE.excludeReason ?? "", /keine 4 Quartale adjusted und kein Horizont t/);
+  assert.match(body.forward.coverageWarn ?? "", /45,0 %/);
+  assert.match(body.forward.coverageWarn ?? "", /NA /);
+  assert.match(body.forward.coverageWarn ?? "", /NONE /);
+  assert.equal((body.forward.source ?? "").includes("Horizont 1J (+1y)"), false);
+  const covered = (line.AAA.indexWeight + line.Y4.indexWeight) * 100;
+  const withNa = covered + line.NA.indexWeight * 100 + line.NONE.indexWeight * 100;
+  assert.ok(covered < withNa);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+  });
+  client.setQueryData(["/api/recession/earnings-growth", "SPY"], body);
+  client.setQueryData(["/api/recession/growth-gap", "SPY"], body);
+  const { RecessionGrowthSection } = await import("../client/src/components/recession/RecessionGrowthSection");
+  const html = renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client }, React.createElement(RecessionGrowthSection, { number: 17 })),
+  );
+  const visible = html.replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+  assert.match(visible, /recession-growth-holding-NA/);
+  assert.match(visible, /keine 4 Quartale adjusted und kein Horizont t/);
+  assert.match(visible, /recession-growth-holding-Y4/);
+  assert.match(visible, /earningsHistoryNonGaap/);
+  assert.match(visible, /data-testid="recession-growth-coverage"/);
+  assert.match(visible, /45,0 %/);
 });
 
 await ok("Pins und Score-Pfade bleiben", () => {

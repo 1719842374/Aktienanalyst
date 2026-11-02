@@ -69,7 +69,7 @@ export const GROWTH_HOLDINGS_PARAMS = {
  * g_ann = (consensus / adjTTM) ^ (oneYearDays / t) − 1. Keine Schwelle, kein Folgejahr, kein Floor, kein Cap.
  * g wird nicht gedämpft.
  * Das Aggregationsgewicht ist Index-Gewicht × min(1, t/oneYearDays) × Huber, mit diesem t. Das ist technische Stabilisierung.
- * Yahoo forwardEps hat auf der Quote-Seite kein FY-Ende und bleibt der 1J-Quotient.
+ * Der Index zählt Yahoo nur mit vier adjusted Quartalen und einem FY-Ende. trailingEps und +1y ohne t zählen nicht.
  */
 export const FORWARD_HORIZON = {
   oneYearDays: 365,
@@ -170,7 +170,7 @@ export type ForwardReading =
       /** Pro Ticker: ungedämpftes g, Aggregationsgewicht, t und Quelle. */
       lines?: ForwardHoldingLine[];
     }
-  | NaReading;
+  | (NaReading & { lines?: ForwardHoldingLine[] });
 
 export interface ForwardHoldingLine {
   symbol: string;
@@ -490,7 +490,7 @@ function isFullYearPeriod(row: unknown): boolean {
 
 /**
  * adjTTM = Summe der letzten 4 gemeldeten epsActual bis asOf.
- * Ein FY-Abschluss zählt nicht als Quartal. Weniger als 4 Drucke → null, der Aufrufer nennt den Fallback.
+ * Ein FY-Abschluss zählt nicht als Quartal. Weniger als 4 Drucke → null.
  * Summe ≤ 0 → unusableReason, kein stiller Ersatz.
  */
 export function adjTtmFromEarnings(raw: unknown, asOf: string): {
@@ -516,6 +516,147 @@ export function adjTtmFromEarnings(raw: unknown, asOf: string): {
   const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
   if (!(adjTtm > 0)) return { adjTtm, quarters, unusableReason: "n/a — adjTTM ≤ 0" };
   return { adjTtm, quarters, unusableReason: null };
+}
+
+export interface YahooAdjQuarter {
+  date: string;
+  eps: number;
+}
+
+/**
+ * adjTTM aus Yahoo adjusted, nie aus GAAP und nie aus trailingEps.
+ * Quelle ist earningsHistoryNonGaap, ersatzweise earningsNonGaap.earningsChart.
+ * Weniger als 4 Quartale → null. Eine Mischung mit earningsGaap ist kein adjTTM.
+ */
+export function adjTtmFromYahooAdjusted(raw: unknown, asOf: string): {
+  adjTtm: number | null;
+  quarters: YahooAdjQuarter[];
+  currency: string | null;
+  unusableReason: string | null;
+} {
+  const history = readYahooAdjustedHistory(raw);
+  const chart = readYahooAdjustedChart(raw);
+  const picked = history.length >= chart.length ? history : chart;
+  const quarters = picked
+    .filter(row => row.date <= asOf)
+    .slice(0, EPS_BASIS.reportedQuarters);
+  const currency = picked.find(row => row.currency)?.currency ?? null;
+  if (quarters.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters, currency, unusableReason: null };
+  }
+  const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) return { adjTtm, quarters, currency, unusableReason: "n/a — adjTTM ≤ 0" };
+  return { adjTtm, quarters, currency, unusableReason: null };
+}
+
+interface YahooAdjRow {
+  date: string;
+  eps: number;
+  currency: string | null;
+}
+
+function readYahooAdjustedHistory(raw: unknown): YahooAdjRow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const history = (raw as { earningsHistoryNonGaap?: { history?: unknown } }).earningsHistoryNonGaap?.history;
+  if (!Array.isArray(history)) return [];
+  const byDate = new Map<string, YahooAdjRow>();
+  for (const row of history) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const quarter = record.quarter && typeof record.quarter === "object" ? record.quarter as Record<string, unknown> : {};
+    const date = String(quarter.fmt ?? "").slice(0, 10);
+    const eps = yahooRaw(record.epsActual);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof record.currency === "string" && record.currency.trim() ? record.currency.trim() : null;
+    if (!byDate.has(date)) byDate.set(date, { date, eps, currency });
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function readYahooAdjustedChart(raw: unknown): YahooAdjRow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const quarterly = (raw as { earningsNonGaap?: { earningsChart?: { quarterly?: unknown } } }).earningsNonGaap?.earningsChart?.quarterly;
+  if (!Array.isArray(quarterly)) return [];
+  const byDate = new Map<string, YahooAdjRow>();
+  for (const row of quarterly) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const periodEnd = record.periodEndDate && typeof record.periodEndDate === "object"
+      ? record.periodEndDate as Record<string, unknown>
+      : {};
+    const date = String(periodEnd.fmt ?? "").slice(0, 10);
+    const eps = yahooRaw(record.actual);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    if (!byDate.has(date)) byDate.set(date, { date, eps, currency: null });
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * Nächstes offenes FY aus earningsTrendNonGaap (0y, sonst +1y), dieselbe Regel wie consensusForOneYear.
+ * Das growth-Feld und ein +1y ohne endDate sind kein g und kein t.
+ */
+export function consensusFromYahooAdjusted(raw: unknown, asOf: string): ReturnType<typeof consensusForOneYear> {
+  if (!raw || typeof raw !== "object") return null;
+  const trend = (raw as { earningsTrendNonGaap?: { trend?: unknown } }).earningsTrendNonGaap?.trend;
+  if (!Array.isArray(trend)) return null;
+  const rows: { date: string; epsAvg: number; currency: string | null }[] = [];
+  for (const row of trend) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = String(record.period ?? "");
+    if (period !== "0y" && period !== "+1y") continue;
+    const date = String(record.endDate ?? "").slice(0, 10);
+    const estimate = record.earningsEstimate && typeof record.earningsEstimate === "object"
+      ? record.earningsEstimate as Record<string, unknown>
+      : {};
+    const eps = yahooRaw(estimate.avg);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof estimate.earningsCurrency === "string" && estimate.earningsCurrency.trim()
+      ? estimate.earningsCurrency.trim()
+      : null;
+    rows.push({ date, epsAvg: eps, currency });
+  }
+  return consensusForOneYear(rows, asOf);
+}
+
+/** JSON-Objekt hinter `"key":` . Strings und Escapes zählen nicht als Klammer. */
+export function sliceJsonObject(text: string, key: string): unknown | null {
+  const token = `"${key}":`;
+  const at = text.indexOf(token);
+  if (at < 0) return null;
+  let i = at + token.length;
+  while (text[i] === " ") i++;
+  if (text[i] !== "{") return null;
+  const start = i;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as unknown;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function majorCurrency(amount: number, code: string): { amount: number; code: string } {
@@ -891,7 +1032,7 @@ export type WeightedForward =
       note: string;
       coverageWarn: string | null;
     }
-  | { available: false; reason: string };
+  | { available: false; reason: string; lines?: ForwardHoldingLine[] };
 
 function deFixed(v: number, digits: number): string {
   const sign = v < 0 ? "−" : "";
@@ -970,7 +1111,21 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   const listed = rows.filter(r => Number.isFinite(r.weight) && r.weight > 0);
   if (!listed.length) return { available: false, reason: "n/a — Holdings ohne positives Gewicht" };
   const used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
-  if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
+  if (!used.length) {
+    return {
+      available: false,
+      reason: "n/a — kein Holding mit Forward-Wachstum",
+      lines: listed.map(row => ({
+        symbol: row.symbol,
+        gAnnPct: null,
+        indexWeight: row.weight,
+        weight: null,
+        tDays: row.tDays ?? null,
+        source: row.source ?? null,
+        excludeReason: row.excludeReason ?? "n/a — kein Forward",
+      })),
+    };
+  }
   const huber = used.map(() => 1);
   let scale: OutlierScale = "suspended";
   if (used.length >= FORWARD_OUTLIER.minNames) {
@@ -996,10 +1151,30 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   const asFraction = (weight: number) => (maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? weight / 100 : weight);
   const fundFraction = asFraction(included);
   const coverage = fundFraction <= 1.05 ? fundFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  const huberBySymbol = new Map<string, number>();
+  used.forEach((row, index) => huberBySymbol.set(row.symbol, huber[index] * horizon[index]));
+  const lines: ForwardHoldingLine[] = listed.map(row => {
+    const scaleW = huberBySymbol.get(row.symbol);
+    const inMean = scaleW != null;
+    return {
+      symbol: row.symbol,
+      gAnnPct: inMean ? (row.gFwdPct ?? null) : null,
+      indexWeight: row.weight,
+      weight: inMean ? row.weight * scaleW : null,
+      tDays: row.tDays ?? null,
+      source: row.source ?? null,
+      excludeReason: inMean ? null : (row.excludeReason ?? null),
+    };
+  });
   if (coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.minCoverage) {
+    const dropped = lines
+      .filter(row => row.gAnnPct == null && row.excludeReason)
+      .map(row => `${row.symbol} (${String(row.excludeReason).replace(/^n\/a — /, "")})`);
+    const droppedNote = dropped.length ? `; ausgeschlossen: ${dropped.join(", ")}` : "";
     return {
       available: false,
-      reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %`,
+      reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %${droppedNote}`,
+      lines,
     };
   }
   const reasoned = listed.filter(row => row.excludeReason && !used.some(kept => kept.symbol === row.symbol));
@@ -1016,21 +1191,6 @@ export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForwa
   const note = coverage != null
     ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`
     : `Deckung der gelisteten Gewichte ${deFixed((included / listedWeight) * 100, 1)} %, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`;
-  const huberBySymbol = new Map<string, number>();
-  used.forEach((row, index) => huberBySymbol.set(row.symbol, huber[index] * horizon[index]));
-  const lines: ForwardHoldingLine[] = listed.map(row => {
-    const scaleW = huberBySymbol.get(row.symbol);
-    const inMean = scaleW != null;
-    return {
-      symbol: row.symbol,
-      gAnnPct: inMean ? row.gFwdPct : null,
-      indexWeight: row.weight,
-      weight: inMean ? row.weight * scaleW : null,
-      tDays: row.tDays ?? null,
-      source: row.source ?? null,
-      excludeReason: inMean ? null : (row.excludeReason ?? null),
-    };
-  });
   const excluded = listed
     .filter(row => !used.some(kept => kept.symbol === row.symbol))
     .map(row => {

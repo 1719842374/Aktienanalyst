@@ -235,7 +235,7 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               <p className="break-words text-sm text-foreground">{gaps.fazit.text}</p>
               <p className="break-words text-[11px] text-muted-foreground">{gaps.fazit.formula}</p>
             </div>
-            {gaps.forward.available && gaps.forward.lines && gaps.forward.lines.length > 0 && (
+            {gaps.forward.lines && gaps.forward.lines.length > 0 && (
               <div className="rounded-md border border-border px-3 py-2" data-testid="recession-growth-holdings">
                 <p className="text-[10px] text-muted-foreground">
                   t = Tage bis FY-Ende + 182. Technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber(MAD-z). g ist ungedämpft.

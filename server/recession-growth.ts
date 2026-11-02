@@ -13,25 +13,24 @@ import {
   FMP_LEGACY_NOTE,
   FORWARD_FORMULA_EPS,
   FORWARD_HORIZON,
-  FORWARD_FORMULA_YAHOO_GROWTH,
-  FORWARD_FORMULA_YAHOO_HTML,
   GROWTH_BOOKS,
   GROWTH_GAP_PARAMS,
   GROWTH_HOLDINGS_PARAMS,
   buildGrowthBody,
   adjTtmFromEarnings,
+  adjTtmFromYahooAdjusted,
   alignConsensusToTtm,
   annualizedFwdPct,
   consensusForOneYear,
+  consensusFromYahooAdjusted,
   horizonWeightFactor,
   describeAnalystEstimates,
   describeEarningsRows,
-  forwardFromEps,
-  forwardFromYahooQuoteSummary,
   holdingsFromYahooHtml,
-  yahooEpsContext,
   multplGrowthPrints,
   nextConsensusEps,
+  sliceJsonObject,
+  unescapeYahooHtml,
   weightsFromHoldingsPayload,
   weightedHoldingsForward,
   yoyFromAnnualEps,
@@ -311,13 +310,77 @@ function datedForward(
 
 type ConsensusFy = NonNullable<ReturnType<typeof consensusForOneYear>>;
 
+interface YahooAdjHit {
+  ttm: number | null;
+  currency: string | null;
+  cite: string;
+  consensus: ConsensusFy | null;
+  unusableReason: string | null;
+}
+
+const YAHOO_ADJ_MODULES = ["earningsHistoryNonGaap", "earningsTrendNonGaap", "earningsNonGaap"] as const;
+const NO_ADJ_QUARTERS = "n/a — keine 4 Quartale adjusted";
+const NO_HORIZON = "n/a — kein Horizont t";
+const NO_ADJ_AND_HORIZON = "n/a — keine 4 Quartale adjusted und kein Horizont t";
+
+function shownEps(value: number): string {
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+async function loadYahooAdjusted(symbol: string, deps: GrowthDeps, notes: string[]): Promise<YahooAdjHit> {
+  const empty: YahooAdjHit = { ttm: null, currency: null, cite: "", consensus: null, unusableReason: null };
+  let raw: unknown = null;
+  let origin = "";
+  const sink: YahooCallDiag[] = [];
+  try {
+    raw = await deps.loadYahooSummary(symbol, YAHOO_ADJ_MODULES, sink);
+    if (raw) origin = `Yahoo quoteSummary earningsHistoryNonGaap ${symbol} (keyless)`;
+  } catch (err) {
+    notes.push(`${symbol}: Yahoo earningsHistoryNonGaap fehlgeschlagen (${clip(err)})`);
+  }
+  if (!raw && deps.loadYahooHtml) {
+    try {
+      const page = await deps.loadYahooHtml(symbol);
+      const text = unescapeYahooHtml(page.html ?? "");
+      const history = sliceJsonObject(text, "earningsHistoryNonGaap");
+      const trend = sliceJsonObject(text, "earningsTrendNonGaap");
+      const chart = sliceJsonObject(text, "earningsNonGaap");
+      if (history || trend || chart) {
+        raw = { earningsHistoryNonGaap: history, earningsTrendNonGaap: trend, earningsNonGaap: chart };
+        origin = `Yahoo Quote-HTML earningsHistoryNonGaap ${symbol} (keyless)`;
+      } else if (page.error) {
+        notes.push(`${symbol}: ${page.error}`);
+      }
+    } catch (err) {
+      notes.push(`${symbol}: Yahoo Quote-HTML fehlgeschlagen (${clip(err)})`);
+    }
+  }
+  if (!raw) {
+    if (sink.length) notes.push(yahooMiss(symbol, sink));
+    return empty;
+  }
+  const parsed = adjTtmFromYahooAdjusted(raw, deps.today);
+  const consensus = consensusFromYahooAdjusted(raw, deps.today);
+  const quarters = parsed.quarters.map(row => `${row.date}=${shownEps(row.eps)}`).join(" + ");
+  const cite = parsed.adjTtm != null
+    ? `${origin} · adjTTM Summe letzter ${EPS_BASIS.reportedQuarters} = ${shownEps(parsed.adjTtm)} (${quarters})`
+    : origin;
+  return {
+    ttm: parsed.adjTtm,
+    currency: assumedCurrency(symbol, parsed.currency),
+    cite,
+    consensus,
+    unusableReason: parsed.unusableReason,
+  };
+}
+
 async function annualizedFromConsensus(
   symbol: string,
   consensus: ConsensusFy,
   deps: GrowthDeps,
   notes: string[],
   rates: Record<string, number> | null,
-  loadYahoo: () => Promise<ForwardReading>,
+  loadYahoo: () => Promise<YahooAdjHit>,
 ): Promise<{ gFwdPct: number; via: string; epsConsensus: number; epsTtm: number } | { excludeReason: string } | null> {
   const ttm = await adjTtmOf(symbol, deps, notes);
   if (ttm.unusableReason) return { excludeReason: ttm.unusableReason };
@@ -347,21 +410,21 @@ async function annualizedFromConsensus(
     const got = apply(ttm.ttm, ttm.currency, `FMP ${ttm.cite}`);
     if (got && "excludeReason" in got) return got;
     if (got) return got;
-  } else if (ttm.ttm == null && consensusCcy) {
+    return { excludeReason: "n/a — keine vergleichbare EPS-Währung" };
+  }
+  if (ttm.ttm == null && consensusCcy) {
     const yahooTtm = await loadYahoo();
-    if (yahooTtm.available && yahooTtm.epsTtm != null && yahooTtm.epsTtm > 0) {
-      const got = apply(
-        yahooTtm.epsTtm,
-        consensusCcy,
-        `Fallback Yahoo trailingEps, keine ${EPS_BASIS.reportedQuarters} gemeldeten epsActual (${ttm.cite})`,
-      );
+    if (yahooTtm.unusableReason) return { excludeReason: yahooTtm.unusableReason };
+    if (yahooTtm.ttm != null && yahooTtm.currency) {
+      const got = apply(yahooTtm.ttm, yahooTtm.currency, yahooTtm.cite);
       if (got && "excludeReason" in got) return got;
       if (got) return got;
+      return { excludeReason: "n/a — keine vergleichbare EPS-Währung" };
     }
-  } else {
-    notes.push(`${symbol}: Währung fehlt`);
+    return { excludeReason: NO_ADJ_QUARTERS };
   }
-  return null;
+  notes.push(`${symbol}: Währung fehlt`);
+  return { excludeReason: "n/a — Währung fehlt auf einer EPS-Seite" };
 }
 
 function yahooMiss(symbol: string, sink: YahooCallDiag[]): string {
@@ -369,18 +432,6 @@ function yahooMiss(symbol: string, sink: YahooCallDiag[]): string {
   return detail
     ? `n/a — Yahoo quoteSummary ${symbol}: ${detail}`
     : `n/a — Yahoo quoteSummary ${symbol} leer`;
-}
-
-async function yahooForward(symbol: string, deps: GrowthDeps): Promise<ForwardReading> {
-  const source = `Yahoo quoteSummary earningsTrend + defaultKeyStatistics.trailingEps ${symbol} (keyless)`;
-  const sink: YahooCallDiag[] = [];
-  try {
-    const raw = await deps.loadYahooSummary(symbol, ["earningsTrend", "defaultKeyStatistics"], sink);
-    if (!raw) return { available: false, reason: yahooMiss(symbol, sink) };
-    return forwardFromYahooQuoteSummary(raw, deps.today, source);
-  } catch (err) {
-    return { available: false, reason: `n/a — Yahoo earningsTrend ${symbol} fehlgeschlagen (${clip(err)})` };
-  }
 }
 
 async function growthForHolding(
@@ -391,57 +442,50 @@ async function growthForHolding(
 ): Promise<{ gFwdPct: number | null; via: string; excludeReason: string | null; tDays: number | null }> {
   const raw = await probeConsensus(symbol, deps, notes);
   const consensus = raw ? consensusForOneYear(raw, deps.today) : null;
-  const tDays = consensus?.horizonDays ?? null;
   if (raw && !consensus && nextConsensusEps(raw, deps.today)) {
     notes.push(`${symbol}: Konsens-FY ohne positiven Horizont t`);
   }
-  let yahooHit: ForwardReading | null = null;
+  let yahooHit: YahooAdjHit | null = null;
   const yahooOnce = async () => {
-    if (!yahooHit) yahooHit = await yahooForward(symbol, deps);
+    if (!yahooHit) yahooHit = await loadYahooAdjusted(symbol, deps, notes);
     return yahooHit;
   };
   if (consensus) {
     const grown = await annualizedFromConsensus(symbol, consensus, deps, notes, rates, yahooOnce);
-    if (grown && "excludeReason" in grown) return { gFwdPct: null, via: "", excludeReason: grown.excludeReason, tDays };
-    if (grown) return { gFwdPct: grown.gFwdPct, via: grown.via, excludeReason: null, tDays };
+    if (grown && "excludeReason" in grown) return { gFwdPct: null, via: "", excludeReason: grown.excludeReason, tDays: consensus.horizonDays };
+    if (grown) return { gFwdPct: grown.gFwdPct, via: grown.via, excludeReason: null, tDays: consensus.horizonDays };
   }
   const yahoo = await yahooOnce();
-  if (!yahoo.available && deps.loadYahooHtml) {
-    try {
-      const page = await deps.loadYahooHtml(symbol);
-      const ctx = yahooEpsContext(page.html ?? "", symbol);
-      const ccy = ctx.financialCurrency;
-      if (ctx.forward != null && ctx.trailing != null && ccy) {
-        const aligned = alignConsensusToTtm(ctx.forward, ccy, ctx.trailing, ccy, rates);
-        if ("error" in aligned) {
-          notes.push(`${symbol}: ${aligned.error}`);
-        } else {
-          const quoteNote = ctx.quoteCurrency && ctx.quoteCurrency !== ccy
-            ? `, Kurs ${ctx.quoteCurrency}`
-            : "";
-          const htmlFwd = forwardFromEps(
-            aligned.consensus,
-            aligned.ttm,
-            deps.today,
-            `Yahoo Quote-HTML ${symbol} (keyless, HTTP/2) · Horizont 1J (forwardEps, nächstes Geschäftsjahr) · EPS ${aligned.note}${quoteNote}`,
-            FORWARD_FORMULA_YAHOO_HTML,
-          );
-          if (htmlFwd.available) return { gFwdPct: htmlFwd.gFwdPct, via: "Yahoo Quote-HTML", excludeReason: null, tDays: null };
-          notes.push(`${symbol}: ${htmlFwd.reason}`);
-        }
+  if (yahoo.unusableReason) return { gFwdPct: null, via: "", excludeReason: yahoo.unusableReason, tDays: yahoo.consensus?.horizonDays ?? null };
+  if (yahoo.consensus && yahoo.ttm != null && yahoo.currency) {
+    const consensusCcy = assumedCurrency(symbol, yahoo.consensus.currency);
+    if (!consensusCcy) {
+      notes.push(`${symbol}: Währung fehlt`);
+    } else {
+      const aligned = alignConsensusToTtm(yahoo.consensus.eps, consensusCcy, yahoo.ttm, yahoo.currency, rates);
+      if ("error" in aligned) {
+        notes.push(`${symbol}: ${aligned.error}`);
       } else {
-        notes.push(`${symbol}: ${page.error ?? "Yahoo Quote-HTML ohne EPS-Paar oder ohne financialCurrency"}`);
+        const forward = datedForward(
+          aligned.consensus,
+          aligned.ttm,
+          yahoo.consensus.date,
+          yahoo.consensus.daysToFyEnd,
+          yahoo.consensus.horizonDays,
+          `${yahoo.cite} · ${aligned.note}`,
+        );
+        if ("reason" in forward) return { gFwdPct: null, via: "", excludeReason: forward.reason, tDays: yahoo.consensus.horizonDays };
+        return { gFwdPct: forward.gFwdPct, via: forward.via, excludeReason: null, tDays: yahoo.consensus.horizonDays };
       }
-    } catch (err) {
-      notes.push(`${symbol}: Yahoo Quote-HTML fehlgeschlagen (${clip(err)})`);
     }
   }
-  if (yahoo.available) {
-    const via = yahoo.formula === FORWARD_FORMULA_YAHOO_GROWTH ? "Yahoo earningsTrend growth" : "Yahoo earningsTrend";
-    return { gFwdPct: yahoo.gFwdPct, via: `${via} · Horizont 1J (+1y)`, excludeReason: null, tDays: null };
+  const hasQuarters = yahoo.ttm != null;
+  const hasHorizon = yahoo.consensus != null || consensus != null;
+  if (!hasQuarters && !hasHorizon) {
+    return { gFwdPct: null, via: "", excludeReason: NO_ADJ_AND_HORIZON, tDays: null };
   }
-  notes.push(`${symbol}: ${yahoo.reason}`);
-  return { gFwdPct: null, via: "", excludeReason: null, tDays: null };
+  if (!hasHorizon) return { gFwdPct: null, via: yahoo.cite, excludeReason: NO_HORIZON, tDays: null };
+  return { gFwdPct: null, via: "", excludeReason: NO_ADJ_QUARTERS, tDays: yahoo.consensus?.horizonDays ?? consensus?.horizonDays ?? null };
 }
 
 async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forward: ForwardReading; trace: string }> {
@@ -450,7 +494,6 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
   const probe = memoProbe(deps.probeFmp);
   const local: GrowthDeps = { ...deps, probeFmp: probe };
   const rates = await usdPerUnit();
-  let thinCoverage: string | null = null;
   if (!deps.fmpAvailable) {
     notes.push("FMP nicht konfiguriert");
   } else {
@@ -463,7 +506,7 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
         }
         continue;
       }
-      const grown = await annualizedFromConsensus(symbol, consensus, local, notes, rates, () => yahooForward(symbol, deps));
+      const grown = await annualizedFromConsensus(symbol, consensus, local, notes, rates, () => loadYahooAdjusted(symbol, deps, notes));
       if (!grown) continue;
       if ("excludeReason" in grown) {
         notes.push(`${symbol}: ${grown.excludeReason}`);
@@ -580,23 +623,11 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
         };
       }
       notes.push(weighted.reason);
-      if (weighted.reason.includes("minCoverage")) thinCoverage = weighted.reason;
-    }
-  }
-  for (const symbol of book.fmpSymbols) {
-    const yahoo = await yahooForward(symbol, deps);
-    if (yahoo.available) {
-      if (!thinCoverage) return { forward: yahoo, trace: notes.join("; ") };
       return {
-        forward: {
-          ...yahoo,
-          coverageWarn: thinCoverage,
-          source: `${yahoo.source} · ${thinCoverage}`,
-        },
+        forward: { available: false, reason: weighted.reason, lines: weighted.lines },
         trace: notes.join("; "),
       };
     }
-    notes.push(`${symbol}: ${yahoo.reason}`);
   }
   const reason = shortForwardReason(notes);
   return { forward: { available: false, reason }, trace: notes.join("; ") };

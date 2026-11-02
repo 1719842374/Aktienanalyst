@@ -137,7 +137,7 @@ g_{\text{ann}} = \left(\frac{\text{consensus}}{\text{adjTTM}}\right)^{365/t} - 1
 
 g_ann wird nicht gedämpft. Nicht (EPS / Tage) × 365 und nicht der unannualisierte Quotient.
 
-adjTTM = Summe der letzten 4 gemeldeten `epsActual` aus FMP `/stable/earnings`. Ein FY-Abschluss zählt nicht als Quartal. Fehlen die 4 Drucke, ist der Fallback Yahoo `trailingEps`, mit Quellenangabe in der Zeile. GAAP `/stable/ratios-ttm` wird nicht gegen den adjusted Konsens gestellt.
+adjTTM = Summe der letzten 4 gemeldeten `epsActual` aus FMP `/stable/earnings`. Ein FY-Abschluss zählt nicht als Quartal. Fehlen die 4 Drucke, bleibt Yahoo nur, wenn `earningsHistoryNonGaap` oder `earningsNonGaap.earningsChart` vier adjusted Quartale liefert, mit Quellenangabe in der Zeile. `trailingEps` und ein Yahoo-+1y ohne echtes t zählen nicht. GAAP `/stable/ratios-ttm` und ein GAAP/non-GAAP-Mix werden nicht gegen den adjusted Konsens gestellt.
 
 adjTTM ≤ 0 oder Konsens ≤ 0: der Ticker ist nicht im Mittel, der Grund steht in der Abdeckung, das Index-Gewicht ist dort ausgewiesen.
 
@@ -149,7 +149,7 @@ Die Stabilisierung sitzt im Aggregationsgewicht, nicht in g. t in der Formel ist
 w_i = w^{\text{Index}}_i \times \min\left(1, \frac{t_i}{365}\right) \times h_i
 \]
 
-h ist das Huber-Gewicht auf dem MAD-z von g_ann: 1 bei |z| ≤ 2,5, sonst 2,5/|z|. Symmetrisch. Kein harter Ausschluss. Ohne FY-Ende (Yahoo-1J) ist der Horizontfaktor 1.
+h ist das Huber-Gewicht auf dem MAD-z von g_ann: 1 bei |z| ≤ 2,5, sonst 2,5/|z|. Symmetrisch. Kein harter Ausschluss. Ein Ticker ohne vier adjusted Quartale oder ohne echtes t ist nicht im Mittel. Sein Grund steht in der Zeile, sein Index-Gewicht in der Abdeckung.
 
 \[
 g_{\text{fwd}} = \frac{\sum_i w_i \, g_{\text{ann},i}}{\sum_i w_i}
@@ -164,7 +164,7 @@ Der frühere ASHR-Wert +13,4 % war der harte Schnitt bei |z| > 2,5. Die Freigabe
 | Punkt | Soll | Ist auf `cursor/eurostat-growth-gap-59aa` |
 |---|---|---|
 | t und g_ann | t = Tage bis FY-Ende + 182, Potenz 365/t, kein Floor, kein Cap, kein Folgejahr | `midToMidDays`, `consensusForOneYear`, `annualizedFwdPct` in `shared/recession-growth.ts` |
-| adjTTM | Summe der letzten 4 `epsActual`, Fallback mit Quelle, kein GAAP-`ratios-ttm` | `adjTtmFromEarnings`, `adjTtmOf` in `server/recession-growth.ts` |
+| adjTTM | Summe der letzten 4 adjusted Quartale, Yahoo nur als non-GAAP-4Q mit Quelle, kein `trailingEps`, kein +1y ohne t, kein GAAP-Mix | `adjTtmFromEarnings`, `adjTtmFromYahooAdjusted`, `adjTtmOf` |
 | ≤ 0 | Ticker raus mit Grund, Gewicht in der Abdeckung | `excludeReason`, Abdeckungstext und Zeile in der Karte |
 | Gewicht | Index × min(1, t/365) × Huber(MAD-z), mit dem neuen t | `horizonWeightFactor`, `weightedHoldingsForward` |
 | Karte | pro Ticker g, t, Gewicht, Quelle, plus Abdeckung | `ForwardHoldingLine.source` über `useRecessionGrowth` → `GET /api/recession/growth-gap/:index` → `RecessionGrowthSection` |
