@@ -1,7 +1,7 @@
 /**
  * POST /api/stock-podcast/:symbol — Skript des Aktien-Podcasts in Section 2.
  * Kette: Section1 → useStockPodcast (apiRequest) → diese Route →
- *   Kapitel 1: earnings-call-source (FMP-Transkript, sonst SEC EX-99.1) → OpenRouter (STOCK_PODCAST_MODEL)
+ *   Kapitel 1: earnings-call-source (FMP-Transkript, sonst SEC EX-99.1) → OpenRouter (OPENROUTER_MODEL, sonst STOCK_PODCAST_DEFAULT_MODEL)
  *   Kapitel 2: mitgeschickter Chat-Kontext (buildStockChatContext, gleiches Zod-Schema wie /api/chat) → OpenRouter
  * Cache je Ticker und Quartal (Speicher + researcher_cache auf Disk). Kein Score, kein Schema,
  * analyze-route.ts bleibt unberührt. Fehlt der Call, bleibt Kapitel 1 n/a mit Grund.
@@ -11,7 +11,7 @@ import { fitChatContextBudget, type ChatContext } from "../shared/chat-context";
 import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import { wordCount } from "../shared/podcast-player";
 import {
-  STOCK_PODCAST_MODEL, STOCK_PODCAST_PARAMS, lengthWindow, quarterLabel, shareWords, stockPodcastCacheKey,
+  STOCK_PODCAST_DEFAULT_MODEL, STOCK_PODCAST_MODEL_ENV, STOCK_PODCAST_PARAMS, lengthWindow, quarterLabel, shareWords, stockPodcastCacheKey, stockPodcastModel,
   type EarningsCallMeta, type StockPodcastChapterText, type StockPodcastScript,
 } from "../shared/stock-podcast";
 import { chatRequestSchema, formatContextForPrompt } from "./chat-route";
@@ -27,12 +27,25 @@ export interface StockPodcastDeps {
   earnings: (symbol: string) => Promise<FetchedEarningsCall>;
   llmAvailable: () => boolean;
   llm: LlmFn;
+  /** Skript-Modell je Anfrage (Env-Override vor Code-Default). */
+  model: () => string;
   cacheGet: (key: string, ttlMs: number) => StockPodcastScript | null;
   cacheSet: (key: string, script: StockPodcastScript) => void;
   now: () => number;
 }
 
 const memory = new Map<string, { at: number; script: StockPodcastScript }>();
+const warnedModels = new Set<string>();
+
+/** Liest OPENROUTER_MODEL je Anfrage; eine ungültige ID meldet das Log einmal und der Code-Default gilt. */
+export function stockPodcastModelFromEnv(env: Record<string, string | undefined> = process.env): string {
+  const { model, invalidEnv } = stockPodcastModel(env);
+  if (invalidEnv && !warnedModels.has(invalidEnv)) {
+    warnedModels.add(invalidEnv);
+    console.warn(`[STOCK-PODCAST] ${STOCK_PODCAST_MODEL_ENV}="${invalidEnv.slice(0, 80)}" ist keine OpenRouter-ID; nutze ${STOCK_PODCAST_DEFAULT_MODEL}`);
+  }
+  return model;
+}
 
 export function resetStockPodcastCache(): void {
   memory.clear();
@@ -136,7 +149,7 @@ function lengthNote(words: number, target: number): string | null {
 async function writeChapter(deps: StockPodcastDeps, title: string, p: { system: string; prompt: string }, target: number, intro: string | null): Promise<{ chapter: StockPodcastChapterText; model: string | null }> {
   try {
     const res = await deps.llm({
-      prompt: p.prompt, systemPrompt: p.system, model: STOCK_PODCAST_MODEL,
+      prompt: p.prompt, systemPrompt: p.system, model: deps.model(),
       maxTokens: STOCK_PODCAST_PARAMS.maxTokensPerChapter, temperature: STOCK_PODCAST_PARAMS.temperature,
       signal: AbortSignal.timeout(STOCK_PODCAST_PARAMS.llmTimeoutMs),
     });
@@ -221,6 +234,7 @@ export function registerStockPodcastRoute(app: Express, depsOverride?: StockPodc
         earnings: (s: string) => source.resolveLatestEarningsCall(s),
         llmAvailable: llm.isLLMAvailable,
         llm: llm.callLLMJson,
+        model: () => stockPodcastModelFromEnv(),
         cacheGet: (k: string, ttl: number) => (disk.diskResearcherGetWithTtl(k, ttl)?.data as StockPodcastScript | undefined) ?? null,
         cacheSet: (k: string, s: StockPodcastScript) => disk.diskResearcherSet(k, s),
         now: () => Date.now(),

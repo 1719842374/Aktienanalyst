@@ -24,7 +24,7 @@ import {
 } from "../shared/podcast-player";
 import { researcherPodcastEpisode } from "../shared/researcher-podcast-episode";
 import {
-  STOCK_PODCAST_MODEL, STOCK_PODCAST_PARAMS, stockPodcastCacheKey, stockPodcastEpisode, type StockPodcastScript,
+  STOCK_PODCAST_DEFAULT_MODEL, STOCK_PODCAST_PARAMS, stockPodcastCacheKey, stockPodcastEpisode, stockPodcastModel, type StockPodcastScript,
 } from "../shared/stock-podcast";
 import {
   decodeEntities, defaultSecDeps, earningsFilingCandidates, exhibitFromIndex, fetchTranscript, fetchTranscriptDates,
@@ -32,7 +32,7 @@ import {
   type EarningsCallDeps, type FetchedEarningsCall, type ObservedFetch,
 } from "../server/earnings-call-source";
 import { FMP_LEGACY_BASE } from "../server/fmp";
-import { buildStockPodcast, earningsBlockWords, registerStockPodcastRoute, resetStockPodcastCache, type StockPodcastDeps } from "../server/stock-podcast-route";
+import { buildStockPodcast, earningsBlockWords, registerStockPodcastRoute, resetStockPodcastCache, stockPodcastModelFromEnv, type StockPodcastDeps } from "../server/stock-podcast-route";
 import { concatWavs, createPiperProvider, memoryLimitBytes, parseWav, wavHeader } from "../server/tts/piper-provider";
 import { resolveTtsProvider, type TtsProvider } from "../server/tts/provider";
 import { createTtsService, registerTtsRoute } from "../server/tts-route";
@@ -171,8 +171,9 @@ async function main() {
     llm: async (o) => {
       prompts.push(o);
       const isEarnings = /QUELLE:/.test(o.prompt);
-      return { data: { paragraphs: [isEarnings ? `Satya Nadella sagte sinngemäß, die Nachfrage sei stark. ${words(900)}` : `Microsoft wächst. ${words(500)}`] }, modelUsed: STOCK_PODCAST_MODEL };
+      return { data: { paragraphs: [isEarnings ? `Satya Nadella sagte sinngemäß, die Nachfrage sei stark. ${words(900)}` : `Microsoft wächst. ${words(500)}`] }, modelUsed: STOCK_PODCAST_DEFAULT_MODEL };
     },
+    model: () => stockPodcastModelFromEnv({}),
     cacheGet: (k) => store.get(k) ?? null,
     cacheSet: (k, s) => { store.set(k, s); },
     now: () => Date.parse("2026-11-02T10:00:00Z"),
@@ -190,7 +191,7 @@ async function main() {
   assert.equal(script.cacheKey, "stock_podcast_v1__MSFT__2026-10-28");
   assert.equal(script.earnings.diagnostics[0], secCall.reason);
   assert.equal(prompts.length, 2);
-  assert.ok(prompts.every(p => p.model === STOCK_PODCAST_MODEL && p.maxTokens === STOCK_PODCAST_PARAMS.maxTokensPerChapter));
+  assert.ok(prompts.every(p => p.model === STOCK_PODCAST_DEFAULT_MODEL && p.maxTokens === STOCK_PODCAST_PARAMS.maxTokensPerChapter));
   const ep = prompts.find(p => /QUELLE:/.test(p.prompt))!;
   const w = earningsBlockWords("sec-exhibit");
   assert.equal(w.qa, 0);
@@ -268,6 +269,19 @@ async function main() {
   assert.equal(bad.status, 400);
   server.close();
   ok("POST /api/stock-podcast/:symbol über Express: 200 mit Skript, ungültiges Symbol 400");
+
+  assert.equal(STOCK_PODCAST_DEFAULT_MODEL, "anthropic/claude-haiku-4.5");
+  assert.deepEqual(stockPodcastModel({}), { model: "anthropic/claude-haiku-4.5", invalidEnv: null });
+  assert.deepEqual(stockPodcastModel({ OPENROUTER_MODEL: " deepseek/deepseek-v3.2 " }), { model: "deepseek/deepseek-v3.2", invalidEnv: null });
+  assert.deepEqual(stockPodcastModel({ OPENROUTER_MODEL: "haiku bitte" }), { model: "anthropic/claude-haiku-4.5", invalidEnv: "haiku bitte" });
+  prompts.length = 0;
+  resetStockPodcastCache();
+  store.clear();
+  await buildStockPodcast("MSFT", { context: ctx }, podDeps({ model: () => stockPodcastModelFromEnv({ OPENROUTER_MODEL: "deepseek/deepseek-v3.2" }) }));
+  assert.ok(prompts.length === 2 && prompts.every(p => p.model === "deepseek/deepseek-v3.2"));
+  const podcastSrc = readFileSync("shared/stock-podcast.ts", "utf8") + readFileSync("server/stock-podcast-route.ts", "utf8");
+  assert.equal(/opus/i.test(podcastSrc.replace(/Opus 5\.5 zu teuer/g, "")), false);
+  ok("Skript-Modell: Default Haiku 4.5 als Konstante, bestehendes OPENROUTER_MODEL überschreibt je Anfrage, ungültige ID → Default");
 
   // ── Sätze und Sprechform ────────────────────────────────────────────────
   assert.deepEqual(splitSentences("Der Umsatz stieg auf 77,7 Mrd. Dollar. Das ist gut! Q1 lief."), ["Der Umsatz stieg auf 77,7 Mrd. Dollar.", "Das ist gut!", "Q1 lief."]);

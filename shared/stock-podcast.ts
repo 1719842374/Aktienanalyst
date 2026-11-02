@@ -7,8 +7,27 @@
 import type { PlayerChapter, PlayerEpisode } from "./podcast-player";
 import { sentencesOfParagraphs } from "./podcast-player";
 
-/** Benanntes Skript-Modell (OpenRouter-ID, live in /api/v1/models geprüft am 02.11.2026). */
-export const STOCK_PODCAST_MODEL = "anthropic/claude-opus-5.5";
+/**
+ * Env-Variable, die das Skript-Modell überschreibt. Bestehender globaler Override (llm-openrouter.ts),
+ * keine eigene Podcast-Variable.
+ */
+export const STOCK_PODCAST_MODEL_ENV = "OPENROUTER_MODEL";
+/**
+ * Code-Default, wenn OPENROUTER_MODEL leer oder keine OpenRouter-ID ist.
+ * Haiku 4.5 (Philip, 02.11.2026: Opus 5.5 zu teuer), wie CHAT_LLM_DEFAULT_MODEL in chat-route.ts (#430).
+ */
+export const STOCK_PODCAST_DEFAULT_MODEL = "anthropic/claude-haiku-4.5";
+/** OpenRouter-ID "anbieter/modell[:variante]", gleiches Muster wie chatLlmModels in chat-route.ts (#430). */
+const OPENROUTER_MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i;
+
+/** Skript-Modell: gültiger Env-Wert vor Code-Default. Wird je Anfrage gelesen. */
+export function stockPodcastModel(env: Record<string, string | undefined>): { model: string; invalidEnv: string | null } {
+  const configured = env[STOCK_PODCAST_MODEL_ENV]?.trim() ?? "";
+  if (!configured) return { model: STOCK_PODCAST_DEFAULT_MODEL, invalidEnv: null };
+  return OPENROUTER_MODEL_ID.test(configured)
+    ? { model: configured, invalidEnv: null }
+    : { model: STOCK_PODCAST_DEFAULT_MODEL, invalidEnv: configured };
+}
 
 export const STOCK_PODCAST_PARAMS = {
   /** Ziellänge Kapitel 1 in Wörtern: ausführlich, rund acht Minuten bei 145 Wörtern/Minute. */
@@ -21,7 +40,7 @@ export const STOCK_PODCAST_PARAMS = {
   earningsShares: { guidance: 0.25, segments: 0.25, quotes: 0.25, qa: 0.25 },
   /** Höchstzahl wörtlicher Management-Zitate in Kapitel 1. */
   maxQuotes: 6,
-  /** So viele Zeichen der Quelle gehen in den Prompt (Opus 5.5 hat 1 Mio. Token Kontext, das Budget ist Kosten). */
+  /** So viele Zeichen der Quelle gehen in den Prompt (rund 30.000 Token, passt in die 200.000 Token von Haiku 4.5). */
   sourceMaxChars: 120_000,
   /** Token-Decke je Kapitel-Antwort (callLLMJson deckelt bei 4000). */
   maxTokensPerChapter: 4000,
