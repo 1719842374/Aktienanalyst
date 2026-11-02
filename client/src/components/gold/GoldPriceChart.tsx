@@ -1,7 +1,7 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { fetchGoldWithRetry, goldChartHistoryRefetchInterval, goldChartHistoryStaleTime } from "@/lib/goldFetchPolicy";
 import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar,
@@ -29,7 +29,10 @@ import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
  * 50-DMA und Golden/Death-Marker aus #201 (goldChartMa.ts) bleiben.
  */
 
-interface Props { data: GoldAnalysis }
+interface Props {
+  data: GoldAnalysis & { fallbackReason?: string };
+  onRetryPrices?: () => void;
+}
 
 // Farben und Labels 1:1 aus BTCDashboard MA_LINES.
 const MA_LINES = [
@@ -55,7 +58,32 @@ type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
 type TimeRange = GoldTimeRange;
 
-interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null; range?: "10Y" | "Max"; warmupPoints?: number }
+interface GoldChartHistory {
+  source: string;
+  points: GoldPricePoint[];
+  incomplete?: boolean;
+  incompleteReason?: string | null;
+  range?: "10Y" | "Max";
+  warmupPoints?: number;
+  /** Gesetzter Text = Ladefehler (HTTP-Status oder Timeout). Leer und ohne diesen Text = wirklich keine Punkte. */
+  loadError?: string | null;
+}
+
+function GoldChartLoadNotice({ reason, onRetry, lead = "Preisdaten nicht geladen" }: { reason: string; onRetry?: () => void; lead?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-chart-load-error" role="status">
+      <span className="min-w-0 flex-1">{lead}: {reason}</span>
+      <button
+        type="button"
+        data-testid="gold-chart-retry"
+        onClick={onRetry}
+        className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-700"
+      >
+        Neu laden
+      </button>
+    </div>
+  );
+}
 
 const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
@@ -63,7 +91,7 @@ const fmtMacro = (key: MacroKey, v: number) =>
 const QE_FILL: Record<QeQtRegime, string> = { expansion: "#22c55e", contraction: "#ef4444", neutral: "#94a3b8" };
 const QE_LABEL: Record<QeQtRegime, string> = { expansion: "Ausweitung", contraction: "Abbau", neutral: "neutral" };
 
-export function GoldPriceChart({ data }: Props) {
+export function GoldPriceChart({ data, onRetryPrices }: Props) {
   const narrow = useIsNarrow();
   const tech = useMemo(() => buildGoldTechnical(data.historicalPrices ?? []), [data.historicalPrices]);
   const fullChart = tech.points;
@@ -87,14 +115,18 @@ export function GoldPriceChart({ data }: Props) {
   const historyQuery = useQuery<GoldChartHistory>({
     queryKey: ["/api/gold-chart-history", historyRange],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/gold-chart-history?range=${historyRange}`);
-      if (!res.ok) throw new Error(`Gold-Historie ${res.status}`);
-      return res.json();
+      const result = await fetchGoldWithRetry<GoldChartHistory>(`/api/gold-chart-history?range=${historyRange}`);
+      // Fehler als sofort veraltete Antwort, nicht als liegenbleibender Error-Status.
+      if (!result.ok) return { source: "keine", points: [], loadError: result.reason };
+      const points = Array.isArray(result.data.points) ? result.data.points : [];
+      return { ...result.data, points, loadError: null };
     },
     enabled: longRange,
     // Unvollstaendige Historie (FMP-Fehler mitten in der Reihe) nicht 6 h halten, sondern nach 10 min neu laden.
-    staleTime: query => (query.state.data?.incomplete ? 10 * 60 * 1000 : 6 * 60 * 60 * 1000),
-    retry: 1,
+    // Ein Ladefehler hat staleTime 0 und wird im Hintergrund wiederholt.
+    staleTime: (query) => goldChartHistoryStaleTime(query.state.data),
+    refetchInterval: (query) => goldChartHistoryRefetchInterval(query.state.data),
+    retry: false,
   });
   const longTech = useMemo(
     () => (historyQuery.data?.points?.length ? buildGoldTechnical(historyQuery.data.points) : null),
@@ -247,10 +279,29 @@ export function GoldPriceChart({ data }: Props) {
   const xInterval = xAxisIntervalProps(narrow, Math.floor(chartData.length / 8));
   const chipCls = "inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px]";
 
+  const historyLoadError = historyQuery.data?.loadError ?? null;
+  const priceLoadError = data.fallbackReason ?? null;
+
   if (fullChart.length === 0) {
+    const pendingHistory = longRange && historyQuery.isFetching && !historyQuery.data;
+    const loadError = priceLoadError || historyLoadError;
     return (
       <SectionCard number={2} title="Gold-Preis-Chart" subtitle="Technische Analyse">
-        <div className="text-xs text-muted-foreground text-center py-8">Keine Preisdaten verfügbar</div>
+        {pendingHistory ? (
+          <div className="text-xs text-muted-foreground text-center py-8">Lade volle Historie …</div>
+        ) : loadError ? (
+          <div className="px-3 py-6">
+            <GoldChartLoadNotice
+              reason={loadError}
+              onRetry={() => {
+                if (historyLoadError) void historyQuery.refetch();
+                if (priceLoadError) onRetryPrices?.();
+              }}
+            />
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground text-center py-8" data-testid="gold-chart-empty">Keine Preisdaten verfügbar</div>
+        )}
       </SectionCard>
     );
   }
@@ -356,13 +407,16 @@ export function GoldPriceChart({ data }: Props) {
             </button>
           ))}
         </div>
-        {longRange && (
+        {historyLoadError && (
+          <div className="w-full basis-full">
+            <GoldChartLoadNotice lead="Lange Historie nicht geladen — vorhandene Kurse bleiben sichtbar" reason={historyLoadError} onRetry={() => void historyQuery.refetch()} />
+          </div>
+        )}
+        {longRange && !historyLoadError && (
           <div className="w-full basis-full text-[10px] text-muted-foreground" data-testid="gold-range-note">
             {historyQuery.isLoading
               ? "Lade volle Historie …"
-              : historyQuery.isError
-                ? `Lange Historie nicht abrufbar — zeige die ${tech.points.length ? "vorhandenen 10 Jahre" : "vorhandenen Daten"}`
-                : rangeNote}
+              : rangeNote}
             {longRange && longTech && historyQuery.data?.incomplete && (
               <span className="ml-1 font-medium text-amber-400" data-testid="gold-range-incomplete" title={historyQuery.data.incompleteReason ?? undefined}>
                 · unvollständig{historyQuery.data.incompleteReason ? ` (${historyQuery.data.incompleteReason})` : ""}
