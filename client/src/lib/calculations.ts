@@ -152,6 +152,17 @@ export interface GBMMonteCarloResult {
   maxDrawdownMean: number;
   expectedReturn: number;
   paths: number[][];
+  /**
+   * Sortierte Endkurse derselben Ziehung wie die Perzentile oben.
+   * Sektion 18 rechnet sie aus der Analyze-Response (historicalPrices, currentPrice, analystPT).
+   * Die Response selbst trägt kein Monte-Carlo-Feld. Bestehende Kennzahlen bleiben dieselben.
+   */
+  terminalPrices: number[];
+  /**
+   * Handelstage dieser Ziehung, derselbe Wert wie `params.tradingDays`.
+   * Nur durchgereicht, die Schleife bleibt unverändert.
+   */
+  horizonDays: number;
 }
 
 function boxMuller(): number {
@@ -244,6 +255,8 @@ export function gbmMonteCarlo(
     mean, p5, p10, p25, p50, p75, p90, p95,
     histogram, downsideProb, downsideProb10, downsideProb20,
     analystPTProb, maxDrawdownMean, expectedReturn, paths: samplePaths,
+    terminalPrices: finalPrices,
+    horizonDays: tradingDays,
   };
 }
 
