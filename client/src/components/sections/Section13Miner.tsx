@@ -15,6 +15,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/formatters";
 import type { BTCAnalysis } from "@/lib/btcAnalysis";
+import { BTC_TA_RANGES, type BtcTaRange } from "@/lib/btcTaWindow";
 import {
   buildMinerZoneSeries, buildZoneSegments, classifyMinerZone,
   calcBreakevenPrice, calcHashpriceUsd, difficultyZoneFromCompression,
@@ -138,9 +139,11 @@ const FLAG_TEXT: Record<string, string> = {
 };
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
-/** Gemeinsame Timeframe-Optionen, identisch zu Section10TechnicalChart (BTCDashboard.tsx). */
-export type MinerTimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
-const RANGE_DAYS: Record<MinerTimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
+/** Dieselben Knöpfe wie die Technische Analyse. Hashrate ist kalendertäglich, der Schnitt bleibt in Kalendertagen. */
+export type MinerTimeRange = BtcTaRange;
+const RANGE_DAYS: Record<Exclude<MinerTimeRange, "Max">, number> = {
+  "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825, "10Y": 3653,
+};
 
 /**
  * timeRange ist OPTIONAL (additiv): wird sie vom Parent (BTCDashboard)
@@ -207,7 +210,7 @@ export function Section13Miner({
 
   // ── Timeframe-Filter: dieselbe Range-Auswahl wie Section 10 (geteilter State) ──
   const series: MinerSeriesPoint[] = useMemo(() => {
-    if (fullSeries.length === 0) return fullSeries;
+    if (fullSeries.length === 0 || timeRange === "Max") return fullSeries;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - RANGE_DAYS[timeRange]);
     const cutoffStr = cutoff.toISOString().split("T")[0];
@@ -313,7 +316,7 @@ export function Section13Miner({
 
         {/* Zeitraum-Buttons — gleicher Stil wie Section 10 (Technische Analyse) */}
         <div className="flex rounded-md border border-border overflow-hidden shrink-0">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+          {BTC_TA_RANGES.map(r => (
             <button
               key={r}
               onClick={() => setTimeRange(r)}
