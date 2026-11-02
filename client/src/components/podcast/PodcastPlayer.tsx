@@ -432,7 +432,7 @@ export function PodcastPlayer({
       </div>
 
       <div className="text-[11px] text-foreground/80 space-y-1" data-testid="podcast-voice">
-        <div>Stimme: {tts ? audioStatusLine(tts) : "Server-Stimme wird geprüft …"}</div>
+        <div>Stimme: {chapters.length === 0 ? "n/a — kein Kapitel zum Vorlesen" : tts ? audioStatusLine(tts) : "Server-Stimme wird geprüft …"}</div>
         {waiting && (
           <div className="flex flex-wrap items-center gap-x-2" data-testid="podcast-waiting">
             <span>Startet, sobald die Server-Stimme für dieses Kapitel bereit ist.</span>

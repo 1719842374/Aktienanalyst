@@ -445,6 +445,10 @@ async function main() {
   }
   const missingHtml = renderToStaticMarkup(React.createElement(PodcastPlayer, { episode: missingEp, scope: "stock" }));
   assert.ok(missingHtml.includes("HTTP 402"));
+  const noneEp = { ...missingEp, chapters: missingEp.chapters.map(c => ({ ...c, status: "n/a" as const, sentences: [] })) };
+  const noneHtml = renderToStaticMarkup(React.createElement(PodcastPlayer, { episode: noneEp, scope: "stock" }));
+  assert.ok(noneHtml.includes("Stimme: n/a — kein Kapitel zum Vorlesen"));
+  assert.equal(noneHtml.includes("wird geprüft"), false);
   assert.equal(missingHtml.includes('data-testid="podcast-segment-earnings-call"'), false);
   assert.ok(missingHtml.includes('data-testid="podcast-segment-analysis"'));
   ok("Ein Player für beide Stellen: Play/Pause, ±15 s, Speed, Sleep (15/30/45/60/Kapitel), Kapitel, Transkript; n/a-Kapitel mit Grund ohne Segment");
