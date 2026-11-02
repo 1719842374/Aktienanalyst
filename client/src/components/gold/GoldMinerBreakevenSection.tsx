@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import type { GoldAiscCompanyCode, GoldAiscSeries, GoldMinerZone, GoldMinerZoneName } from "../../../../shared/schema";
 import { GOLD_MINER_P_HIGH_RANK, GOLD_MINER_P_LOW_RANK, GOLD_MINER_ZONE_MIN_OBS, goldMinerPriceDomain } from "../../../../shared/gold-miner-zone";
+import { MINER_ZONE_BAND_FILL } from "../../../../shared/miner-zone-bands";
 import { GOLD_AISC_FORMULA, goldAiscCovering, goldAiscNaReason } from "../../../../shared/gold-aisc";
 import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 
@@ -26,12 +27,7 @@ const RANGES = Object.keys(TIME_RANGE_CUTOFF) as TimeRange[];
 const DATE_INPUT_CLASS =
   "h-8 w-full min-w-0 rounded border border-border bg-background px-1.5 text-[10px] text-foreground scheme-light dark:scheme-dark";
 
-const ZONE_FILL: Record<GoldMinerZoneName, string> = {
-  capitulation: "rgba(239, 68, 68, 0.18)",
-  transition: "rgba(234, 179, 8, 0.12)",
-  profitable: "rgba(34, 197, 94, 0.10)",
-  euphoria: "rgba(168, 85, 247, 0.12)",
-};
+const ZONE_FILL = MINER_ZONE_BAND_FILL;
 
 const ZONE_LABEL: Record<GoldMinerZoneName, string> = {
   capitulation: "Kapitulation",
@@ -70,7 +66,7 @@ function MetricCard({ testId, label, value, subValue, color, title, extra }: {
     <div className="bg-muted/30 border border-border rounded-lg p-3" data-testid={testId} title={title}>
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{label}</div>
       <div className={`text-base md:text-lg font-bold font-mono tabular-nums mt-1 ${color || "text-foreground"}`}>{value}</div>
-      {subValue && <div className="text-xs text-muted-foreground mt-0.5">{subValue}</div>}
+      {subValue && <div className="text-xs text-muted-foreground mt-0.5 break-words">{subValue}</div>}
       {extra}
     </div>
   );
@@ -97,7 +93,7 @@ function companyLine(latest: NonNullable<GoldMinerZone["latest"]>): { text: stri
 export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const narrow = useIsNarrow();
   const fetching = useIsFetching({ queryKey: ["/api/analyze-gold"] });
-  const [range, setRange] = useState<TimeRange>("1Y");
+  const [range, setRange] = useState<TimeRange>("Max");
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [rangeHint, setRangeHint] = useState<string | null>(null);
   const zone = data.aiscZone;
@@ -171,6 +167,13 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   };
   const latestStep = line?.quarters.find(step => step.quarter === latest?.quarter) ?? null;
   const gapPoint = view.points.find(point => point.aisc == null) ?? null;
+  const p20Text = zone?.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(2)}×`;
+  const p50Text = zone?.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(2)}×`;
+  const thresholdTitle = zone
+    ? `pLowRank=${zone.thresholds.pLowRank}, pHighRank=${zone.thresholds.pHighRank}, minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage, PERCENTILE.INC`
+    : undefined;
+  const bandFrom = view.segments[0]?.x1 ?? null;
+  const bandTo = view.segments.length ? view.segments[view.segments.length - 1].x2 : null;
   const chartRows = view.points.map(point => ({
     ...point,
     minerAisc: point.aisc,
@@ -273,8 +276,9 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 label="Spot/AISC-Multiple"
                 value={latest ? `${latest.multiple.toFixed(2)}×` : "—"}
                 subValue={latest && zone
-                  ? `P20 (pLowRank=${zone.thresholds.pLowRank}) ${zone.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(1)}×`} · P50 (pHighRank=${zone.thresholds.pHighRank}) ${zone.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(1)}×`} · minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage${data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""}`
+                  ? `P20 ${p20Text} · P50 ${p50Text} · ${zone.thresholds.obs} Tage${data.aiscZoneSpotSource ? ` · ${data.aiscZoneSpotSource}` : ""}`
                   : naText}
+                title={thresholdTitle}
                 color={latest?.zone === "capitulation" ? "text-red-500" : undefined}
               />
               <MetricCard
@@ -319,6 +323,11 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
               <div className="text-xs font-semibold text-muted-foreground mb-1">
                 Spot vs. Miner-Breakeven (AISC) — Zonen: Kapitulation (rot) · Übergang (gelb) · Profitabel (grün)
               </div>
+              {bandFrom && bandTo && (
+                <div className="text-[10px] text-muted-foreground mb-1 break-words" data-testid="gold-miner-band-span">
+                  Bänder {bandFrom} – {bandTo}
+                </div>
+              )}
               <ResponsiveContainer width="100%" height={heights.spot}>
                 <ComposedChart data={chartRows} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -332,17 +341,17 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                   <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <Legend wrapperStyle={legendStyle} />
                   {view.segments.map((seg, index) => (
-                    <ReferenceArea key={`${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
+                    <ReferenceArea key={`${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} fillOpacity={1} strokeOpacity={0} />
                   ))}
-                  <Line type="monotone" dataKey="spot" name="Gold Spot ($/oz)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls />
-                  <Line type="stepAfter" dataKey="minerAisc" name="AISC Ø Minen ($/oz)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" connectNulls={false} />
+                  <Line type="monotone" dataKey="spot" name="Gold Spot ($/oz)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls isAnimationActive={false} />
+                  <Line type="stepAfter" dataKey="minerAisc" name="AISC Ø Minen ($/oz)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" connectNulls={false} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
 
             <div data-testid="gold-miner-chart-multiple">
-              <div className="text-xs font-semibold text-muted-foreground mb-1" data-testid="gold-miner-history-since">
-                Spot/AISC-Multiple — P20 = Perzentil pLowRank={zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}, P50 = Perzentil pHighRank={zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK} (PERCENTILE.INC, Historie seit {zone?.thresholds.since ?? "n/a"}{data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""})
+              <div className="text-xs font-semibold text-muted-foreground mb-1 break-words" data-testid="gold-miner-history-since">
+                Spot/AISC-Multiple — P20 {p20Text} · P50 {p50Text} (Perzentil {zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}/{zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK}, Historie seit {zone?.thresholds.since ?? "n/a"}{data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""})
               </div>
               <ResponsiveContainer width="100%" height={heights.multiple}>
                 <ComposedChart data={chartRows} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
@@ -351,14 +360,17 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                   <YAxis tick={{ fontSize: 10 }} width={yWidth} domain={multipleDomain ?? ["auto", "auto"]} tickFormatter={(value: number) => `${value.toFixed(1)}×`} />
                   <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <Legend wrapperStyle={legendStyle} />
-                  <ReferenceLine y={1} stroke="#EF4444" label={{ value: "Spot = AISC", fontSize: 10, fill: "#EF4444", position: "insideTopLeft" }} />
+                  {view.segments.map((seg, index) => (
+                    <ReferenceArea key={`m-${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} fillOpacity={1} strokeOpacity={0} />
+                  ))}
+                  <ReferenceLine y={1} stroke="#EF4444" label={{ value: narrow ? "1×" : "Spot = AISC", fontSize: narrow ? 9 : 10, fill: "#EF4444", position: "insideTopLeft" }} />
                   {zone?.thresholds.low != null && (
-                    <ReferenceLine y={zone.thresholds.low} stroke="#EF4444" strokeDasharray="4 3" label={{ value: `P20 pLowRank=${zone.thresholds.pLowRank} = ${zone.thresholds.low.toFixed(2)}×`, fontSize: 10, fill: "#EF4444", position: "insideBottomLeft" }} />
+                    <ReferenceLine y={zone.thresholds.low} stroke="#EF4444" strokeDasharray="4 3" label={{ value: `P20 ${p20Text}`, fontSize: narrow ? 9 : 10, fill: "#EF4444", position: "insideBottomLeft" }} />
                   )}
                   {zone?.thresholds.high != null && (
-                    <ReferenceLine y={zone.thresholds.high} stroke="#F59E0B" strokeDasharray="4 3" label={{ value: `P50 pHighRank=${zone.thresholds.pHighRank} = ${zone.thresholds.high.toFixed(2)}×`, fontSize: 10, fill: "#F59E0B", position: "insideTopRight" }} />
+                    <ReferenceLine y={zone.thresholds.high} stroke="#F59E0B" strokeDasharray="4 3" label={{ value: `P50 ${p50Text}`, fontSize: narrow ? 9 : 10, fill: "#F59E0B", position: "insideTopRight" }} />
                   )}
-                  <Line type="monotone" dataKey="multiple" name="Spot/AISC" stroke="#a855f7" dot={false} strokeWidth={1.8} connectNulls={false} />
+                  <Line type="monotone" dataKey="multiple" name="Spot/AISC" stroke="#a855f7" dot={false} strokeWidth={1.8} connectNulls={false} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -372,8 +384,8 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                   <YAxis tick={{ fontSize: 10 }} width={yWidth} tickFormatter={(value: number) => `${Math.round(value)}%`} />
                   <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <ReferenceLine y={0} stroke="hsl(var(--foreground))" strokeOpacity={0.45} />
-                  <Area type="monotone" dataKey="marginUp" name="Marge über Breakeven" stroke="#22c55e" fill="#22c55e" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} />
-                  <Area type="monotone" dataKey="marginDown" name="Marge unter Breakeven" stroke="#ef4444" fill="#ef4444" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} />
+                  <Area type="monotone" dataKey="marginUp" name="Marge über Breakeven" stroke="#22c55e" fill="#22c55e" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="marginDown" name="Marge unter Breakeven" stroke="#ef4444" fill="#ef4444" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -389,6 +401,11 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
               </div>
               {gapPoint && (
                 <div data-testid="gold-miner-aisc-gap">AISC n/a am {gapPoint.date}: {goldAiscNaReason(line, gapPoint.date)}</div>
+              )}
+              {line && line.gaps.length > 0 && (
+                <div data-testid="gold-miner-company-gaps">
+                  Lücken, nicht interpoliert: {line.gaps.join(", ")}. Der Quartals-Ø bleibt der Mittelwert der belegten Firmen (minCompanies={line.minCompanies}).
+                </div>
               )}
               <div>
                 Historie: {zone?.thresholds.obs ?? 0} Tage seit {zone?.thresholds.since ?? "n/a"}.{data.aiscZoneSpotSource ? ` Spot-Quelle (jeder Wert): ${data.aiscZoneSpotSource}.` : ""}

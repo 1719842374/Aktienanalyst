@@ -229,9 +229,67 @@ console.log("\nechte gold-aisc.json");
     zone?.thresholds.euph == null && zone!.points.every(p => p.zone !== "euphoria") && zone!.segments.every(s => s.zone !== "euphoria"));
   check("Punkte ≤ 800", (zone?.points.length ?? 999) <= 800);
   const src = readFileSync(path.join(root, "shared/gold-miner-zone.ts"), "utf8");
+  const bandSrc = readFileSync(path.join(root, "shared/miner-zone-bands.ts"), "utf8");
+  const btcSrc = readFileSync(path.join(root, "client/src/lib/btc/minerMetrics.ts"), "utf8");
   check("importiert nur goldAiscStepAt aus gold-aisc", /import \{ goldAiscStepAt \} from "\.\/gold-aisc"/.test(src));
   check("keine festen 1,10/1,15-Multiple-Schwellen", !/1\.10|1\.15/.test(src));
   check("zieht minerMetrics nicht ein", !/minerMetrics|classifyMinerZone/.test(src));
+  check("Gold-Bänder kommen aus miner-zone-bands", src.includes('from "./miner-zone-bands"') && !/function smoothZones/.test(src));
+  check("BTC-Bänder kommen aus derselben Datei", btcSrc.includes('from "../../../../shared/miner-zone-bands"') && btcSrc.includes("smoothMinerZoneBands"));
+  check("gemeinsame Farben und Fenster 7", bandSrc.includes("MINER_ZONE_SMOOTH_WINDOW = 7") && bandSrc.includes("rgba(239, 68, 68, 0.18)"));
+}
+
+console.log("\nechte GC=F-Schlüsse gegen echte AISC-Datei: Zonen und Score über die volle Historie");
+{
+  const root = process.cwd();
+  const spotFile = JSON.parse(readFileSync(path.join(root, "script/fixtures/gold-spot-gc-f-2016-2026.json"), "utf8")) as {
+    _source: string;
+    points: { date: string; close: number }[];
+  };
+  check("Fixture ist Yahoo GC=F, 2016 bis 2026", spotFile._source.includes("GC=F") && spotFile._source.includes("Yahoo") && spotFile.points.length > 2500 && spotFile.points[0].date === "2016-01-04" && spotFile.points.at(-1)!.date === "2026-11-02",
+    `${spotFile.points.length} ${spotFile.points[0]?.date}…${spotFile.points.at(-1)?.date}`);
+  const file = JSON.parse(readFileSync(path.join(root, "server/data/gold-aisc.json"), "utf8")) as GoldAiscFile;
+  const series = buildGoldAiscSeries(file);
+  const zone = buildGoldMinerZone(spotFile.points, series)!;
+  const withMultiple = zone.points.filter(p => p.multiple != null && p.aisc != null);
+  const withZone = zone.points.filter(p => p.zone != null);
+  const sorted = withMultiple.map(p => p.multiple!).sort((a, b) => a - b);
+  const latest = zone.latest!;
+  check("seit 2016, nicht 2024-05-30", zone.thresholds.since != null && zone.thresholds.since >= "2016-11-29" && zone.thresholds.since <= "2016-12-31" && zone.thresholds.since !== "2024-05-30", zone.thresholds.since ?? "");
+  check("Stichprobe deutlich über 667 Tage", zone.thresholds.obs > 2000, String(zone.thresholds.obs));
+  check("erstes Multiple vor 2017", !!withMultiple[0] && withMultiple[0].date < "2017-01-01", withMultiple[0]?.date);
+  check("letzte Stufe 2026-Q2 AISC 1649 aus der Datei", latest.quarter === "2026-Q2" && latest.aisc === 1649, `${latest.quarter} ${latest.aisc}`);
+  check("latest.multiple = Spot/AISC der echten Schlüsse", Math.abs(latest.multiple - latest.spot / latest.aisc) < 1e-9, String(latest.multiple));
+  const rawRank = percentileRank(sorted, latest.multiple);
+  const expectedScore = latest.multiple < 1 ? Math.min(rawRank, 10) : rawRank;
+  check("Score ist der Rang in der vollen Stichprobe", Math.abs(latest.score - expectedScore) < 1e-9, `score ${latest.score} rang ${rawRank}`);
+  check("volle Historie: obs 2497, P20 1.493, P50 1.677, Score 87.34, profitabel",
+    zone.thresholds.obs === 2497
+    && zone.thresholds.low!.toFixed(3) === "1.493"
+    && zone.thresholds.high!.toFixed(3) === "1.677"
+    && latest.score.toFixed(2) === "87.34"
+    && latest.zone === "profitable"
+    && latest.multiple.toFixed(3) === "2.399",
+    `obs ${zone.thresholds.obs} P20 ${zone.thresholds.low} P50 ${zone.thresholds.high} score ${latest.score} ${latest.zone} ×${latest.multiple}`);
+  check("heutiges Multiple liegt über 1, Score nicht auf 10 gekappt", latest.multiple > 1 && latest.score > 10, String(latest.score));
+  const zonesPresent = new Set(zone.segments.map(s => s.zone));
+  check("Bänder enthalten Kapitulation und Profitabel", zonesPresent.has("capitulation") && zonesPresent.has("profitable"), [...zonesPresent].join(","));
+  check("kein Euphorie-Band", !zonesPresent.has("euphoria") && zone.thresholds.euph == null);
+  const covered = new Set<string>();
+  for (const seg of zone.segments) {
+    for (const point of zone.points) {
+      if (point.date >= seg.x1 && point.date <= seg.x2) covered.add(point.date);
+    }
+  }
+  check("jedes klassifizierte Datum liegt in einem Band", withZone.length > 0 && withZone.every(p => covered.has(p.date)), `${covered.size}/${withZone.length}`);
+  check("Bänder beginnen vor 2018 und laufen bis zum letzten Punkt", zone.segments[0].x1 < "2018-01-01" && zone.segments.at(-1)!.x2 === zone.points.at(-1)!.date,
+    `${zone.segments[0]?.x1} … ${zone.segments.at(-1)?.x2}`);
+  const day = zone.points.find(p => p.date === "2018-06-15");
+  check("2018-06-15: echte Stufe 883, Multiple = Schluss/883", !!day && day.aisc === 883 && day.multiple != null && Math.abs(day.multiple - day.spot / 883) < 1e-9, day ? `${day.spot}/${day.aisc}` : "fehlt");
+  const late = buildGoldMinerZone(spotFile.points, { ...series, quarters: series.quarters.filter(q => q.quarter >= "2024-Q1") })!;
+  check("ohne Historie vor 2024-Q1 fällt der Start auf 2024-05-30 zurück", late.thresholds.since === "2024-05-30", late.thresholds.since ?? "");
+  check("die kurze Reihe hat weniger als 800 Tage, die volle nicht", late.thresholds.obs < 800 && zone.thresholds.obs > late.thresholds.obs, `voll ${zone.thresholds.obs} kurz ${late.thresholds.obs}`);
+  console.log(`  echte Werte: seit ${zone.thresholds.since}, obs ${zone.thresholds.obs}, P20 ${zone.thresholds.low?.toFixed(3)} P50 ${zone.thresholds.high?.toFixed(3)}, Score ${latest.score.toFixed(2)}, Zone ${latest.zone}, Multiple ${latest.multiple.toFixed(3)}, Spot ${latest.spot}, Bänder ${zone.segments.length}`);
 }
 
 console.log("\nSkala und Rechnung analog BTC, nicht das TA-Overlay");

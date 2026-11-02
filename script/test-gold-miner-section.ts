@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import * as esbuild from "esbuild";
+import { buildGoldAiscSeries, type GoldAiscFile } from "../shared/gold-aisc";
 import { buildGoldMinerZone } from "../shared/gold-miner-zone";
 import type { GoldAiscSeries } from "../shared/schema";
 import { TIME_RANGE_CUTOFF, slicePresetWindow } from "../client/src/lib/taRangeCutoff";
@@ -98,6 +99,23 @@ const sectionSrc = readFileSync(path.join(root, "client/src/components/gold/Gold
 const chartSrc = readFileSync(path.join(root, "client/src/components/sections/TechnicalChart.tsx"), "utf8");
 check("Sektion schneidet mit slicePresetWindow, nicht mit Kalendertagen", sectionSrc.includes("slicePresetWindow(points, range)") && !/3653|RANGE_DAYS/.test(sectionSrc));
 check("TechnicalChart nutzt denselben Helper, die Zahlen stehen nur in taRangeCutoff", chartSrc.includes('from "@/lib/taRangeCutoff"') && chartSrc.includes("slicePresetWindow(ohlcv, timeRange)") && !/"3M": 63/.test(chartSrc));
+check("Band-Spanne steht neben dem Chart", html.includes('data-testid="gold-miner-band-span"') && html.includes("Bänder "));
+{
+  const at = html.indexOf('data-testid="gold-miner-history-since"');
+  const heading = html.slice(at, at + 700);
+  check("Multiple-Untertitel: kurze P20/P50, ohne pLowRank in der Zeile", heading.includes("P20 ") && heading.includes("P50 ") && !heading.includes("pLowRank="));
+}
+check("öffnet auf Max, die volle Reihe", html.includes('data-testid="button-gold-miner-range-Max"') && sectionSrc.includes('useState<TimeRange>("Max")'));
+
+const aiscFile = JSON.parse(readFileSync(path.join(root, "server/data/gold-aisc.json"), "utf8")) as GoldAiscFile;
+const aiscSeries = buildGoldAiscSeries(aiscFile);
+const spotFx = JSON.parse(readFileSync(path.join(root, "script/fixtures/gold-spot-gc-f-2016-2026.json"), "utf8")) as { points: { date: string; close: number }[] };
+const realZone = buildGoldMinerZone(spotFx.points, aiscSeries);
+const realHtml = render({ ...mod.GOLD_FALLBACK_DATA, aiscZone: realZone, aiscLine: aiscSeries, aiscZoneSpotSource: "Yahoo GC=F (Futures)" });
+check("echte Historie: seit 2016 im Untertitel", !!realZone?.thresholds.since && realHtml.includes(`Historie seit ${realZone.thresholds.since}`) && realZone.thresholds.since < "2017-01-01", realZone?.thresholds.since ?? "");
+check("echte Historie: Bänder beginnen vor 2018", realHtml.includes('data-testid="gold-miner-band-span"') && /Bänder 201[67]-/.test(realHtml));
+check("Barrick-Lücken sind sichtbar und als nicht interpoliert gekennzeichnet", realHtml.includes('data-testid="gold-miner-company-gaps"') && realHtml.includes("B 2016-Q4") && realHtml.includes("nicht interpoliert"));
+check("Score-Karte zeigt den vollen Rang, nicht die 667-Tage-Stichprobe", realHtml.includes('data-testid="gold-miner-card-score"') && realHtml.includes(`${Math.round(realZone!.latest!.score)}/100`) && (realZone?.thresholds.obs ?? 0) > 2000);
 
 console.log(failed === 0 ? "\nSektion 9 grün." : `\n${failed} Test(s) fehlgeschlagen.`);
 process.exit(failed === 0 ? 0 : 1);

@@ -10,18 +10,19 @@
  * adaptiv. `multiple < 1` (Spot unter AISC) ist die harte Kostengrenze, keine
  * kalibrierte Zonen-Zahl. Die Euphorie-Zone ≥ P90 wird nicht klassifiziert
  * (`thresholds.euph` bleibt null) — ja/nein entscheidet Philip.
- * Die BTC-Miner-Rechnung bleibt unberührt; die Glättung (Fenster 7, Mehrheit)
- * ist hier lokal nachgebaut.
+ * Die BTC-Punktetabelle (Puell, Hash Ribbon) bleibt unberührt. Die Bänder
+ * (Glättung Fenster 7, Segmente, Farben) kommen aus miner-zone-bands.ts,
+ * derselben Logik wie Section 13.
  */
 import type { GoldAiscSeries, GoldMinerZone, GoldMinerZoneName, GoldMinerZonePoint } from "./schema";
 import { goldAiscStepAt } from "./gold-aisc";
+import { MINER_ZONE_SMOOTH_WINDOW, buildMinerZoneBandSegments, smoothMinerZoneBands } from "./miner-zone-bands";
 
 export const GOLD_MINER_ZONE_MIN_OBS = 120;
 export const GOLD_MINER_P_LOW_RANK = 20;
 export const GOLD_MINER_P_HIGH_RANK = 50;
 /** Design-Default aus der Spec. Wird nicht als Zonengrenze angewendet. */
 export const GOLD_MINER_P_EUPH_RANK = 90;
-const SMOOTH_WINDOW = 7;
 /**
  * Obergrenze der ausgelieferten Punkte. 10 Jahre Handelstage aus /api/analyze-gold
  * (~2520) bleiben vollständig, damit 3M nicht auf eine ausgedünnte Linie fällt.
@@ -95,49 +96,6 @@ function classifyMultiple(multiple: number, pLow: number, pHigh: number): GoldMi
   if (multiple < 1 || multiple < pLow) return "capitulation";
   if (multiple < pHigh) return "transition";
   return "profitable";
-}
-
-/** Mehrheits-Zone über ein Fenster. null bleibt null. Gleichstand: zuerst gesehene Zone. */
-function smoothZones(zones: readonly (GoldMinerZoneName | null)[], window: number): (GoldMinerZoneName | null)[] {
-  return zones.map((z, i) => {
-    if (z == null) return null;
-    const slice = zones.slice(Math.max(0, i - window + 1), i + 1).filter((x): x is GoldMinerZoneName => x != null);
-    if (slice.length === 0) return z;
-    const order: GoldMinerZoneName[] = [];
-    const counts: Partial<Record<GoldMinerZoneName, number>> = {};
-    for (const s of slice) {
-      if (counts[s] == null) order.push(s);
-      counts[s] = (counts[s] ?? 0) + 1;
-    }
-    let best: GoldMinerZoneName = z;
-    let bestCount = -1;
-    for (const zone of order) {
-      const count = counts[zone] ?? 0;
-      if (count > bestCount) {
-        best = zone;
-        bestCount = count;
-      }
-    }
-    return best;
-  });
-}
-
-function buildSegments(dates: readonly string[], smoothed: readonly (GoldMinerZoneName | null)[]): GoldMinerZone["segments"] {
-  const segments: GoldMinerZone["segments"] = [];
-  let current: GoldMinerZone["segments"][number] | null = null;
-  for (let i = 0; i < dates.length; i++) {
-    const zone = smoothed[i];
-    if (zone == null) {
-      current = null;
-      continue;
-    }
-    if (current && current.zone === zone) current.x2 = dates[i];
-    else {
-      current = { x1: dates[i], x2: dates[i], zone };
-      segments.push(current);
-    }
-  }
-  return segments;
 }
 
 function thinPoints(points: readonly GoldMinerZonePoint[], max: number): GoldMinerZonePoint[] {
@@ -224,8 +182,8 @@ export function buildGoldMinerZone(
     if (rawZones[i] != null) points[i] = { ...points[i], zone: rawZones[i] };
   }
 
-  const smoothed = smoothZones(rawZones, SMOOTH_WINDOW);
-  let segments = buildSegments(points.map(p => p.date), smoothed);
+  const smoothed = smoothMinerZoneBands(rawZones, MINER_ZONE_SMOOTH_WINDOW);
+  let segments = buildMinerZoneBandSegments(points.map(p => p.date), smoothed);
   const delivered = thinPoints(points, maxPoints);
   if (delivered.length !== points.length) {
     segments = clipSegments(segments, delivered.map(p => p.date));
