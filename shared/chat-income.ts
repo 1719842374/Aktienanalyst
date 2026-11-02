@@ -16,6 +16,8 @@ export interface IncomeLineDef {
   group: IncomeLineGroup;
   /** Summenzeile, zu der der Posten gehört (Unterposten). */
   parentKey?: string;
+  /** Ist diese Zwischensumme vorhanden, hängt der Posten unter ihr statt unter parentKey (SG&A über S&M und G&A). */
+  nestUnder?: string;
   /** Erste vorhandene Konzept-ID gewinnt. */
   concepts: Partial<Record<IncomeTaxonomy, readonly string[]>>;
   /** FMP-Feld im Income-Statement, falls vorhanden. */
@@ -41,16 +43,16 @@ export const INCOME_LINE_DEFS: readonly IncomeLineDef[] = [
     filingTerms: [/\boperating expenses (increased|decreased)\b/i] },
   { key: "forschung", label: "Forschung und Entwicklung", group: "betrieb", parentKey: "betriebsaufwand", fmpField: "researchAndDevelopmentExpenses",
     concepts: { "us-gaap": ["ResearchAndDevelopmentExpense"], "ifrs-full": ["ResearchAndDevelopmentExpense"] },
-    filingTerms: [/\bresearch and development expenses? (increased|decreased)\b/i, /\bresearch and development\b/i] },
-  { key: "vertrieb", label: "Vertrieb und Marketing", group: "betrieb", parentKey: "betriebsaufwand", fmpField: "sellingAndMarketingExpenses",
-    concepts: { "us-gaap": ["SellingAndMarketingExpense"], "ifrs-full": ["SalesAndMarketingExpense"] },
-    filingTerms: [/\bsales and marketing expenses? (increased|decreased)\b/i, /\bsales and marketing\b/i] },
-  { key: "verwaltung", label: "Allgemeine Verwaltung", group: "betrieb", parentKey: "betriebsaufwand", fmpField: "generalAndAdministrativeExpenses",
-    concepts: { "us-gaap": ["GeneralAndAdministrativeExpense"], "ifrs-full": ["AdministrativeExpense"] },
-    filingTerms: [/\bgeneral and administrative expenses? (increased|decreased)\b/i, /\bgeneral and administrative\b/i] },
+    filingTerms: [/\bresearch and development( \(“?R&D”?\))? expenses? (increased|decreased)\b/i] },
   { key: "vertriebVerwaltung", label: "Vertrieb, Verwaltung (SG&A)", group: "betrieb", parentKey: "betriebsaufwand", fmpField: "sellingGeneralAndAdministrativeExpenses",
     concepts: { "us-gaap": ["SellingGeneralAndAdministrativeExpense"] },
     filingTerms: [/\bselling, general and administrative\b/i] },
+  { key: "vertrieb", label: "Vertrieb und Marketing", group: "betrieb", parentKey: "betriebsaufwand", nestUnder: "vertriebVerwaltung", fmpField: "sellingAndMarketingExpenses",
+    concepts: { "us-gaap": ["SellingAndMarketingExpense"], "ifrs-full": ["SalesAndMarketingExpense"] },
+    filingTerms: [/\bsales and marketing expenses? (increased|decreased)\b/i] },
+  { key: "verwaltung", label: "Allgemeine Verwaltung", group: "betrieb", parentKey: "betriebsaufwand", nestUnder: "vertriebVerwaltung", fmpField: "generalAndAdministrativeExpenses",
+    concepts: { "us-gaap": ["GeneralAndAdministrativeExpense"], "ifrs-full": ["AdministrativeExpense"] },
+    filingTerms: [/\bgeneral and administrative expenses? (increased|decreased)\b/i] },
   { key: "betriebsergebnis", label: "Betriebsergebnis", group: "ergebnis", fmpField: "operatingIncome",
     concepts: { "us-gaap": ["OperatingIncomeLoss"], "ifrs-full": ["ProfitLossFromOperatingActivities"] },
     filingTerms: [/\boperating income (increased|decreased)\b/i] },
@@ -101,6 +103,8 @@ export const INCOME_PERIOD_TOLERANCE_DAYS = 14;
 export const INCOME_DISPLAY_SCALE = 1_000_000;
 /** So viele Erklärungssätze aus dem Filing je Ausreißer. */
 export const INCOME_EXPLANATION_SENTENCES = 2;
+/** Längere „Sätze“ sind zusammengelaufene Tabellen oder Prüfvermerke, keine MD&A-Erklärung. */
+export const INCOME_EXPLANATION_MAX_CHARS = 500;
 
 /** Wörter, an denen ein Erklärungssatz im MD&A zu erkennen ist. */
 const EXPLANATION_CUE = /\b(primarily|mainly|due to|driven by|reflects?|reflecting|attributable to|as a result of|offset|included)\b/i;
@@ -141,6 +145,8 @@ export interface IncomeGroupCheck {
 
 export interface IncomeOutlier {
   group: IncomeLineGroup;
+  /** Summenzeile, in der dieser Posten die größte Veränderung hat. */
+  parentKey: string;
   key: string;
   label: string;
   current: number | null;
@@ -316,9 +322,23 @@ export function incomeOutliers(lines: IncomeStatementLine[]): IncomeOutlier[] {
     const parts = lines.filter(l => l.parentKey === parentKey && l.deltaAbs != null);
     if (!parts.length) continue;
     const top = parts.reduce((a, b) => (Math.abs(b.deltaAbs as number) > Math.abs(a.deltaAbs as number) ? b : a));
-    out.push({ group: top.group, key: top.key, label: top.label, current: top.current, prior: top.prior, deltaAbs: top.deltaAbs as number, explanation: null, explanationReason: null });
+    out.push({ group: top.group, parentKey, key: top.key, label: top.label, current: top.current, prior: top.prior, deltaAbs: top.deltaAbs as number, explanation: null, explanationReason: null });
   }
   return out;
+}
+
+/** Posten mit `nestUnder` hängen unter der Zwischensumme, wenn das Filing sie ausweist. */
+export function nestIncomeLines(lines: IncomeStatementLine[]): IncomeStatementLine[] {
+  const present = new Set(lines.map(l => l.key));
+  return lines.map(l => {
+    const nest = INCOME_LINE_DEFS.find(d => d.key === l.key)?.nestUnder;
+    return nest && present.has(nest) ? { ...l, parentKey: nest } : l;
+  });
+}
+
+function incomeStructure(raw: IncomeStatementLine[]): Pick<IncomeStatementBrief, "lines" | "checks" | "outliers"> {
+  const lines = nestIncomeLines(raw);
+  return { lines, checks: incomeGroupChecks(lines), outliers: incomeOutliers(lines) };
 }
 
 /** GuV aus SEC-companyfacts. Ohne passende Daten: n/a mit Grund. */
@@ -352,7 +372,7 @@ export function incomeBriefFromCompanyFacts(symbol: string, facts: unknown, fili
     filingUrl: filing?.url ?? null, companyName: typeof f?.entityName === "string" ? f.entityName : null, currency: latest.currency,
     period,
     priorPeriod: priorLine ? { start: null, end: priorEnd, label: priorLabel(period, latest.kind), fiscalYear: period.fiscalYear != null ? period.fiscalYear - 1 : null, fiscalPeriod: period.fiscalPeriod } : null,
-    lines, checks: incomeGroupChecks(lines), outliers: incomeOutliers(lines), notes,
+    ...incomeStructure(lines), notes,
   };
 }
 
@@ -387,7 +407,7 @@ export function incomeBriefFromFmp(symbol: string, rows: unknown): IncomeStateme
     companyName: null, currency: typeof cur.reportedCurrency === "string" ? cur.reportedCurrency : null,
     period: { start: null, end: cur.date, label, fiscalYear: Number.isFinite(fy) ? fy : null, fiscalPeriod: typeof cur.period === "string" ? cur.period : null },
     priorPeriod: pri ? { start: null, end: pri.date, label: `${pri.period} FY${fy - 1}`, fiscalYear: fy - 1, fiscalPeriod: pri.period } : null,
-    lines, checks: incomeGroupChecks(lines), outliers: incomeOutliers(lines),
+    ...incomeStructure(lines),
     notes: ["FMP enthält keine Unterposten von Derivaten, Finanzanlagen und Währung; Erklärung aus dem Filing-Text n/a"],
   };
 }
@@ -398,22 +418,39 @@ export function splitFilingSentences(text: string): string[] {
 }
 
 /**
+ * Satz, der den Posten nennt. Läuft eine Tabelle ohne Satzzeichen in den Satz hinein (zu lang oder
+ * mit Seitenkopf " | "), zählt nur der Rest ab der letzten Nennung des Postens.
+ */
+function explanationCandidate(s: string, terms: readonly RegExp[]): string | null {
+  const clean = (x: string) => x.length <= INCOME_EXPLANATION_MAX_CHARS && !x.includes(" | ");
+  if (!terms.some(t => t.test(s))) return null;
+  if (clean(s)) return s;
+  let at = -1;
+  for (const t of terms) {
+    for (const m of Array.from(s.matchAll(new RegExp(t.source, t.flags.includes("g") ? t.flags : `${t.flags}g`)))) at = Math.max(at, m.index ?? -1);
+  }
+  const tail = at >= 0 ? s.slice(at) : "";
+  return tail && clean(tail) ? tail : null;
+}
+
+/**
  * Erklärungssätze aus dem Filing für einen Posten: der Satz muss den Posten nennen und eine
  * Ursache angeben ("primarily due to", "reflects", "included"). Tabellenzeilen fallen weg.
  */
 export function findFilingExplanation(sentences: string[], terms: readonly RegExp[], max = INCOME_EXPLANATION_SENTENCES): string[] {
-  const hits: Array<{ i: number; score: number }> = [];
-  sentences.forEach((s, i) => {
-    if (!terms.some(t => t.test(s))) return;
+  const hits: Array<{ i: number; text: string; score: number }> = [];
+  sentences.forEach((raw, i) => {
+    const s = explanationCandidate(raw, terms);
+    if (!s) return;
     if (!EXPLANATION_CUE.test(s)) return;
     const digits = (s.match(/\d/g) ?? []).length;
     if (digits > s.length / 6) return;
     const score = (CHANGE_CUE.test(s) ? 2 : 0) + (/\bprimarily|due to|reflects\b/i.test(s) ? 1 : 0);
-    hits.push({ i, score });
+    hits.push({ i, text: s, score });
   });
   const seen = new Set<string>();
   return hits.sort((a, b) => b.score - a.score || a.i - b.i)
-    .map(h => sentences[h.i])
+    .map(h => h.text)
     .filter(s => (seen.has(s) ? false : (seen.add(s), true)))
     .slice(0, max);
 }
@@ -425,7 +462,7 @@ export function withFilingExplanations(brief: IncomeStatementBrief, filingText: 
   const sentences = splitFilingSentences(filingText);
   const outliers = brief.outliers.map(o => {
     const def = INCOME_LINE_DEFS.find(d => d.key === o.key);
-    const parent = INCOME_LINE_DEFS.find(d => d.key === def?.parentKey);
+    const parent = INCOME_LINE_DEFS.find(d => d.key === o.parentKey);
     const own = def ? findFilingExplanation(sentences, def.filingTerms) : [];
     const group = parent ? findFilingExplanation(sentences, parent.filingTerms, 1) : [];
     const picked = Array.from(new Set([...group, ...own])).slice(0, INCOME_EXPLANATION_SENTENCES + 1);

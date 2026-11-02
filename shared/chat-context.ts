@@ -498,7 +498,7 @@ export function withIncomeStatementFacts(ctx: ChatContext, brief: IncomeStatemen
       tail.guvSummenpruefung = clipTo(brief.checks.map(c => `${labelOf(c.parentKey)}: ausgewiesen ${incomeValue(c.reported)}, Summe ${c.parts} Unterposten ${incomeValue(c.sumOfParts)}, Differenz ${incomeValue(c.diff)}`).join(" | "), cap);
     }
     for (const o of brief.outliers) {
-      const parentKey = INCOME_LINE_DEFS.find(d => d.key === o.key)?.parentKey ?? o.group;
+      const parentKey = o.parentKey;
       tail[`guvAusreisser_${parentKey}`] = clipTo(`${o.label}: ${cur} ${incomeValue(o.current)} gegen ${pri} ${incomeValue(o.prior)}, Δ ${incomeValue(o.deltaAbs)} Mio ${brief.currency ?? ""} (größte Veränderung in „${labelOf(parentKey)}“) | Erklärung laut Filing: ${o.explanation ?? o.explanationReason ?? "n/a"}`.trim(), cap);
     }
     hints.push(...brief.notes);

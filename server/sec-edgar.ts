@@ -22,6 +22,15 @@ const EX99_1 = /ex-?99[-_.]?0?1(?![0-9])|ex991/i;
 /** Erste Zeilen eines Ergebnis-Exhibits (Quartals-/Jahresergebnis), nicht eines anderen 6-K. */
 const RESULTS_CUE = /(quarter|quarterly|half[- ]year|full[- ]year|fiscal|annual)[^.]{0,120}(results|statement|report)|(results|statement)[^.]{0,80}(quarter|year)/i;
 const RESULTS_HEAD_CHARS = 1500;
+/** EDGAR-Kopf eines Exhibits („EX-99.1 2 datei.htm … Exhibit 99.1“) steht in den ersten Zeichen. */
+const EXHIBIT_HEADER_CHARS = 300;
+const EXHIBIT_HEADER = /^[\s\S]*\bexhibit 99\.1\b\s*/i;
+
+function stripExhibitHeader(text: string): string {
+  const head = text.slice(0, EXHIBIT_HEADER_CHARS);
+  const m = EXHIBIT_HEADER.exec(head);
+  return m ? text.slice(m[0].length) : text;
+}
 
 const jsonCache = new Map<string, { at: number; value: unknown }>();
 const textCache = new Map<string, string>();
@@ -166,7 +175,7 @@ export async function secLatestEarningsRelease(cik10: string): Promise<{ release
     if (!text) continue;
     if (f.form === "6-K" && !RESULTS_CUE.test(text.slice(0, RESULTS_HEAD_CHARS))) continue;
     return {
-      release: { form: f.form, filingDate: f.filingDate, accession: f.accession, url, indexUrl: `${archiveBase(cik10, f.accession)}/`, text },
+      release: { form: f.form, filingDate: f.filingDate, accession: f.accession, url, indexUrl: `${archiveBase(cik10, f.accession)}/`, text: stripExhibitHeader(text) },
       reason: null,
     };
   }
