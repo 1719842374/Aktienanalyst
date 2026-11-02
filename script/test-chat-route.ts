@@ -60,14 +60,18 @@ async function main() {
   const good = await handleChat(body, { llmAvailable: () => true, llm: async () => ({ data: { answer: "Antwort", sectionRefs: [7, 99, 7, "x"] }, modelUsed: "m" }) });
   assert.equal(good.body.status, "ok"); assert.match(good.body.answer ?? "", /^Antwort\n\nQuelle: geladene Dashboard-Daten /); assert.deepEqual(good.body.sectionRefs, [7]); ok("ok-Antwort mit angehängter Quellzeile, sectionRefs auf bekannte Sektionen gefiltert");
   const nul = await handleChat(body, { llmAvailable: () => true, llm: async () => null });
-  assert.equal(nul.body.status, "llm-error"); assert.equal(nul.body.answer, null); ok("LLM null → llm-error, keine Fake-Antwort");
+  const errorHasReasonAndSource = (e: string | null | undefined) => {
+    assert.match(e ?? "", /\nGrund: \S/); assert.match(e ?? "", /\nQuelle: geladene Dashboard-Daten \(/); assert.ok(!(e ?? "").includes("\\n"));
+  };
+  assert.equal(nul.body.status, "llm-error"); assert.equal(nul.body.answer, null); errorHasReasonAndSource(nul.body.error); ok("LLM null → llm-error mit Grund und Quellzeile, keine Fake-Antwort");
   const emptyAns = await handleChat(body, { llmAvailable: () => true, llm: async () => ({ data: { answer: "  " }, modelUsed: "m" }) });
-  assert.equal(emptyAns.body.status, "llm-error"); ok("leere Antwort → llm-error");
+  assert.equal(emptyAns.body.status, "llm-error"); errorHasReasonAndSource(emptyAns.body.error); assert.match(emptyAns.body.error ?? "", /Grund: m lieferte keinen Antworttext/); ok("leere Antwort → llm-error, Grund nennt das Modell");
   const thr = await handleChat(body, { llmAvailable: () => true, llm: async () => { throw new Error("boom"); } });
-  assert.equal(thr.body.status, "llm-error"); ok("LLM-Throw → llm-error");
+  assert.equal(thr.body.status, "llm-error"); errorHasReasonAndSource(thr.body.error); ok("LLM-Throw → llm-error mit Grund und Quellzeile");
   const t0 = Date.now();
   const slow = await handleChat(body, { llmAvailable: () => true, timeoutMs: 50, llm: () => new Promise((_, rej) => setTimeout(() => rej(new Error("late")), 200)) });
-  assert.equal(slow.body.status, "timeout"); assert.ok(Date.now() - t0 < 180); ok("eigenes Timeout greift, späte Ablehnung unbehandelt-frei");
+  assert.equal(slow.body.status, "timeout"); assert.ok(Date.now() - t0 < 180); errorHasReasonAndSource(slow.body.error); assert.match(slow.body.error ?? "", /Grund: Zeitlimit 0 s überschritten/);
+  ok("eigenes Timeout greift mit Grund und Quellzeile, späte Ablehnung unbehandelt-frei");
   const inv = await handleChat({ ...body, sectionId: 99 }, { llmAvailable: () => true, llm: async () => { called++; return null; } });
   assert.equal(inv.http, 400); assert.equal(called, 0); ok("ungültig → 400 ohne LLM-Call");
 

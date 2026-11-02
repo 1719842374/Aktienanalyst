@@ -254,22 +254,33 @@ const mdLabel = (v: string) => v.replace(/[[\]]/g, "");
  * Quellzeile, die zur letzten Frage passt: GuV-Frage (oder gebundene S4) → Filing-Link aus guvFilingUrl,
  * Earnings-Frage → earningsCallQuelleUrl, sonst die geladenen Dashboard-Daten mit Datenstand.
  */
-export function chatSourceLines(body: ChatRequestBody): Array<{ line: string; url: string | null }> {
+export function chatSourceLines(body: ChatRequestBody): Array<{ line: string; plain: string; url: string | null }> {
   const ctx = body.context;
   const question = [...body.messages].reverse().find(m => m.role === "user")?.content ?? "";
-  const out: Array<{ line: string; url: string | null }> = [];
+  const out: Array<{ line: string; plain: string; url: string | null }> = [];
   const guvUrl = httpUrl(factOf(ctx, "guvFilingUrl"));
   if (guvUrl && (body.sectionId === CHAT_INCOME_SECTION_ID || GUV_QUESTION.test(question))) {
     const label = mdLabel(factOf(ctx, "guvQuelle") ?? "Filing");
-    out.push({ line: `Quelle: [${label}](${guvUrl})`, url: guvUrl });
+    out.push({ line: `Quelle: [${label}](${guvUrl})`, plain: `Quelle: ${label} (${guvUrl})`, url: guvUrl });
   }
   const earnUrl = httpUrl(factOf(ctx, "earningsCallQuelleUrl"));
   if (EARNINGS_QUESTION.test(question) && (earnUrl || factOf(ctx, "earningsCallQuelle"))) {
     const label = mdLabel(factOf(ctx, "earningsCallQuelle") ?? "Earnings Release");
-    out.push({ line: earnUrl ? `Quelle: [${label}](${earnUrl})` : `Quelle: ${label}`, url: earnUrl });
+    out.push({ line: earnUrl ? `Quelle: [${label}](${earnUrl})` : `Quelle: ${label}`, plain: earnUrl ? `Quelle: ${label} (${earnUrl})` : `Quelle: ${label}`, url: earnUrl });
   }
-  if (!out.length) out.push({ line: `Quelle: geladene Dashboard-Daten (${ctx.title}, Datenstand ${ctx.asOf ?? "n/a"})`, url: null });
+  if (!out.length) {
+    const line = `Quelle: geladene Dashboard-Daten (${ctx.title}, Datenstand ${ctx.asOf ?? "n/a"})`;
+    out.push({ line, plain: line, url: null });
+  }
   return out;
+}
+
+/**
+ * Fehlertext für timeout und llm-error: was passiert ist, der Grund und die Quelle der Daten, auf die
+ * sich die Frage bezog. Das Widget zeigt Fehler als Rohtext, deshalb Klartext statt Markdown-Link.
+ */
+export function chatErrorText(headline: string, reason: string, body: ChatRequestBody): string {
+  return `${headline}\nGrund: ${reason}\nBitte erneut versuchen.\n${chatSourceLines(body).map(l => l.plain).join("\n")}`;
 }
 
 /** Hängt fehlende Quellzeilen an: jede passende Quelle mit Link muss im Text stehen, und eine Zeile „Quelle:“ immer. */
@@ -331,15 +342,20 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   const fallbackReason = chatFallbackReason(attempts, raced && raced !== TIMEOUT ? raced.modelUsed : null);
   if (fallbackReason) console.warn(`[CHAT] Fallback (Kette ${models.join(" → ")}): ${fallbackReason}`);
   const fallback = fallbackReason ? { fallbackReason } : {};
+  const failedAttempts = chatFallbackReason(attempts, null);
   if (raced === TIMEOUT) {
-    console.warn(`[CHAT] Timeout nach ${timeoutMs} ms (dashboard=${body.dashboard})`);
-    return { http: 200, body: reply("timeout", { error: `KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet. Bitte erneut versuchen.`, ...trim, ...fallback }) };
+    const reason = `Zeitlimit ${Math.round(timeoutMs / 1000)} s überschritten (Kette ${models.join(" → ")})${failedAttempts ? `; vorher ${failedAttempts}` : ""}`;
+    console.warn(`[CHAT] Timeout nach ${timeoutMs} ms (dashboard=${body.dashboard}): ${reason}`);
+    return { http: 200, body: reply("timeout", { error: chatErrorText(`KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet.`, reason, body), ...trim, ...fallback }) };
   }
   const res = raced;
   const first = typeof res?.data?.answer === "string" ? normalizeChatAnswer(res.data.answer) : "";
   if (!res || !first.trim()) {
-    console.warn(`[CHAT] LLM-Fehler oder leere Antwort (dashboard=${body.dashboard})`);
-    return { http: 200, body: reply("llm-error", { error: "KI-Antwort fehlgeschlagen oder leer. Bitte erneut versuchen.", ...trim, ...fallback }) };
+    const reason = res
+      ? `${res.modelUsed} lieferte keinen Antworttext (finish_reason ${res.finishReason ?? "n/a"})`
+      : failedAttempts ?? `keine verwertbare Antwort von OpenRouter (Netz-, HTTP- oder JSON-Fehler, Kette ${models.join(" → ")})`;
+    console.warn(`[CHAT] LLM-Fehler oder leere Antwort (dashboard=${body.dashboard}): ${reason}`);
+    return { http: 200, body: reply("llm-error", { error: chatErrorText("KI-Antwort fehlgeschlagen oder leer.", reason, body), ...trim, ...fallback }) };
   }
   let answer = first;
   let cut = isCut(res);
