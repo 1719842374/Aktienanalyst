@@ -8,6 +8,7 @@ import {
   GEO_MAP_COUNTRIES,
   SECTOR_CANON,
   SECTOR_LAYER_PARAMS,
+  geoMapLoadMatches,
   projectSectorLayer,
   sectorLegendShares,
   type GeoMapCountry,
@@ -41,6 +42,12 @@ assert.match(panel, /geo-sector-ampel-/);
 assert.match(panel, /shareBand/);
 assert.match(panel, /sectorColor/);
 assert.doesNotMatch(panel, /symbol === "GOLD"/);
+assert.match(panel, /loadGen/);
+assert.match(panel, /geoMapLoadMatches/);
+assert.equal(geoMapLoadMatches("sector", "sector", "sector"), true);
+assert.equal(geoMapLoadMatches("capex", "sector", "capex"), false);
+assert.equal(geoMapLoadMatches("sector", "sector", "capex"), false);
+assert.equal(geoMapLoadMatches("sector", "gold", "sector"), false);
 
 function sectorBase(rows: { iso2: string; shares: { sector: string; pct: number }[]; capex?: number | null; dominantSector: string | null }[]): GeoMapResponse {
   return {

@@ -267,6 +267,15 @@ export const GEO_BUBBLE_GEOMETRY = {
   maxPx: 26,
 } as const;
 
+/**
+ * Eine abgeschlossene Karten-Anfrage darf die Fläche nur ändern, wenn der Nutzer
+ * noch auf dem angefragten Layer ist und der Body denselben Layer trägt.
+ * Sonst löscht die langsame Capex-Antwort des Kaltstarts den schon gezeichneten Sektor.
+ */
+export function geoMapLoadMatches(requestedLayer: string, activeLayer: string, payloadLayer: string | undefined): boolean {
+  return requestedLayer === activeLayer && payloadLayer === requestedLayer;
+}
+
 export function radiusForPercentile(percentile: number | null): number {
   if (percentile == null || !Number.isFinite(percentile)) return GEO_BUBBLE_GEOMETRY.minPx;
   const t = Math.min(1, Math.max(0, percentile));
