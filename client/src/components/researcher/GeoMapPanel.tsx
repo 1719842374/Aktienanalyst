@@ -55,6 +55,7 @@ type MinerLayerSite = MinerMapSite & { bubble: MinerMapBubble };
 type MinerLayerData = GeoMapMinerResponse & {
   sites?: MinerLayerSite[];
   countryShareNote?: string;
+  countryShares?: { iso2: string; name: string; sharePct: number | null; hashrateEH: number | null; label: string; note: string | null }[];
 };
 
 /** Datenradius aus decorateMinerSites. Ohne MW der benannte naPx-Punkt, kein literaler Pixelwert. */
@@ -73,14 +74,16 @@ function GeoMinerBubbles({ minerSites, selected, onSelect, onOffset }: {
 }) {
   const { projection } = useMapContext();
   const placed = useMemo(() => {
+    const drawable = minerSites.filter((site): site is MinerLayerSite & { lat: number; lon: number } =>
+      typeof site.lat === "number" && typeof site.lon === "number" && Number.isFinite(site.lat) && Number.isFinite(site.lon));
     const points: MarkerPixel[] = [];
-    for (const site of minerSites) {
+    for (const site of drawable) {
       const xy = projection([site.lon, site.lat]);
       if (!xy) continue;
       points.push({ id: site.id, x: xy[0], y: xy[1], radiusPx: minerBubbleRadius(site) });
     }
     const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
-    return minerSites.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
+    return drawable.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
   }, [projection, minerSites]);
   const shifted = placed.some(item => item.dx !== 0 || item.dy !== 0);
   useEffect(() => { onOffset(shifted); }, [shifted, onOffset]);
@@ -101,7 +104,7 @@ function GeoMinerBubbles({ minerSites, selected, onSelect, onOffset }: {
                 style={{ cursor: "pointer" }}
                 data-testid={`geo-miner-${site.id}`}
               >
-                <title>{`${site.name}: ${mw}`}</title>
+                <title>{site.formulaTooltip || `${site.name}: ${mw}`}</title>
               </circle>
             </g>
           </Marker>
@@ -577,6 +580,11 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
           {goldBubbles.length === 0 && (
             <div className="text-foreground/55 italic" data-testid="geo-gold-na">{goldData.note || "n/a — keine Produktions-Unzen und kein Länderanteil"}</div>
           )}
+          {goldData.remainder && (
+            <div className="text-foreground/80" data-testid="geo-gold-rest" title={`Formel: Weltzeile ${goldData.remainder.worldTonnes} − ausgewiesene Zeilen ${goldData.remainder.listedTonnes}. Nicht auf Länder verteilt, keine Bubble.`}>
+              {goldData.remainder.label}: {goldData.remainder.tonnes} {goldData.remainder.unit}
+            </div>
+          )}
           {goldBubbles.length > 0 && goldData.note && (
             <div className="text-foreground/55" data-testid="geo-gold-remainder">{goldData.note}</div>
           )}
@@ -660,7 +668,20 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
             <div className="text-foreground/70 leading-relaxed" data-testid="geo-miner-note">{minerData.countryShareNote || minerData.locationNote || MINER_LOCATION_NOTE}</div>
             {minerSel && (
               <div className="text-foreground/80" data-testid="geo-miner-site">
-                {minerSel.name}: {minerSel.capacityMw ? `${minerSel.capacityMw.value} MW` : (minerSel.bubble.note ?? "n/a — keine MW")}
+                {minerSel.name}: {minerSel.capacityMw ? `${minerSel.capacityMw.value} MW` : (minerSel.capacityNote ?? minerSel.bubble.note ?? "n/a — keine MW")}
+                {minerSel.estimateLabel && <div className="text-[10px] text-amber-200/90" data-testid={`geo-miner-estimate-${minerSel.id}`}>{minerSel.estimateLabel}</div>}
+                {minerSel.formulaTooltip && <div className="text-[10px] text-foreground/70" data-testid={`geo-miner-formula-${minerSel.id}`}>{minerSel.formulaTooltip}</div>}
+                {minerSel.lat == null && <div className="text-[10px] text-foreground/55">{minerSel.coordNote}</div>}
+              </div>
+            )}
+            {minerData.countryShares && minerData.countryShares.length > 0 && (
+              <div className="space-y-0.5" data-testid="geo-country-shares">
+                <div className="text-foreground/45 text-[10px]">Länder-Hashrate, Archiv</div>
+                {minerData.countryShares.map(share => (
+                  <div key={share.iso2} className="text-[10px] text-foreground/70" title={share.note ?? share.label} data-testid={`geo-country-share-${share.iso2}`}>
+                    {share.name}: {share.hashrateEH == null ? "EH/s n/a" : `${share.hashrateEH} EH/s`} · {share.sharePct == null ? "Anteil n/a" : `${share.sharePct} %`} · {share.label}
+                  </div>
+                ))}
               </div>
             )}
             {minerData.regions.find(r => r.id === selected) && (

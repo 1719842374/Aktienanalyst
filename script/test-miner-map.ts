@@ -20,6 +20,11 @@ import {
   minerCoverage,
   formatMinerCoverage,
   spreadMarkerOffsets,
+  mwFromHashrateEh,
+  VEGA_FORMULA_MW,
+  VEGA_HASHRATE_CEILING,
+  HASHRATE_MW,
+  CAMBRIDGE_ARCHIVE_SHARES,
 } from "../shared/miner-map";
 
 const { buildMinerMap } = await import("../server/miner-map");
@@ -66,6 +71,31 @@ for (const s of MINER_MAP_SITES) {
   }
 }
 for (const g of MINER_MAP_GAPS) assert.ok(g.note.startsWith("n/a — "), g.id);
+assert.equal(MINER_MAP_GAPS.find(g => g.id === "kz" || g.id === "hut-vega" || g.id === "cifr-barber"), undefined);
+assert.equal(mwFromHashrateEh(VEGA_HASHRATE_CEILING.ehPerS, VEGA_HASHRATE_CEILING.joulesPerTh), VEGA_HASHRATE_CEILING.ehPerS * VEGA_HASHRATE_CEILING.joulesPerTh);
+assert.equal(VEGA_FORMULA_MW, 195);
+assert.equal(HASHRATE_MW.thPerEh, 1_000_000);
+assert.equal(mwFromHashrateEh(24.79, 0), null);
+const vega = MINER_MAP_SITES.find(s => s.id === "us-tx-vega");
+const barber = MINER_MAP_SITES.find(s => s.id === "us-tx-barber-lake");
+const kz = MINER_MAP_SITES.find(s => s.id === "kz-archive");
+assert.ok(vega && barber && kz);
+assert.equal(vega.capacityMw?.value, 205);
+assert.equal(vega.lat, null);
+assert.equal(vega.lon, null);
+assert.match(vega.capacityMw?.scope ?? "", /205 MW/);
+assert.match(vega.formulaTooltip ?? "", /195 MW/);
+assert.match(vega.operators[0]?.siteHashrateNote ?? "", /^n\/a — /);
+assert.equal(barber.capacityMw?.value, 300);
+assert.equal(barber.capacityRole, "hpc");
+assert.equal(barber.lat, 32.399486);
+assert.equal(barber.lon, -100.858304);
+assert.equal(kz.capacityMw, null);
+assert.match(kz.capacityNote ?? "", /^n\/a — /);
+assert.equal(kz.estimateLabel, "Schätzung / keine Primärquelle");
+assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "KZ")?.sharePct, 13.22);
+assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "KZ")?.hashrateEH, 24.79);
+assert.equal(CAMBRIDGE_ARCHIVE_SHARES.find(s => s.iso2 === "CN")?.hashrateEH, null);
 
 const sample = bubbleCapacitySample(MINER_MAP_SITES);
 assert.ok(sample.length >= 8, `Stichprobe ${sample.length}`);
@@ -93,7 +123,10 @@ assert.equal(body.pipeline.networkHashrateEH, null);
 assert.ok(body.pipeline.networkHashrateNote?.startsWith("n/a — "));
 assert.equal(body.pipeline.hashpriceUsdPerThDay, null);
 assert.ok(body.pipeline.hashpriceUsdNote?.startsWith("n/a — "));
-assert.ok(body.countryShareNote.startsWith("n/a — "));
+assert.match(body.countryShareNote, /^Schätzung \/ keine Primärquelle/);
+assert.equal(body.countryShares.length, 5);
+assert.equal(body.sites.find(s => s.id === "us-tx-barber-lake")?.bubble.radiusPx, null);
+assert.ok(body.sites.find(s => s.id === "us-tx-vega")?.bubble.radiusPx != null);
 assert.equal(body.pipeline.breakevenUsd, null);
 
 const live = buildMinerMapBody(pipelineFromMiner({
@@ -167,8 +200,8 @@ assert.equal((MINER_BUBBLE_ROLES as readonly string[]).includes("planned"), fals
 
 const coverage = minerCoverage(MINER_MAP_SITES);
 assert.equal(coverage.total, MINER_MAP_SITES.length);
-assert.equal(coverage.total - coverage.withMw, 5, "fünf Pins ohne MW-Zahl");
-assert.equal(coverage.withMw, 12);
+assert.equal(coverage.total - coverage.withMw, 6, "sechs Standorte ohne MW-Zahl");
+assert.equal(coverage.withMw, 14);
 assert.equal(coverage.withSiteEhs, 0, "keine erfundene Standort-EH/s");
 assert.equal(coverage.withCompanyEhs, 9);
 assert.equal(body.coverage.withMw, coverage.withMw);
@@ -176,7 +209,7 @@ assert.equal(body.coverage.withSiteEhs, coverage.withSiteEhs);
 assert.equal(body.coverage.withCompanyEhs, coverage.withCompanyEhs);
 assert.equal("withFigure" in body.coverage, false);
 const coverageLabel = formatMinerCoverage(coverage);
-assert.equal(coverageLabel, "12/17 mit MW · 0/17 mit Standort-EH/s · 9/17 mit Konzern-EH/s");
+assert.equal(coverageLabel, "14/20 mit MW · 0/20 mit Standort-EH/s · 9/20 mit Konzern-EH/s");
 assert.doesNotMatch(coverageLabel, /mit Zahl/);
 
 const panelSrc = readFileSync("client/src/components/researcher/MinerMapPanel.tsx", "utf8");

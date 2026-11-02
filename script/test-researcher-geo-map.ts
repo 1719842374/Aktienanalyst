@@ -88,7 +88,22 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.match(gold.json.note, /Other Countries/);
   assert.match(gold.json.note, /kein einzelnes Land/);
   const accounted = production.rows.filter((row: any) => row.role !== "world").reduce((sum: number, row: any) => sum + (row.tonnes[year] || 0), 0);
-  if (accounted !== world) assert.match(gold.json.note, /nicht auf Länder verteilt/);
+  if (accounted !== world) {
+    assert.match(gold.json.note, /nicht auf Länder verteilt/);
+    assert.equal(gold.json.remainder.label, "Rest/Sonstige");
+    assert.equal(gold.json.remainder.tonnes, world - accounted);
+    assert.equal(gold.json.countries.some((c: { name: string }) => c.name === "Rest/Sonstige"), false);
+  }
+  const kgc = gold.json.goldCompanies.find((c: { symbol: string }) => c.symbol === "KGC");
+  const wpm = gold.json.goldCompanies.find((c: { symbol: string }) => c.symbol === "WPM");
+  const fnv = gold.json.goldCompanies.find((c: { symbol: string }) => c.symbol === "FNV");
+  assert.equal(kgc.aiscUsdPerOz, 1917);
+  assert.match(kgc.note, /By-Product/);
+  assert.equal(kgc.productionOz, null);
+  assert.equal(wpm.aiscUsdPerOz, 568);
+  assert.match(wpm.note, /kein WGC-AISC/);
+  assert.equal(fnv.aiscUsdPerOz, 347);
+  assert.match(fnv.note, /Cash Costs per GEO/);
   assert.match(gold.json.attribution, /Weltvolumen/);
   assert.match(gold.json.source, /USGS/);
   const au = gold.json.countries.find((c: any) => c.iso2 === "AU");
@@ -230,7 +245,8 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     assert.ok(got, site.id);
     assert.equal(got.bubble.radiusPx, site.bubble.radiusPx, `${site.id} radius`);
   }
-  assert.match(r.json.countryShareNote, /^n\/a — /);
+  assert.match(r.json.countryShareNote, /^Schätzung \/ keine Primärquelle/);
+  assert.equal(r.json.countryShares.find((row: { iso2: string }) => row.iso2 === "KZ").sharePct, 13.22);
   const standortLine = panel.match(/\{[^}\n]+\} Standorte/);
   assert.ok(standortLine, "Zählzeile Standorte fehlt");
   assert.match(standortLine[0], /minerSites\.length/);
@@ -250,12 +266,14 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     return typeof radiusPx === "number" && Number.isFinite(radiusPx) ? radiusPx : MINER_MAP_RADIUS.naPx;
   };
   const proj = geoEqualEarth().translate([400, 200]).scale(160);
-  const points = decorated.map(site => {
-    const xy = proj([site.lon, site.lat]);
+  const placed = decorated.filter(site => typeof site.lat === "number" && typeof site.lon === "number");
+  assert.ok(placed.length < decorated.length, "Vega ohne Koordinate bleibt ohne Pin");
+  const points = placed.map(site => {
+    const xy = proj([site.lon as number, site.lat as number]);
     assert.ok(xy, site.id);
     return { id: site.id, x: xy[0], y: xy[1], radiusPx: drawnRadius(site) };
   });
-  assert.equal(points.length, decorated.length);
+  assert.equal(points.length, placed.length);
   const pairOverlaps = (offsets: Map<string, { dx: number; dy: number }> | null) => {
     const pairs: string[] = [];
     for (let i = 0; i < points.length; i++) {

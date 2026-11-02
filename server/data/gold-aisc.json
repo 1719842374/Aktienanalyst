@@ -279,5 +279,34 @@
       "sourceDate": "2026-07-30",
       "note": "Ab 2026 revidierte Zusammensetzung (NTI-Zahlungen Meadowbank); laut Q4/FY2025-Bericht FY2025 neu 1.313 statt 1.339 $/oz. Nicht zurückgerechnet."
     }
+  ],
+  "mapOnly": [
+    {
+      "code": "KGC",
+      "quarter": "2026-Q3",
+      "aisc": 1917,
+      "sourceUrl": "https://www.kinross.com/English/news-and-investors/news-releases/press-release-details/2026/Kinross-reports-2026-third-quarter-results/default.aspx",
+      "sourceTitle": "Kinross Q3 2026 results, attributable AISC per ounce sold on a by-product basis",
+      "sourceDate": "2026-10-28",
+      "metricNote": "Miner, gleiche By-Product-Basis wie NEM/B/AEM: attributable all-in sustaining cost per Au oz sold on a by-product basis, Q3 2026, 1917 USD/oz. Quelle: Kinross-Pressemitteilung 28.10.2026. Nicht in der Chart-Linie aus NEM/B/AEM."
+    },
+    {
+      "code": "WPM",
+      "quarter": "2026-Q2",
+      "aisc": 568,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1323404/000119312526338641/d15525dex991.htm",
+      "sourceTitle": "Wheaton Precious Metals Q2 2026, Exhibit 99.1, average cash costs per GEO",
+      "sourceDate": "2026-08-06",
+      "metricNote": "Streamer, kein WGC-AISC. AISC-Äquivalent hier: average cash cost je GEO. Formel der Quelle: (Cost of sales − depletion − cost of sales related to delay ounces) / verkaufte Mengen, von Wheaton auf GEO umgerechnet. Q2 2026: 568 USD je GEO. Ohne Sustaining-Capex eines Minenbetreibers."
+    },
+    {
+      "code": "FNV",
+      "quarter": "2026-Q2",
+      "aisc": 347,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1456346/000110465926094181/fnv-20260630xex99d2.htm",
+      "sourceTitle": "Franco-Nevada Q2 2026 MD&A, Cash Costs per GEO sold",
+      "sourceDate": "2026-08-11",
+      "metricNote": "Royalty/Stream, kein WGC-AISC. AISC-Äquivalent hier: Cash Costs per GEO sold = Cash Costs / GEO sold. Q2 2026: 347 USD je GEO. Das sind die direkten Kosten der Verkäufe, nicht die All-in-Sustaining-Kosten eines Minenbetreibers."
+    }
   ]
 }

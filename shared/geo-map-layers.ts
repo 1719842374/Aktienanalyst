@@ -86,6 +86,8 @@ export interface GoldMapResponse {
   goldCompanies: GoldMapCompanyRow[];
   /** Fehlende Quelle, oder der nicht als Bubble gezeichnete Rest des Weltvolumens. */
   note: string | null;
+  /** 50-t-Differenz und jede andere Weltzeilen-Differenz. Keine Bubble. */
+  remainder: { label: "Rest/Sonstige"; tonnes: number; listedTonnes: number; worldTonnes: number; unit: string } | null;
   pending?: boolean;
   _cached?: boolean;
   _cacheAge?: number;
@@ -95,16 +97,19 @@ export interface AiscPoint {
   code: string;
   quarter: string;
   aisc: number;
+  /** Erklärung, wenn der Wert kein WGC-AISC eines Minenbetreibers ist. */
+  metricNote?: string | null;
 }
 
 const NO_OZ = "n/a — gold-aisc.json und gold-routes enthalten keine Produktions-Unzen";
 
-function latestAisc(points: readonly AiscPoint[], codes: readonly string[]): { quarter: string; aisc: number } | null {
+function latestAisc(points: readonly AiscPoint[], codes: readonly string[]): { quarter: string; aisc: number; metricNote: string | null } | null {
   const want = new Set(codes.map(code => code.toUpperCase()));
   const rows = points.filter(p => want.has(p.code.toUpperCase()) && Number.isFinite(p.aisc) && p.aisc > 0 && p.quarter);
   if (rows.length === 0) return null;
   rows.sort((a, b) => a.quarter.localeCompare(b.quarter));
-  return rows[rows.length - 1];
+  const last = rows[rows.length - 1];
+  return { quarter: last.quarter, aisc: last.aisc, metricNote: last.metricNote ?? null };
 }
 
 function estimatePhrase(estimated: boolean | null): string {
@@ -132,7 +137,7 @@ export function buildGoldMapLayer(
     if (fileMissing) note = "n/a — gold-aisc.json nicht lesbar";
     else if (resolved.ambiguous) note = "n/a — Ticker-Alias mehrdeutig. " + NO_OZ;
     else if (!hit) note = `n/a — kein AISC-Eintrag für ${symbol}. ` + NO_OZ;
-    else note = NO_OZ;
+    else note = hit.metricNote ? `${hit.metricNote} ${NO_OZ}` : NO_OZ;
     return {
       symbol,
       name: GOLD_NAMES[symbol],
@@ -164,6 +169,7 @@ export function buildGoldMapLayer(
     countries,
     goldCompanies,
     note,
+    remainder: resolved && !resolved.unavailable ? resolved.remainder : null,
   };
 }
 

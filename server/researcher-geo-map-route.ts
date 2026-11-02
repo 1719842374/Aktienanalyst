@@ -33,7 +33,7 @@ import {
 } from "@shared/geo-map";
 import { buildGoldMapLayer, buildValueChainMapLayer } from "@shared/geo-map-layers";
 import { tickerAliasGroupsFromCompanies } from "@shared/gold-aisc";
-import { loadGoldAiscSeries } from "./gold-aisc";
+import { loadGoldAiscSeries, loadGoldMapAiscPoints } from "./gold-aisc";
 import { loadGoldMapProduction } from "./gold-mine-production";
 import { ALL_INDUSTRIES } from "./valuechain-catalog";
 
@@ -215,6 +215,7 @@ function withFiling(body: GeoMapMinerResponse, filing: MinerMapResponse) {
     pipeline: filing.pipeline,
     gaps: filing.gaps,
     countryShareNote: filing.countryShareNote,
+    countryShares: filing.countryShares,
   };
 }
 
@@ -247,18 +248,24 @@ export function capexPayloadCarriesGeoSegments(payload: unknown): boolean {
   return true;
 }
 
-function goldLayerInput(): { points: { code: string; quarter: string; aisc: number }[] | null; aliases: ReturnType<typeof tickerAliasGroupsFromCompanies> } {
+function goldLayerInput(): { points: { code: string; quarter: string; aisc: number; metricNote?: string | null }[] | null; aliases: ReturnType<typeof tickerAliasGroupsFromCompanies> } {
   const series = loadGoldAiscSeries();
-  if (!series) return { points: null, aliases: [] };
-  const points: { code: string; quarter: string; aisc: number }[] = [];
-  for (const quarter of series.quarters) {
-    for (const value of quarter.values) {
-      if (value && typeof value.aisc === "number" && Number.isFinite(value.aisc)) {
-        points.push({ code: String(value.company), quarter: quarter.quarter, aisc: value.aisc });
+  const mapPoints = loadGoldMapAiscPoints();
+  if (!series && mapPoints.length === 0) return { points: null, aliases: [] };
+  const points: { code: string; quarter: string; aisc: number; metricNote?: string | null }[] = [];
+  if (series) {
+    for (const quarter of series.quarters) {
+      for (const value of quarter.values) {
+        if (value && typeof value.aisc === "number" && Number.isFinite(value.aisc)) {
+          points.push({ code: String(value.company), quarter: quarter.quarter, aisc: value.aisc });
+        }
       }
     }
   }
-  return { points, aliases: tickerAliasGroupsFromCompanies(series.companies) };
+  for (const extra of mapPoints) {
+    points.push({ code: extra.code, quarter: extra.quarter, aisc: extra.aisc, metricNote: extra.metricNote });
+  }
+  return { points, aliases: series ? tickerAliasGroupsFromCompanies(series.companies) : [] };
 }
 
 let warmImpl: () => void = () => {};
