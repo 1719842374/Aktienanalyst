@@ -21,6 +21,7 @@ import {
   adjTtmFromYahooAdjusted,
   alignConsensusToTtm,
   completeEpsCurrencies,
+  londonListingIssue,
   resolveAdjustedFmpQuarters,
   annualizedFwdPct,
   consensusForOneYear,
@@ -393,6 +394,10 @@ async function annualizedFromConsensus(
   const yahooTtm = await loadYahoo();
   const resolved = resolveAdjustedFmpQuarters(ttm.raw, yahooTtm.raw, deps.today);
   if (resolved.unusableReason) return { excludeReason: resolved.unusableReason };
+  if (symbol.endsWith(".L") && resolved.adjTtm != null && resolved.quarters.some(row => !row.yahooChecked)) {
+    const open = resolved.quarters.filter(row => !row.yahooChecked).map(row => row.date).join(", ");
+    return { excludeReason: `n/a — .L ${open} nicht gegen Yahoo NonGaap gesichert` };
+  }
   const amount = resolved.adjTtm ?? yahooTtm.ttm;
   const amountCcy = resolved.adjTtm != null ? (ttm.currency ?? yahooTtm.currency) : yahooTtm.currency;
   const basis = resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite;
@@ -407,6 +412,18 @@ async function annualizedFromConsensus(
     amountCcy,
   );
   if (filled.inferred) notes.push(`${symbol}: ${filled.inferred}`);
+  const london = londonListingIssue(
+    symbol,
+    consensus.eps,
+    amount,
+    filled.consensusCcy,
+    filled.ttmCcy,
+    resolved.adjTtm == null || resolved.quarters.every(row => row.yahooChecked),
+  );
+  if (london) {
+    notes.push(`${symbol}: ${london}`);
+    return { excludeReason: london };
+  }
   if (!filled.consensusCcy || !filled.ttmCcy) {
     notes.push(`${symbol}: Währung fehlt`);
     return { excludeReason: "n/a — Währung fehlt auf einer EPS-Seite" };
