@@ -10,15 +10,20 @@
  *
  *   ln(BTC) = a + b · ln(M2 mit 10 Wochen Lag)
  *
- * Fenster: das sichtbare TA-Fenster (sliceBtcTaWindow → filteredData), vor dem
- * 500-Punkte-Downsample. Die volle Historie wird nicht geschätzt, damit ein
- * kurzes Preset n/a bleibt, statt still auf Max auszuweichen. Jede sichtbare
- * Kursbeobachtung mit positivem Preis und positivem M2-Lag ist ein Paar.
- * Forward-Fill wiederholt denselben M2-Stand an Folgetagen; diese Tage bleiben
- * eigene Beobachtungen.
+ * Stichprobe: die gesamte verfügbare Historie bis zum Fensterende, nicht nur
+ * das sichtbare Fenster. Gezeichnet wird exp(a + b·ln(M2)) nur im Fenster, auf
+ * der Preisachse. Ein kurzes Preset (1J, 2J) behält damit die langfristige
+ * Steigung, statt sie neu aus wenigen Monaten zu schätzen.
  *
- * Gezeichnet wird exp(a + b·ln(M2)) auf der Preisachse. Das ist ein Modellwert
- * im Fenster, keine Prognose. Unter 8 Paaren oder ohne Streuung im M2-Lag: n/a.
+ * Paare sind echte Monatswerte. buildM2AbsoluteForwardFill schreibt denselben
+ * Stand auf jeden Folgetag; diese Tage zählen nicht mit. Ein neues Paar beginnt,
+ * wenn der gelagte M2-Stand wechselt (der Tag, an dem der nächste Monatswert
+ * nach dem Lag sichtbar wird). Liegt `monthlyPrint` vor, zählen nur die
+ * markierten Monatswerte — auch wenn zwei Monate denselben Stand haben.
+ *
+ * Unter 8 echten Paaren oder ohne Streuung im monatlichen M2-Lag: n/a.
+ * Keine R²-Schwelle. Die Preisachse bleibt am Kurs; Werte außerhalb werden
+ * abgeschnitten, der Hinweis steht in m2ImpliedAxisHint.
  */
 
 export const M2_IMPLIED_MIN_PAIRS = 8;
@@ -26,14 +31,25 @@ export const M2_IMPLIED_LINE_NAME = "M2-impliziter BTC-Preis";
 export const M2_IMPLIED_FORMULA = "ln(BTC) = a + b·ln(M2 mit 10 Wochen Lag)";
 export const M2_IMPLIED_SOURCE = "FRED M2SL";
 export const M2_IMPLIED_DISCLAIMER = "Modellwert, keine Prognose";
-/** OLS-Stichprobe: sichtbares Fenster, nicht die volle Historie. */
-export const M2_IMPLIED_WINDOW = "visible" as const;
+/** OLS-Stichprobe: gesamte Historie bis zum Fensterende, nicht nur das sichtbare Fenster. */
+export const M2_IMPLIED_WINDOW = "history-through-end" as const;
 export const M2_IMPLIED_COLOR = "#22d3ee";
+export const M2_IMPLIED_CLIPPED_HINT = "Die Linie wird an der Kursachse abgeschnitten.";
+export const M2_IMPLIED_OUTSIDE_HINT = "Die Linie liegt außerhalb der Kursachse.";
 
 export interface M2LagPoint {
+  date?: string;
   price: number;
   m2AbsoluteLagged?: number | null;
+  /**
+   * true: echter Monatswert, zählt auch bei gleichem Stand wie der Vormonat.
+   * false: vorwärts aufgefüllter Tag, zählt nie.
+   * Fehlt das Feld an allen Punkten, zählt der erste Tag jedes neuen M2-Stands.
+   */
+  monthlyPrint?: boolean;
 }
+
+export type M2ImpliedAxisPlacement = "inside" | "clipped" | "outside";
 
 interface M2ImpliedMeta {
   formula: typeof M2_IMPLIED_FORMULA;
@@ -75,32 +91,62 @@ function tooShort(n: number): M2ImpliedNa {
   return {
     ok: false,
     n,
-    reason: `n/a — Fenster zu kurz (${M2_IMPLIED_MIN_PAIRS} Paare aus Kurs und M2-Lag nötig, vorhanden: ${n})`,
+    reason: `n/a — zu wenige echte Monatswerte (${M2_IMPLIED_MIN_PAIRS} Paare aus Kurs und monatlichem M2-Lag nötig, vorhanden: ${n}; vorwärts aufgefüllte Tage zählen nicht)`,
     ...meta(),
   };
 }
 
+/** Historie bis einschließlich throughDate. undefined = alle Punkte, null = kein Fenster. */
+function historyThrough(points: readonly M2LagPoint[], throughDate?: string | null): M2LagPoint[] {
+  if (throughDate === null) return [];
+  if (typeof throughDate !== "string") return [...points];
+  return points
+    .filter(point => typeof point.date === "string" && point.date <= throughDate)
+    .sort((a, b) => a.date!.localeCompare(b.date!));
+}
+
 /**
- * OLS von ln(Kurs) auf ln(M2-Lag) über die übergebenen Punkte.
- * Aufrufer gibt das sichtbare Fenster (nicht die volle Historie, nicht nur
- * die gedownsamplete Zeichenreihe).
+ * Echte Monatspaare. Vorwärts aufgefüllte Tage mit demselben M2-Stand fallen weg.
+ * Nicht positive Kurse oder M2-Stände zählen nicht und unterbrechen die Folge nicht.
  */
-export function fitM2ImpliedBtc(points: readonly M2LagPoint[]): M2ImpliedModel {
-  const xs: number[] = [];
-  const ys: number[] = [];
+function monthlyPairs(points: readonly M2LagPoint[]): M2LagPoint[] {
+  const explicit = points.some(point => point.monthlyPrint != null);
+  const pairs: M2LagPoint[] = [];
+  let previous: number | null = null;
   for (const point of points) {
     if (!finitePositive(point.price) || !finitePositive(point.m2AbsoluteLagged)) continue;
-    xs.push(Math.log(point.m2AbsoluteLagged));
-    ys.push(Math.log(point.price));
+    if (explicit) {
+      if (point.monthlyPrint === true) pairs.push(point);
+      continue;
+    }
+    if (previous !== null && point.m2AbsoluteLagged === previous) continue;
+    previous = point.m2AbsoluteLagged;
+    pairs.push(point);
   }
-  const n = xs.length;
+  return pairs;
+}
+
+/**
+ * OLS von ln(Kurs) auf ln(M2-Lag).
+ * `throughDate` schneidet die Historie am Fensterende ab. Gezeichnet wird
+ * das Ergebnis nur im Fenster; diese Funktion liefert die Koeffizienten.
+ */
+export function fitM2ImpliedBtc(points: readonly M2LagPoint[], throughDate?: string | null): M2ImpliedModel {
+  const pairs = monthlyPairs(historyThrough(points, throughDate));
+  const n = pairs.length;
   if (n < M2_IMPLIED_MIN_PAIRS) return tooShort(n);
 
   let sumX = 0;
   let sumY = 0;
-  for (let i = 0; i < n; i++) {
-    sumX += xs[i];
-    sumY += ys[i];
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const point of pairs) {
+    const x = Math.log(point.m2AbsoluteLagged as number);
+    const y = Math.log(point.price);
+    xs.push(x);
+    ys.push(y);
+    sumX += x;
+    sumY += y;
   }
   const meanX = sumX / n;
   const meanY = sumY / n;
@@ -118,7 +164,7 @@ export function fitM2ImpliedBtc(points: readonly M2LagPoint[]): M2ImpliedModel {
     return {
       ok: false,
       n,
-      reason: "n/a — M2-Lag im sichtbaren Fenster ohne Streuung, Steigung nicht bestimmbar",
+      reason: "n/a — monatlicher M2-Lag bis zum Fensterende ohne Streuung, Steigung nicht bestimmbar",
       ...meta(),
     };
   }
@@ -140,17 +186,65 @@ export function m2ImpliedPrice(model: M2ImpliedModel, m2Lag: number | null | und
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/** Ob ein Modellwert unter oder über der Preisachse liegt. */
+export function m2ImpliedPointOutside(usd: number | null | undefined, domain: readonly [number, number]): boolean {
+  return typeof usd === "number" && Number.isFinite(usd) && (usd < domain[0] || usd > domain[1]);
+}
+
+/**
+ * inside: jeder gezeichnete Wert liegt in der Preisachse.
+ * clipped: ein Teil liegt außerhalb und wird abgeschnitten.
+ * outside: keiner liegt in der Achse.
+ */
+export function m2ImpliedAxisPlacement(
+  values: readonly (number | null | undefined)[],
+  domain: readonly [number, number],
+): M2ImpliedAxisPlacement {
+  let inside = 0;
+  let outside = 0;
+  for (const value of values) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    if (value < domain[0] || value > domain[1]) outside += 1;
+    else inside += 1;
+  }
+  if (outside === 0) return "inside";
+  if (inside === 0) return "outside";
+  return "clipped";
+}
+
+export function m2ImpliedAxisHint(placement: M2ImpliedAxisPlacement): string | null {
+  switch (placement) {
+    case "inside":
+      return null;
+    case "clipped":
+      return M2_IMPLIED_CLIPPED_HINT;
+    case "outside":
+      return M2_IMPLIED_OUTSIDE_HINT;
+    default: {
+      const unexpected: never = placement;
+      return unexpected;
+    }
+  }
+}
+
 /** Tooltip-Zeilen: $-Wert, Formel, a, b, R², Quelle, Hinweis. Bei n/a nur der Grund. */
-export function m2ImpliedTooltipLines(model: M2ImpliedModel, usd: number | null): string[] {
+export function m2ImpliedTooltipLines(
+  model: M2ImpliedModel,
+  usd: number | null,
+  placement: M2ImpliedAxisPlacement = "inside",
+): string[] {
   if (!model.ok) return [model.reason];
   const price = usd != null && Number.isFinite(usd)
     ? `$${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
     : "n/a";
-  return [
+  const lines = [
     `${M2_IMPLIED_LINE_NAME} ${price}`,
     model.formula,
     `a = ${model.a.toFixed(4)} · b = ${model.b.toFixed(4)} · R² = ${model.r2.toFixed(4)}`,
     `Quelle ${model.source}`,
     model.disclaimer,
   ];
+  const hint = placement === "inside" ? null : m2ImpliedAxisHint(placement);
+  if (hint) lines.push(hint);
+  return lines;
 }

@@ -33,6 +33,9 @@ import {
   M2_IMPLIED_DISCLAIMER,
   M2_IMPLIED_LINE_NAME,
   fitM2ImpliedBtc,
+  m2ImpliedAxisHint,
+  m2ImpliedAxisPlacement,
+  m2ImpliedPointOutside,
   m2ImpliedPrice,
   m2ImpliedTooltipLines,
 } from "@/lib/m2ImpliedBtc";
@@ -85,7 +88,7 @@ interface TechChartPoint {
   ma1400: number | null;
   real10y?: number | null; m2Yoy?: number | null;
   m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
-  /** exp(a + b·ln(M2-Lag)) auf der Preisachse. OLS nur über das sichtbare Fenster. */
+  /** exp(a + b·ln(M2-Lag)) auf der Preisachse. OLS über die Historie bis zum Fensterende. */
   m2ImpliedBtc?: number | null;
   /** Fed-Bilanz WALCL in Bio. USD (Liquiditäts-Endpoint) */
   walcl?: number | null;
@@ -1112,9 +1115,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     return result;
   }, [filteredData]);
 
-  // Koeffizienten aus allen Paaren des sichtbaren Fensters, nicht aus der
-  // vollen Historie und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
-  const m2Implied = useMemo(() => fitM2ImpliedBtc(filteredData), [filteredData]);
+  // Koeffizienten aus den echten Monatswerten der Historie bis zum Fensterende,
+  // nicht aus dem sichtbaren Fenster und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
+  const m2Implied = useMemo(
+    () => fitM2ImpliedBtc(fullChart, filteredData.length > 0 ? filteredData[filteredData.length - 1].date : null),
+    [fullChart, filteredData],
+  );
 
   const qePoints = useMemo(
     () => fullChart.map(p => ({ date: p.date, price: p.price, walcl: p.walcl ?? null })),
@@ -1281,18 +1287,22 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           if (v > maxVal) maxVal = v;
         }
       }
-      if (showM2AbsoluteLagged && d.m2ImpliedBtc && d.m2ImpliedBtc > 0) {
-        if (d.m2ImpliedBtc < minVal) minVal = d.m2ImpliedBtc;
-        if (d.m2ImpliedBtc > maxVal) maxVal = d.m2ImpliedBtc;
-      }
     }
-    // Safeguard: never go below 0, ensure valid range
+    // Safeguard: never go below 0, ensure valid range.
+    // Der implizite M2-Preis zieht die Achse nicht auf: er liegt auf derselben
+    // Skala und wird am Rand abgeschnitten, wenn er außerhalb des Kurses liegt.
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) {
       return [0, 100000] as [number, number];
     }
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartDataWithRSI, visibleMAs, visibleOverlays, showM2AbsoluteLagged]);
+  }, [chartDataWithRSI, visibleMAs, visibleOverlays]);
+
+  const m2ImpliedPlacement = useMemo(
+    () => m2ImpliedAxisPlacement(chartDataWithRSI.map(d => d.m2ImpliedBtc), yDomain),
+    [chartDataWithRSI, yDomain],
+  );
+  const m2ImpliedOffAxis = m2ImpliedAxisHint(m2ImpliedPlacement);
 
   // Format helpers
   const formatDate = (date: string) => {
@@ -1557,8 +1567,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         {showM2AbsoluteLagged && (
           <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-note">
             {m2Implied.ok
-              ? `${M2_IMPLIED_LINE_NAME} auf der Preisachse · OLS über das sichtbare Fenster (n=${m2Implied.n}) · ${M2_IMPLIED_DISCLAIMER}`
+              ? `${M2_IMPLIED_LINE_NAME} auf der Preisachse · OLS über die Historie bis zum Fensterende, nur Monatswerte (n=${m2Implied.n}) · ${M2_IMPLIED_DISCLAIMER}`
               : m2Implied.reason}
+          </div>
+        )}
+        {showM2AbsoluteLagged && m2Implied.ok && m2ImpliedOffAxis && (
+          <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-offaxis">
+            {m2ImpliedOffAxis}
           </div>
         )}
         {capitulationSegmentsSnapped.length > 0 && (
@@ -1798,6 +1813,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
             <YAxis
               domain={yDomain}
+              allowDataOverflow
               tick={xTick}
               tickFormatter={formatYAxis}
               width={55}
@@ -1887,7 +1903,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                     )}
                     {showM2AbsoluteLagged && (
                       <div className="mt-1 space-y-0.5 border-t border-border pt-1" data-testid="btc-m2-implied-tooltip">
-                        {m2ImpliedTooltipLines(m2Implied, volPoint?.m2ImpliedBtc ?? null).map(line => (
+                        {m2ImpliedTooltipLines(
+                          m2Implied,
+                          volPoint?.m2ImpliedBtc ?? null,
+                          m2ImpliedPointOutside(volPoint?.m2ImpliedBtc, yDomain) ? "outside" : "inside",
+                        ).map(line => (
                           <div key={line} className="text-cyan-300">{line}</div>
                         ))}
                       </div>
