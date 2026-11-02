@@ -25,6 +25,7 @@ import {
   hasPositiveSegmentRevenue,
   segmentNeedsLlm,
   validateTamNaFills,
+  type PeerSegmentEvidence,
   type TamNaFill,
   type TamNaSegmentRef,
 } from "../shared/tam-na-fill";
@@ -47,6 +48,8 @@ export interface TamNaFillArgs {
   peerAnchor?: PeerGrowthAnchor | null;
   /** Zweiter Abruf: der erste hat zu wenige belegte Zellen geliefert. */
   repeatBecauseThin?: boolean;
+  /** Peer-Segmente mit Umsatz und Marktanteil. Fehlt das Feld, lädt die Schätz-Route sie. */
+  peerEvidence?: PeerSegmentEvidence[];
   segments: TamNaFillRequestSegment[];
 }
 
@@ -169,7 +172,8 @@ REGELN:
 - Anteil am TAM und vs. TAM sind lokale Formeln. Nicht schätzen und nicht ins JSON schreiben. Kein Über, kein Unter.
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
 - Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
-- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.`;
+- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.
+- tamSource nennt eine Marktgröße (Gartner, IDC, Geschäftsbericht, Pressemitteilung), keine Wachstumsrate und kein Peer-CAGR.`;
 }
 
 export async function requestTamNaFills(
