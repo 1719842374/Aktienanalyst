@@ -207,6 +207,10 @@ console.log("\nechte gold-aisc.json");
     !!latest && Math.abs(latest.multiple - latest.spot / latest.aisc) < 1e-9,
     latest ? String(latest.multiple) : "kein latest");
   check("letzte Stufe 2026-Q2 Ø 1649", latest?.quarter === "2026-Q2" && latest.aisc === 1649, `${latest?.quarter} ${latest?.aisc}`);
+  const earlyDates = businessDays("2018-06-01", 5);
+  const early = buildGoldMinerZone(earlyDates.map(date => ({ date, close: 1300 })), series);
+  check("2018-06 trägt die damals gültige Stufe 2018-Q1 Ø 883", early?.points.every(p => p.aisc === 883) === true, String(early?.points[0]?.aisc));
+  check("seit-Datum folgt der Preisreihe, nicht mehr 2024-05-30", early?.thresholds.since === earlyDates[0]);
   check("drei Firmen am letzten Quartal", latest?.perCompany.length === 3);
   check("keine Euphorie-Zone und euph null",
     zone?.thresholds.euph == null && zone!.points.every(p => p.zone !== "euphoria") && zone!.segments.every(s => s.zone !== "euphoria"));

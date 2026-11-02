@@ -22,13 +22,19 @@ export const GOLD_MINER_P_HIGH_RANK = 50;
 /** Design-Default aus der Spec. Wird nicht als Zonengrenze angewendet. */
 export const GOLD_MINER_P_EUPH_RANK = 90;
 const SMOOTH_WINDOW = 7;
-const MAX_POINTS = 800;
+/**
+ * Obergrenze der ausgelieferten Punkte. 10 Jahre Handelstage aus /api/analyze-gold
+ * (~2520) bleiben vollständig, damit 3M nicht auf eine ausgedünnte Linie fällt.
+ * Der Score rechnet immer auf der vollen Stichprobe, vor dem Ausdünnen.
+ */
+export const GOLD_MINER_ZONE_MAX_POINTS = 4000;
+const MAX_POINTS = GOLD_MINER_ZONE_MAX_POINTS;
 
 const NA_SHORT_HISTORY = "Historie < 120 Handelstage";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface GoldMinerZoneOptions {
-  /** Obergrenze der ausgelieferten Punkte. Default 800. */
+  /** Obergrenze der ausgelieferten Punkte. Default GOLD_MINER_ZONE_MAX_POINTS. */
   maxPoints?: number;
 }
 

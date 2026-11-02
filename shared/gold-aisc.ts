@@ -171,15 +171,46 @@ export function buildGoldAiscSeries(
   };
 }
 
-/** Zum Datum gültige Stufe (letzte mit availableFrom <= date). n/a-Stufe oder vor dem ersten Quartal -> null. */
-export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
+/**
+ * Ø je Quartal, an jedem Kurstag die zu diesem Tag gültige Stufe (wie eine SMA je Datum,
+ * hier die letzte Quartalsstufe mit availableFrom ≤ Datum). Keine Interpolation.
+ * minCompanies und lagDays kommen aus der Reihe (Defaults GOLD_AISC_MIN_COMPANIES, GOLD_AISC_LAG_DAYS).
+ */
+export const GOLD_AISC_FORMULA =
+  "Ø = gerundet(Mittelwert der belegten Quartals-AISC), nur wenn Anzahl ≥ minCompanies; Stufe ab Quartalsende + lagDays; Multiple = Spot / Ø; Marge = (Spot − Ø) / Spot. Keine Interpolation.";
+
+/** Letzte Stufe mit availableFrom ≤ date, auch wenn ihr AISC n/a ist. Vor der ersten Stufe → null. */
+export function goldAiscCovering(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
   if (!series) return null;
   let hit: GoldAiscQuarterStep | null = null;
   for (const q of series.quarters) {
     if (q.availableFrom <= date) hit = q;
     else break;
   }
+  return hit;
+}
+
+/** Zum Datum gültige Stufe (letzte mit availableFrom <= date). n/a-Stufe oder vor dem ersten Quartal -> null. */
+export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
+  const hit = goldAiscCovering(series, date);
   return hit && hit.aisc != null ? hit : null;
+}
+
+/**
+ * Grund, warum an diesem Datum kein AISC steht. null = eine belegte Stufe gilt.
+ * Lücken bleiben Lücken: die vorherige Stufe wird nicht fortgeschrieben.
+ */
+export function goldAiscNaReason(series: GoldAiscSeries | null | undefined, date: string): string | null {
+  if (!series || series.quarters.length === 0) return "keine belegte AISC-Reihe";
+  const hit = goldAiscCovering(series, date);
+  if (hit?.aisc != null) return null;
+  const first = series.quarters[0];
+  if (!hit) {
+    return `vor der ersten belegten Stufe ${first.quarter} (gültig ab ${first.availableFrom}, Lag ${series.lagDays} Tage nach Quartalsende). Nicht interpoliert.`;
+  }
+  const gaps = series.gaps.filter(gap => gap.endsWith(hit.quarter));
+  const missing = gaps.length > 0 ? gaps.join(", ") : "belegte Firmen unter dem Minimum";
+  return `${hit.quarter}: nur ${hit.count} von ${GOLD_AISC_COMPANY_CODES.length} Firmen belegt (Minimum minCompanies=${series.minCompanies}). ${missing}. Nicht interpoliert.`;
 }
 
 /** Hinweis, wenn die Antwort kein `aiscLine` trägt (z. B. Client-Offline-Fallback): sichtbar statt stillem Verschwinden. */

@@ -81,7 +81,9 @@ check("Badge Profitabel", html.includes('data-testid="gold-miner-zone-badge"') &
 check("Karte Multiple 2.00×", html.includes('data-testid="gold-miner-card-multiple"') && html.includes("2.00×"));
 check("Karte AISC $1,000", html.includes('data-testid="gold-miner-card-aisc"') && html.includes("$1,000"));
 check("drei Charts", ["gold-miner-chart-spot", "gold-miner-chart-multiple", "gold-miner-chart-margin"].every(id => html.includes(`data-testid="${id}"`)));
-check("Zeitraum-Buttons", ["6M", "1Y", "2Y", "Max"].every(r => html.includes(`data-testid="button-gold-miner-range-${r}"`)));
+check("Zeitraum-Buttons wie der Aktien-TA-Chart", ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"].every(r => html.includes(`data-testid="button-gold-miner-range-${r}"`)));
+check("Von/Bis", html.includes('data-testid="input-gold-miner-from"') && html.includes('data-testid="input-gold-miner-to"') && html.includes(">Von<") && html.includes(">Bis<"));
+check("Formel am Wert", html.includes("Keine Interpolation"));
 check("kein Overlay-Faktor 1,15 in der Sektion", !html.includes("1,15") && !html.includes("×1.15"));
 
 console.log(failed === 0 ? "\nSektion 9 grün." : `\n${failed} Test(s) fehlgeschlagen.`);
