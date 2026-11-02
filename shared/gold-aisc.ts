@@ -171,6 +171,19 @@ export function buildGoldAiscSeries(
   };
 }
 
+/**
+ * Quartalsstufen für die adaptive AISC-Marge (F10-20).
+ * Datum = availableFrom (Quartalsende + Berichtsverzug), nicht das Quartalsende.
+ * n/a-Stufen (aisc null) fehlen — nichts wird geschätzt. Keine Serie → null.
+ */
+export function goldAiscScoreSteps(series: GoldAiscSeries | null | undefined): { date: string; aisc: number }[] | null {
+  if (!series) return null;
+  const steps = series.quarters
+    .filter((step): step is GoldAiscQuarterStep & { aisc: number } => typeof step.aisc === "number" && step.aisc > 0)
+    .map(step => ({ date: step.availableFrom, aisc: step.aisc }));
+  return steps.length > 0 ? steps : null;
+}
+
 /** Zum Datum gültige Stufe (letzte mit availableFrom <= date). n/a-Stufe oder vor dem ersten Quartal -> null. */
 export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
   if (!series) return null;

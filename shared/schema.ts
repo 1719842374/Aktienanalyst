@@ -1022,7 +1022,8 @@ export interface Treasury10YOverlayPoint {
 // ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
 // Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
 // GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
-// Nur Anzeige: GIS, getTechnicalScore und `aisc: null` in gold-routes.ts bleiben (B2).
+// Nur Anzeige der Linie. GIS und getTechnicalScore bleiben. Die adaptive
+// Supply-Schicht (F10-20) bekommt die Quartalsstufen, nicht den GIS.
 
 /** NEM = Newmont, B = Barrick (vormals GOLD), AEM = Agnico Eagle. */
 export type GoldAiscCompanyCode = "NEM" | "B" | "AEM";
@@ -1077,9 +1078,9 @@ export interface GoldAiscSeries {
 }
 
 // ─── Gold Miner-Breakeven (Spot vs. AISC), nur Anzeige ───────────────────────
-// Adaptive Perzentil-Zonen aus der eigenen Multiple-Historie. Kein GIS, kein
-// adaptiver Score. Euphorie (P90) ist ein Typ-Slot; ob sie klassifiziert wird,
-// entscheidet Philip — die Rechnung setzt euph nicht.
+// Adaptive Perzentil-Zonen aus der eigenen Multiple-Historie. Kein GIS.
+// Euphorie ab P90, wenn P90 über dem Median liegt. z-Score und Median stehen
+// neben den Perzentilen; fehlt die Streuung, bleibt zScore null.
 
 /** capitulation · transition · profitable sind aktiv. euphoria ist reserviert, nicht vergeben. */
 export type GoldMinerZoneName = "capitulation" | "transition" | "profitable" | "euphoria";
@@ -1102,9 +1103,15 @@ export interface GoldMinerZone {
     pHighRank: 50;
     pEuphRank: 90;
     low: number | null;
+    /** P50, zugleich der Median der Multiple-Historie. */
     high: number | null;
-    /** null, solange die Euphorie-Zone (P90) nicht freigegeben ist. */
+    median: number | null;
+    /** P90 der Multiple-Historie. null unter 120 Beobachtungen. */
     euph: number | null;
+    /** Stichproben-σ der Multiple vor dem letzten Tag. null ohne Streuung. */
+    sigma: number | null;
+    /** (letztes Multiple − Mittel) / sigma. null, wenn sigma fehlt. */
+    zScore: number | null;
     obs: number;
     since: string | null;
   };

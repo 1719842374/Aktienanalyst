@@ -20,6 +20,8 @@ import {
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
 import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
+import { attachAiscToChart, goldAiscStepAt } from "../../../../shared/gold-aisc";
+import { clipGoldZoneSegments, goldMinerPriceDomain } from "../../../../shared/gold-miner-zone";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -154,6 +156,22 @@ export function GoldPriceChart({ data }: Props) {
     }));
   }, [chartData]);
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
+  const capitulationBands = useMemo(
+    () => clipGoldZoneSegments(data.aiscZone?.segments ?? [], chartData.map(point => point.date), "capitulation"),
+    [data.aiscZone, chartData],
+  );
+  const aiscPaneRows = useMemo(() => {
+    if (!data.aiscLine) return [];
+    return attachAiscToChart(
+      chartData.map(point => ({ date: point.date, price: point.price })),
+      data.aiscLine,
+    ).map(point => ({ date: point.date, aiscUsd: point.aisc, quarter: point.aiscQuarter }));
+  }, [chartData, data.aiscLine]);
+  const aiscPaneDomain = useMemo(
+    () => goldMinerPriceDomain(aiscPaneRows.flatMap(row => (row.aiscUsd == null ? [] : [{ spot: row.aiscUsd, aisc: row.aiscUsd }]))),
+    [aiscPaneRows],
+  );
+  const aiscPaneHasStep = aiscPaneRows.some(row => row.aiscUsd != null);
   const qeQt = useMemo(() => goldQeQtView(
     rangeTech.points.map(p => ({ date: p.date, price: p.price, walcl: p.walcl })),
     chartData.map(d => d.date),
@@ -600,6 +618,20 @@ export function GoldPriceChart({ data }: Props) {
               {/* Fair Value (bestehend) */}
               <ReferenceLine y={data.fairValue.fvAdj} stroke="#a855f7" strokeDasharray="5 5" strokeOpacity={0.5} ifOverflow="hidden" />
 
+              {capitulationBands.map(seg => (
+                <ReferenceArea
+                  key={`cap-${seg.x1}-${seg.x2}`}
+                  x1={seg.x1}
+                  x2={seg.x2}
+                  y1={yDomain[0]}
+                  y2={yDomain[1]}
+                  fill="#EF4444"
+                  fillOpacity={0.3}
+                  strokeOpacity={0}
+                  ifOverflow="hidden"
+                />
+              ))}
+
               {showQeQt && qeQt.bands.map(b => (
                 <ReferenceArea
                   key={`qe-${b.x1}-${b.regime}`}
@@ -824,6 +856,65 @@ export function GoldPriceChart({ data }: Props) {
           </ResponsiveContainer>
         </div>
 
+        <div className="mt-3 min-h-10 shrink-0" style={{ minHeight: TA_OSC_MIN_PX }} data-testid="gold-aisc-pane">
+          <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:flex-nowrap">
+            <span className="font-medium">AISC ($/oz)</span>
+            <span className="opacity-60">= All-in Sustaining Cost Ø NEM/B/AEM | Quartalsstufe | keine Schätzung</span>
+            {(() => {
+              const last = [...aiscPaneRows].reverse().find(row => row.aiscUsd != null);
+              if (!last?.aiscUsd) return null;
+              return <span className="ml-auto font-mono font-semibold text-orange-500" data-testid="gold-aisc-pane-last">{formatYAxis(last.aiscUsd)} — {last.quarter}</span>;
+            })()}
+          </div>
+          {!data.aiscLine ? (
+            <div className="px-1 text-[10px] text-amber-500" data-testid="gold-aisc-pane-na">n/a — Offline-Daten, keine AISC-Quelle in dieser Antwort</div>
+          ) : !aiscPaneHasStep ? (
+            <div className="px-1 text-[10px] text-amber-500" data-testid="gold-aisc-pane-na">n/a — kein belegtes AISC-Quartal im Zeitraum</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={130}>
+              <ComposedChart data={aiscPaneRows} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+                <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
+                <YAxis
+                  domain={aiscPaneDomain ?? ["auto", "auto"]}
+                  tick={axisTick(narrow, 9, "var(--muted-foreground)")}
+                  tickFormatter={formatYAxis}
+                  tickLine={false}
+                  axisLine={false}
+                  width={55}
+                />
+                {narrow && visibleRightWidth > 0 && (
+                  <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+                )}
+                <Tooltip
+                  contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const raw = payload.find(item => item.dataKey === "aiscUsd")?.value;
+                    const step = goldAiscStepAt(data.aiscLine, String(label));
+                    return (
+                      <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                        <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-orange-500">AISC</span>
+                          <span className="font-mono">{typeof raw === "number" ? formatYAxis(raw) : "n/a"}</span>
+                        </div>
+                        {step && (
+                          <div className="mt-1 text-muted-foreground">
+                            {step.quarter}
+                            {step.values.map(value => ` · ${value.company} ${formatYAxis(value.aisc)}`).join("")}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }}
+                />
+                <Line type="stepAfter" dataKey="aiscUsd" name="AISC ($/oz)" stroke="#F97316" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
         {showGoldWalcl && qeQt.ratios.length > 0 && (
           <div className="mt-3" data-testid="gold-walcl-ratio-chart">
             <div className="mb-1 text-[10px] font-medium text-muted-foreground">Gold / WALCL · Unterchart · nur Anzeige, kein Gate</div>
@@ -853,6 +944,17 @@ export function GoldPriceChart({ data }: Props) {
         </span>
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
+        </span>
+        <span className="min-w-0 break-words" data-testid="gold-ta-capitulation">
+          {data.aiscZone === undefined
+            ? "Kapitulation n/a — Offline-Daten, keine AISC-Zone"
+            : data.aiscZone == null
+              ? "Kapitulation n/a — AISC-Zone fehlt"
+              : data.aiscZone.naReason
+                ? `Kapitulation n/a — ${data.aiscZone.naReason}`
+                : capitulationBands.length > 0
+                  ? "Kapitulation (rot): Spot unter AISC oder unter P20"
+                  : "Keine Kapitulationszone im Fenster"}
         </span>
         <span className="min-w-0 break-words" data-testid="gold-qe-qt-status">
           {qeQt.unavailableReason
@@ -902,7 +1004,7 @@ export function GoldPriceChart({ data }: Props) {
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
-        „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten. Die Minen-AISC steht in Abschnitt 9.
+        „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten. Die Minen-AISC steht als Pane unter RSI und in Abschnitt 9, nicht als Linie auf der Preisachse.
       </div>
       </div>
     </SectionCard>

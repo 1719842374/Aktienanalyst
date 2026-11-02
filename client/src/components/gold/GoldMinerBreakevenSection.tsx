@@ -2,7 +2,7 @@
  * Gold Sektion 9 — Spot vs. Miner-Breakeven (AISC).
  * Layout wie BTC Section 13. Schwellen kommen aus GoldAnalysis.aiscZone
  * (GET /api/analyze-gold), sie werden hier nicht neu gerechnet.
- * Euphorie (P90) ist nicht freigegeben und wird nicht gezeichnet.
+ * Euphorie ab P90, wenn die Schwelle über dem Median liegt.
  */
 import { useMemo, useState } from "react";
 import { useIsFetching } from "@tanstack/react-query";
@@ -135,7 +135,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const priceDomain = useMemo(() => goldMinerPriceDomain(view.points), [view.points]);
   const multipleDomain = useMemo(() => {
     const values = view.points.map(point => point.multiple).filter((value): value is number => value != null && value > 0);
-    for (const extra of [1, zone?.thresholds.low, zone?.thresholds.high]) {
+    for (const extra of [1, zone?.thresholds.low, zone?.thresholds.high, zone?.thresholds.euph]) {
       if (extra != null && extra > 0) values.push(extra);
     }
     if (values.length === 0) return null;
@@ -221,7 +221,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 label="Spot/AISC-Multiple"
                 value={latest ? `${latest.multiple.toFixed(2)}×` : "—"}
                 subValue={latest && zone
-                  ? `P20 ${zone.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(1)}×`} · P50 ${zone.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(1)}×`} (adaptiv, ${zone.thresholds.obs} Tage)`
+                  ? `P20 ${zone.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(1)}×`} · Median P50 ${zone.thresholds.median == null ? "—" : `${zone.thresholds.median.toFixed(1)}×`} · z ${zone.thresholds.zScore == null ? "n/a — keine Streuung" : zone.thresholds.zScore.toFixed(2)} (${zone.thresholds.obs} Tage)`
                   : naText}
                 color={latest?.zone === "capitulation" ? "text-red-500" : undefined}
               />
@@ -251,7 +251,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
 
             <div data-testid="gold-miner-chart-spot">
               <div className="text-xs font-semibold text-muted-foreground mb-1">
-                Spot vs. Miner-Breakeven (AISC) — Zonen: Kapitulation (rot) · Übergang (gelb) · Profitabel (grün)
+                Spot vs. Miner-Breakeven (AISC) — Zonen: Kapitulation (rot) · Übergang (gelb) · Profitabel (grün) · Euphorie (lila)
               </div>
               <ResponsiveContainer width="100%" height={heights.spot}>
                 <ComposedChart data={chartRows} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
@@ -265,8 +265,17 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                   />
                   <Tooltip contentStyle={tooltipStyle} formatter={(value: number | string, name: string) => [typeof value === "number" ? formatCurrency(value, 0) : value, name]} />
                   <Legend wrapperStyle={legendStyle} />
-                  {view.segments.map((seg, index) => (
-                    <ReferenceArea key={`${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
+                  {priceDomain && view.segments.map((seg, index) => (
+                    <ReferenceArea
+                      key={`${seg.zone}-${seg.x1}-${index}`}
+                      x1={seg.x1}
+                      x2={seg.x2}
+                      y1={priceDomain[0]}
+                      y2={priceDomain[1]}
+                      fill={ZONE_FILL[seg.zone]}
+                      strokeOpacity={0}
+                      ifOverflow="hidden"
+                    />
                   ))}
                   <Line type="monotone" dataKey="spot" name="Gold Spot ($/oz)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls />
                   <Line type="stepAfter" dataKey="minerAisc" name="AISC Ø Minen ($/oz)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" connectNulls={false} />
@@ -290,7 +299,10 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                     <ReferenceLine y={zone.thresholds.low} stroke="#EF4444" strokeDasharray="4 3" label={{ value: `Kapitulation P20 = ${zone.thresholds.low.toFixed(2)}×`, fontSize: 10, fill: "#EF4444", position: "insideBottomLeft" }} />
                   )}
                   {zone?.thresholds.high != null && (
-                    <ReferenceLine y={zone.thresholds.high} stroke="#F59E0B" strokeDasharray="4 3" label={{ value: `P50 = ${zone.thresholds.high.toFixed(2)}×`, fontSize: 10, fill: "#F59E0B", position: "insideTopRight" }} />
+                    <ReferenceLine y={zone.thresholds.high} stroke="#F59E0B" strokeDasharray="4 3" label={{ value: `Median P50 = ${zone.thresholds.high.toFixed(2)}×`, fontSize: 10, fill: "#F59E0B", position: "insideTopRight" }} />
+                  )}
+                  {zone?.thresholds.euph != null && zone.thresholds.high != null && zone.thresholds.euph > zone.thresholds.high && (
+                    <ReferenceLine y={zone.thresholds.euph} stroke="#A855F7" strokeDasharray="4 3" label={narrow ? undefined : { value: `Euphorie P90 = ${zone.thresholds.euph.toFixed(2)}×`, fontSize: 10, fill: "#A855F7", position: "insideTopLeft" }} />
                   )}
                   <Line type="monotone" dataKey="multiple" name="Spot/AISC" stroke="#a855f7" dot={false} strokeWidth={1.8} connectNulls={false} />
                 </ComposedChart>
@@ -317,7 +329,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
               <div>
                 AISC = All-in Sustaining Cost je Unze (by-product), Ø Newmont, Barrick, Agnico Eagle aus Quartalsberichten
                 (Quelle je Wert in server/data/gold-aisc.json). Stufe ab Quartalsende + Berichtsverzug.
-                Zonen-Schwellen sind Perzentile der eigenen Multiple-Historie (P20 / P50), keine festen Zahlen.
+                Zonen-Schwellen sind Perzentile der eigenen Multiple-Historie (P20 / Median P50 / P90) und der z-Score, keine festen Faktoren.
                 Kein Einfluss auf GIS/Score.
               </div>
               <div>

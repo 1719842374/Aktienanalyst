@@ -6,10 +6,11 @@
  * → GoldAnalysis.aiscZone → GoldDashboard. Nur Anzeige, `inScore: false`.
  *
  * Schwellen am Tag d stammen nur aus Multiple-Werten ≤ d (kein Lookahead).
- * P20 / P50 sind Perzentil-Ränge (Design-Default); die Multiple-Grenzen sind
- * adaptiv. `multiple < 1` (Spot unter AISC) ist die harte Kostengrenze, keine
- * kalibrierte Zonen-Zahl. Die Euphorie-Zone ≥ P90 wird nicht klassifiziert
- * (`thresholds.euph` bleibt null) — ja/nein entscheidet Philip.
+ * P20 / P50 / P90 sind Perzentil-Ränge (benannte Parameter); die Multiple-Grenzen
+ * sind adaptiv. Median = P50. z-Score = (letztes Multiple − Mittel) / Stichproben-σ
+ * der vorherigen Werte. `multiple < 1` (Spot unter AISC) ist die harte Kostengrenze.
+ * Euphorie gilt ab P90, aber nur wenn P90 über dem Median liegt — sonst wäre eine
+ * konstante Stichprobe vollständig Euphorie.
  * Die BTC-Miner-Rechnung bleibt unberührt; die Glättung (Fenster 7, Mehrheit)
  * ist hier lokal nachgebaut.
  */
@@ -19,8 +20,10 @@ import { goldAiscStepAt } from "./gold-aisc";
 export const GOLD_MINER_ZONE_MIN_OBS = 120;
 export const GOLD_MINER_P_LOW_RANK = 20;
 export const GOLD_MINER_P_HIGH_RANK = 50;
-/** Design-Default aus der Spec. Wird nicht als Zonengrenze angewendet. */
+/** Oberes Perzentil. Euphorie nur, wenn dieser Wert streng über dem Median liegt. */
 export const GOLD_MINER_P_EUPH_RANK = 90;
+/** Stichproben-σ braucht mindestens zwei Werte (Nenner n−1). */
+export const GOLD_MINER_Z_MIN_HISTORY = 2;
 const SMOOTH_WINDOW = 7;
 const MAX_POINTS = 800;
 
@@ -84,11 +87,25 @@ function insertSorted(sorted: number[], value: number): void {
   sorted.splice(lo, 0, value);
 }
 
-/** Kapitulation unter 1× oder unter P20. Übergang bis P50. Darüber profitabel. Keine Euphorie. */
-function classifyMultiple(multiple: number, pLow: number, pHigh: number): GoldMinerZoneName {
+/**
+ * Kapitulation unter 1× oder unter P20. Euphorie ab P90, sofern P90 über dem Median liegt.
+ * Übergang bis P50. Darüber profitabel.
+ */
+function classifyMultiple(multiple: number, pLow: number, pHigh: number, pEuph: number): GoldMinerZoneName {
   if (multiple < 1 || multiple < pLow) return "capitulation";
+  if (pEuph > pHigh && multiple >= pEuph) return "euphoria";
   if (multiple < pHigh) return "transition";
   return "profitable";
+}
+
+/** Mittel und Stichproben-σ (n−1). σ = 0 oder zu wenig Werte → null, kein Ersatz. */
+export function goldMinerSampleSigma(values: readonly number[]): { mean: number; sigma: number } | null {
+  if (values.length < GOLD_MINER_Z_MIN_HISTORY) return null;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  const sigma = Math.sqrt(variance);
+  if (!(sigma > 0) || !Number.isFinite(mean)) return null;
+  return { mean, sigma };
 }
 
 /** Mehrheits-Zone über ein Fenster. null bleibt null. Gleichstand: zuerst gesehene Zone. */
@@ -211,7 +228,8 @@ export function buildGoldMinerZone(
       if (expanding.length < GOLD_MINER_ZONE_MIN_OBS) continue;
       const pLow = percentileValue(expanding, GOLD_MINER_P_LOW_RANK);
       const pHigh = percentileValue(expanding, GOLD_MINER_P_HIGH_RANK);
-      rawZones[i] = classifyMultiple(multiple, pLow, pHigh);
+      const pEuph = percentileValue(expanding, GOLD_MINER_P_EUPH_RANK);
+      rawZones[i] = classifyMultiple(multiple, pLow, pHigh, pEuph);
     }
   }
   for (let i = 0; i < points.length; i++) {
@@ -228,6 +246,7 @@ export function buildGoldMinerZone(
   const allSorted = multiples.slice().sort((a, b) => a - b);
   const low = enough ? percentileValue(allSorted, GOLD_MINER_P_LOW_RANK) : null;
   const high = enough ? percentileValue(allSorted, GOLD_MINER_P_HIGH_RANK) : null;
+  const euph = enough ? percentileValue(allSorted, GOLD_MINER_P_EUPH_RANK) : null;
 
   let latest: GoldMinerZone["latest"] = null;
   if (enough) {
@@ -253,13 +272,20 @@ export function buildGoldMinerZone(
     }
   }
 
+  const history = multiples.slice(0, -1);
+  const spread = latest ? goldMinerSampleSigma(history) : null;
+  const zScore = latest && spread ? (latest.multiple - spread.mean) / spread.sigma : null;
+
   const thresholds: GoldMinerZone["thresholds"] = {
-    pLowRank: 20,
-    pHighRank: 50,
-    pEuphRank: 90,
+    pLowRank: GOLD_MINER_P_LOW_RANK,
+    pHighRank: GOLD_MINER_P_HIGH_RANK,
+    pEuphRank: GOLD_MINER_P_EUPH_RANK,
     low,
     high,
-    euph: null,
+    median: high,
+    euph,
+    sigma: spread?.sigma ?? null,
+    zScore: zScore != null && Number.isFinite(zScore) ? zScore : null,
     obs,
     since,
   };
@@ -272,6 +298,40 @@ export function buildGoldMinerZone(
     naReason: enough ? null : NA_SHORT_HISTORY,
     inScore: false,
   };
+}
+
+/**
+ * Schneidet Zonenflächen auf die Daten des sichtbaren Fensters.
+ * x1/x2 liegen danach auf einem gelieferten Datum, sonst zeichnet die Kategorie-Achse nichts.
+ * `only` filtert eine Zone (Kapitulations-Overlay im TA-Chart).
+ */
+export function clipGoldZoneSegments(
+  segments: readonly { x1: string; x2: string; zone: GoldMinerZoneName }[],
+  dates: readonly string[],
+  only?: GoldMinerZoneName,
+): { x1: string; x2: string; zone: GoldMinerZoneName }[] {
+  if (dates.length === 0) return [];
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const has = new Set(dates);
+  const snap = (date: string, forward: boolean) => {
+    if (has.has(date)) return date;
+    if (forward) return dates.find(item => item >= date) ?? last;
+    for (let i = dates.length - 1; i >= 0; i--) if (dates[i] <= date) return dates[i];
+    return first;
+  };
+  const out: { x1: string; x2: string; zone: GoldMinerZoneName }[] = [];
+  for (const seg of segments) {
+    if (only && seg.zone !== only) continue;
+    if (seg.x2 < first || seg.x1 > last) continue;
+    const x1 = snap(seg.x1 < first ? first : seg.x1, true);
+    const x2 = snap(seg.x2 > last ? last : seg.x2, false);
+    if (x1 > x2) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.zone === seg.zone && prev.x2 >= x1) prev.x2 = x2;
+    else out.push({ x1, x2, zone: seg.zone });
+  }
+  return out;
 }
 
 /**
