@@ -3,7 +3,7 @@
  *
  * Additive Route: liest nur den vom Dashboard mitgeschickten Kontext (shared/chat-context.ts),
  * ruft das LLM über das bestehende callLLMJson (OpenRouter) mit EIGENEM Zeitlimit auf
- * (Muster Makro-Ebene; callLLMJson selbst bleibt unverändert) und gibt eine Textantwort zurück.
+ * (Muster Makro-Ebene) und eigener Modellkette CHAT_LLM_MODELS und gibt eine Textantwort zurück.
  * Kein Score-, Gate- oder Analyse-Einfluss; server/analyze-route.ts wird nicht berührt.
  * Kein Key → status "no-key" mit klarem Text, keine erfundene Antwort.
  * Es werden keine Keys und keine Chat-Inhalte geloggt (nur Längen/Status).
@@ -20,7 +20,22 @@ import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 export const CHAT_LLM_TIMEOUT_MS = 30_000;
 export const CHAT_RATE_LIMIT = { windowMs: 60_000, max: 20 } as const;
 
-type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string }) =>
+/** Chat-Modell (OpenRouter-ID laut https://openrouter.ai/api/v1/models). */
+export const CHAT_LLM_MODEL = "anthropic/claude-opus-5.5";
+/** Bisheriges Chat-Modell (erstes Glied von MODEL_FALLBACK_CHAIN); springt bei 402/404/429 oder leerer Antwort ein. */
+export const CHAT_LLM_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
+export const CHAT_LLM_MODELS: readonly string[] = [CHAT_LLM_MODEL, CHAT_LLM_FALLBACK_MODEL];
+/**
+ * Zeitlimit der Chat-Antwort. Tabelle, Vorjahresvergleich und Quelle brauchen mit Opus länger als
+ * CHAT_LLM_TIMEOUT_MS (das der Podcast mitnutzt); bleibt unter dem 45-s-Timeout von useDashboardChat.
+ */
+export const CHAT_ANSWER_TIMEOUT_MS = 42_000;
+/** Platz für Kernsatz, Posten-Tabelle, Ausreißer-Satz und Quellenlink im JSON. */
+export const CHAT_LLM_MAX_TOKENS = 1_800;
+/** Opus 5.5 ignoriert temperature (OpenRouter supported_parameters); der Fallback nutzt sie. */
+export const CHAT_LLM_TEMPERATURE = 0.3;
+
+type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string; models?: readonly string[] }) =>
   Promise<{ data: any; modelUsed: string } | null>;
 
 export interface ChatDeps {
@@ -118,6 +133,14 @@ export const CHAT_SYSTEM_PROMPT = [
   "Was-wäre-wenn-Fragen beantwortest du nur qualitativ als Gedankenexperiment; du änderst keine Scores, Gates oder Bewertungen und gibst keine neuen Score-Werte aus.",
   "Jede Sektion kann ein Feld \"auffaelligkeiten\" haben: mögliche Schwächen oder Auffälligkeiten, abgeleitet nur aus vorhandenen Daten, Flags und Gates. Nenne sie, wenn nach Schwächen, Risiken oder Auffälligkeiten einer Sektion gefragt wird, und erkläre sie mit den Zahlen der Sektion; erfinde keine weiteren.",
   "Du machst keine Änderungsvorschläge an Parametern und keine Overrides.",
+  "Fragen zu GuV-Posten (Umsatz, Kosten, Aufwendungen, Erträge, sonstige Posten, Zinsen, Steuern, Ergebnis) beantwortest du aus den S4-Fakten mit dem Präfix guv in genau vier Teilen:",
+  "(1) Ein Satz mit der Kernzahl, aktuelle Periode gegen Vorjahresperiode laut guvPeriode.",
+  "(2) Eine Markdown-Tabelle der Posten mit den Spalten Posten | aktuelle Periode | Vorjahresperiode | Δ, nur Zeilen aus guv_-Fakten, Unterposten direkt unter ihrer Summenzeile, Einheit wie in guvPeriode.",
+  "(3) Ein Satz zum größten Ausreißer aus guvAusreisser_ mit der Erklärung laut Filing; steht dort n/a, nenne den Grund.",
+  "(4) Quelle: Markdown-Link auf guvFilingUrl mit Formular, Periode und Einreichdatum aus guvQuelle.",
+  "Diese Form hat bei GuV-Fragen Vorrang vor der Gliederung Catalysts, Assumptions und Risks. Rechne keine fehlenden Posten aus; fehlen guv-Fakten oder steht guvHinweis mit n/a, antworte mit n/a und dem Grund.",
+  "Fragen zum letzten Earnings Call: Datum (earningsCallDatum), Art der Quelle (earningsCallArt), Kernaussagen aus Zusammenfassung bzw. Auszug, wörtliche Zitate nur aus earningsCallZitate mit Namen, und die Quelle als Link auf earningsCallQuelleUrl, falls vorhanden. Ein Earnings Release ist kein Call-Transkript; sag das. Fehlt alles, nenne earningsCallHinweis.",
+  "Zahlen mit Vergleich nennst du immer mit beiden Perioden und mit Quelle.",
   "Betrifft die Frage die Lage des Assets und steht keine AUFGABE für die ganze Analyse im Prompt, gliedere die Antwort in die Abschnitte Catalysts, Assumptions und Risks. Nur Werte aus dem KONTEXT, Fehlendes als n/a.",
   "Liegt im Nutzerprompt eine AUFGABE für die ganze Analyse, halte ihre Blockreihenfolge ein. PESTEL nur, wenn pestelStark=ja. Thesis immer als dominante Klasse, ohne Wachstumsschwelle.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
@@ -128,7 +151,7 @@ export const CHAT_BIG_PICTURE_TASK = [
   "Ordne die Daten zu einem Bild. Liste nicht Sektion für Sektion auf.",
   "Blöcke in dieser Reihenfolge, jeder Block nur aus dem KONTEXT:",
   "1. Wachstumstreiber: größtes Segment und das, was der letzte Earnings Call als Treiber nennt. Steht earningsCallHinweis, nenne den Grund und erfinde keinen Call.",
-  "2. Financials: was die Kennzahlen in S4 zeigen.",
+  "2. Financials: was die Kennzahlen in S4 zeigen; GuV-Posten aus guv_ mit Vorjahresvergleich und dem Link guvFilingUrl als Quelle.",
   "3. Moat / Ökosystem: Burggraben und Bindung aus S13. Peers nur, wenn sie im Kontext stehen.",
   "4. PESTEL: nur wenn pestelStark=ja. Sonst diesen Block weglassen.",
   "5. Technical: Momentum aus S11/S12 (RSL, Cross). Fehlende Client-Werte als n/a mit dem genannten Grund.",
@@ -162,10 +185,13 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
     return { http: 200, body: reply("no-key", { error: OPENROUTER_NO_KEY_MESSAGE, ...trim }) };
   }
   const body = v.body;
-  const timeoutMs = deps.timeoutMs ?? CHAT_LLM_TIMEOUT_MS;
+  const timeoutMs = deps.timeoutMs ?? CHAT_ANSWER_TIMEOUT_MS;
   let res: { data: any; modelUsed: string } | null = null;
   try {
-    const call = deps.llm({ prompt: buildChatPrompt(body), systemPrompt: CHAT_SYSTEM_PROMPT, maxTokens: 900, temperature: 0.3 });
+    const call = deps.llm({
+      prompt: buildChatPrompt(body), systemPrompt: CHAT_SYSTEM_PROMPT,
+      maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models: CHAT_LLM_MODELS,
+    });
     call.catch(() => undefined);
     const raced = await withTimeout(call, timeoutMs);
     if (raced === TIMEOUT) {
