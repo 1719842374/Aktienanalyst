@@ -421,3 +421,109 @@ export function retainSourcedTamNaFills(fills: TamNaFill[]): { fills: TamNaFill[
   }
   return { fills: kept, naReasons };
 }
+
+/** Höchstens ein weiterer LLM-Aufruf, wenn der erste zu wenige Zielzellen schließt. */
+export const TAM_ESTIMATE_MAX_RETRIES = 1;
+
+export const TAM_NA_UNFILLED_REASON = {
+  growth: "n/a — keine belegte Wachstumsschätzung",
+  tam: "n/a — keine belegte TAM-Schätzung",
+  cagr: "n/a — keine belegte CAGR-Schätzung",
+} as const;
+
+/** Offene Zellen, die das Modell selbst setzen darf. Anteil am TAM und vs. TAM bleiben Formeln. */
+export function llmTargetCellCount(seg: TamNaSegmentRef): number {
+  const cells = scopeNaCells(seg, null);
+  return Number(cells.growth) + Number(cells.tam) + Number(cells.cagr);
+}
+
+export function llmClosedCellCount(seg: TamNaSegmentRef, fill: TamNaFill | null | undefined): number {
+  const before = scopeNaCells(seg, null);
+  const after = scopeNaCells(seg, fill ?? null);
+  let closed = 0;
+  if (before.growth && !after.growth) closed += 1;
+  if (before.tam && !after.tam) closed += 1;
+  if (before.cagr && !after.cagr) closed += 1;
+  return closed;
+}
+
+/**
+ * Mindestanteil geschlossener Zielzellen, ab dem kein Retry mehr nötig ist.
+ * Eine vollständig beantwortete Zeile — die mit den wenigsten offenen Zielzellen —
+ * reicht. Der Anteil ist der Quotient aus dieser Zeile und der offenen Matrix.
+ */
+export function adaptiveMinFilledCellRatio(openCellsByRow: readonly number[]): number {
+  const rows = openCellsByRow.filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
+  const total = rows.reduce((sum, n) => sum + n, 0);
+  if (total <= 0) return 1;
+  return Math.min(...rows) / total;
+}
+
+export function filledTargetCellRatio(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): number {
+  const byName = fillByName(fills);
+  let open = 0;
+  let closed = 0;
+  for (const seg of segments) {
+    const target = llmTargetCellCount(seg);
+    if (target === 0) continue;
+    open += target;
+    closed += llmClosedCellCount(seg, byName.get(seg.segmentName) ?? null);
+  }
+  if (open === 0) return 1;
+  return closed / open;
+}
+
+/**
+ * Zellen aus zwei Abrufen. Eine gesetzte Zahl wird nicht durch eine andere ersetzt
+ * und nicht gemittelt. Eine Zeile, die nur im zweiten Abruf belegt ist, kommt dazu.
+ */
+export function unionTamNaFills(segments: TamNaSegmentRef[], first: TamNaFill[], second: TamNaFill[]): TamNaFill[] {
+  const left = fillByName(first);
+  const right = fillByName(second);
+  const out: TamNaFill[] = [];
+  for (const seg of segments) {
+    const a = left.get(seg.segmentName);
+    const b = right.get(seg.segmentName);
+    if (!a && !b) continue;
+    if (a && !b) {
+      out.push(a);
+      continue;
+    }
+    if (!a && b) {
+      out.push(b);
+      continue;
+    }
+    const preferSecond = llmClosedCellCount(seg, b) > llmClosedCellCount(seg, a);
+    out.push(preferSecond ? b! : a!);
+  }
+  return out;
+}
+
+export function mergeTamNaReasons(existing: TamNaReason[], extra: TamNaReason[]): TamNaReason[] {
+  const seen = new Set<string>();
+  const out: TamNaReason[] = [];
+  for (const reason of [...existing, ...extra]) {
+    if (!reason || typeof reason.segmentName !== "string") continue;
+    const key = `${reason.segmentName}\u0000${reason.field}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(reason);
+  }
+  return out;
+}
+
+/** Zielzellen, die nach dem Apply offen bleiben. Ein schon gesetzter Grund gewinnt beim Merge. */
+export function unfilledTamNaReasons(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): TamNaReason[] {
+  const byName = fillByName(fills);
+  const reasons: TamNaReason[] = [];
+  const fields = ["growth", "tam", "cagr"] as const;
+  for (const seg of segments) {
+    const before = scopeNaCells(seg, null);
+    const after = scopeNaCells(seg, byName.get(seg.segmentName) ?? null);
+    for (const field of fields) {
+      if (!before[field] || !after[field]) continue;
+      reasons.push({ segmentName: seg.segmentName, field, reason: TAM_NA_UNFILLED_REASON[field] });
+    }
+  }
+  return reasons;
+}
