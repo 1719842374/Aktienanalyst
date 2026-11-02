@@ -102,6 +102,11 @@ export interface BTCAnalysis {
   gisCalculation: string;
   /** Liquiditätsblock (WALCL/Bills/DGS10). null = Endpoint nicht erreichbar → GIS ohne Block. */
   liquidity?: BtcLiquidityBlock | null;
+  /**
+   * Wochenwerte der Fed-Bilanz für die QE/QT-Bänder. Dieselbe FRED-Reihe WALCL
+   * wie der Gold-Chart, hier aus GET /api/analyze-btc/liquidity. Kein Score.
+   */
+  walclOverlay?: { source: string; sourceUrl: string | null; points: { date: string; valueTn: number }[] } | null;
   powerLaw: {
     daysSinceGenesis: number;
     fairValue: number;
@@ -1150,6 +1155,13 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     gis,
     gisCalculation,
     liquidity: liquidityBlock,
+    walclOverlay: liquidity?.walcl?.length
+      ? {
+          source: "FRED WALCL (H.4.1)",
+          sourceUrl: liquidity.sources?.walcl ?? null,
+          points: liquidity.walcl,
+        }
+      : null,
 
     powerLaw: {
       daysSinceGenesis,

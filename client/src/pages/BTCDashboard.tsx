@@ -27,6 +27,8 @@ import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisInterv
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
+import { BTC_TA_RANGES, sliceBtcTaWindow, type BtcTaRange } from "@/lib/btcTaWindow";
+import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -94,6 +96,8 @@ interface BTCAnalysis {
   gisCalculation: string;
   /** Liquiditätsblock (WALCL/Bills/DGS10); fehlt bei Fallback-Daten. */
   liquidity?: BtcLiquidityBlock | null;
+  /** Wochen-WALCL für die QE/QT-Bänder. Fehlt bei Fallback-Daten. */
+  walclOverlay?: { source: string; sourceUrl: string | null; points: { date: string; valueTn: number }[] } | null;
   powerLaw: {
     daysSinceGenesis: number; fairValue: number; support: number; resistance: number;
     deviationPercent: number; fairValue6M: number; powerSignal: number;
@@ -984,7 +988,7 @@ const BTC_OVERLAYS = [
 
 type MAKey = typeof MA_LINES[number]["key"];
 type BTCOverlayKey = typeof BTC_OVERLAYS[number]["key"];
-type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
+type TimeRange = BtcTaRange;
 
 // StatusPill: ausgelagert nach TaStatusPill (Markup unveraendert), Gold nutzt dieselbe Karte.
 const StatusPill = TaStatusPill;
@@ -1020,6 +1024,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const [showM2AbsoluteLagged, setShowM2AbsoluteLagged] = useState(false);
   // Fed-Bilanz (WALCL) aus dem Liquiditätsblock — wie die absoluten M2-Linien nur manuell an.
   const [showWalcl, setShowWalcl] = useState(false);
+  const [showQeQt, setShowQeQt] = useState(false);
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1082,15 +1087,10 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     [capitulationInputsFull]
   );
 
-  // Filter data by time range (using calendar days)
-  const filteredData = useMemo(() => {
-    if (fullChart.length === 0) return [];
-    const daysCutoff: Record<TimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysCutoff[timeRange]);
-    const cutoffStr = cutoff.toISOString().split("T")[0];
-    return fullChart.filter(d => d.date >= cutoffStr);
-  }, [fullChart, timeRange]);
+  // Handelstage-Fenster wie TechnicalChart: letzte N Bars der vollen Reihe.
+  // Die SMA ist vorher auf der ganzen Historie gerechnet, der Vorlauf bleibt draußen.
+  const taWindow = useMemo(() => sliceBtcTaWindow(fullChart, timeRange), [fullChart, timeRange]);
+  const filteredData = taWindow.visible;
 
   // Downsample for performance: max ~500 points
   const chartData = useMemo(() => {
@@ -1102,6 +1102,14 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }
     return result;
   }, [filteredData]);
+
+  const qePoints = useMemo(
+    () => fullChart.map(p => ({ date: p.date, price: p.price, walcl: p.walcl ?? null })),
+    [fullChart],
+  );
+  const qeDates = useMemo(() => chartData.map(d => d.date), [chartData]);
+  const { view: qeQt, phases: qePhases } = useQeQtOverlay(qePoints, qeDates, data.walclOverlay?.points);
+  const qeUnavailable = qeQtUnavailableText(qeQt.unavailableReason, "btc");
 
   const hasReal10y = useMemo(() => chartData.some(d => d.real10y != null), [chartData]);
   const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
@@ -1271,7 +1279,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // Format helpers
   const formatDate = (date: string) => {
     const parts = date.split("-");
-    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y") {
+    if (timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") {
       return `${parts[1]}/${parts[0].slice(2)}`;
     }
     return `${parts[1]}/${parts[2]}`;
@@ -1511,7 +1519,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         {/* Time range buttons */}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="btc-presets">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+          {BTC_TA_RANGES.map(r => (
             <button
               key={r}
               onClick={() => setTimeRange(r)}
@@ -1523,6 +1531,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             </button>
           ))}
         </div>
+        {taWindow.historyNote && (
+          <div className="w-full basis-full text-[10px] text-amber-300" data-testid="btc-history-since">
+            {taWindow.historyNote}
+          </div>
+        )}
 
         {/* MA toggles */}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
@@ -1660,6 +1673,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
           </div>
         )}
+
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+        <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+        <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Bilanz:</span>
+        <QeQtBandsToggle view={qeQt} show={showQeQt} onToggle={() => setShowQeQt(v => !v)} asset="btc" testId="toggle-btc-qe-qt" />
+        <BtcDividendNa />
+        </div>
 
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
         {/* Measurement tool toggle */}
@@ -1880,6 +1900,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               />
             )}
 
+            {qeQtBandNodes(qeQt.bands, showQeQt)}
+
             {/* Price line */}
             <Line
               type="monotone"
@@ -1892,20 +1914,27 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
 
             {/* Standard MA lines */}
-            {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
-              <Line
-                key={ma.key}
-                type="monotone"
-                dataKey={ma.key}
-                name={ma.label}
-                stroke={ma.color}
-                strokeWidth={1.5}
-                dot={false}
-                strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
-                connectNulls={true}
-                isAnimationActive={false}
-              />
-            ))}
+            {MA_LINES.map(ma => {
+              const sma = ma.key === "ma50" || ma.key === "ma200";
+              const hasValue = !sma || chartData.some(d => {
+                const v = d[ma.key];
+                return typeof v === "number" && Number.isFinite(v);
+              });
+              return visibleMAs.has(ma.key) && hasValue && (
+                <Line
+                  key={ma.key}
+                  type="monotone"
+                  dataKey={ma.key}
+                  name={ma.label}
+                  stroke={ma.color}
+                  strokeWidth={1.5}
+                  dot={false}
+                  strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
+                  connectNulls={!sma}
+                  isAnimationActive={false}
+                />
+              );
+            })}
 
             {/* BTC-specific overlay lines */}
             {BTC_OVERLAYS.map(o => visibleOverlays.has(o.key) && (
@@ -2027,6 +2056,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       {narrow && showVolume && (
         <TaVolumeBand data={chartDataWithRSI} leftAxisWidth={55} rightAxisWidth={visibleRightWidth} marginRight={8} />
       )}
+      {showQeQt && (
+        <QeQtPhaseList phases={qePhases} unavailable={qeUnavailable} testId="btc-qe-qt-phases" />
+      )}
+      {!showQeQt && qeUnavailable && (
+        <QeQtPhaseList phases={[]} unavailable={qeUnavailable} testId="btc-qe-qt-phases" />
+      )}
+
       {hiddenMacroSeries.length > 0 && (
         <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="macro-axis-note">
           <span>Ohne eigene Achse — Wert im Tooltip:</span>
