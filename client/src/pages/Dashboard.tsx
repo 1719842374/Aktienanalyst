@@ -704,7 +704,12 @@ export default function Dashboard() {
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              {/* Sektion 12 füllt die Main-Spalte. Sidebar ist w-52 (13rem); die übrigen Sektionen bleiben max-w-5xl. */}
+              <div
+                ref={setSectionRef(12)}
+                data-testid="section-12-wide"
+                className="min-w-0 max-w-full lg:w-[calc(100vw-13rem-2rem)] lg:max-w-none lg:ml-[calc((100%-(100vw-13rem-2rem))/2)] lg:mr-[calc((100%-(100vw-13rem-2rem))/2)]"
+              ><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} monteCarlo={sharedMonteCarlo ? { terminalPrices: sharedMonteCarlo.terminalPrices, horizonDays: sharedMonteCarlo.horizonDays } : null} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
