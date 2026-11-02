@@ -78,7 +78,7 @@ while (dates.length < 180) {
   t += 86400000;
 }
 const zone = buildGoldMinerZone(dates.map(date => ({ date, close: 2000 })), series(1000));
-const html = render({ ...mod.GOLD_FALLBACK_DATA, aiscZone: zone });
+const html = render({ ...mod.GOLD_FALLBACK_DATA, aiscZone: zone, aiscZoneSpotSource: "Yahoo GC=F (Futures)" });
 check("Badge Profitabel", html.includes('data-testid="gold-miner-zone-badge"') && html.includes("Profitabel"));
 check("Karte Multiple 2.00×", html.includes('data-testid="gold-miner-card-multiple"') && html.includes("2.00×"));
 check("Karte AISC $1,000", html.includes('data-testid="gold-miner-card-aisc"') && html.includes("$1,000"));
@@ -86,6 +86,8 @@ check("drei Charts", ["gold-miner-chart-spot", "gold-miner-chart-multiple", "gol
 check("Zeitraum-Buttons wie der Aktien-TA-Chart", ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"].every(r => html.includes(`data-testid="button-gold-miner-range-${r}"`)));
 check("Von/Bis", html.includes('data-testid="input-gold-miner-from"') && html.includes('data-testid="input-gold-miner-to"') && html.includes(">Von<") && html.includes(">Bis<"));
 check("Formel am Wert", html.includes("Keine Interpolation"));
+check("Historie seit kommt aus thresholds.since", !!zone?.thresholds.since && html.includes(`Historie seit ${zone.thresholds.since}`) && html.includes('data-testid="gold-miner-history-since"'));
+check("Spot-Quelle an Untertitel, Multiple und Marge", (html.match(/Yahoo GC=F \(Futures\)/g) ?? []).length >= 3, String((html.match(/Yahoo GC=F \(Futures\)/g) ?? []).length));
 check("kein Overlay-Faktor 1,15 in der Sektion", !html.includes("1,15") && !html.includes("×1.15"));
 
 const bars = Array.from({ length: 400 }, (_, i) => i);

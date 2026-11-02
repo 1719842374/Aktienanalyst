@@ -1,8 +1,10 @@
 /**
  * Lange Gold-Chart-Historie fuer die Zeitfenster 10Y und Max (GoldPriceChart).
  *
- * Reine Chart-Daten: /api/analyze-gold, GIS, adaptive Schicht, Modelle und
- * Gates bleiben bei ihrem 10-Jahres-Fenster und werden hier nicht beruehrt.
+ * GIS, adaptive Schicht, Modelle und Gates in /api/analyze-gold bleiben bei
+ * ihrem rollierenden 10-Jahres-Fenster. Die Miner-Zone liest dieselbe
+ * Quellwahl (pickLongerSource) und schneidet ab GOLD_ZONE_HISTORY_START,
+ * damit 2016 nicht mit dem Tagesdatum herausrollt.
  * Der Client laedt diese Reihe nur, wenn 10Y oder Max gewaehlt wird.
  *
  * Indikatoren (MA200 hier, MA20/50/100, EMAs, MACD, RSI im Client) werden auf
@@ -63,6 +65,27 @@ export function pickLongerSource(fmp: RawGoldRow[], yahoo: RawGoldRow[]): { rows
   if (!fmpReaches && yahooReaches) return { rows: yahoo, source: "Yahoo GC=F (Futures)" };
   const gapDays = (Date.parse(fmp[0].date) - Date.parse(yahoo[0].date)) / 864e5;
   return gapDays > 365 ? { rows: yahoo, source: "Yahoo GC=F (Futures)" } : { rows: fmp, source: "FMP GCUSD" };
+}
+
+/**
+ * Fester Beginn der Miner-Zone. Nicht „heute minus 10 Jahre“: der Zonenstart
+ * darf 2016 nicht verlieren, sobald das rollierende Fenster nachrückt.
+ * Liegt vor dem AISC-Floor (erste Stufe 2016-11-29) und vor GOLD_HISTORY_FLOOR.
+ */
+export const GOLD_ZONE_HISTORY_START = "2016-01-01";
+
+/** Punkte ab GOLD_ZONE_HISTORY_START. Jahre davor bleiben draussen, die Quelle aendert sich nicht. */
+export function clipZoneSpot<T extends { date: string }>(rows: readonly T[]): T[] {
+  return rows.filter(row => row.date >= GOLD_ZONE_HISTORY_START);
+}
+
+/**
+ * Spot-Reihe der Miner-Zone: dieselbe Quellwahl wie der Chart, eine Quelle,
+ * nicht gemischt, ab GOLD_ZONE_HISTORY_START. Der Score-Pfad ruft das nicht auf.
+ */
+export function zoneSpotSeries(fmp: RawGoldRow[], yahoo: RawGoldRow[]): { rows: RawGoldRow[]; source: string } {
+  const picked = pickLongerSource(fmp, yahoo);
+  return { rows: clipZoneSpot(picked.rows), source: picked.source };
 }
 
 /** Wie in /api/analyze-gold: MA200 aus den Closes, Real10Y je Datum, dann Overlays und Volumen. */

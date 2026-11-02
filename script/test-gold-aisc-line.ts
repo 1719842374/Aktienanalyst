@@ -150,7 +150,8 @@ console.log("\nServer-Loader + Verdrahtung");
   check("loadGoldAiscSeries() aus fremdem cwd liefert 40 Quartale", !!fromTmp && fromTmp.quarters.length === 40 && fromTmp.quarters.at(-1)!.aisc === 1649);
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
   check("gold-routes liefert aiscLine aus dem Loader", /const aiscSeries = loadGoldAiscSeries\(\)/.test(routes) && /aiscLine: aiscSeries/.test(routes));
-  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(historicalPrices, aiscSeries\)/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
+  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(zonePrices, aiscSeries\)/.test(routes) && /aiscZone = null/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
+  check("Spot-Quelle der Zone steht an der Antwort", /aiscZoneSpotSource/.test(routes));
   check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
   check("getTechnicalScore vorhanden", /function getTechnicalScore\(/.test(routes));
   // Schnitt endet vor der Response-Zeile: die Reihe wird einmal geladen, nachdem GIS und
@@ -161,6 +162,7 @@ console.log("\nServer-Loader + Verdrahtung");
   check("analyze-route.ts kennt AISC nicht", !/gold-aisc|aiscLine/.test(analyze));
   const schema = readFileSync(path.join(root, "shared/gold-schema.ts"), "utf8");
   check("GoldAnalysis.aiscLine typisiert", /aiscLine\?:\s*GoldAiscSeries \| null/.test(schema));
+  check("GoldAnalysis.aiscZoneSpotSource typisiert", /aiscZoneSpotSource\?: string \| null/.test(schema));
   const chart = readFileSync(path.join(root, "client/src/components/gold/GoldPriceChart.tsx"), "utf8");
   check("Chip heißt „Inflations-BE (T10YIE)“", chart.includes('label: "Inflations-BE (T10YIE)"') && !/label: "Breakeven"/.test(chart));
   // AISC ist nicht mehr die gestufte Linie im TA-Chart (Philip 17:48): eigene Sektion 9.

@@ -273,7 +273,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 label="Spot/AISC-Multiple"
                 value={latest ? `${latest.multiple.toFixed(2)}×` : "—"}
                 subValue={latest && zone
-                  ? `P20 (pLowRank=${zone.thresholds.pLowRank}) ${zone.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(1)}×`} · P50 (pHighRank=${zone.thresholds.pHighRank}) ${zone.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(1)}×`} · minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage`
+                  ? `P20 (pLowRank=${zone.thresholds.pLowRank}) ${zone.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(1)}×`} · P50 (pHighRank=${zone.thresholds.pHighRank}) ${zone.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(1)}×`} · minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage${data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""}`
                   : naText}
                 color={latest?.zone === "capitulation" ? "text-red-500" : undefined}
               />
@@ -303,7 +303,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 testId="gold-miner-card-margin"
                 label="Marge"
                 value={latest ? `${formatCurrency(latest.marginUsd, 0)} / oz` : "—"}
-                subValue={latest ? `${(latest.marginPct * 100).toFixed(0)} % vom Spot` : naText}
+                subValue={latest ? `${(latest.marginPct * 100).toFixed(0)} % vom Spot${data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""}` : naText}
                 color={latest && latest.marginUsd < 0 ? "text-red-500" : undefined}
               />
               <MetricCard
@@ -329,7 +329,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                     domain={priceDomain ?? ["auto", "auto"]}
                     tickFormatter={(value: number) => (value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`)}
                   />
-                  <Tooltip content={props => <MinerTip {...props} line={line} />} />
+                  <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <Legend wrapperStyle={legendStyle} />
                   {view.segments.map((seg, index) => (
                     <ReferenceArea key={`${seg.zone}-${seg.x1}-${index}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
@@ -341,15 +341,15 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
             </div>
 
             <div data-testid="gold-miner-chart-multiple">
-              <div className="text-xs font-semibold text-muted-foreground mb-1">
-                Spot/AISC-Multiple — P20 = Perzentil pLowRank={zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}, P50 = Perzentil pHighRank={zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK} (PERCENTILE.INC, Historie seit {zone?.thresholds.since ?? "n/a"})
+              <div className="text-xs font-semibold text-muted-foreground mb-1" data-testid="gold-miner-history-since">
+                Spot/AISC-Multiple — P20 = Perzentil pLowRank={zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}, P50 = Perzentil pHighRank={zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK} (PERCENTILE.INC, Historie seit {zone?.thresholds.since ?? "n/a"}{data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""})
               </div>
               <ResponsiveContainer width="100%" height={heights.multiple}>
                 <ComposedChart data={chartRows} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={60} />
                   <YAxis tick={{ fontSize: 10 }} width={yWidth} domain={multipleDomain ?? ["auto", "auto"]} tickFormatter={(value: number) => `${value.toFixed(1)}×`} />
-                  <Tooltip content={props => <MinerTip {...props} line={line} />} />
+                  <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <Legend wrapperStyle={legendStyle} />
                   <ReferenceLine y={1} stroke="#EF4444" label={{ value: "Spot = AISC", fontSize: 10, fill: "#EF4444", position: "insideTopLeft" }} />
                   {zone?.thresholds.low != null && (
@@ -370,7 +370,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={60} />
                   <YAxis tick={{ fontSize: 10 }} width={yWidth} tickFormatter={(value: number) => `${Math.round(value)}%`} />
-                  <Tooltip content={props => <MinerTip {...props} line={line} />} />
+                  <Tooltip content={props => <MinerTip {...props} line={line} spotSource={data.aiscZoneSpotSource} />} />
                   <ReferenceLine y={0} stroke="hsl(var(--foreground))" strokeOpacity={0.45} />
                   <Area type="monotone" dataKey="marginUp" name="Marge über Breakeven" stroke="#22c55e" fill="#22c55e" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} />
                   <Area type="monotone" dataKey="marginDown" name="Marge unter Breakeven" stroke="#ef4444" fill="#ef4444" fillOpacity={0.25} strokeWidth={1.4} connectNulls={false} />
@@ -391,7 +391,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 <div data-testid="gold-miner-aisc-gap">AISC n/a am {gapPoint.date}: {goldAiscNaReason(line, gapPoint.date)}</div>
               )}
               <div>
-                Historie: {zone?.thresholds.obs ?? 0} Tage seit {zone?.thresholds.since ?? "n/a"}.
+                Historie: {zone?.thresholds.obs ?? 0} Tage seit {zone?.thresholds.since ?? "n/a"}.{data.aiscZoneSpotSource ? ` Spot-Quelle (jeder Wert): ${data.aiscZoneSpotSource}.` : ""}
                 Parameter: method={line?.method ?? "mean"}, minCompanies={line?.minCompanies ?? "n/a"}, lagDays={line?.lagDays ?? "n/a"},
                 pLowRank={zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}, pHighRank={zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK},
                 minObs={GOLD_MINER_ZONE_MIN_OBS}.
@@ -412,10 +412,11 @@ type MinerTipRow = {
   multiple: number | null;
 };
 
-function MinerTip({ active, payload, line }: {
+function MinerTip({ active, payload, line, spotSource }: {
   active?: boolean;
   payload?: ReadonlyArray<{ payload?: MinerTipRow }>;
   line: GoldAiscSeries | null;
+  spotSource?: string | null;
 }) {
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
@@ -425,7 +426,7 @@ function MinerTip({ active, payload, line }: {
   return (
     <div style={tooltipStyle} className="max-w-sm space-y-0.5 p-2">
       <div className="font-mono">{row.date}</div>
-      <div>Spot {formatCurrency(row.spot, 0)}</div>
+      <div>Spot {formatCurrency(row.spot, 0)}{spotSource ? ` · Quelle ${spotSource}` : ""}</div>
       <div>AISC Ø {row.aisc == null ? "n/a" : formatCurrency(row.aisc, 0)}{step?.quarter ? ` · ${quarterLabel(step.quarter)}` : ""}</div>
       {row.multiple != null && <div>Multiple {row.multiple.toFixed(2)}×</div>}
       {reason && <div>{reason}</div>}

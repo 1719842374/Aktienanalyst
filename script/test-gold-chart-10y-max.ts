@@ -4,7 +4,7 @@
  * Ausfuehren: npx tsx script/test-gold-chart-10y-max.ts
  */
 import { readFileSync } from "node:fs";
-import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage } from "../server/gold-chart-history";
+import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage, zoneSpotSeries, GOLD_ZONE_HISTORY_START } from "../server/gold-chart-history";
 import { buildGoldTechnical, filterGoldRange, macroRangeState, goldRangeNote, needsLongHistory } from "../client/src/components/gold/goldTechnical";
 
 let failed = 0;
@@ -40,6 +40,22 @@ console.log("\nZeilen zusammenfuehren / Quelle waehlen");
   const yahoo2016 = [{ date: "2016-08-01", close: 1 }];
   check("FMP nach 2016 und Yahoo bis 2016 -> Yahoo, eine Quelle", pickLongerSource(lateFmp, yahoo2016).source === "Yahoo GC=F (Futures)" && pickLongerSource(lateFmp, yahoo2016).rows[0].date === "2016-08-01");
   check("FMP bis 2016 bleibt Spot, auch wenn Yahoo etwas frueher ist", pickLongerSource([{ date: "2016-06-01", close: 1 }], yahoo2016).source === "FMP GCUSD");
+}
+
+console.log("\nMiner-Zone: feste Historie, Yahoo nur als Fallback, eine Quelle");
+{
+  const lateFmp = [{ date: "2017-05-18", close: 1200 }, { date: "2017-05-19", close: 1201 }];
+  const yahoo2016 = [{ date: "2016-08-01", close: 1300 }, { date: "2016-08-02", close: 1301 }, { date: "2026-11-02", close: 4000 }];
+  const yahooZone = zoneSpotSeries(lateFmp, yahoo2016);
+  check("FMP nach dem Floor -> Zone von Yahoo, nicht gemischt", yahooZone.source === "Yahoo GC=F (Futures)" && yahooZone.rows.every(r => r.close !== 1200) && yahooZone.rows[0].date === "2016-08-01");
+  const longFmp = [{ date: "1975-01-02", close: 100 }, { date: "2015-12-31", close: 1060 }, { date: "2016-01-04", close: 1100 }, { date: "2016-11-29", close: 1180 }];
+  const yahooEarly = [{ date: "2000-08-30", close: 270 }, { date: "2016-11-29", close: 999 }];
+  const fmpZone = zoneSpotSeries(longFmp, yahooEarly);
+  check("lange FMP-Reihe bleibt Spot", fmpZone.source === "FMP GCUSD");
+  check("Zone beginnt am festen Start, nicht 1975 und nicht heute-10J", fmpZone.rows[0].date === "2016-01-04" && fmpZone.rows[0].date >= GOLD_ZONE_HISTORY_START && !fmpZone.rows.some(r => r.date < GOLD_ZONE_HISTORY_START));
+  check("2016-11-29 bleibt in der Zone", fmpZone.rows.some(r => r.date === "2016-11-29" && r.close === 1180));
+  const shortFmp = zoneSpotSeries([{ date: "2016-11-02", close: 1 }, { date: "2026-11-02", close: 2 }], []);
+  check("ohne Yahoo bleibt eine kurze FMP-Reihe unverlaengert", shortFmp.rows[0].date === "2016-11-02" && shortFmp.source === "FMP GCUSD");
 }
 
 // Synthetische 26-Jahres-Historie ab 2000-08-30 (wie Yahoo GC=F live), FRED-Starts wie live.
@@ -107,6 +123,10 @@ console.log("\nScore/Gates unberuehrt");
   const analyze = src.slice(src.indexOf('app.get("/api/analyze-gold"'), histStart);
   check("analyze-gold-Handler nutzt keine 10Y/Max-Helfer", !/historyWindows|mergeGoldRows|pickLongerSource|buildGoldChartHistoryPoints|seriesCoverage/.test(analyze));
   check("analyze-gold bleibt bei 10 Jahren", analyze.includes("10 * 365.25 * 24 * 60 * 60 * 1000"));
+  const zoneBlock = analyze.slice(analyze.indexOf("const aiscSeries"), analyze.indexOf("const analysis"));
+  check("Zone liest die Chart-Historie und schneidet ab dem festen Start", zoneBlock.includes("chartHistoryGet()") && zoneBlock.includes("clipZoneSpot(hist.points)") && zoneBlock.includes("buildGoldMinerZone(zonePrices, aiscSeries)") && !zoneBlock.includes("buildGoldMinerZone(historicalPrices"));
+  const scoreBlock = analyze.slice(analyze.indexOf("scoreGoldAdaptive({"), analyze.indexOf("const aiscSeries"));
+  check("Score-Pfad bleibt historicalPrices und aisc null", scoreBlock.includes("closes: historicalPrices.map") && scoreBlock.includes("aisc: null") && !/zonePrices|clipZoneSpot|chartHistoryGet/.test(scoreBlock));
   // #225-Follow-up: die Chart-Route laedt jede FRED-Serie genau einmal, aber nicht blockierend (execFile statt execSync).
   const hist = src.slice(histStart);
   check("Chart-Route laedt FRED async, je Serie einmal", hist.includes("fredKeys.map(id => fetchFREDSeriesHistoryAsync(id, GOLD_HISTORY_FRED_FLOOR))") && !/fetchFREDSeriesHistory\(|execSync/.test(hist));

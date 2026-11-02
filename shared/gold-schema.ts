@@ -311,4 +311,9 @@ export interface GoldAnalysis {
   aiscLine?: GoldAiscSeries | null;
   /** Spot vs. AISC, adaptive Perzentil-Zonen, nur Anzeige, kein Score. */
   aiscZone?: GoldMinerZone | null;
+  /**
+   * Spot-Quelle der Miner-Zone, eine Reihe (pickLongerSource, nicht gemischt).
+   * Gilt für jeden Spot-Wert der Zone. Fehlt bei älteren Antworten.
+   */
+  aiscZoneSpotSource?: string | null;
 }
