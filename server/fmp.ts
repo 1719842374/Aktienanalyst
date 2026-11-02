@@ -105,6 +105,61 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
   throw lastErr ?? new Error(`FMP fetch failed: ${path}`);
 }
 
+function redactFmpText(text: string, key: string): string {
+  const stripped = key ? text.split(key).join("") : text;
+  return stripped.replace(/apikey=[^&\s]+/gi, "apikey=").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+/**
+ * Dieselbe Stable-Basis wie fmpFetch, aber mit HTTP-Status und Vendor-Text.
+ * Der Key steht weder im Detail noch in einem Log. Für die Growth-Karte, damit ein 402
+ * vom Symbol oder vom Endpunkt unterscheidbar bleibt, ohne den Score-Pfad zu ändern.
+ */
+export async function fmpObserved(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<{ status: number; json: unknown | null; detail: string }> {
+  const key = getApiKey();
+  if (!key) return { status: 0, json: null, detail: "FMP_API_KEY not set" };
+  const url = new URL(`${FMP_BASE}${path}`);
+  url.searchParams.set("apikey", key);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  let lastStatus = 0;
+  let lastDetail = "";
+  for (let attempt = 0; attempt <= FMP_CONFIG.maxRetries; attempt++) {
+    await spaceOutgoingCall();
+    trackFmpCall(1);
+    try {
+      const resp = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(15000),
+        headers: { "User-Agent": "StockAnalystPro/1.0" },
+      });
+      const text = await resp.text();
+      const detail = redactFmpText(text, key);
+      if ((resp.status === 429 || resp.status === 503) && attempt < FMP_CONFIG.maxRetries) {
+        lastStatus = resp.status;
+        lastDetail = detail;
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      if (!resp.ok) return { status: resp.status, json: null, detail };
+      try {
+        return { status: resp.status, json: JSON.parse(text) as unknown, detail: "" };
+      } catch {
+        return { status: resp.status, json: null, detail: "JSON nicht lesbar" };
+      }
+    } catch (err: any) {
+      const detail = redactFmpText(String(err?.message ?? err), key);
+      if (attempt < FMP_CONFIG.maxRetries && (err?.name === "AbortError" || err?.name === "TimeoutError")) {
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      return { status: lastStatus, json: null, detail: detail || lastDetail || "FMP fetch failed" };
+    }
+  }
+  return { status: lastStatus, json: null, detail: lastDetail || "FMP fetch failed" };
+}
+
 // Cheap guard for /api/analyze — returns true when a full analysis run would
 // exceed the daily budget. isFmpBudgetLow re-uses the same tracker as trackFmpCall.
 export function wouldExceedBudget(callsPerAnalysis = FMP_CONFIG.callsPerAnalysis): boolean {
@@ -608,6 +663,29 @@ export async function fmpGeoSegments(symbol: string): Promise<FmpSegmentRow[]> {
   }
 }
 
+/**
+ * Rohzeilen der Segment-Endpunkte, jährlich oder quartalsweise.
+ * Die Jahres-Normalisierung in fmpSegments()/fmpGeoSegments() bleibt unverändert.
+ * period=quarter ist derselbe FMP-Stable-Parameter wie bei den Statements.
+ */
+export async function fmpSegmentationRows(
+  kind: "product" | "geographic",
+  symbol: string,
+  period: "annual" | "quarter",
+): Promise<unknown[]> {
+  const path = kind === "product" ? "/revenue-product-segmentation" : "/revenue-geographic-segmentation";
+  const params: Record<string, string> = { symbol };
+  if (period === "quarter") params.period = "quarter";
+  try {
+    const raw = await fmpFetch(path, params);
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw?.data)) return raw.data;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fmpPeers(symbol: string): Promise<any[]> {
   try {
     // GET /stable/stock-peers?symbol=AAPL
@@ -644,6 +722,12 @@ export async function fmpRatiosTtm(symbol: string) {
 export async function fmpKeyMetrics(symbol: string, limit = 5) {
   // GET /stable/key-metrics?symbol=AAPL&limit=5
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
+}
+
+export async function fmpKeyMetricsQuarterly(symbol: string, limit: number) {
+  // GET /stable/key-metrics?symbol=X&period=quarter&limit=
+  // returnOnInvestedCapital bleibt die Dezimalquote, wie in der Jahresreihe.
+  return fmpFetch(`/key-metrics`, { symbol, period: "quarter", limit: String(limit) });
 }
 
 export async function fmpEnterpriseValues(symbol: string, limit = 5) {
@@ -708,6 +792,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   currency?: string;
   exchangeFullName?: string;
   exchange?: string;
+  isin?: string;
 }>> {
   if (!query || query.length < 1) return [];
   try {
@@ -730,6 +815,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
         currency: row.currency,
         exchangeFullName: row.exchangeFullName || row.stockExchange || "",
         exchange: row.exchangeShortName || row.exchange,
+        isin: typeof row.isin === "string" ? row.isin : undefined,
       }))
       .slice(0, limit);
   } catch { return []; }

@@ -36,10 +36,6 @@ const REF_LINES: Partial<Record<OverlayKey, { y: number; color: string; label?: 
   buffett: [{ y: 100, color: "#94a3b8", label: "100%" }],
 };
 
-interface BuffettPayload {
-  points?: { date: string; ratio: number }[];
-}
-
 function chipClass(on: boolean, onClass: string, disabled: boolean) {
   return `inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
     disabled ? "border-border text-muted-foreground opacity-30 cursor-not-allowed"
@@ -75,17 +71,6 @@ export function RecessionTaSection({
       return (await res.json()) as RecessionTaResponse;
     },
   });
-  const buffett = useQuery({
-    queryKey: ["recession-buffett", book.buffettRegion],
-    enabled: on.buffett,
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const res = await fetch(`/api/analyze-recession/buffett?region=${book.buffettRegion}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return (await res.json()) as BuffettPayload;
-    },
-  });
-
   const stock = useMemo(() => (ta.data ? recessionTaAsStock(ta.data) : null), [ta.data]);
   const seriesById = useMemo(() => {
     const m = new Map<MacroSeriesId, RecessionTaResponse["series"][number]>();
@@ -93,11 +78,13 @@ export function RecessionTaSection({
     return m;
   }, [ta.data]);
   const buffettPoints = useMemo(
-    () => (buffett.data?.points ?? []).map(p => ({ date: p.date, value: p.ratio })).filter(p => Number.isFinite(p.value)),
-    [buffett.data],
+    () => (ta.data?.buffett?.points ?? []).filter(p => Number.isFinite(p.value)),
+    [ta.data],
   );
+  const buffettError = ta.data?.buffett?.error
+    ?? (ta.data && !ta.data.buffett ? "n/a — Buffett nicht im Abruf" : null);
 
-  const available = (k: OverlayKey) => (k === "buffett" ? buffett.isLoading || !on.buffett || buffettPoints.length > 0 : seriesById.has(k));
+  const available = (k: OverlayKey) => (k === "buffett" ? ta.isLoading || buffettPoints.length > 0 : seriesById.has(k));
   const labelFor = (k: OverlayKey) => (k === "buffett" ? "Buffett (TMC/BIP)" : seriesById.get(k)?.label ?? book.series[k]?.label ?? OVERLAY_META[k].chip);
 
   const probs = bannerProbabilities({ subgroups, topDrivers });
@@ -165,6 +152,9 @@ export function RecessionTaSection({
           ))}
         </div>
       </div>
+      {buffettError && (
+        <p className="text-[11px] text-muted-foreground break-words" data-testid="ta-buffett-na">{buffettError}</p>
+      )}
     </div>
   );
 
@@ -175,7 +165,7 @@ export function RecessionTaSection({
         const active = on[k] && !disabled;
         return (
           <button key={k} type="button" disabled={disabled} aria-pressed={active} data-testid={`button-ta-${k}`}
-            title={disabled ? `${labelFor(k)}: n/a für ${book.label}` : `${labelFor(k)} — kein Score-Einfluss`}
+            title={disabled ? (k === "buffett" && buffettError ? buffettError : `${labelFor(k)}: n/a für ${book.label}`) : `${labelFor(k)} — kein Score-Einfluss`}
             onClick={() => setOn(s => ({ ...s, [k]: !s[k] }))}
             className={chipClass(active, OVERLAY_META[k].on, disabled)}>
             {active ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}

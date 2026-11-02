@@ -99,6 +99,13 @@ export interface RecessionTaBar {
   volume: number;
 }
 
+/** F1-42: Buffett liegt im selben Abruf wie Kurs, Vol, Kurve und Spread. */
+export interface RecessionTaBuffett {
+  points: { date: string; value: number }[];
+  error: string | null;
+  source: string;
+}
+
 export interface RecessionTaResponse {
   region: RecessionTaRegion;
   label: string;
@@ -107,6 +114,24 @@ export interface RecessionTaResponse {
   ohlcvSource: "fmp" | "yahoo" | null;
   ohlcvError: string | null;
   series: MacroSeriesPayload[];
+  /** Fehlt nur in älteren Test-Fixtures. Die Route setzt das Feld immer. */
+  buffett?: RecessionTaBuffett;
+}
+
+export function buffettOverlayFromLoaded(
+  body: { points: { date: string; ratio: number }[]; note?: string; sources?: { id: string }[] } | null,
+  failure: string | null,
+): RecessionTaBuffett {
+  if (failure) return { points: [], error: `n/a — ${failure}`, source: "Buffett" };
+  if (!body) return { points: [], error: "n/a — Buffett-Abruf ohne Antwort", source: "Buffett" };
+  const points = body.points
+    .filter(point => Number.isFinite(point.ratio))
+    .map(point => ({ date: point.date, value: point.ratio }));
+  const source = (body.sources ?? []).map(item => item.id).filter(Boolean).join(", ") || "Buffett";
+  if (points.length === 0) {
+    return { points: [], error: body.note ? `n/a — ${body.note}` : "n/a — Buffett-Reihe leer", source };
+  }
+  return { points, error: null, source };
 }
 
 /** Difference of two dated series on common dates (EZ curve = 10J − 3M). */

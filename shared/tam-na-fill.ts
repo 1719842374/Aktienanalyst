@@ -59,6 +59,8 @@ export interface TamNaFill {
   shareWarning?: boolean;
   confidence: "low" | "med" | "high";
   rationale: string;
+  /** Relative Formel oder Begründung. Leer lassen heißt: nicht belegt. */
+  formula?: string;
 }
 
 export interface ScopeNaCells {
@@ -359,6 +361,8 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
       rationale: cleanText(rec.rationale, 140) ?? "",
       outperforming: deriveOutperforming(effectiveGrowth, effectiveCagr),
     };
+    const formula = cleanText(rec.formula, 180);
+    if (formula) fill.formula = formula;
     if (estimatedGrowth !== null) fill.segmentGrowth = estimatedGrowth;
     if (tamSize !== undefined && tamCAGR !== undefined) {
       const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
@@ -373,4 +377,47 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     out.push(fill);
   }
   return out;
+}
+
+export interface TamNaReason {
+  segmentName: string;
+  field: "growth" | "tam" | "cagr";
+  reason: string;
+}
+
+function hasEstimateText(fill: TamNaFill): boolean {
+  return Boolean((fill.rationale && fill.rationale.trim()) || (fill.formula && fill.formula.trim()));
+}
+
+/**
+ * Schätzungen ohne Formel/Begründung oder ohne TAM-Quelle bleiben draußen.
+ * Der Aufrufer zeigt den Grund an der n/a-Zelle.
+ */
+export function retainSourcedTamNaFills(fills: TamNaFill[]): { fills: TamNaFill[]; naReasons: TamNaReason[] } {
+  const naReasons: TamNaReason[] = [];
+  const kept: TamNaFill[] = [];
+  for (const fill of fills) {
+    if (!fill || typeof fill.segmentName !== "string") continue;
+    const next: TamNaFill = { ...fill };
+    if (fill.segmentGrowth != null && !hasEstimateText(fill)) {
+      delete next.segmentGrowth;
+      naReasons.push({
+        segmentName: fill.segmentName,
+        field: "growth",
+        reason: "n/a — Schätzung ohne Formel oder Begründung",
+      });
+    }
+    if (fill.tamSize != null && !(fill.tamSource && fill.tamSource.trim())) {
+      delete next.tamSize;
+      delete next.tamCAGR;
+      delete next.tamLabel;
+      delete next.marketShare;
+      delete next.shareWarning;
+      naReasons.push({ segmentName: fill.segmentName, field: "tam", reason: "n/a — TAM ohne Quelle" });
+      naReasons.push({ segmentName: fill.segmentName, field: "cagr", reason: "n/a — CAGR ohne Quelle" });
+    }
+    if (next.segmentGrowth == null && next.tamSize == null) continue;
+    kept.push(next);
+  }
+  return { fills: kept, naReasons };
 }

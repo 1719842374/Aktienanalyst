@@ -546,6 +546,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
   (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
+  // GET /api/recession/earnings-growth/:index und /api/recession/growth-gap/:index — nur Anzeige, kein Score.
+  const { registerRecessionGrowthRoutes } = await import("./recession-growth-route");
+  registerRecessionGrowthRoutes(app);
   const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
 
   // 18. GET /api/chat/earnings-brief/:symbol — letzter Earnings Call für den KI-Chat. Kein Score.
@@ -576,4 +579,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 22. POST /api/macro/adaptive-layer — F9-08/14/18, nur nach dem Knopf, kein Score.
   registerMacroAdaptiveLayerRoute(app);
+
+  // 23. Segment-YoY-Lücken und TAM-Schätzung mit Quelle. Kein Score, kein Schema.
+  const { registerSegmentGrowthRoute } = await import("./segment-growth-route");
+  registerSegmentGrowthRoute(app);
+  const { registerSegmentTamEstimateRoute } = await import("./segment-tam-estimate-route");
+  registerSegmentTamEstimateRoute(app);
 }
