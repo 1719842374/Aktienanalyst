@@ -16,7 +16,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Ey
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
-import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
 import { currencySymbol } from "@/lib/formatters";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
@@ -31,7 +31,7 @@ import {
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -261,13 +261,18 @@ export function TechnicalChart({
     setPeerDraft("");
     setPeerQuery("");
   }, [data.ticker]);
-  const eyQuery = useEarningsYield(data.ticker, showEy);
-  const roicQuery = useRoicSeries(data.ticker, showRoic);
+  const peerOn = showPeerFund && peerQuery.length > 0;
+  // Tooltip zeigt EY und ROIC des Haupttitels, sobald der Peer-Vergleich an ist.
+  // Die Linien bleiben an den Chips. Vorher lief der Abruf nur bei showEy/showRoic,
+  // der Tooltip druckte dann „n/a — kein Wert“, während der Peer einen Wert hatte.
+  const fundActive = showEy || showRoic || peerOn;
+  const eyQuery = useEarningsYield(data.ticker, fundActive);
+  const roicQuery = useRoicSeries(data.ticker, fundActive);
   const peerFrom = oldestOhlcvDate(ohlcv);
   const peerTo = newestOhlcvDate(ohlcv);
-  const peerOn = showPeerFund && peerQuery.length > 0;
   const peerRoicQuery = useRoicSeries(peerQuery, peerOn);
   const peerPriceQuery = usePeerPriceBars(peerQuery, peerOn, peerFrom ?? "", peerTo ?? "");
+  const peerDivQuery = useDividendHistory(peerQuery, showDividend && peerOn);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -477,6 +482,31 @@ export function TechnicalChart({
   // Currency guard: dividend currency (stated by FMP/Yahoo) vs analysis price currency. Mismatch → n/a, no FX.
   const dividendCcy = dividendCurrencyCheck(dividendQuery.data?.currency, data.currency);
   const dividendOverlay = dividendCcy !== "mismatch" && dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
+  const peerDividend = useMemo<{ points: PeerDividendYieldPoint[]; sourceText: string } | null>(() => {
+    if (!showDividend || !peerOn || !dividendOverlay) return null;
+    const dates = aBuilt.points.map(p => p.date);
+    if (peerDivQuery.isLoading && !peerDivQuery.data) {
+      return {
+        points: dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividende wird geladen" })),
+        sourceText: dividendSourceCaption(null),
+      };
+    }
+    if (peerDivQuery.isError && !peerDivQuery.data) {
+      return {
+        points: dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividenden-Abruf fehlgeschlagen" })),
+        sourceText: dividendSourceCaption(null),
+      };
+    }
+    const history = peerDivQuery.data;
+    const bars = peerPriceQuery.data?.bars ?? [];
+    const priceNote = peerPriceQuery.isError
+      ? "n/a — Peer-Kurs-Abruf fehlgeschlagen"
+      : (peerPriceQuery.isLoading && bars.length === 0 ? "n/a — Peer-Kurs wird geladen" : (peerPriceQuery.data?.note ?? null));
+    return {
+      points: peerDividendYieldOnDates(dates, bars, history?.events ?? [], history?.events?.length ? priceNote : (history?.note ?? priceNote)),
+      sourceText: dividendSourceCaption(history?.source),
+    };
+  }, [showDividend, peerOn, dividendOverlay, aBuilt.points, peerDivQuery.isLoading, peerDivQuery.isError, peerDivQuery.data, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading]);
   const creditSeries = useMemo<CreditOverlayPoint[] | null>(
     () => (showCredit && creditQuery.data && creditQuery.data.points.length > 0 ? creditOverlaySeries(aBuilt.points, creditQuery.data.points) : null),
     [showCredit, creditQuery.data, aBuilt.points],
@@ -494,12 +524,14 @@ export function TechnicalChart({
   );
   const real10yOverlay = real10ySeries && real10ySeries.some(p => p.real10y != null) ? real10ySeries : null;
   const fundOverlay = useMemo<FundJoinPoint[] | null>(() => {
-    if (!showEy && !showRoic && !peerOn) return null;
+    if (!fundActive) return null;
+    const eyLoaded = !!eyQuery.data;
+    const eyEmpty = eyLoaded && eyQuery.data!.quarters.length === 0 && eyQuery.data!.ttmPrints.length === 0 && eyQuery.data!.annualEps.length === 0;
     const joined = joinFundamentalsOntoPrices(aBuilt.points.map(p => p.date), {
       earningsYield: null,
-      epsQuarters: showEy ? (eyQuery.data?.quarters ?? []) : null,
-      ttmPrints: showEy ? (eyQuery.data?.ttmPrints ?? []) : null,
-      annualEps: showEy ? (eyQuery.data?.annualEps ?? []) : null,
+      epsQuarters: fundActive ? (eyQuery.data?.quarters ?? []) : null,
+      ttmPrints: fundActive ? (eyQuery.data?.ttmPrints ?? []) : null,
+      annualEps: fundActive ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
       priceFx: data.currencyInfo?.converted && eyQuery.data?.fxHistory && eyQuery.data.fxHistory.length > 0
         ? {
@@ -509,8 +541,12 @@ export function TechnicalChart({
             history: eyQuery.data.fxHistory,
           }
         : null,
-      roic: roicQuery.data?.points ?? null,
-      roicSeriesNote: roicQuery.data?.note ?? null,
+      roic: fundActive ? (roicQuery.data?.points ?? null) : null,
+      roicSeriesNote: !fundActive
+        ? null
+        : roicQuery.isError
+          ? "n/a — ROIC-Abruf fehlgeschlagen"
+          : (roicQuery.data?.note ?? (roicQuery.isLoading ? "n/a — ROIC wird geladen" : "n/a — keine ROIC-Punkte")),
       peerRoic: peerRoicQuery.data?.points ?? null,
       peerRoicSeriesNote: peerOn
         ? (peerRoicQuery.isError ? "n/a — Peer-ROIC-Abruf fehlgeschlagen" : (peerRoicQuery.data?.note ?? (peerRoicQuery.isLoading ? "n/a — Peer-ROIC wird geladen" : null)))
@@ -524,13 +560,46 @@ export function TechnicalChart({
       showRoic,
       showPeerRoic: peerOn,
       showPeerPrice: peerOn,
+      resolveEarningsYield: fundActive,
+      resolveRoic: fundActive,
     });
-    return joined.map(point => ({
-      ...point,
-      peerRoicPct: peerMode === "roic" ? point.peerRoicKnown : null,
-      peerPriceIndexed: peerMode === "price" ? point.peerPriceIndexed : null,
-    }));
-  }, [showEy, showRoic, peerOn, peerMode, eyQuery.data, roicQuery.data, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency, data.currencyInfo]);
+    return joined.map(point => {
+      let earningsYieldKnown = point.earningsYieldKnown;
+      let earningsYieldNote = point.earningsYieldNote;
+      let roicKnown = point.roicKnown;
+      let roicNote = point.roicNote;
+      if (eyQuery.isLoading && !eyQuery.data) {
+        earningsYieldKnown = null;
+        earningsYieldNote = "n/a — Earnings Yield wird geladen";
+      } else if (eyQuery.isError && !eyQuery.data) {
+        earningsYieldKnown = null;
+        earningsYieldNote = "n/a — Earnings-Yield-Abruf fehlgeschlagen";
+      } else if (eyEmpty && eyQuery.data?.note) {
+        earningsYieldKnown = null;
+        earningsYieldNote = eyQuery.data.note;
+      } else if (earningsYieldKnown != null && earningsYieldNote && !earningsYieldNote.includes("Quelle:") && eyQuery.data?.source) {
+        earningsYieldNote = `${earningsYieldNote} · Quelle: ${eyQuery.data.source}`;
+      }
+      if (roicQuery.isLoading && !roicQuery.data) {
+        roicKnown = null;
+        roicNote = "n/a — ROIC wird geladen";
+      } else if (roicQuery.isError && !roicQuery.data) {
+        roicKnown = null;
+        roicNote = "n/a — ROIC-Abruf fehlgeschlagen";
+      }
+      return {
+        ...point,
+        earningsYieldPct: showEy ? earningsYieldKnown : null,
+        earningsYieldKnown,
+        earningsYieldNote,
+        roicPct: showRoic ? roicKnown : null,
+        roicKnown,
+        roicNote,
+        peerRoicPct: peerMode === "roic" ? point.peerRoicKnown : null,
+        peerPriceIndexed: peerMode === "price" ? point.peerPriceIndexed : null,
+      };
+    });
+  }, [fundActive, showEy, showRoic, peerOn, peerMode, eyQuery.data, eyQuery.isError, eyQuery.isLoading, roicQuery.data, roicQuery.isError, roicQuery.isLoading, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency, data.currencyInfo]);
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -990,6 +1059,8 @@ export function TechnicalChart({
                 measurePoints={measurePoints}
                 measurement={measurement}
                 dividend={dividendOverlay}
+                peerDividend={peerDividend?.points ?? null}
+                peerDividendSource={peerDividend?.sourceText ?? null}
                 credit={creditOverlay}
                 creditLabel={creditLabel}
                 t10y={t10yOverlay}
@@ -1042,6 +1113,8 @@ export function TechnicalChart({
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
               dividend={dividendOverlay}
+              peerDividend={peerDividend?.points ?? null}
+              peerDividendSource={peerDividend?.sourceText ?? null}
               credit={creditOverlay}
               creditLabel={creditLabel}
               t10y={t10yOverlay}
@@ -1138,6 +1211,7 @@ export function TechnicalChart({
           formatDateFull={formatDateFull}
           currencyCheck={dividendCcy}
           priceCurrency={data.currency}
+          peerCaption={peerDividend ? `Peer Div. Yield · Formel: ${DIVIDEND_YIELD_FORMULA} · Quelle: ${peerDividend.sourceText}. Kein Score-Einfluss.` : null}
         />
       )}
 
@@ -1499,7 +1573,7 @@ function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
+  onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
   cone = null, fund = null,
 }: {
   points: WindowPoint[];
@@ -1517,6 +1591,9 @@ function PricePane({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  /** Peer-Dividendenrendite auf denselben Kurstagen, zweite Linie der Div.-Yield-Achse. */
+  peerDividend?: PeerDividendYieldPoint[] | null;
+  peerDividendSource?: string | null;
   /** JOB A1: Markt-Spread Baa je Kurstag (eigene rechte %-Achse). */
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
@@ -1537,15 +1614,16 @@ function PricePane({
   const domainExtra = [...(conePrices ?? []), ...peerIndexed];
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger, domainExtra.length ? domainExtra : undefined);
   const chartData = useMemo(() => {
-    const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y), fund);
+    const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
-  }, [points, dividend, credit, t10y, real10y, cone, fund]);
+  }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
   const rightAxis = !!dividend || !!credit || !!t10y || !!real10y || !!fund;
   const fundDomain = percentAxisDomain((fund ?? []).flatMap(p => [p.earningsYieldPct, p.roicPct, p.peerRoicPct]));
-  const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
+  const peerDivMax = peerDividend ? Math.max(0, ...peerDividend.map(p => p.yieldPct ?? 0)) : 0;
+  const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0), peerDivMax) : 0;
   const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
   const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
@@ -1670,7 +1748,7 @@ function PricePane({
                   {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{ccy}{bbWidth}</span></div>}
                 </>
               )}
-              {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
+              {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} peerSource={peerDividendSource} />}
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
@@ -1761,6 +1839,20 @@ function PricePane({
               // Marks a visibly corrected point (amber) or a window with a special dividend (violet).
               return <circle key={props.key} cx={props.cx} cy={props.cy} r={2.5} fill={pl._divSpecial?.length ? "#a855f7" : "#f59e0b"} stroke="none" />;
             }}
+          />
+        )}
+        {dividend && peerDividend && (
+          <Line
+            yAxisId="div"
+            type="stepAfter"
+            dataKey="_peerDivYield"
+            name="Peer Div. Yield"
+            stroke="#0f766e"
+            strokeWidth={1.25}
+            strokeDasharray="4 2"
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
           />
         )}
         {credit && (
@@ -1977,7 +2069,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, fund, ccy,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
   cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
 }: {
   label: string;
@@ -2003,6 +2095,8 @@ function BandStack({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  peerDividend?: PeerDividendYieldPoint[] | null;
+  peerDividendSource?: string | null;
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
   t10y?: Treasury10YOverlayPoint[] | null;
@@ -2045,6 +2139,8 @@ function BandStack({
               measurePoints={measurePoints}
               measurement={measurement}
               dividend={dividend}
+              peerDividend={peerDividend}
+              peerDividendSource={peerDividendSource}
               credit={credit}
               creditLabel={creditLabel}
               t10y={t10y}
@@ -2102,36 +2198,75 @@ type DividendFields = {
   _divDropped?: string[];
   _divSpecial?: string[];
   _divAdded?: string[];
+  _peerDivYield?: number | null;
+  _peerDivNote?: string | null;
 };
 
-/** Adds the overlay fields to each price point by date. No dividend series → points unchanged. */
-export function withDividendOverlay(points: WindowPoint[], series: DividendOverlaySeries | null | undefined): Array<WindowPoint & DividendFields> {
-  if (!series) return points;
-  const byDate = new Map(series.points.map(p => [p.date, p]));
+/** Adds the overlay fields to each price point by date. No dividend series and no peer → points unchanged. */
+export function withDividendOverlay(
+  points: WindowPoint[],
+  series: DividendOverlaySeries | null | undefined,
+  peer?: PeerDividendYieldPoint[] | null,
+): Array<WindowPoint & DividendFields> {
+  if (!series && !peer) return points;
+  const byDate = new Map((series?.points ?? []).map(p => [p.date, p]));
+  const peerByDate = new Map((peer ?? []).map(p => [p.date, p]));
   return points.map(pt => {
-    const d = byDate.get(pt.date);
-    if (!d) return { ...pt, _divYield: null };
-    return { ...pt, _divYield: d.yieldPct, _divTtm: d.ttmDividend, _divRaw: d.rawYieldPct, _divDropped: d.droppedExDates, _divSpecial: d.specialExDates, _divAdded: d.addedExDates };
+    const d = series ? byDate.get(pt.date) : undefined;
+    const peerHit = peer ? peerByDate.get(pt.date) : undefined;
+    const peerFields = peer
+      ? { _peerDivYield: peerHit?.yieldPct ?? null, _peerDivNote: peerHit?.note ?? (peerHit ? null : "n/a — kein Peer-Dividendenpunkt an diesem Tag") }
+      : {};
+    if (!series) return { ...pt, ...peerFields };
+    if (!d) return { ...pt, _divYield: null, ...peerFields };
+    return {
+      ...pt,
+      _divYield: d.yieldPct,
+      _divTtm: d.ttmDividend,
+      _divRaw: d.rawYieldPct,
+      _divDropped: d.droppedExDates,
+      _divSpecial: d.specialExDates,
+      _divAdded: d.addedExDates,
+      ...peerFields,
+    };
   });
 }
 
-function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatDateFull: (d: string) => string }) {
-  if (p._divYield == null) {
-    return <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">n/a</span></div>;
-  }
+function PeerDividendTooltipRows({ p, source }: { p: DividendFields; source?: string | null }) {
+  if (p._peerDivYield === undefined && p._peerDivNote === undefined) return null;
+  const text = p._peerDivYield != null && Number.isFinite(p._peerDivYield)
+    ? `${p._peerDivYield.toFixed(2)} %`
+    : (p._peerDivNote?.trim() ? p._peerDivNote : "n/a — Peer-Dividendenrendite fehlt");
   return (
     <>
-      <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
-      {isAttractiveDividendYield(p._divYield) && <div className="text-green-500" data-testid="dividend-tooltip-attractive">≥ {DIV_ATTRACTIVE_YIELD_PCT} % attraktiv</div>}
-      {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
-      {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
-        <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
-      ))}
+      <div className="flex justify-between gap-3" data-testid="tooltip-peer-div-yield"><span className="text-teal-700">Peer Div. Yield</span><span className="font-mono">{text}</span></div>
+      <div className="text-muted-foreground">Formel: {DIVIDEND_YIELD_FORMULA}</div>
+      <div className="text-muted-foreground" data-testid="tooltip-peer-div-source">Quelle: {source ?? dividendSourceCaption(null)}</div>
     </>
   );
 }
 
-function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency }: {
+function DividendTooltipRows({ p, formatDateFull, peerSource = null }: { p: DividendFields; formatDateFull: (d: string) => string; peerSource?: string | null }) {
+  return (
+    <>
+      {p._divYield == null ? (
+        <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">n/a</span></div>
+      ) : (
+        <>
+          <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
+          {isAttractiveDividendYield(p._divYield) && <div className="text-green-500" data-testid="dividend-tooltip-attractive">≥ {DIV_ATTRACTIVE_YIELD_PCT} % attraktiv</div>}
+          {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
+          {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
+            <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
+          ))}
+        </>
+      )}
+      <PeerDividendTooltipRows p={p} source={peerSource} />
+    </>
+  );
+}
+
+function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency, peerCaption = null }: {
   currencyCheck?: "ok" | "mismatch" | "unknown";
   priceCurrency?: string;
   series: DividendOverlaySeries | null;
@@ -2139,6 +2274,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
   loading: boolean;
   failed: boolean;
   formatDateFull: (d: string) => string;
+  peerCaption?: string | null;
 }) {
   const base = "mt-1 text-[10px] text-muted-foreground break-words";
   if (loading) return <div className={base} data-testid="dividend-overlay-loading">Div. Yield: Dividendenhistorie wird geladen …</div>;
@@ -2158,6 +2294,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
       {" "}· KPI „Div. Yield“ in Sektion 1 zeigt denselben TTM-Wert (GJ-Wert von FMP als Zusatzzeile).
+      {peerCaption && <div data-testid="dividend-overlay-peer">{peerCaption}</div>}
     </div>
   );
 }
@@ -2166,8 +2303,10 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
 
 type FundFields = {
   _ey?: number | null;
+  _eyKnown?: number | null;
   _eyNote?: string | null;
   _roic?: number | null;
+  _roicKnown?: number | null;
   _roicNote?: string | null;
   _peerRoic?: number | null;
   _peerRoicKnown?: number | null;
@@ -2185,8 +2324,10 @@ function withFundOverlay<T extends WindowPoint>(points: T[], series: FundJoinPoi
     return {
       ...pt,
       _ey: f?.earningsYieldPct ?? null,
+      _eyKnown: f?.earningsYieldKnown ?? null,
       _eyNote: f?.earningsYieldNote ?? null,
       _roic: f?.roicPct ?? null,
+      _roicKnown: f?.roicKnown ?? null,
       _roicNote: f?.roicNote ?? null,
       _peerRoic: f?.peerRoicPct ?? null,
       _peerRoicKnown: f?.peerRoicKnown ?? null,
@@ -2203,14 +2344,23 @@ function fmtPctOrNote(v: number | null | undefined, note: string | null | undefi
   return note && note.trim() ? note : "n/a — kein Wert";
 }
 
+function EstimateBadge({ note }: { note: string | null | undefined }) {
+  if (!estimateBadge(note)) return null;
+  return <div className="text-amber-400" data-testid="badge-schaetzung">Schätzung · {note}</div>;
+}
+
 function FundTooltipRows({ p }: { p: FundFields }) {
+  const ey = p._eyKnown ?? null;
+  const roic = p._roicKnown ?? null;
   return (
     <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal">
-      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
-      {p._ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
+      <div className="flex justify-between gap-3" data-testid="tooltip-earnings-yield"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(ey, ey != null ? null : p._eyNote)}</span></div>
+      {ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
+      <EstimateBadge note={ey != null ? p._eyNote : null} />
       <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>
-      <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>
-      {p._roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
+      <div className="flex justify-between gap-3" data-testid="tooltip-roic"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(roic, roic != null ? null : p._roicNote)}</span></div>
+      {roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
+      <EstimateBadge note={roic != null ? p._roicNote : null} />
       {p._roicNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>}
       <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPctOrNote(p._peerRoicKnown, p._peerRoicKnown != null ? null : p._peerRoicNote)}</span></div>
       {p._peerRoicKnown != null && p._peerRoicNote ? <div className="text-muted-foreground">{p._peerRoicNote}</div> : null}
