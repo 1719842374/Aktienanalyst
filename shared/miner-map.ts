@@ -25,7 +25,40 @@ export const MINER_MAP_TERTILE = {
  */
 export const MINER_BUBBLE_ROLES = ["developed", "nameplate", "available"] as const;
 
-export type MinerCapacityRole = (typeof MINER_BUBBLE_ROLES)[number] | "planned";
+export type MinerCapacityRole = (typeof MINER_BUBBLE_ROLES)[number] | "planned" | "hpc";
+
+/**
+ * MW aus Hashrate und Effizienz.
+ * 1 EH/s = thPerEh TH/s. Leistung in Watt = TH/s × J/TH. 1 MW = wattsPerMw Watt.
+ * MW = EH/s × J/TH. Eine fehlende Effizienz bleibt null, keine angenommene J/TH.
+ */
+export const HASHRATE_MW = {
+  thPerEh: 1_000_000,
+  wattsPerMw: 1_000_000,
+} as const;
+
+export function mwFromHashrateEh(ehPerS: number, joulesPerTh: number): number | null {
+  if (!(typeof ehPerS === "number" && Number.isFinite(ehPerS) && ehPerS > 0)) return null;
+  if (!(typeof joulesPerTh === "number" && Number.isFinite(joulesPerTh) && joulesPerTh > 0)) return null;
+  const watts = ehPerS * HASHRATE_MW.thPerEh * joulesPerTh;
+  const mw = watts / HASHRATE_MW.wattsPerMw;
+  return Number.isFinite(mw) && mw > 0 ? mw : null;
+}
+
+/** Obergrenze aus der Hut-8-Meldung, nicht eine gemessene Ist-Hashrate. */
+export const VEGA_HASHRATE_CEILING = {
+  ehPerS: 15,
+  joulesPerTh: 13,
+} as const;
+
+export const VEGA_FORMULA_MW = mwFromHashrateEh(VEGA_HASHRATE_CEILING.ehPerS, VEGA_HASHRATE_CEILING.joulesPerTh);
+
+const HUT_VEGA_RELEASE = "https://www.globenewswire.com/news-release/2025/06/30/3107324/0/en/hut-8-energizes-vega-data-center.html";
+const CIFR_BARBER_2024 = "https://www.sec.gov/Archives/edgar/data/1819989/000181998924000026/cifr-20241031xex991.htm";
+const CIFR_BARBER_LEASE = "https://www.sec.gov/Archives/edgar/data/1819989/000095010325012168/dp234624_ex9901.htm";
+const CENSUS_TX_PLACES = "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_gaz_place_48.txt";
+const TDLR_BARBER = "https://www.tdlr.texas.gov/TABS/Search/Project/TABS2026023534";
+const CAMBRIDGE_ARCHIVE_URL = "https://www.jbs.cam.ac.uk/2022/bitcoin-mining-new-data-reveal-a-surprising-resurgence/";
 
 export const MINER_BUBBLE_COLOR = {
   low: "#38bdf8",
@@ -66,8 +99,9 @@ export interface MinerMapSite {
   iso2: string;
   /** ISO-3166 numerisch, world-atlas countries-110m. */
   isoNum: string;
-  lat: number;
-  lon: number;
+  /** null, wenn die Quelle keine Lage nennt. Dann kein Pin. */
+  lat: number | null;
+  lon: number | null;
   coordNote: string;
   capacityMw: SourcedNumber | null;
   capacityNote: string | null;
@@ -77,6 +111,10 @@ export interface MinerMapSite {
   operatorNote: string | null;
   energyNote: string;
   regulatoryNote: string;
+  /** Quelle und Formel, wenn eine Zahl aus EH/s × J/TH oder einem Archiv erklärt wird. */
+  formulaTooltip?: string | null;
+  /** Gesetzt, wenn der Wert kein aktueller Primärwert ist. */
+  estimateLabel?: string | null;
 }
 
 export interface MinerMapGap {
@@ -122,6 +160,8 @@ export interface MinerMapResponse {
   pipeline: MinerMapPipeline;
   /** Länderanteil bewusst nicht befüllt. */
   countryShareNote: string;
+  /** Archiv-Anteile. Nicht der Ist-Stand des Karten-Datums. */
+  countryShares: MinerCountryShare[];
   gaps: MinerMapGap[];
   _cached?: boolean;
 }
@@ -197,26 +237,100 @@ const maraCompanyHash: SourcedNumber = {
   scope: "Energised hashrate Ende Dezember 2025, Konzern. Kein späterer freier Wert in den gelesenen Quellen.",
 };
 
-export const MINER_MAP_COUNTRY_SHARE_NOTE =
-  "n/a — Cambridge Mining Map zeigt öffentlich zuletzt Januar 2022 und liefert keine freie aktuelle Länderquote. Der Stand 2022 wird nicht als Anteil 2026 angezeigt.";
+export interface MinerCountryShare {
+  iso2: string;
+  name: string;
+  /** Monat des Archivs, nicht das Veröffentlichungsdatum. */
+  asOf: string;
+  sharePct: number | null;
+  hashrateEH: number | null;
+  label: "Schätzung / keine Primärquelle";
+  sourceLabel: string;
+  sourceUrl: string;
+  note: string | null;
+}
 
-export const MINER_MAP_GAPS: MinerMapGap[] = [
+const CAMBRIDGE_ARCHIVE_LABEL = "Cambridge Judge Business School, 17.05.2022, CCAF Mining Map Januar 2022";
+
+/** Anteile aus dem Cambridge-Artikel. Kein Ist 2026, keine Fortschreibung. */
+export const CAMBRIDGE_ARCHIVE_SHARES: readonly MinerCountryShare[] = [
   {
-    id: "kz",
-    label: "Kasachstan",
-    note: "n/a — keine freie Quelle mit aktueller MW- oder Hashrate-Zahl. Die Cambridge-Karte endet öffentlich im Januar 2022 und wird nicht fortgeschrieben.",
+    iso2: "US",
+    name: "USA",
+    asOf: "2022-01",
+    sharePct: 37.84,
+    hashrateEH: 70.97,
+    label: "Schätzung / keine Primärquelle",
+    sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
+    sourceUrl: CAMBRIDGE_ARCHIVE_URL,
+    note: null,
   },
   {
-    id: "hut-vega",
-    label: "HUT Vega",
-    note: "n/a — CoinShares nennt 14.86 EH/s an Bitmain-Minern der Vega-Site im Q4-Kontext, aber keinen Ort. Ohne Lage kein Pin.",
+    iso2: "CN",
+    name: "China",
+    asOf: "2022-01",
+    sharePct: 21.11,
+    hashrateEH: null,
+    label: "Schätzung / keine Primärquelle",
+    sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
+    sourceUrl: CAMBRIDGE_ARCHIVE_URL,
+    note: "n/a — absolute EH/s für Januar 2022 nennt der Artikel nicht. 30.47 EH/s sind September 2021 und werden nicht eingesetzt.",
   },
   {
-    id: "cifr-barber",
-    label: "CIFR Barber Lake",
-    note: "n/a — CoinShares nennt 300 MW in Entwicklung für HPC, Umsatz noch nicht begonnen. Nicht als Mining-Betrieb gepinnt.",
+    iso2: "KZ",
+    name: "Kasachstan",
+    asOf: "2022-01",
+    sharePct: 13.22,
+    hashrateEH: 24.79,
+    label: "Schätzung / keine Primärquelle",
+    sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
+    sourceUrl: CAMBRIDGE_ARCHIVE_URL,
+    note: null,
+  },
+  {
+    iso2: "CA",
+    name: "Kanada",
+    asOf: "2022-01",
+    sharePct: 6.48,
+    hashrateEH: 12.15,
+    label: "Schätzung / keine Primärquelle",
+    sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
+    sourceUrl: CAMBRIDGE_ARCHIVE_URL,
+    note: null,
+  },
+  {
+    iso2: "RU",
+    name: "Russland",
+    asOf: "2022-01",
+    sharePct: 4.66,
+    hashrateEH: 8.74,
+    label: "Schätzung / keine Primärquelle",
+    sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
+    sourceUrl: CAMBRIDGE_ARCHIVE_URL,
+    note: null,
   },
 ];
+
+export const MINER_FILING_LOWER_BOUND_NOTE =
+  "Filing-Untergrenze: n/a — keine gemessene standortscharfe EH/s. Vega nennt bis zu 15 EH/s als Obergrenze bei voller Energisierung. Obergrenzen zählen nicht als Untergrenze und werden nicht als 0 geführt.";
+
+export function formatCambridgeShareNote(shares: readonly MinerCountryShare[], filingNote: string): string {
+  const bits = shares.map(share => {
+    const eh = share.hashrateEH == null ? "EH/s n/a" : `${share.hashrateEH} EH/s`;
+    const pct = share.sharePct == null ? "Anteil n/a" : `${share.sharePct} %`;
+    return `${share.name} ${eh} (${pct})`;
+  });
+  const source = shares[0];
+  const head = source
+    ? `${source.label}. ${source.sourceLabel} (${source.sourceUrl}), Stand ${source.asOf}, nicht Ist 2026`
+    : "Schätzung / keine Primärquelle. Keine Archivzeile";
+  return `${head}: ${bits.join("; ")}. ${filingNote}`;
+}
+
+export const MINER_MAP_COUNTRY_SHARE_NOTE = formatCambridgeShareNote(CAMBRIDGE_ARCHIVE_SHARES, MINER_FILING_LOWER_BOUND_NOTE);
+
+/** Die drei früheren Lücken haben eine Quelle. Was ohne Koordinate oder Effizienz bleibt, steht an der Site. */
+export const MINER_MAP_GAPS: MinerMapGap[] = [];
 
 export const MINER_MAP_SITES: MinerMapSite[] = [
   {
@@ -703,6 +817,82 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     energyNote: "Als green energy zusammen mit Kanada und Paraguay beschrieben, ohne schwedischen Tarif.",
     regulatoryNote: "n/a — die Meldung nennt die Regulierung der Länder mit Standorten nur pauschal, ohne Schweden-Satz.",
   },
+  {
+    id: "us-tx-vega",
+    name: "Vega (HUT)",
+    region: "Texas, ERCOT",
+    iso2: "US",
+    isoNum: "840",
+    lat: null,
+    lon: null,
+    coordNote: "n/a — keine Koordinate. Die Meldung vom 30.06.2025 nennt das ERCOT-Netz und Texas als Beispiel für hohe Außentemperatur, aber keine Stadt. Kein Pin.",
+    capacityMw: {
+      value: 205,
+      asOf: "2025-06-30",
+      sourceLabel: "Hut 8, Energize Vega, 30.06.2025",
+      sourceUrl: HUT_VEGA_RELEASE,
+      scope: `205 MW Nameplate. Formel MW = EH/s × J/TH = ${VEGA_HASHRATE_CEILING.ehPerS} × ${VEGA_HASHRATE_CEILING.joulesPerTh} = ${VEGA_FORMULA_MW} MW ASIC-Last (1 EH/s = ${HASHRATE_MW.thPerEh} TH/s, 1 MW = ${HASHRATE_MW.wattsPerMw} W). Die Formel erklärt die bis zu 15 EH/s bei 13 J/TH und ersetzt die genannten 205 MW nicht.`,
+    },
+    capacityNote: null,
+    capacityRole: "nameplate",
+    operators: [{
+      ticker: "HUT",
+      name: "Hut 8",
+      siteHashrateEHs: null,
+      siteHashrateNote: "n/a — bis zu 15 EH/s bei voller Energisierung sind eine Obergrenze, keine gemessene Ist-Hashrate und keine Untergrenze.",
+      companyHashrateEHs: null,
+      companyHashrateNote: "n/a — 10 EH/s auf 25 EH/s ist der Pfad, falls die Kaufoption gezogen wird, keine gemessene Konzern-Hashrate in dieser Meldung.",
+      companyPowerUsdPerKwh: null,
+      companyPowerNote: "n/a — kein USD/kWh. Genannt sind ERCOT, ein Windpark hinter dem Zähler und PUE 1.06.",
+    }],
+    operatorNote: null,
+    energyNote: "ERCOT-Netz und Windpark hinter dem Zähler, PUE 1.06. Kein Tarif in USD/kWh.",
+    regulatoryNote: "n/a — die Meldung nennt keine Genehmigung über den ERCOT-Anschluss hinaus.",
+    formulaTooltip: `Formel: MW = EH/s × J/TH = ${VEGA_HASHRATE_CEILING.ehPerS} × ${VEGA_HASHRATE_CEILING.joulesPerTh} = ${VEGA_FORMULA_MW} MW ASIC-Last. Nameplate bleibt 205 MW. Quelle: Hut 8, 30.06.2025.`,
+  },
+  {
+    id: "us-tx-barber-lake",
+    name: "Barber Lake (CIFR)",
+    region: "Colorado City, Texas",
+    iso2: "US",
+    isoNum: "840",
+    lat: 32.399486,
+    lon: -100.858304,
+    coordNote: "Census 2025 Place internal point Colorado City city, GEOID 4816120, nicht die Parzelle. Adresse 951 County Road 204 steht im TDLR-Eintrag TABS2026023534, ohne eigene Koordinate.",
+    capacityMw: {
+      value: 300,
+      asOf: "2024-10-31",
+      sourceLabel: "Cipher Mining, Q3 2024 Update, Exhibit 99.1",
+      sourceUrl: CIFR_BARBER_2024,
+      scope: "300 MW bei der Übernahme, sofort verfügbar zur Energisierung, West Texas. HPC-Vertrag 25.09.2025: 168 MW Critical IT Load, maximal 244 MW brutto, Fluidstack in Colorado City. Die 168 MW ersetzen die 300 MW nicht.",
+    },
+    capacityNote: null,
+    capacityRole: "hpc",
+    operators: [],
+    operatorNote: "n/a — der Vertragspartner im Exhibit vom 25.09.2025 ist Fluidstack für HPC, kein Bitcoin-Miner-Ticker.",
+    energyNote: "n/a — kein Tarif. Die Meldung vom 31.10.2024 nennt 300 MW und eine Umspannstation, keinen Strompreis.",
+    regulatoryNote: "TDLR-Projekt TABS2026023534, Barber Lake, 951 County Road 204, Colorado City, Mitchell County. HPC-Colocation, nicht als Mining-MW in der Perzentil-Stichprobe.",
+    formulaTooltip: `300 MW sind die genannte Standortleistung vom 31.10.2024, keine Rechnung aus Hashrate. HPC-Vertrag: ${CIFR_BARBER_LEASE}. Lage der Stadt: ${CENSUS_TX_PLACES}. Adresse: ${TDLR_BARBER}.`,
+  },
+  {
+    id: "kz-archive",
+    name: "Kasachstan (Cambridge-Archiv)",
+    region: "Kasachstan",
+    iso2: "KZ",
+    isoNum: "398",
+    lat: 48.40585039153326,
+    lon: 67.23568238185362,
+    coordNote: "Flächenschwerpunkt aus world-atlas countries-110m, ISO 398. Keine Farm-Adresse. Schätzung / keine Primärquelle für die Lage einer Anlage.",
+    capacityMw: null,
+    capacityNote: "n/a — Cambridge nennt 24.79 EH/s im Januar 2022, aber keine Effizienz in J/TH. MW = EH/s × J/TH wird nicht mit einer angenommenen Effizienz gefüllt.",
+    capacityRole: null,
+    operators: [],
+    operatorNote: "n/a — der Cambridge-Artikel nennt kein Unternehmen.",
+    energyNote: "Der Artikel vom 17.05.2022 nennt Stromausfälle bis Januar 2022. Kein Tarif in USD/kWh.",
+    regulatoryNote: "Der Artikel beschreibt eine Steuererhöhung und ein Vorgehen gegen nicht registrierte Miner bis Januar 2022. Kein Gesetzestext in dieser Quelle.",
+    estimateLabel: "Schätzung / keine Primärquelle",
+    formulaTooltip: "Schätzung / keine Primärquelle. Kasachstan Januar 2022: 24.79 EH/s, 13.22 % der globalen Hashrate. Cambridge Judge Business School, 17.05.2022. Kein Ist 2026. Keine J/TH, deshalb keine MW.",
+  },
 ];
 
 export function positiveSample(values: number[]): number[] {
@@ -916,11 +1106,12 @@ export function buildMinerMapBody(pipeline: MinerMapPipeline, asOf = new Date().
     layer: "miner",
     asOf,
     source: "SEC-Filings, Unternehmensmeldungen, CoinShares-Report (kostenlos), Live-Kontext aus server/btc-miner.ts",
-    attribution: `Länderanteil: ${CAMBRIDGE} (zuletzt öffentlich Jan 2022, hier nicht als Ist verwendet). Standorte nicht geschätzt.`,
+    attribution: `Länderanteil: Schätzung / keine Primärquelle, Cambridge-Archiv Januar 2022 (${CAMBRIDGE_ARCHIVE_URL}), nicht Ist 2026. Die Karte ${CAMBRIDGE} wird nicht als aktueller Abruf verwendet. Standorte ohne Koordinate bleiben ohne Pin.`,
     coverage: minerCoverage(sites),
     sites,
     pipeline,
     countryShareNote: MINER_MAP_COUNTRY_SHARE_NOTE,
+    countryShares: [...CAMBRIDGE_ARCHIVE_SHARES],
     gaps: MINER_MAP_GAPS,
   };
 }

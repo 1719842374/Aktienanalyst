@@ -57,6 +57,14 @@ export interface GoldProductionFact {
   countrySharePct: number | null;
 }
 
+export interface GoldProductionRemainder {
+  label: "Rest/Sonstige";
+  tonnes: number;
+  listedTonnes: number;
+  worldTonnes: number;
+  unit: string;
+}
+
 export interface GoldProductionResolution {
   facts: GoldProductionFact[];
   unplacedCount: number;
@@ -66,6 +74,8 @@ export interface GoldProductionResolution {
   worldVolume: number | null;
   unit: string | null;
   estimated: boolean | null;
+  /** Differenz Weltzeile minus ausgewiesene Zeilen. Keine Bubble, nicht verteilt. */
+  remainder: GoldProductionRemainder | null;
 }
 
 function assertNever(value: never): never {
@@ -120,6 +130,7 @@ function unavailable(note: string): GoldProductionResolution {
     worldVolume: null,
     unit: null,
     estimated: null,
+    remainder: null,
   };
 }
 
@@ -265,8 +276,16 @@ export function resolveGoldProduction(
     }
     notes.push(`${entry.row.country}: ${volume}/${worldVolume} ${table.unit} im Jahr ${year} (${estimateLabel(estimated)}), kein einzelnes Land, keine Bubble`);
   }
-  if (accounted !== worldVolume) {
-    notes.push(`Ausgewiesene Zeilen ${accounted} ${table.unit}, Weltzeile ${worldVolume} ${table.unit}. Differenz ${worldVolume - accounted} ${table.unit} bleibt bei der Weltzeile und wird nicht auf Länder verteilt`);
+  const remainderTonnes = worldVolume - accounted;
+  const remainder: GoldProductionRemainder | null = remainderTonnes === 0 ? null : {
+    label: "Rest/Sonstige",
+    tonnes: remainderTonnes,
+    listedTonnes: accounted,
+    worldTonnes: worldVolume,
+    unit: table.unit,
+  };
+  if (remainder) {
+    notes.push(`Rest/Sonstige: ${remainder.tonnes} ${table.unit}. Formel: Weltzeile ${worldVolume} − ausgewiesene Zeilen ${accounted}. Die Differenz wird nicht auf Länder verteilt, keine Bubble`);
   }
   if (ambiguous.length > 0) notes.push(`n/a — mehrdeutige Länderzeilen, nicht addiert: ${ambiguous.join(", ")}`);
   if (negatives.length > 0) notes.push(`n/a — negative Menge, nicht verwendet: ${negatives.join(", ")}`);
@@ -285,5 +304,6 @@ export function resolveGoldProduction(
     worldVolume,
     unit: table.unit,
     estimated,
+    remainder,
   };
 }

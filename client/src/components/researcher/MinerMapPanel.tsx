@@ -47,14 +47,16 @@ function SourceLink({ sourced }: { sourced: SourcedNumber }) {
 function MinerBubbles({ sites, selected, onSelect, onOffset }: { sites: SiteView[]; selected: string | null; onSelect: (id: string) => void; onOffset: (active: boolean) => void }) {
   const { projection } = useMapContext();
   const placed = useMemo(() => {
+    const drawable = sites.filter((site): site is SiteView & { lat: number; lon: number } =>
+      typeof site.lat === "number" && typeof site.lon === "number" && Number.isFinite(site.lat) && Number.isFinite(site.lon));
     const points: MarkerPixel[] = [];
-    for (const site of sites) {
+    for (const site of drawable) {
       const xy = projection([site.lon, site.lat]);
       if (!xy) continue;
       points.push({ id: site.id, x: xy[0], y: xy[1], radiusPx: drawnRadius(site) });
     }
     const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
-    return sites.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
+    return drawable.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
   }, [projection, sites]);
   const shifted = placed.some(item => item.dx !== 0 || item.dy !== 0);
   useEffect(() => { onOffset(shifted); }, [shifted, onOffset]);
@@ -73,7 +75,7 @@ function MinerBubbles({ sites, selected, onSelect, onOffset }: { sites: SiteView
               style={{ cursor: "pointer" }}
               data-testid={`miner-bubble-${site.id}`}
             >
-              <title>{`${site.name}: ${fmtMw(site)}`}</title>
+              <title>{site.formulaTooltip || `${site.name}: ${fmtMw(site)}`}</title>
             </circle>
           </g>
         </Marker>
@@ -192,6 +194,15 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
           {data.gaps.map(g => <div key={g.id}>{g.label}: {g.note}</div>)}
         </div>
       )}
+      {data && data.countryShares.length > 0 && (
+        <div className="text-[10px] text-foreground/70 space-y-0.5" data-testid="miner-country-shares">
+          {data.countryShares.map(share => (
+            <div key={share.iso2} title={share.note ?? share.sourceUrl} data-testid={`miner-country-share-${share.iso2}`}>
+              {share.name}: {share.hashrateEH == null ? "EH/s n/a" : `${share.hashrateEH} EH/s`} · {share.sharePct == null ? "Anteil n/a" : `${share.sharePct} %`} · {share.label}
+            </div>
+          ))}
+        </div>
+      )}
       {data && (
         <div className="text-[10px] text-foreground/40 leading-relaxed">
           {data.countryShareNote} Quelle: {data.source}. {data.attribution}
@@ -232,6 +243,8 @@ function SiteCard({ site, onClose }: { site: SiteView; onClose: () => void }) {
         </div>
         <button type="button" onClick={onClose} className="text-foreground/40 hover:text-foreground text-[10px]">Schließen</button>
       </div>
+      {site.estimateLabel && <div className="text-[10px] text-amber-200/90" data-testid={`miner-estimate-${site.id}`}>{site.estimateLabel}</div>}
+      {site.formulaTooltip && <div className="text-[10px] text-foreground/70" data-testid={`miner-formula-${site.id}`}>{site.formulaTooltip}</div>}
       <div>
         <div className="text-foreground/45 text-[10px]">Leistung</div>
         <div className="font-mono">{fmtMw(site)}</div>
