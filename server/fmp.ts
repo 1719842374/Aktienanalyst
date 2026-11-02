@@ -627,6 +627,12 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpKeyMetricsQuarterly(symbol: string, limit: number) {
+  // GET /stable/key-metrics?symbol=X&period=quarter&limit=
+  // returnOnInvestedCapital bleibt die Dezimalquote, wie in der Jahresreihe.
+  return fmpFetch(`/key-metrics`, { symbol, period: "quarter", limit: String(limit) });
+}
+
 export async function fmpEnterpriseValues(symbol: string, limit = 5) {
   // GET /stable/enterprise-values?symbol=AAPL&limit=5 — gleiche FMP-Quelle, kein neuer Anbieter.
   return fmpFetch(`/enterprise-values`, { symbol, limit: String(limit) });

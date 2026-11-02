@@ -1192,6 +1192,7 @@ export interface BtcLiquidityResponse {
 // Kein Score, kein Rating. Fehlende Punkte: value null + note, nie 0.
 export type {
   FundamentalPoint,
+  EpsQuarter,
   EarningsYieldResponse,
   RoicSeriesResponse,
   FundJoinPoint,
