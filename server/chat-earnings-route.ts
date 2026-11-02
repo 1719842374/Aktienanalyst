@@ -9,7 +9,7 @@
 import type { Express, Request, Response } from "express";
 import { chatEarningsPartChars } from "../shared/chat-context";
 import {
-  clipTranscriptExcerpt, earningsBriefNa, extractReleaseQuotes, extractTranscriptQuotes, latestTranscriptSlot, transcriptContent,
+  clipEarningsSummary, clipTranscriptExcerpt, earningsBriefNa, extractReleaseQuotes, extractTranscriptQuotes, latestTranscriptSlot, transcriptContent,
   type EarningsCallBrief,
 } from "../shared/chat-earnings";
 import type { SecEarningsRelease } from "./sec-edgar";
@@ -70,7 +70,7 @@ async function summarize(excerpt: string, kind: NonNullable<EarningsCallBrief["k
     const res = await deps.llm({ systemPrompt: SUMMARY_PROMPT[kind], prompt: excerpt, temperature: EARNINGS_SUMMARY_TEMPERATURE });
     const text = typeof res?.data?.summary === "string" ? res.data.summary.trim() : "";
     if (!text) return { summary: null, reason: "n/a — OpenRouter lieferte keine Zusammenfassung; der Auszug steht im Kontext" };
-    return { summary: clipTranscriptExcerpt(text, chatEarningsPartChars("zusammenfassung")).excerpt, reason: null };
+    return { summary: clipEarningsSummary(text, chatEarningsPartChars("zusammenfassung")).excerpt, reason: null };
   } catch {
     return { summary: null, reason: "n/a — OpenRouter-Zusammenfassung fehlgeschlagen; der Auszug steht im Kontext" };
   }

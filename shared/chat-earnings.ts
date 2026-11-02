@@ -130,6 +130,27 @@ export function clipTranscriptExcerpt(content: string, maxChars: number): { exce
   return { excerpt: `${body}…`, truncated: true };
 }
 
+/**
+ * KI-Zusammenfassung (Markdown) auf `maxChars`: Zeilenumbrüche bleiben, damit Listen und Fettdruck in der
+ * Earnings-Box rendern. Doppelt escapte Umbrüche ("\\n" → wörtliches \n) werden zu echten Umbrüchen.
+ */
+export function clipEarningsSummary(content: string, maxChars: number): { excerpt: string; truncated: boolean } {
+  const text = content
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) return { excerpt: "", truncated: false };
+  if (text.length <= maxChars) return { excerpt: text, truncated: false };
+  if (maxChars <= 1) return { excerpt: "…", truncated: true };
+  const slice = text.slice(0, maxChars - 1);
+  const cut = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"));
+  const body = (cut > 0 ? slice.slice(0, cut) : slice).trimEnd();
+  return { excerpt: `${body}…`, truncated: true };
+}
+
 export function transcriptContent(raw: unknown): string | null {
   const row = Array.isArray(raw) ? raw[0] : raw;
   if (!row || typeof row !== "object") return null;

@@ -104,6 +104,12 @@ export interface ChatResponseBody {
   error: string | null;
   /** Fehlt, wenn nichts gekürzt wurde. Sonst je Faktart die entfernten Zeichen. */
   contextTrimmed?: ChatContextTrimEntry[];
+  /** Nur gesetzt, wenn nicht das erste Modell der Kette antwortete: warum (z. B. "x/y: HTTP 429"). */
+  fallbackReason?: string;
+  /** true, wenn die Antwort am Token-Budget endete und nicht vollständig fortgesetzt werden konnte (Hinweis steht im Text). */
+  truncated?: boolean;
+  /** true, wenn eine abgeschnittene Antwort per Fortsetzungs-Call ergänzt wurde. */
+  continued?: boolean;
 }
 
 /** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */

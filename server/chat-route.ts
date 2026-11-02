@@ -12,10 +12,11 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
-  CHAT_DASHBOARDS, CHAT_LIMITS, CHAT_REQUEST_TIMEOUT_MS, chatContextTrimReport, fitChatContextBudget,
+  CHAT_DASHBOARDS, CHAT_INCOME_SECTION_ID, CHAT_LIMITS, CHAT_REQUEST_TIMEOUT_MS, chatContextTrimReport, fitChatContextBudget,
   type ChatContext, type ChatContextTrimEntry, type ChatRequestBody, type ChatResponseBody,
 } from "../shared/chat-context";
 import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
+import type { LlmAttempt } from "./llm-openrouter";
 
 /** Eigenes Zeitlimit für den Chat-Call (liegt unter dem apiRequest-Client-Timeout von 90 s). */
 export const CHAT_LLM_TIMEOUT_MS = 30_000;
@@ -26,9 +27,12 @@ export const CHAT_RATE_LIMIT = { windowMs: 60_000, max: 20 } as const;
  * callWithFallback für alle Analyse-Calls gilt; Analyse und Podcast bleiben darauf.
  */
 export const CHAT_MODEL_ENV = "OPENROUTER_CHAT_MODEL";
-/** Code-Default, wenn OPENROUTER_CHAT_MODEL leer ist (OpenRouter-ID laut https://openrouter.ai/api/v1/models). */
-export const CHAT_LLM_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
-/** Bisheriges Chat-Modell (erstes Glied von MODEL_FALLBACK_CHAIN); springt bei 402/404/429 oder leerer Antwort ein. */
+/**
+ * Code-Default, wenn OPENROUTER_CHAT_MODEL leer ist (OpenRouter-ID laut https://openrouter.ai/api/v1/models).
+ * Haiku 4.5 (Philip, 02.11.2026: Opus 5.5 zu teuer). Ohne Env-Wert ist die Kette nur dieses Modell.
+ */
+export const CHAT_LLM_DEFAULT_MODEL = "anthropic/claude-haiku-4.5";
+/** Springt ein, wenn ein per Env gesetztes Modell 402/404/429 oder eine leere Antwort liefert (erstes Glied von MODEL_FALLBACK_CHAIN). */
 export const CHAT_LLM_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
 /** OpenRouter-ID "anbieter/modell[:variante]". Eine falsch geschriebene ID beantwortet OpenRouter mit 400, und 400 fällt nicht auf den Fallback. */
 const OPENROUTER_MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i;
@@ -50,17 +54,26 @@ export function chatLlmModels(env: NodeJS.ProcessEnv = process.env): readonly st
 /** Abstand zum Client-Timeout, damit der Server zuerst mit status "timeout" antwortet. */
 export const CHAT_ANSWER_TIMEOUT_HEADROOM_MS = 3_000;
 /**
- * Zeitlimit der Chat-Antwort. Tabelle, Vorjahresvergleich und Quelle brauchen mit Opus länger als
+ * Zeitlimit der Chat-Antwort samt Fortsetzungs-Call. Tabelle, Vorjahresvergleich und Quelle brauchen länger als
  * CHAT_LLM_TIMEOUT_MS (das der Podcast mitnutzt); liegt um den Abstand unter CHAT_REQUEST_TIMEOUT_MS.
  */
 export const CHAT_ANSWER_TIMEOUT_MS = CHAT_REQUEST_TIMEOUT_MS - CHAT_ANSWER_TIMEOUT_HEADROOM_MS;
-/** Platz für Kernsatz, Posten-Tabelle, Ausreißer-Satz und Quellenlink im JSON. */
-export const CHAT_LLM_MAX_TOKENS = 1_800;
+/**
+ * Token-Budget je Chat-Call: Kernsatz, Posten-Tabelle (bis ~18 Zeilen), Ausreißer-Satz und Quellenlink
+ * im JSON. 1 800 reichte für lange GuV-Tabellen nicht. Liegt auf der Decke LLM_JSON_MAX_TOKENS von callLLMJson.
+ */
+export const CHAT_LLM_MAX_TOKENS = 4_000;
+/** Höchstens so viele Fortsetzungs-Calls, wenn eine Antwort trotzdem am Budget endet (finish_reason "length"). */
+export const CHAT_MAX_CONTINUATIONS = 1;
+/** Fortsetzen nur, wenn bis zum Antwort-Timeout noch so viel Zeit bleibt; sonst Hinweis statt Fortsetzung. */
+export const CHAT_CONTINUATION_MIN_MS = 8_000;
+/** Sichtbarer Hinweis, wenn die Antwort am Token-Budget endete und nicht fortgesetzt werden konnte. */
+export const CHAT_TRUNCATED_NOTE = "Hinweis: Die Antwort wurde am Token-Budget abgeschnitten und ist unvollständig. Frag nach dem fehlenden Teil.";
 /** Modelle ohne temperature in den OpenRouter supported_parameters (z. B. Opus 5.5) ignorieren den Wert; Haiku nutzt ihn. */
 export const CHAT_LLM_TEMPERATURE = 0.3;
 
-type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string; models?: readonly string[] }) =>
-  Promise<{ data: any; modelUsed: string } | null>;
+type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string; models?: readonly string[]; attempts?: LlmAttempt[] }) =>
+  Promise<{ data: any; modelUsed: string; finishReason?: string | null; salvaged?: boolean } | null>;
 
 export interface ChatDeps {
   llmAvailable: () => boolean;
@@ -165,6 +178,8 @@ export const CHAT_SYSTEM_PROMPT = [
   "Diese Form hat bei GuV-Fragen Vorrang vor der Gliederung Catalysts, Assumptions und Risks. Rechne keine fehlenden Posten aus; fehlen guv-Fakten oder steht guvHinweis mit n/a, antworte mit n/a und dem Grund.",
   "Fragen zum letzten Earnings Call: Datum (earningsCallDatum), Art der Quelle (earningsCallArt), Kernaussagen aus Zusammenfassung bzw. Auszug, wörtliche Zitate nur aus earningsCallZitate mit Namen, und die Quelle als Link auf earningsCallQuelleUrl, falls vorhanden. Ein Earnings Release ist kein Call-Transkript; sag das. Fehlt alles, nenne earningsCallHinweis.",
   "Zahlen mit Vergleich nennst du immer mit beiden Perioden und mit Quelle.",
+  "Die letzte Zeile jeder Antwort beginnt mit „Quelle:“: Link auf guvFilingUrl bzw. earningsCallQuelleUrl, wenn du diese Daten nutzt, sonst „Quelle: geladene Dashboard-Daten“.",
+  "Zeilenumbrüche im JSON-String schreibst du als einfaches \\n, nie doppelt escaped.",
   "Betrifft die Frage die Lage des Assets und steht keine AUFGABE für die ganze Analyse im Prompt, gliedere die Antwort in die Abschnitte Catalysts, Assumptions und Risks. Nur Werte aus dem KONTEXT, Fehlendes als n/a.",
   "Liegt im Nutzerprompt eine AUFGABE für die ganze Analyse, halte ihre Blockreihenfolge ein. PESTEL nur, wenn pestelStark=ja. Thesis immer als dominante Klasse, ohne Wachstumsschwelle.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
@@ -194,12 +209,108 @@ export function buildChatPrompt(body: ChatRequestBody): string {
   return `KONTEXT:\n${formatContextForPrompt(body.context, body.sectionId)}\n\nVERLAUF:\n${history}${task}\n\nAntworte auf die letzte Nutzer-Nachricht.`;
 }
 
+/** Prompt für die Fortsetzung einer am Token-Budget abgeschnittenen Antwort. */
+export function buildChatContinuationPrompt(body: ChatRequestBody, partial: string): string {
+  return `${buildChatPrompt(body)}\n\nDEINE BISHERIGE ANTWORT (am Token-Budget abgeschnitten):\n${partial}\n\n`
+    + "Setze die Antwort genau an der Abbruchstelle fort, auch mitten im Satz oder in der Tabellenzeile. Wiederhole nichts. "
+    + "answer enthält nur die Fortsetzung; die letzte Zeile beginnt mit „Quelle:“.";
+}
+
+/** Länge der Antwort im Response-Body. Liegt über dem, was CHAT_LLM_MAX_TOKENS samt Fortsetzung erzeugen kann. */
+export const CHAT_ANSWER_MAX_CHARS = 32_000;
+
+/**
+ * Doppelt escapte Umbrüche ("\\n" im JSON → wörtliches \n im Text) und eine verschachtelte
+ * JSON-Hülle ({"answer": "…"} als String) werden zu normalem Markdown-Text.
+ */
+export function normalizeChatAnswer(raw: string): string {
+  let s = raw;
+  if (/^\s*\{\s*"answer"\s*:/.test(s)) {
+    try {
+      const inner = JSON.parse(s);
+      if (typeof inner?.answer === "string") s = inner.answer;
+    } catch { /* kein gültiges JSON: Text bleibt */ }
+  }
+  return s.replace(/\\r\\n|\\n|\\r/g, "\n").replace(/\\t/g, "  ").replace(/\\"/g, '"');
+}
+
+/** Zeile „Quelle: …“ (auch fett oder als Liste) irgendwo in der Antwort. */
+const SOURCE_LINE = /(^|\n)\s*(?:[-*]\s*)?(?:\*\*|__)?Quellen?(?:\*\*|__)?\s*:/i;
+const GUV_QUESTION = /\b(guv|gewinn- und verlust|income statement|umsatz|revenue|kosten|aufwend|expense|ertr[äa]g|income|zins|steuer|ergebnis|marge|margin|posten)/i;
+const EARNINGS_QUESTION = /\b(earnings|call|quartalszahlen|release|transkript|transcript)/i;
+
+function factOf(ctx: ChatContext, key: string): string | null {
+  for (const s of ctx.sections) {
+    const v = s.facts[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+const httpUrl = (v: string | null) => (v && /^https?:\/\//i.test(v) ? v : null);
+const mdLabel = (v: string) => v.replace(/[[\]]/g, "");
+
+/**
+ * Quellzeile, die zur letzten Frage passt: GuV-Frage (oder gebundene S4) → Filing-Link aus guvFilingUrl,
+ * Earnings-Frage → earningsCallQuelleUrl, sonst die geladenen Dashboard-Daten mit Datenstand.
+ */
+export function chatSourceLines(body: ChatRequestBody): Array<{ line: string; url: string | null }> {
+  const ctx = body.context;
+  const question = [...body.messages].reverse().find(m => m.role === "user")?.content ?? "";
+  const out: Array<{ line: string; url: string | null }> = [];
+  const guvUrl = httpUrl(factOf(ctx, "guvFilingUrl"));
+  if (guvUrl && (body.sectionId === CHAT_INCOME_SECTION_ID || GUV_QUESTION.test(question))) {
+    const label = mdLabel(factOf(ctx, "guvQuelle") ?? "Filing");
+    out.push({ line: `Quelle: [${label}](${guvUrl})`, url: guvUrl });
+  }
+  const earnUrl = httpUrl(factOf(ctx, "earningsCallQuelleUrl"));
+  if (EARNINGS_QUESTION.test(question) && (earnUrl || factOf(ctx, "earningsCallQuelle"))) {
+    const label = mdLabel(factOf(ctx, "earningsCallQuelle") ?? "Earnings Release");
+    out.push({ line: earnUrl ? `Quelle: [${label}](${earnUrl})` : `Quelle: ${label}`, url: earnUrl });
+  }
+  if (!out.length) out.push({ line: `Quelle: geladene Dashboard-Daten (${ctx.title}, Datenstand ${ctx.asOf ?? "n/a"})`, url: null });
+  return out;
+}
+
+/** Hängt fehlende Quellzeilen an: jede passende Quelle mit Link muss im Text stehen, und eine Zeile „Quelle:“ immer. */
+export function ensureChatSourceLine(answer: string, body: ChatRequestBody): string {
+  const lines = chatSourceLines(body);
+  const hasLine = SOURCE_LINE.test(answer);
+  const missing = lines.filter(l => (l.url ? !answer.includes(l.url) : !hasLine));
+  if (!missing.length) return answer;
+  return `${answer.trimEnd()}\n\n${missing.map(l => l.line).join("\n\n")}`;
+}
+
+/** Warum nicht das erste Modell der Kette antwortete. null, wenn es das erste war. */
+export function chatFallbackReason(attempts: readonly LlmAttempt[], modelUsed: string | null): string | null {
+  const failed = attempts.filter(a => a.outcome !== "ok");
+  if (!failed.length || (modelUsed && attempts[0]?.model === modelUsed)) return null;
+  return failed.map(a => {
+    if (a.outcome === "empty") return `${a.model}: leere Antwort (finish_reason ${a.finishReason ?? "n/a"})`;
+    return `${a.model}: ${a.status != null ? `HTTP ${a.status}` : "Fehler ohne HTTP-Status"}`;
+  }).join(" | ");
+}
+
 const TIMEOUT = Symbol("chat-timeout");
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMEOUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const t = new Promise<typeof TIMEOUT>(resolve => { timer = setTimeout(() => resolve(TIMEOUT), ms); });
   try { return await Promise.race([p, t]); } finally { if (timer) clearTimeout(timer); }
 }
+
+type LlmResult = Awaited<ReturnType<LlmFn>>;
+
+async function callChatLlm(deps: ChatDeps, opts: Parameters<LlmFn>[0], ms: number): Promise<LlmResult | typeof TIMEOUT> {
+  try {
+    const call = deps.llm(opts);
+    call.catch(() => undefined);
+    return await withTimeout(call, ms);
+  } catch {
+    return null;
+  }
+}
+
+const isCut = (r: NonNullable<LlmResult>) => r.finishReason === "length" || r.salvaged === true;
 
 export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: number; body: ChatResponseBody }> {
   const v = validateChatRequest(raw);
@@ -210,31 +321,56 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   }
   const body = v.body;
   const timeoutMs = deps.timeoutMs ?? CHAT_ANSWER_TIMEOUT_MS;
-  let res: { data: any; modelUsed: string } | null = null;
-  try {
-    const call = deps.llm({
-      prompt: buildChatPrompt(body), systemPrompt: CHAT_SYSTEM_PROMPT,
-      maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models: chatLlmModels(),
-    });
-    call.catch(() => undefined);
-    const raced = await withTimeout(call, timeoutMs);
-    if (raced === TIMEOUT) {
-      console.warn(`[CHAT] Timeout nach ${timeoutMs} ms (dashboard=${body.dashboard})`);
-      return { http: 200, body: reply("timeout", { error: `KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet. Bitte erneut versuchen.`, ...trim }) };
-    }
-    res = raced;
-  } catch {
-    res = null;
+  const startedAt = Date.now();
+  const models = chatLlmModels();
+  const attempts: LlmAttempt[] = [];
+  const raced = await callChatLlm(deps, {
+    prompt: buildChatPrompt(body), systemPrompt: CHAT_SYSTEM_PROMPT,
+    maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models, attempts,
+  }, timeoutMs);
+  const fallbackReason = chatFallbackReason(attempts, raced && raced !== TIMEOUT ? raced.modelUsed : null);
+  if (fallbackReason) console.warn(`[CHAT] Fallback (Kette ${models.join(" → ")}): ${fallbackReason}`);
+  const fallback = fallbackReason ? { fallbackReason } : {};
+  if (raced === TIMEOUT) {
+    console.warn(`[CHAT] Timeout nach ${timeoutMs} ms (dashboard=${body.dashboard})`);
+    return { http: 200, body: reply("timeout", { error: `KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet. Bitte erneut versuchen.`, ...trim, ...fallback }) };
   }
-  const answer = typeof res?.data?.answer === "string" ? res.data.answer.trim().slice(0, 8000) : "";
-  if (!res || !answer) {
+  const res = raced;
+  const first = typeof res?.data?.answer === "string" ? normalizeChatAnswer(res.data.answer) : "";
+  if (!res || !first.trim()) {
     console.warn(`[CHAT] LLM-Fehler oder leere Antwort (dashboard=${body.dashboard})`);
-    return { http: 200, body: reply("llm-error", { error: "KI-Antwort fehlgeschlagen oder leer. Bitte erneut versuchen.", ...trim }) };
+    return { http: 200, body: reply("llm-error", { error: "KI-Antwort fehlgeschlagen oder leer. Bitte erneut versuchen.", ...trim, ...fallback }) };
   }
+  let answer = first;
+  let cut = isCut(res);
+  let continued = false;
+  const refs: unknown[] = Array.isArray(res.data.sectionRefs) ? [...res.data.sectionRefs] : [];
+  for (let i = 0; cut && i < CHAT_MAX_CONTINUATIONS; i++) {
+    const left = timeoutMs - (Date.now() - startedAt);
+    if (left < CHAT_CONTINUATION_MIN_MS) break;
+    console.warn(`[CHAT] Antwort am Token-Budget (finish_reason ${res.finishReason ?? "n/a"}, ${answer.length} Zeichen); Fortsetzung ${i + 1}`);
+    const more = await callChatLlm(deps, {
+      prompt: buildChatContinuationPrompt(body, answer), systemPrompt: CHAT_SYSTEM_PROMPT,
+      maxTokens: CHAT_LLM_MAX_TOKENS, temperature: CHAT_LLM_TEMPERATURE, models: [res.modelUsed],
+    }, left);
+    const tail = more && more !== TIMEOUT && typeof more.data?.answer === "string" ? normalizeChatAnswer(more.data.answer) : "";
+    if (!more || more === TIMEOUT || !tail.trim()) break;
+    answer += tail;
+    continued = true;
+    cut = isCut(more);
+    if (Array.isArray(more.data.sectionRefs)) refs.push(...more.data.sectionRefs);
+  }
+  if (cut) {
+    console.warn(`[CHAT] Antwort bleibt am Token-Budget abgeschnitten (${answer.length} Zeichen, Fortsetzung ${continued ? "unvollständig" : "nicht möglich"})`);
+    answer = `${answer.trimEnd()}…\n\n*${CHAT_TRUNCATED_NOTE}*`;
+  }
+  answer = ensureChatSourceLine(answer.trim(), body).slice(0, CHAT_ANSWER_MAX_CHARS);
   const known = new Set(body.context.sections.map(s => s.id));
-  const refs = Array.isArray(res.data.sectionRefs) ? res.data.sectionRefs : [];
   const sectionRefs = Array.from(new Set<number>(refs.filter((n: unknown): n is number => typeof n === "number" && known.has(n)))).slice(0, 10);
-  return { http: 200, body: reply("ok", { answer, sectionRefs, model: res.modelUsed ?? null, ...trim }) };
+  return {
+    http: 200,
+    body: reply("ok", { answer, sectionRefs, model: res.modelUsed ?? null, ...trim, ...fallback, ...(cut ? { truncated: true } : {}), ...(continued ? { continued: true } : {}) }),
+  };
 }
 
 const hits = new Map<string, number[]>();

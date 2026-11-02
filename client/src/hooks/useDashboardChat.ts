@@ -13,6 +13,10 @@ export interface ChatEntry extends ChatMessage {
   sectionRefs?: number[];
   status?: ChatResponseBody["status"];
   error?: boolean;
+  /** Modell, das geantwortet hat, und warum nicht das erste der Kette (nur bei Fallback). */
+  model?: string | null;
+  fallbackReason?: string;
+  truncated?: boolean;
 }
 
 export function useDashboardChat(context: ChatContext | null, sectionId: number | null) {
@@ -35,7 +39,10 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
       if (reqId !== reqRef.current) return;
       setContextTrimmed(body?.contextTrimmed?.length ? body.contextTrimmed : undefined);
       if (body?.ok && body.answer) {
-        setEntries(prev => [...prev, { role: "assistant", content: body.answer!, sectionRefs: body.sectionRefs, status: "ok" }]);
+        setEntries(prev => [...prev, {
+          role: "assistant", content: body.answer!, sectionRefs: body.sectionRefs, status: "ok", model: body.model,
+          ...(body.fallbackReason ? { fallbackReason: body.fallbackReason } : {}), ...(body.truncated ? { truncated: true } : {}),
+        }]);
       } else {
         const msg = body?.error ?? `Chat fehlgeschlagen (HTTP ${res.status})`;
         setEntries(prev => [...prev, { role: "assistant", content: msg, status: body?.status, error: true }]);
