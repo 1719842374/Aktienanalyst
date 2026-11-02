@@ -1,0 +1,426 @@
+{
+  "captured": "2026-11-02",
+  "source": "Yahoo analysis page: earningsHistoryNonGaap/Gaap, reportedDate, earningsTrendNonGaap/Gaap",
+  "names": {
+    "META": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-01-28",
+          "nonGaap": 8.88,
+          "gaap": 8.88,
+          "estimate": 8.17705
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-04-29",
+          "nonGaap": 7.31,
+          "gaap": 10.44,
+          "estimate": 6.819
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-29",
+          "nonGaap": 6.18,
+          "gaap": 6.18,
+          "estimate": 7.39818
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-21",
+          "nonGaap": 7.4,
+          "gaap": 3.83,
+          "estimate": 6.84636
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 29.7896,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 35.42861,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 29.12343,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 33.92516,
+          "ccy": "USD"
+        }
+      ]
+    },
+    "AMZN": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-02-05",
+          "nonGaap": 1.95,
+          "gaap": 1.95,
+          "estimate": 1.94579
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-04-29",
+          "nonGaap": 1.6081,
+          "gaap": 2.78,
+          "estimate": 1.64473
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-30",
+          "nonGaap": 1.9505,
+          "gaap": 5.75,
+          "estimate": 1.82
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-29",
+          "nonGaap": 1.89,
+          "gaap": 1.89,
+          "estimate": 1.9925
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 11.43509,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 10.89173,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 12.80814,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 10.6625,
+          "ccy": "USD"
+        }
+      ]
+    },
+    "GOOGL": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-02-04",
+          "nonGaap": 2.82,
+          "gaap": 2.82,
+          "estimate": 2.64089
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-04-29",
+          "nonGaap": 2.76,
+          "gaap": 5.11,
+          "estimate": 2.62989
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-22",
+          "nonGaap": 2.85,
+          "gaap": 9.11,
+          "estimate": 2.91271
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-28",
+          "nonGaap": 2.67,
+          "gaap": 2.12,
+          "estimate": 3.04064
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 16.7969,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 15.16542,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 19.71035,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 14.83975,
+          "ccy": "USD"
+        }
+      ]
+    },
+    "GOOG": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-02-04",
+          "nonGaap": 2.82,
+          "gaap": 2.82,
+          "estimate": 2.64089
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-04-29",
+          "nonGaap": 2.76,
+          "gaap": 5.11,
+          "estimate": 2.62989
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-22",
+          "nonGaap": 2.85,
+          "gaap": 9.11,
+          "estimate": 2.91271
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-28",
+          "nonGaap": 2.67,
+          "gaap": 2.12,
+          "estimate": 3.04064
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 16.53791,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 15.16542,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 19.69575,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 14.80629,
+          "ccy": "USD"
+        }
+      ]
+    },
+    "MU": {
+      "quarters": [
+        {
+          "end": "2025-11-30",
+          "reported": "2025-12-17",
+          "nonGaap": 4.78,
+          "gaap": 4.6,
+          "estimate": 3.96409
+        },
+        {
+          "end": "2026-02-28",
+          "reported": "2026-03-18",
+          "nonGaap": 12.2,
+          "gaap": 12.07,
+          "estimate": 9.15866
+        },
+        {
+          "end": "2026-05-31",
+          "reported": "2026-06-24",
+          "nonGaap": 25.11,
+          "gaap": 24.67,
+          "estimate": 20.68603
+        },
+        {
+          "end": "2026-08-31",
+          "reported": "2026-09-30",
+          "nonGaap": 33.42,
+          "gaap": 32.87,
+          "estimate": 31.81801
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2027-08-31",
+          "avg": 176.50168,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2028-08-31",
+          "avg": 207.76048,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2027-08-31",
+          "avg": 173.59177,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2028-08-31",
+          "avg": 204.07129,
+          "ccy": "USD"
+        }
+      ]
+    },
+    "ASML": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-01-28",
+          "nonGaap": 7.34,
+          "gaap": 7.34,
+          "estimate": 7.54521
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-04-15",
+          "nonGaap": 7.15,
+          "gaap": 7.15,
+          "estimate": 6.621
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-14",
+          "nonGaap": 7.58,
+          "gaap": 7.58,
+          "estimate": 6.94813
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-14",
+          "nonGaap": 11.8193,
+          "gaap": 12.93,
+          "estimate": 10.75815
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 41.20818,
+          "ccy": "EUR"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 55.929,
+          "ccy": "EUR"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 41.51027,
+          "ccy": "EUR"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 56.55003,
+          "ccy": "EUR"
+        }
+      ]
+    },
+    "SHEL.L": {
+      "quarters": [
+        {
+          "end": "2025-12-31",
+          "reported": "2026-02-05",
+          "nonGaap": 0.57,
+          "gaap": 0.71,
+          "estimate": 0.69954
+        },
+        {
+          "end": "2026-03-31",
+          "reported": "2026-05-07",
+          "nonGaap": 1.22,
+          "gaap": 1,
+          "estimate": 1.06438
+        },
+        {
+          "end": "2026-06-30",
+          "reported": "2026-07-30",
+          "nonGaap": 1.76,
+          "gaap": 1.92,
+          "estimate": 1.54916
+        },
+        {
+          "end": "2026-09-30",
+          "reported": "2026-10-29",
+          "nonGaap": 1.93,
+          "gaap": 2.13,
+          "estimate": 1.79638
+        }
+      ],
+      "nonGaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 6.52412,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 5.87043,
+          "ccy": "USD"
+        }
+      ],
+      "gaapFy": [
+        {
+          "period": "0y",
+          "end": "2026-12-31",
+          "avg": 7.3109,
+          "ccy": "USD"
+        },
+        {
+          "period": "+1y",
+          "end": "2027-12-31",
+          "avg": 5.53719,
+          "ccy": "USD"
+        }
+      ]
+    }
+  }
+}

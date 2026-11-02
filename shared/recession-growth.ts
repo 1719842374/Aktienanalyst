@@ -83,23 +83,10 @@ export const EPS_BASIS = {
 } as const;
 
 /**
- * Abgleich eines FMP-epsActual mit dem adjusted Druck.
- * samePrint: relativer Abstand, darunter sind FMP und Yahoo NonGaap derselbe Wert.
- * plausibleSurprise: |epsActual/epsEstimated − 1| darüber, ohne Yahoo-NonGaap, ist das Quartal nicht adjusted.
- * Kein Ticker, keine feste EPS-Zahl.
+ * Kein Prozentabstand, kein Tagescap. Ein Quartal ist adjusted, wenn das
+ * Yahoo-NonGaap-Quartalsende das letzte Ende am oder vor dem Meldetag ist.
+ * Der Wert ist dann der von Yahoo bezeichnete NonGaap-Druck.
  */
-export const EPS_ADJUSTED_CHECK = {
-  samePrint: 0.02,
-  plausibleSurprise: 0.25,
-  /** Meldetag liegt 0 bis reportLagDays Tage nach dem Quartalsende. */
-  reportLagDays: 75,
-} as const;
-
-/** Verhältnis, in dem zwei EPS-Seiten GBp gegen GBP sind. */
-export const EPS_PENCE_RATIO = {
-  min: 50,
-  max: 150,
-} as const;
 
 /**
  * Robust z = madScale · (g − median) / MAD.
@@ -542,18 +529,17 @@ export interface ResolvedQuarter {
   eps: number;
   fmpEps: number;
   source: "fmp" | "yahoo-nongaap";
-  /** true, wenn ein Yahoo-Quartalsende 0 bis reportLagDays Tage vor dem FMP-Datum liegt. */
+  /** true, wenn ein Yahoo-NonGaap-Quartalsende am oder vor dem Meldetag liegt. */
   yahooChecked: boolean;
 }
 
 /**
- * FMP-epsActual nur, wenn es der adjusted Druck ist.
- * FMP nennt den Meldetag, Yahoo das Quartalsende. Zugeordnet wird das letzte
- * Quartalsende, das 0 bis reportLagDays Tage davor liegt. Kein festes Ticker-Datum.
- * Ein abweichender FMP-Druck wird durch Yahoo NonGaap ersetzt.
- * Ohne Yahoo entscheidet der Quartalskonsens epsEstimated. Liegt der Abstand
- * über plausibleSurprise, ist das Quartal n/a. Ohne beide Gegenproben bleibt
- * der FMP-Druck, weil nichts ihn als GAAP ausweist.
+ * FMP nennt den Meldetag oder, wenn vorhanden, fiscalDateEnding.
+ * Zugeordnet wird das letzte Yahoo-NonGaap-Quartalsende am oder vor diesem Tag.
+ * Der übernommene Wert ist der NonGaap-Druck. Liegt kein Ende davor, ist das
+ * Quartal nicht belegt und damit n/a. Keine Prozentgrenze und kein Tagescap.
+ * Liefert Yahoo gar keine NonGaap-Quartale, bleibt der FMP-Druck stehen:
+ * es gibt dann keine Gegenprobe, der Aufrufer weist die Quelle aus.
  */
 export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | null, asOf: string): {
   adjTtm: number | null;
@@ -566,34 +552,41 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
     return { adjTtm: null, quarters: [], unusableReason: null, cite: "" };
   }
   const yahooLeft = adjTtmFromYahooAdjusted(yahooRaw, asOf).quarters.map(row => ({ date: row.date, eps: row.eps }));
+  const yahooSeen = yahooLeft.length > 0;
   const resolved: ResolvedQuarter[] = [];
-  for (const row of fmp) {
-    const yahooEps = takeYahooQuarter(yahooLeft, row.date);
+  const pending = fmp.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const byReport = new Map<string, ResolvedQuarter>();
+  for (const row of pending) {
+    const yahooEps = takeYahooQuarter(yahooLeft, row.anchor);
     if (yahooEps != null) {
-      const same = relativeGap(row.eps, yahooEps) <= EPS_ADJUSTED_CHECK.samePrint;
-      resolved.push({
+      byReport.set(row.date, {
         date: row.date,
-        eps: same ? row.eps : yahooEps,
+        eps: yahooEps,
         fmpEps: row.eps,
-        source: same ? "fmp" : "yahoo-nongaap",
+        source: "yahoo-nongaap",
         yahooChecked: true,
       });
       continue;
     }
-    if (row.estimate != null && row.estimate !== 0) {
-      const surprise = Math.abs(row.eps / row.estimate - 1);
-      if (surprise > EPS_ADJUSTED_CHECK.plausibleSurprise) {
-        const actual = shownPlain(row.eps);
-        const estimate = shownPlain(row.estimate);
-        return {
-          adjTtm: null,
-          quarters: resolved,
-          unusableReason: `n/a — Quartal ${row.date} epsActual ${actual} gegen Konsens ${estimate} nicht als adjusted geklärt`,
-          cite: "",
-        };
-      }
+    if (yahooSeen) {
+      return {
+        adjTtm: null,
+        quarters: resolved,
+        unusableReason: `n/a — Quartal ${row.date} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`,
+        cite: "",
+      };
     }
-    resolved.push({ date: row.date, eps: row.eps, fmpEps: row.eps, source: "fmp", yahooChecked: false });
+    byReport.set(row.date, {
+      date: row.date,
+      eps: row.eps,
+      fmpEps: row.eps,
+      source: "fmp",
+      yahooChecked: false,
+    });
+  }
+  for (const row of fmp) {
+    const hit = byReport.get(row.date);
+    if (hit) resolved.push(hit);
   }
   const adjTtm = resolved.reduce((sum, row) => sum + row.eps, 0);
   if (!(adjTtm > 0)) {
@@ -615,6 +608,8 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
 
 interface FmpQuarterRow {
   date: string;
+  /** Meldetag, oder fiscalDateEnding wenn die Zeile das Quartalsende nennt. */
+  anchor: string;
   eps: number;
   estimate: number | null;
 }
@@ -626,10 +621,11 @@ function fmpQuarterRows(raw: unknown, asOf: string): FmpQuarterRow[] {
     if (isFullYearPeriod(row)) continue;
     const parsed = epsPrintFromEarningsRow(row);
     if (!parsed || parsed.date > asOf) continue;
-    const estimate = row && typeof row === "object"
-      ? finiteLoose((row as Record<string, unknown>).epsEstimated)
-      : null;
-    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, eps: parsed.eps, estimate });
+    const record = row as Record<string, unknown>;
+    const fiscal = String(record.fiscalDateEnding ?? "").slice(0, 10);
+    const anchor = /^\d{4}-\d{2}-\d{2}$/.test(fiscal) ? fiscal : parsed.date;
+    const estimate = finiteLoose(record.epsEstimated);
+    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, anchor, eps: parsed.eps, estimate });
   }
   return Array.from(byDate.values())
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -643,19 +639,13 @@ function finiteLoose(v: unknown): number | null {
   return null;
 }
 
-function relativeGap(a: number, b: number): number {
-  const scale = Math.max(Math.abs(a), Math.abs(b));
-  if (!(scale > 0)) return 0;
-  return Math.abs(a - b) / scale;
-}
-
-/** Letztes Yahoo-Quartalsende, 0 bis reportLagDays Tage vor dem Meldetag. Jedes Ende nur einmal. */
+/** Letztes Yahoo-Quartalsende am oder vor dem Meldetag. Jedes Ende nur einmal. Kein Tagescap. */
 function takeYahooQuarter(pool: { date: string; eps: number }[], reportDate: string): number | null {
   let best = -1;
-  let bestLag = EPS_ADJUSTED_CHECK.reportLagDays + 1;
+  let bestLag = Number.POSITIVE_INFINITY;
   for (let i = 0; i < pool.length; i++) {
     const lag = horizonDays(pool[i].date, reportDate);
-    if (lag < 0 || lag > EPS_ADJUSTED_CHECK.reportLagDays || lag >= bestLag) continue;
+    if (lag < 0 || lag >= bestLag) continue;
     best = i;
     bestLag = lag;
   }
@@ -670,27 +660,19 @@ function shownPlain(value: number): string {
 }
 
 /**
- * Fehlende EPS-Währung. GBp gegen GBP (Faktor 100) wird beschriftet, nicht verworfen.
- * Eine bekannte Filingswährung wird auf die leere Seite übernommen, außer das
- * Größenverhältnis liegt im Pence-Band und eine Seite ist GBP oder GBp.
+ * Fehlende EPS-Währung. Eine bezeichnete Filingswährung wird übernommen.
+ * GBp gegen GBP rechnet nur alignConsensusToTtm, und nur wenn beide Kürzel dastehen.
+ * Aus dem Größenverhältnis wird keine Währung geraten.
  */
 export function completeEpsCurrencies(
-  consensus: number,
+  _consensus: number,
   consensusCcy: string | null,
-  ttm: number,
+  _ttm: number,
   ttmCcy: string | null,
 ): { consensusCcy: string | null; ttmCcy: string | null; inferred: string | null } {
   if (consensusCcy && ttmCcy) return { consensusCcy, ttmCcy, inferred: null };
   const known = consensusCcy ?? ttmCcy;
   if (!known) return { consensusCcy, ttmCcy, inferred: null };
-  if (isSterling(known) && nearPenceRatio(consensus, ttm)) {
-    const consensusIsLarger = Math.abs(consensus) > Math.abs(ttm);
-    return {
-      consensusCcy: consensusCcy ?? (consensusIsLarger ? "GBp" : "GBP"),
-      ttmCcy: ttmCcy ?? (consensusIsLarger ? "GBP" : "GBp"),
-      inferred: "GBp gegen GBP, Faktor 100",
-    };
-  }
   return {
     consensusCcy: consensusCcy ?? known,
     ttmCcy: ttmCcy ?? known,
@@ -698,24 +680,11 @@ export function completeEpsCurrencies(
   };
 }
 
-function isSterling(code: string): boolean {
-  return code === "GBp" || code === "GBX" || code.toUpperCase() === "GBP";
-}
-
-function nearPenceRatio(a: number, b: number): boolean {
-  if (!(Math.abs(a) > 0) || !(Math.abs(b) > 0)) return false;
-  const ratio = Math.max(Math.abs(a), Math.abs(b)) / Math.min(Math.abs(a), Math.abs(b));
-  return ratio >= EPS_PENCE_RATIO.min && ratio <= EPS_PENCE_RATIO.max;
-}
-
-/**
- * London-Listing. Adjusted nur mit Yahoo-Quartalsende im Meldefenster.
- * Faktor ~100 ist nur als GBp gegen GBP zulässig, sonst n/a.
- */
+/** London-Listing. Adjusted und Währung müssen von Yahoo NonGaap bezeichnet sein, sonst n/a. */
 export function londonListingIssue(
   symbol: string,
-  consensus: number,
-  ttm: number,
+  _consensus: number,
+  _ttm: number,
   consensusCcy: string | null,
   ttmCcy: string | null,
   yahooChecked: boolean,
@@ -723,9 +692,6 @@ export function londonListingIssue(
   if (!symbol.endsWith(".L")) return null;
   if (!yahooChecked) return "n/a — .L Quartale nicht gegen Yahoo NonGaap gesichert";
   if (!consensusCcy || !ttmCcy) return "n/a — .L Währung nicht gesichert";
-  if (nearPenceRatio(consensus, ttm) && !(isSterling(consensusCcy) && isSterling(ttmCcy))) {
-    return "n/a — .L EPS-Skala unplausibel (Faktor ~100 ohne GBp/GBP)";
-  }
   return null;
 }
 

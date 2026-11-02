@@ -388,7 +388,7 @@ async function annualizedFromConsensus(
   notes: string[],
   rates: Record<string, number> | null,
   loadYahoo: () => Promise<YahooAdjHit>,
-): Promise<{ gFwdPct: number; via: string; epsConsensus: number; epsTtm: number } | { excludeReason: string } | null> {
+): Promise<{ gFwdPct: number; via: string; epsConsensus: number; epsTtm: number; tDays: number } | { excludeReason: string } | null> {
   const ttm = await adjTtmOf(symbol, deps, notes);
   if (ttm.unusableReason) return { excludeReason: ttm.unusableReason };
   const yahooTtm = await loadYahoo();
@@ -400,21 +400,30 @@ async function annualizedFromConsensus(
   }
   const amount = resolved.adjTtm ?? yahooTtm.ttm;
   const amountCcy = resolved.adjTtm != null ? (ttm.currency ?? yahooTtm.currency) : yahooTtm.currency;
-  const basis = resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite;
+  const fy = yahooTtm.consensus ?? consensus;
+  if (yahooTtm.consensus && yahooTtm.consensus.date !== consensus.date) {
+    notes.push(`${symbol}: FMP-FY ${consensus.date} ist nicht das offene NonGaap-FY ${yahooTtm.consensus.date}`);
+  }
+  const basis = [
+    resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite,
+    yahooTtm.consensus
+      ? `Konsens Yahoo earningsTrendNonGaap offenes FY ${fy.date} = ${shownEps(fy.eps)}`
+      : `Konsens FMP FY ${fy.date} = ${shownEps(fy.eps)}`,
+  ].filter(Boolean).join(" · ");
   if (amount == null) {
     if (yahooTtm.unusableReason) return { excludeReason: yahooTtm.unusableReason };
     return { excludeReason: NO_ADJ_QUARTERS };
   }
   const filled = completeEpsCurrencies(
-    consensus.eps,
-    assumedCurrency(symbol, consensus.currency),
+    fy.eps,
+    assumedCurrency(symbol, fy.currency),
     amount,
     amountCcy,
   );
   if (filled.inferred) notes.push(`${symbol}: ${filled.inferred}`);
   const london = londonListingIssue(
     symbol,
-    consensus.eps,
+    fy.eps,
     amount,
     filled.consensusCcy,
     filled.ttmCcy,
@@ -428,7 +437,7 @@ async function annualizedFromConsensus(
     notes.push(`${symbol}: Währung fehlt`);
     return { excludeReason: "n/a — Währung fehlt auf einer EPS-Seite" };
   }
-  const aligned = alignConsensusToTtm(consensus.eps, filled.consensusCcy, amount, filled.ttmCcy, rates);
+  const aligned = alignConsensusToTtm(fy.eps, filled.consensusCcy, amount, filled.ttmCcy, rates);
   if ("error" in aligned) {
     notes.push(`${symbol}: ${aligned.error}`);
     return { excludeReason: `n/a — ${aligned.error}` };
@@ -436,13 +445,13 @@ async function annualizedFromConsensus(
   const forward = datedForward(
     aligned.consensus,
     aligned.ttm,
-    consensus.date,
-    consensus.daysToFyEnd,
-    consensus.horizonDays,
+    fy.date,
+    fy.daysToFyEnd,
+    fy.horizonDays,
     `${basis} · ${aligned.note}`,
   );
   if ("reason" in forward) return { excludeReason: forward.reason };
-  return { gFwdPct: forward.gFwdPct, via: forward.via, epsConsensus: aligned.consensus, epsTtm: aligned.ttm };
+  return { gFwdPct: forward.gFwdPct, via: forward.via, epsConsensus: aligned.consensus, epsTtm: aligned.ttm, tDays: fy.horizonDays };
 }
 
 function yahooMiss(symbol: string, sink: YahooCallDiag[]): string {
@@ -471,7 +480,7 @@ async function growthForHolding(
   if (consensus) {
     const grown = await annualizedFromConsensus(symbol, consensus, deps, notes, rates, yahooOnce);
     if (grown && "excludeReason" in grown) return { gFwdPct: null, via: "", excludeReason: grown.excludeReason, tDays: consensus.horizonDays };
-    if (grown) return { gFwdPct: grown.gFwdPct, via: grown.via, excludeReason: null, tDays: consensus.horizonDays };
+    if (grown) return { gFwdPct: grown.gFwdPct, via: grown.via, excludeReason: null, tDays: grown.tDays };
   }
   const yahoo = await yahooOnce();
   if (yahoo.unusableReason) return { gFwdPct: null, via: "", excludeReason: yahoo.unusableReason, tDays: yahoo.consensus?.horizonDays ?? null };
@@ -543,8 +552,8 @@ async function loadForward(index: GrowthIndex, deps: GrowthDeps): Promise<{ forw
             symbol,
             gAnnPct: grown.gFwdPct,
             indexWeight: 1,
-            weight: horizonWeightFactor(consensus.horizonDays),
-            tDays: consensus.horizonDays,
+            weight: horizonWeightFactor(grown.tDays),
+            tDays: grown.tDays,
             source: grown.via,
             excludeReason: null,
           }],

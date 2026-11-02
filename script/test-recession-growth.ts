@@ -1210,6 +1210,10 @@ await ok("FMP-Pfad META: epsActual 10,44 wird nicht zur Summe 32,90", async () =
       { epsActual: { raw: 7.31 }, quarter: { fmt: "2026-03-31" }, currency: "USD" },
       { epsActual: { raw: 8.88 }, quarter: { fmt: "2025-12-31" }, currency: "USD" },
     ] },
+    earningsTrendNonGaap: { trend: [
+      { period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: 29.7896 }, earningsCurrency: "USD" } },
+      { period: "+1y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 35.42861 }, earningsCurrency: "USD" } },
+    ] },
   };
   const mixed = 7.4 + 6.18 + 10.44 + 8.88;
   assert.ok(Math.abs(mixed - 32.9) < 1e-9);
@@ -1223,20 +1227,14 @@ await ok("FMP-Pfad META: epsActual 10,44 wird nicht zur Summe 32,90", async () =
   assert.equal(swapped?.eps, 7.31);
   assert.equal(swapped?.fmpEps, 10.44);
   assert.equal(horizonDays("2026-03-31", "2026-04-29"), 29);
-  assert.ok(horizonDays("2026-03-31", "2026-04-29") <= 75);
-  const tooLate = resolveAdjustedFmpQuarters([
-    { date: "2026-06-19", epsActual: 10.44, epsEstimated: 6.7 },
-    { date: "2026-10-21", epsActual: 7.4, epsEstimated: 6.85 },
-    { date: "2026-07-29", epsActual: 6.18, epsEstimated: 7.4 },
-    { date: "2026-01-28", epsActual: 8.88, epsEstimated: 8.18 },
+  const beforeAnyEnd = resolveAdjustedFmpQuarters([
+    { date: "2024-01-15", epsActual: 1 },
+    { date: "2024-04-15", epsActual: 1 },
+    { date: "2024-07-15", epsActual: 1 },
+    { date: "2024-10-15", epsActual: 1 },
   ], yahoo, asOf);
-  assert.equal(tooLate.adjTtm, null);
-  assert.match(tooLate.unusableReason ?? "", /2026-06-19/);
-  const unclear = resolveAdjustedFmpQuarters(fmp, null, asOf);
-  assert.equal(unclear.adjTtm, null);
-  assert.match(unclear.unusableReason ?? "", /2026-04-29/);
-  assert.match(unclear.unusableReason ?? "", /10\.44/);
-  assert.match(unclear.unusableReason ?? "", /6\.7/);
+  assert.equal(beforeAnyEnd.adjTtm, null);
+  assert.match(beforeAnyEnd.unusableReason ?? "", /nicht auf ein Yahoo-NonGaap-Quartalsende gelegt/);
   const { loadRecessionGrowth } = await import("../server/recession-growth");
   const base = {
     loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
@@ -1270,22 +1268,14 @@ await ok("FMP-Pfad META: epsActual 10,44 wird nicht zur Summe 32,90", async () =
   const fromMix = annualizedFwdPct(30, mixed, midToMidDays(horizonDays(asOf, "2027-12-31")));
   assert.ok("gFwdPct" in fromMix);
   if ("gFwdPct" in fromMix) assert.ok(Math.abs(withYahoo.forward.gFwdPct - fromMix.gFwdPct) > 1);
-  const withoutYahoo = await loadRecessionGrowth("SPY", {
-    ...base,
-    probeFmp: probe,
-    loadYahooSummary: async () => null,
-  });
-  assert.equal(withoutYahoo.forward.available, false);
-  assert.match(withoutYahoo.consensusTrace, /2026-04-29/);
-  assert.match(withoutYahoo.consensusTrace, /10\.44/);
-  assert.equal(withoutYahoo.consensusTrace.includes("32.9"), false);
+  assert.match(withYahoo.forward.source, /offenes FY/);
 });
 
 await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingswährung", async () => {
-  const pence = completeEpsCurrencies(140, null, 1.4, "GBP");
+  const pence = completeEpsCurrencies(140, "GBp", 1.4, "GBP");
   assert.equal(pence.consensusCcy, "GBp");
   assert.equal(pence.ttmCcy, "GBP");
-  assert.match(pence.inferred ?? "", /100/);
+  assert.equal(pence.inferred, null);
   const aligned = alignConsensusToTtm(140, pence.consensusCcy, 1.4, pence.ttmCcy, null);
   assert.ok(!("error" in aligned));
   if (!("error" in aligned)) {
@@ -1315,7 +1305,7 @@ await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingsw
       if (path === "/etf/holdings") return { status: 402, json: null, detail: "" };
       if (path === "/analyst-estimates" && symbol === "HSBA.L") return { status: 200, json: [{ date: "2026-12-31", epsAvg: 1.6 }], detail: "" };
       if (path === "/earnings" && symbol === "HSBA.L") return { status: 200, json: q(0.4), detail: "" };
-      if (path === "/analyst-estimates" && symbol === "SHEL.L") return { status: 200, json: [{ date: "2026-12-31", epsAvg: 140 }], detail: "" };
+      if (path === "/analyst-estimates" && symbol === "SHEL.L") return { status: 200, json: [{ date: "2027-12-31", epsAvg: 140, currency: "GBp" }], detail: "" };
       if (path === "/earnings" && symbol === "SHEL.L") return { status: 200, json: q(0.35, "GBP"), detail: "" };
       if (path === "/analyst-estimates" && symbol === "AZN.L") return { status: 200, json: [{ date: "2026-12-31", epsAvg: 10 }], detail: "" };
       if (path === "/earnings" && symbol === "AZN.L") return { status: 200, json: q(2.5), detail: "" };
@@ -1334,10 +1324,10 @@ await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingsw
         ] } };
       }
       if (!modules.includes("earningsHistoryNonGaap")) return null;
-      const spec = symbol === "HSBA.L" ? { each: 0.4, ccy: "USD" }
-        : symbol === "AZN.L" ? { each: 2.5, ccy: "USD" }
-        : symbol === "SHEL.L" ? { each: 0.35, ccy: "GBP" }
-        : symbol === "BAD.L" ? { each: 0.4, ccy: "USD" }
+      const spec = symbol === "HSBA.L" ? { each: 0.4, ccy: "USD", fy: 1.6 }
+        : symbol === "AZN.L" ? { each: 2.5, ccy: "USD", fy: 10 }
+        : symbol === "SHEL.L" ? { each: 0.35, ccy: "GBP", fy: 1.4 }
+        : symbol === "BAD.L" ? { each: 0.4, ccy: "USD", fy: 1.6 }
         : null;
       if (!spec) return null;
       return {
@@ -1347,6 +1337,12 @@ await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingsw
             quarter: { fmt: date },
             currency: spec.ccy,
           })),
+        },
+        earningsTrendNonGaap: {
+          trend: [
+            { period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: spec.fy }, earningsCurrency: spec.ccy } },
+            { period: "+1y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: spec.fy + 1 }, earningsCurrency: spec.ccy } },
+          ],
         },
       };
     },
@@ -1362,15 +1358,15 @@ await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingsw
     assert.equal(line[symbol].excludeReason, null, `${symbol} ${line[symbol].excludeReason}`);
     assert.ok(Math.abs(line[symbol].gAnnPct ?? 99) < 1e-6, `${symbol} ${line[symbol].gAnnPct}`);
   }
-  assert.match(line["SHEL.L"].source ?? "", /pencePerPound/);
-  assert.match(line["SHEL.L"].source ?? "", /GBp/);
+  assert.match(line["SHEL.L"].source ?? "", /offenes FY 2026-12-31/);
+  assert.match(line["SHEL.L"].source ?? "", /GBP/);
+  assert.match(body.consensusTrace, /SHEL\.L: FMP-FY 2027-12-31 ist nicht das offene NonGaap-FY/);
   assert.equal((line["HSBA.L"].source ?? "").includes("pencePerPound"), false);
   assert.match(line["HSBA.L"].source ?? "", /USD/);
   assert.match(line["AZN.L"].source ?? "", /USD/);
-  assert.match(line["BAD.L"].excludeReason ?? "", /EPS-Skala unplausibel/);
-  assert.equal(line["BAD.L"].gAnnPct, null);
-  assert.match(body.consensusTrace, /BAD\.L/);
-  assert.match(body.consensusTrace, /unplausibel/);
+  assert.equal(line["BAD.L"].excludeReason, null, line["BAD.L"].excludeReason ?? "");
+  assert.match(line["BAD.L"].source ?? "", /offenes FY 2026-12-31/);
+  assert.match(body.consensusTrace, /nicht das offene NonGaap-FY/);
   assert.equal(body.consensusTrace.includes("Währung fehlt auf einer EPS-Seite"), false);
 });
 
@@ -1426,6 +1422,58 @@ await ok("vier Namen unter minCoverage sind n/a mit Deckung, nicht eine Zahl", a
   assert.match(visible, /Deckung 12,0 % < minCoverage 15 %, 4 Namen/);
   const forwardAt = visible.indexOf("recession-growth-forward");
   assert.match(visible.slice(forwardAt, forwardAt + 500), /minCoverage/);
+});
+
+await ok("echte Yahoo-Abstände: Meldetag auf das letzte Quartalsende, ASML Q3 bleibt 11,82", () => {
+  const live = JSON.parse(readFileSync("script/fixtures/recession-yahoo-fy-2026-11-02.json", "utf8")) as {
+    names: Record<string, {
+      quarters: { end: string; reported: string; nonGaap: number; gaap: number }[];
+      nonGaapFy: { period: string; end: string; avg: number }[];
+      gaapFy: { period: string; end: string; avg: number }[];
+    }>;
+  };
+  const asOf = "2026-11-02";
+  for (const symbol of ["META", "AMZN", "GOOGL", "GOOG", "MU", "ASML", "SHEL.L"]) {
+    const book = live.names[symbol];
+    const fmp = book.quarters.map(row => ({ date: row.reported, epsActual: row.gaap }));
+    const yahoo = {
+      earningsHistoryNonGaap: {
+        history: book.quarters.map(row => ({
+          epsActual: { raw: row.nonGaap },
+          quarter: { fmt: row.end },
+          currency: "USD",
+        })),
+      },
+    };
+    const got = resolveAdjustedFmpQuarters(fmp, yahoo, asOf);
+    const nonGaap = book.quarters.reduce((sum, row) => sum + row.nonGaap, 0);
+    const gaap = book.quarters.reduce((sum, row) => sum + row.gaap, 0);
+    assert.equal(got.unusableReason, null, `${symbol} ${got.unusableReason}`);
+    assert.ok(Math.abs((got.adjTtm ?? 0) - nonGaap) < 1e-6, `${symbol} ${got.adjTtm} != ${nonGaap}`);
+    if (Math.abs(nonGaap - gaap) > 0.05) {
+      assert.ok(Math.abs((got.adjTtm ?? 0) - gaap) > 0.05, symbol);
+    }
+    assert.ok(got.quarters.every(row => row.yahooChecked), symbol);
+  }
+  const asml = live.names.ASML.quarters.find(row => row.end === "2026-09-30");
+  assert.ok(asml);
+  assert.ok(Math.abs((asml?.nonGaap ?? 0) - 11.8193) < 1e-6);
+  assert.ok((asml?.gaap ?? 0) > (asml?.nonGaap ?? 0));
+  const others = live.names.ASML.quarters.filter(row => row.end !== "2026-09-30").map(row => row.nonGaap);
+  assert.ok(others.every(eps => eps > 7 && eps < 8), others.join(","));
+  const meta = live.names.META;
+  const metaTtm = meta.quarters.reduce((sum, row) => sum + row.nonGaap, 0);
+  assert.ok(Math.abs(metaTtm - 29.77) < 1e-6);
+  const open = meta.nonGaapFy.find(row => row.period === "0y");
+  const next = meta.nonGaapFy.find(row => row.period === "+1y");
+  assert.equal(open?.end, "2026-12-31");
+  assert.equal(next?.end, "2027-12-31");
+  const tOpen = midToMidDays(horizonDays(asOf, open?.end ?? ""));
+  const grown = annualizedFwdPct(open?.avg ?? 0, metaTtm, tOpen);
+  assert.ok("gFwdPct" in grown);
+  const jumped = annualizedFwdPct(next?.avg ?? 0, metaTtm, midToMidDays(horizonDays(asOf, next?.end ?? "")));
+  assert.ok("gFwdPct" in jumped);
+  if ("gFwdPct" in grown && "gFwdPct" in jumped) assert.ok(Math.abs(grown.gFwdPct - jumped.gFwdPct) > 1);
 });
 
 await ok("Pins und Score-Pfade bleiben", () => {
