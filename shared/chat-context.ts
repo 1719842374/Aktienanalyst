@@ -448,7 +448,7 @@ export function withEarningsBriefFacts(ctx: ChatContext, brief: EarningsCallBrie
   if (brief?.source) facts.earningsCallQuelle = part("meta", brief.source);
   if (brief?.sourceUrl) facts.earningsCallQuelleUrl = brief.sourceUrl;
   const hinweis = brief?.summary
-    ? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null)
+    ? (brief.reason ?? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null))
     : (brief?.reason ?? "n/a — Earnings-Call noch nicht geladen");
   if (hinweis) facts.earningsCallHinweis = part("meta", hinweis);
   const fitted = fitFactGroup(facts, chatFactAllowedChars("earningsCall"));

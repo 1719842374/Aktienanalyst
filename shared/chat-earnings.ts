@@ -59,6 +59,37 @@ export function extractReleaseQuotes(text: string, max = EARNINGS_QUOTE_COUNT): 
   return out.slice(0, max);
 }
 
+/** Höchstlänge eines Transkript-Zitats (ganze Sätze bis zu dieser Länge). */
+export const EARNINGS_TRANSCRIPT_QUOTE_MAX_CHARS = 400;
+
+const TRANSCRIPT_TURN = /^([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){0,3}):\s+(.+)$/;
+const TRANSCRIPT_SKIP_SPEAKER = /^(operator|moderator|unknown|unidentified)/i;
+const TRANSCRIPT_COURTESY = /^(thank you|thanks|good (morning|afternoon|evening)|hello|hi|great|okay|sure|yes)\b/i;
+
+/**
+ * Management-Zitate aus einem FMP-Transkript ("Name: Text" je Wortmeldung): je Sprecher die
+ * ersten inhaltlichen Sätze, Moderator und Begrüßungen ausgenommen. Wörtlich, nicht umformuliert.
+ */
+export function extractTranscriptQuotes(content: string, max = EARNINGS_QUOTE_COUNT): string[] {
+  const out: string[] = [];
+  const speakers = new Set<string>();
+  for (const line of content.split(/\n+/)) {
+    const m = TRANSCRIPT_TURN.exec(line.trim());
+    if (!m || TRANSCRIPT_SKIP_SPEAKER.test(m[1]) || speakers.has(m[1])) continue;
+    const sentences = (m[2].match(/[^.!?]+[.!?]+/g) ?? []).map(s => s.trim()).filter(s => !TRANSCRIPT_COURTESY.test(s));
+    let quote = "";
+    for (const s of sentences) {
+      if ((quote ? quote.length + 1 : 0) + s.length > EARNINGS_TRANSCRIPT_QUOTE_MAX_CHARS) break;
+      quote = quote ? `${quote} ${s}` : s;
+    }
+    if (quote.length < EARNINGS_QUOTE_MIN_CHARS) continue;
+    speakers.add(m[1]);
+    out.push(`${m[1]}: „${quote}“`);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 export function earningsBriefNa(symbol: string, reason: string): EarningsCallBrief {
   return {
     symbol, status: "n/a", reason,
