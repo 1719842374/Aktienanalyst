@@ -56,7 +56,9 @@ import {
   type VolPoint,
 } from "../shared/recession-market-charts";
 import { fillSpyValuationGaps, parseYahooFactpack, YAHOO_FACTPACK_MODULES } from "../shared/yahoo-factpack";
+import { dropHoldingsReplacedPeClauses } from "../shared/spy-holdings-pe";
 import { fetchYahooQuoteSummaryResult } from "./yahoo-fetcher";
+import { loadSpyHoldingsAggregatePe } from "./spy-holdings-pe";
 
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
@@ -390,7 +392,14 @@ async function loadValuation(
   book: (typeof CHART_BOOKS)[number],
   bar: ChartBar,
   allowForward: boolean,
-): Promise<{ core: ReturnType<typeof valuationFromFmpRows>; missing: string | null; valuationLabel: string }> {
+): Promise<{
+  core: ReturnType<typeof valuationFromFmpRows>;
+  missing: string | null;
+  valuationLabel: string;
+  peSource: string | null;
+  peCoverage: number | null;
+  peEstimate: boolean;
+}> {
   const etfSources = await loadPrintSources(book.etf);
   const etfInst = instrumentFrom(book.etf, "etf", bar.close, etfSources, allowForward);
   let fallback: ValuationInstrument | null = null;
@@ -436,8 +445,29 @@ async function loadValuation(
   const valuationLabel = valuationLabelFor(chosen, book.etf);
   const sourceNotes = (chosen.symbol === book.etf ? etfSources.notes : fallbackSources?.notes ?? etfSources.notes);
   const gaps: string[] = [];
+  let peSource: string | null = null;
+  let peCoverage: number | null = null;
+  let peEstimate = false;
   if (valuationLabel !== "ETF-Proxy") {
     gaps.push(`Formel auf ${chosen.symbol} (Kurs und EPS), nicht auf ${book.etf}`);
+  }
+  // Holdings-Summe nur für das aktuelle SPY-KGV, nur wenn FMP selbst keins geliefert hat.
+  // Danach bleiben yahooFundamentalsWhenFmpEmpty und fillSpyValuationGaps die nächsten Stufen.
+  if (book.etf === "SPY" && allowForward && fmpCore.pe == null && bar.close > 0) {
+    try {
+      const agg = await loadSpyHoldingsAggregatePe();
+      if (agg.pe != null && agg.source) {
+        core = { ...core, pe: agg.pe };
+        peSource = agg.source;
+        peCoverage = agg.coverage;
+        peEstimate = agg.estimate;
+      } else if (agg.note) {
+        gaps.push(agg.note);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message.slice(0, 80) : "Fehler";
+      gaps.push(`n/a — PE: SPY-Holdings nicht aggregiert (${message})`);
+    }
   }
   if (book.etf === "SPY" && core.pe == null && bar.close > 0) {
     try {
@@ -466,6 +496,9 @@ async function loadValuation(
       }
     }
   }
+  if (peSource != null) {
+    core = { ...core, note: dropHoldingsReplacedPeClauses(core.note) };
+  }
   if (core.pe == null && !gaps.some(gap => gap.startsWith("n/a —"))) {
     const why = [...sourceNotes, ...priceNotes].filter(Boolean);
     gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
@@ -482,7 +515,14 @@ async function loadValuation(
   if (allowForward && core.pegFwd == null && core.gCons != null && core.gCons <= 0) {
     gaps.push("PEG fwd n/a: g<=0");
   }
-  return { core, missing: gaps.length ? gaps.join(" · ") : null, valuationLabel };
+  return {
+    core,
+    missing: gaps.length ? gaps.join(" · ") : null,
+    valuationLabel,
+    peSource,
+    peCoverage,
+    peEstimate,
+  };
 }
 
 export async function buildChartMarket(
@@ -518,6 +558,9 @@ export async function buildChartMarket(
         rsi: last.rsi,
         macdHist: last.hist,
         missing: loaded.missing,
+        peSource: loaded.peSource,
+        peCoverage: loaded.peCoverage,
+        peEstimate: loaded.peEstimate,
       };
     } catch (err) {
       console.error(`[RECESSION-CHARTS] valuation ${book.etf}`, err instanceof Error ? err.message : err);
@@ -647,6 +690,9 @@ async function buildFactpack(
     pegExpensive: v.pegExpensive,
     pegFwdExpensive: v.pegFwdExpensive,
     note,
+    peSource: loaded?.peSource ?? null,
+    peCoverage: loaded?.peCoverage ?? null,
+    peEstimate: loaded?.peEstimate ?? false,
   });
   return { pack, cacheable };
 }
@@ -687,7 +733,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
       res.status(400).json({ error: "etf muss SPY, QQQ, VGK oder ASHR sein" });
       return true;
     }
-    const key = `v4:${window}:${etf}:${date}`;
+    const key = `v5:${window}:${etf}:${date}`;
     const cached = cacheGet(factpackCache, key);
     if (cached) {
       res.json(cached);
@@ -709,7 +755,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
     return true;
   }
 
-  const key = `v4:${window}`;
+  const key = `v5:${window}`;
   const cached = cacheGet(bundleCache, key);
   if (cached) {
     res.json(cached);
