@@ -102,6 +102,11 @@ export function playableChapters(episode: PlayerEpisode): PlayerChapter[] {
   return episode.chapters.filter(c => c.status === "ok" && c.sentences.length > 0);
 }
 
+/** Listenzeile eines Kapitels. Titel mit eigener Nummer („1. Gold AISC“, Treiber-Rang) bekommen keine zweite. */
+export function chapterListLabel(index: number, title: string): string {
+  return /^\d+\.\s/.test(title) ? title : `${index + 1}. ${title}`;
+}
+
 /**
  * Sprechform eines Satzes für Server- und Browser-Stimme. Das Transkript zeigt weiter den Originalsatz.
  * Nur Kürzel, die Stimmen sonst buchstabieren; Zahlen liest die Stimme selbst.

@@ -453,6 +453,8 @@ async function main() {
   const panelHtml = renderToStaticMarkup(React.createElement(PodcastProbePanel, { state: { phase: "done", result: withDrivers }, playRequest: 1 }));
   assert.ok(panelHtml.includes('data-testid="podcast-player"'));
   assert.ok(panelHtml.includes("1. Gold AISC"));
+  assert.equal(panelHtml.includes("2. 1. Gold AISC"), false);
+  assert.ok(panelHtml.includes("1. Einstieg"));
   assert.ok(panelHtml.includes("Audio: ok — Piper · de_DE-thorsten-high"));
   const page = readFileSync("client/src/pages/Researcher.tsx", "utf8");
   assert.match(page, /setPodcastPlayRequest\(n => n \+ 1\)/);
