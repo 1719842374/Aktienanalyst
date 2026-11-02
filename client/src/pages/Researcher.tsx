@@ -109,6 +109,7 @@ export default function Researcher() {
   const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
   const [podcastError, setPodcastError] = useState<string | null>(null);
+  const [podcastPlayRequest, setPodcastPlayRequest] = useState(0);
 
   async function runPodcast() {
     setPodcastPhase("loading");
@@ -123,6 +124,7 @@ export default function Researcher() {
       }
       setPodcastResult(body as PodcastProbeResult);
       setPodcastPhase("done");
+      setPodcastPlayRequest(n => n + 1);
     } catch (err: unknown) {
       setPodcastPhase("error");
       setPodcastError(err instanceof Error ? err.message : "n/a — Podcast-Abruf fehlgeschlagen");
@@ -311,7 +313,7 @@ export default function Researcher() {
               <span className="hidden xs:inline sm:inline">Briefing</span>
             </button>
             <button
-              onClick={() => { void runPodcast(); }}
+              onClick={() => { if (podcastPhase === "done" && podcastResult?.script) setPodcastPlayRequest(n => n + 1); else void runPodcast(); }}
               className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-violet-300 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30 shrink-0"
               title="Key Driver für Börse, Wirtschaft und Finanzen, danach ein Podcast-Skript"
               data-testid="button-podcast"
@@ -375,7 +377,7 @@ export default function Researcher() {
       <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
         {podcastPhase !== "idle" && (
           <div className="mb-4 min-w-0">
-            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} playRequest={podcastPlayRequest} />
           </div>
         )}
         {activeTab === "macro" && (

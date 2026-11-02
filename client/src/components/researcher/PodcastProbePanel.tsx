@@ -2,8 +2,11 @@
  * Anzeige der Podcast-Probe. Fehlendes bleibt „n/a — Grund“.
  * Der Block bricht um, damit 375 und 1440 nicht seitlich überlaufen.
  */
-import React from "react";
+import React, { useMemo, useState } from "react";
 import type { PodcastProbeResult } from "../../../../server/podcast-pipeline";
+import { audioStatusLine, type TtsEpisodeStatus } from "@shared/podcast-player";
+import { researcherPodcastEpisode } from "@shared/researcher-podcast-episode";
+import { PodcastPlayer } from "@/components/podcast/PodcastPlayer";
 
 export const PODCAST_REQUEST_TIMEOUT_MS = 120_000;
 
@@ -22,6 +25,7 @@ function driverValueLine(driver: { value: number; unit: string | null; asOf: str
 export function PodcastProbePanel({
   viewportWidth,
   state,
+  playRequest,
 }: {
   viewportWidth?: number;
   state: {
@@ -29,8 +33,15 @@ export function PodcastProbePanel({
     result?: PodcastProbeResult | null;
     error?: string | null;
   };
+  /** Jede Erhöhung startet den Player (Podcast-Knopf in der Kopfzeile). */
+  playRequest?: number;
 }) {
   const result = state.result;
+  const [liveAudio, setLiveAudio] = useState<TtsEpisodeStatus | null>(null);
+  const episode = useMemo(
+    () => (result?.script ? researcherPodcastEpisode(result.script, result.drivers, result.drivers[0]?.asOf ?? null) : null),
+    [result],
+  );
   return (
     <section
       data-testid="podcast-probe"
@@ -100,20 +111,15 @@ export function PodcastProbePanel({
 
           <div data-testid="podcast-script" className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-foreground">Skript</div>
-            {result.script ? (
-              <div className="space-y-1">
-                <p className="text-[12px] font-semibold text-foreground break-words">{result.script.title}</p>
-                <p className="text-[12px] leading-relaxed text-foreground whitespace-pre-wrap break-words">
-                  {result.script.spokenScript}
-                </p>
-              </div>
+            {result.script && episode ? (
+              <PodcastPlayer episode={episode} scope="researcher" playRequest={playRequest} onAudioStatus={setLiveAudio} />
             ) : (
               <p className="text-[12px] text-foreground break-words">{result.scriptStatus}</p>
             )}
           </div>
 
           <p className="text-[11px] text-foreground break-words" data-testid="podcast-audio">
-            Audio: {result.audio.reason}
+            Audio: {liveAudio ? audioStatusLine(liveAudio) : result.audio.reason}
           </p>
         </div>
       )}
