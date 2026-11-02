@@ -400,12 +400,12 @@ export const CAMBRIDGE_ARCHIVE_SHARES: readonly MinerCountryShare[] = [
 /** Jüngere Länder-Schätzung, getrennt vom Cambridge-Archiv Januar 2022. */
 export const HASHRATE_INDEX_CHINA_Q4: MinerCountryShare = {
   iso2: "CN",
-  name: "China (Hashrate Index, Q4 2026)",
+  name: "China (Hashrate Index, Q3 2026)",
   asOf: "2026-09",
   sharePct: 11.7,
   hashrateEH: 110,
   label: "Schätzung",
-  sourceLabel: "Hashrate Index, Global Hashrate Heatmap Q4 2026, 05.10.2026",
+  sourceLabel: "Hashrate Index, Global Hashrate Heatmap Q3 2026, 05.10.2026",
   sourceUrl: "https://hashrateindex.com/blog/global-hashrate-heatmap-update-q4-2026-c/",
   note: "Schätzung. Artikel vom 05.10.2026 zum Stand Ende Q3 2026: China etwa 110 EH/s, 11.7 % von etwa 941 EH/s Netz. Die Tilde steht in der Quelle. Kein Primärfiling und nicht das Cambridge-Archiv Januar 2022.",
 };
