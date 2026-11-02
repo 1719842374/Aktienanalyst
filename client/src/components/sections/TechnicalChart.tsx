@@ -33,6 +33,10 @@ import {
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
 import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import {
+  chartAmpelFromAnalysis, paintPhaseRows, phasesByDate, TA_PHASE_BADGE, TA_PHASE_STROKE,
+  type ChartAmpel, type TaPhase,
+} from "@shared/ta-phase";
 
 export type { TimeRange };
 
@@ -363,6 +367,8 @@ export function TechnicalChart({
   const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
   // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
+  const chartAmpel = useMemo(() => chartAmpelFromAnalysis(data), [data]);
+  const phaseByDateMap = useMemo(() => phasesByDate(fullSeries.points, chartAmpel.moat), [fullSeries, chartAmpel.moat]);
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
   const scenarioCone = useMemo(() => {
     if (!showCone) return null;
@@ -371,6 +377,8 @@ export function TechnicalChart({
     return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarlo);
   }, [showCone, data, aBuilt.points, monteCarlo]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
+  const lineEndPhase = aBuilt.points.length ? (phaseByDateMap.get(aBuilt.points[aBuilt.points.length - 1].date) ?? null) : null;
+  const ampelBadge = <ChartAmpelBadge ampel={chartAmpel} lineEndPhase={lineEndPhase} />;
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
@@ -1039,7 +1047,7 @@ export function TechnicalChart({
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone}>
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={ampelBadge}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -1068,6 +1076,7 @@ export function TechnicalChart({
                 priceFactor={priceFactor}
                 cone={scenarioCone}
                 fund={fundOverlay}
+                phases={phaseByDateMap}
               />
             </div>
             {narrow && showVolume && (
@@ -1125,6 +1134,8 @@ export function TechnicalChart({
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
               measurement={measurement}
+              phases={phaseByDateMap}
+              overlay={ampelBadge}
             />
           )}
           {showKursB && (
@@ -1694,7 +1705,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
-  priceFactor = 1, cone = null, fund = null,
+  priceFactor = 1, cone = null, fund = null, phases = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1729,6 +1740,8 @@ function PricePane({
   cone?: ScenarioCone | null;
   /** Earnings Yield / ROIC / Peer, nur Anzeige. null = keine zusätzliche Serie. */
   fund?: FundJoinPoint[] | null;
+  /** Phasenfarbe der Kurslinie. null = eine Farbe, wie bisher. */
+  phases?: Map<string, TaPhase | null> | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1739,6 +1752,8 @@ function PricePane({
     const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
+  const painted = useMemo(() => (phases ? paintPhaseRows(chartData, phases) : null), [chartData, phases]);
+  const plotData = painted ?? chartData;
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1767,7 +1782,7 @@ function PricePane({
     <div ref={plotRef} className="h-full w-full">
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
-        data={chartData}
+        data={plotData}
         margin={dense ? { top: 2, right: rightAxis ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: rightAxis ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
@@ -1856,11 +1871,19 @@ function PricePane({
           }
           const bbWidth = dp.bbUpper != null && dp.bbLower != null ? formatPx(dp.bbUpper - dp.bbLower) : null;
           const dv = dp as WindowPoint & DividendFields;
+          const phase = (dp as { _phase?: TaPhase | null })._phase ?? null;
+          const phaseStroke = phase ? TA_PHASE_STROKE[phase] : closeStroke;
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
               {dp.close != null && Number.isFinite(dp.close) && (
-                <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{formatPx(dp.close)}</span></div>
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: phaseStroke }}>{closeName}</span>
+                  <span className="font-mono">{formatPx(dp.close)}</span>
+                </div>
+              )}
+              {phase && (
+                <div className="font-semibold" style={{ color: phaseStroke }}>Ampel: {phase}</div>
               )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
@@ -1879,7 +1902,7 @@ function PricePane({
               {fund && (dp.close != null && Number.isFinite(dp.close)
                 ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
                 : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
+              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx", "_phA", "_phN", "_phV", "_phBase"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
                   <span className="font-mono">{formatPx(Number(p.value))}</span>
@@ -1937,7 +1960,16 @@ function PricePane({
             )} />
           </>
         )}
-        <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        {painted ? (
+          <>
+            <Line yAxisId="price" type="monotone" dataKey="_phBase" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="_phA" name="ATTRAKTIV" stroke={TA_PHASE_STROKE.ATTRAKTIV} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="_phN" name="NEUTRAL" stroke={TA_PHASE_STROKE.NEUTRAL} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="_phV" name="VORSICHTIG" stroke={TA_PHASE_STROKE.VORSICHTIG} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+          </>
+        ) : (
+          <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
         ))}
@@ -2202,7 +2234,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
-  priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
+  priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
 }: {
   label: string;
   labelClassName: string;
@@ -2240,13 +2272,15 @@ function BandStack({
   widthScale?: number;
   scrollToEnd?: boolean;
   alignedPoints?: WindowPoint[];
+  phases?: Map<string, TaPhase | null> | null;
+  overlay?: ReactNode;
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
   const compact = count > 1;
   const aligned = alignedPoints ?? series.points;
   return (
-    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd}>
+    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd} overlay={overlay}>
     <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
@@ -2282,6 +2316,7 @@ function BandStack({
               ccy={ccy}
               priceFactor={priceFactor}
               cone={cone}
+              phases={phases}
             />
           )}
         </div>
@@ -2297,6 +2332,27 @@ function BandStack({
       )}
     </div>
     </TaPlotScroll>
+  );
+}
+
+function ChartAmpelBadge({ ampel, lineEndPhase }: { ampel: ChartAmpel; lineEndPhase: TaPhase | null }) {
+  const phase = ampel.phase;
+  return (
+    <div
+      className={`pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${
+        phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground"
+      }`}
+      data-testid="chart-ampel-label"
+      data-phase={phase ?? ""}
+      data-buyscore={ampel.buyScore ?? ""}
+      data-consistent={ampel.contradictsHeader ? "0" : "1"}
+      data-override={ampel.overrideActive ? "1" : "0"}
+      data-rsl-percentile={ampel.rslPercentile == null ? "" : String(ampel.rslPercentile)}
+      data-line-end={lineEndPhase ?? ""}
+      title={ampel.detail ?? undefined}
+    >
+      {phase ? `Ampel: ${phase}` : "Ampel: n/a"}
+    </div>
   );
 }
 
