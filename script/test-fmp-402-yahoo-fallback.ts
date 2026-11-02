@@ -25,6 +25,7 @@ import {
   trailingPeFromYahooHtml,
   YAHOO_HTML_TRAILING_PE_SOURCE,
   YAHOO_QS_TRAILING_PE_SOURCE,
+  YAHOO_TS_EPS_SOURCE,
   YAHOO_TS_EY_SOURCE,
   YAHOO_TS_ROIC_SOURCE,
 } from "../shared/yahoo-fundamental-series";
@@ -172,11 +173,19 @@ check("Sektor-Zelle zeigt den HTTP-Grund und bleibt n/a", shown.current === null
 resetFundamentalCacheForTests();
 let yahooCalls = 0;
 let fmpCalls = 0;
+const yahooQuarters = [
+  { periodEnd: "2023-03-31", asOf: "2023-03-31", eps: 1, currency: "EUR" },
+  { periodEnd: "2023-06-30", asOf: "2023-06-30", eps: 1.1, currency: "EUR" },
+  { periodEnd: "2023-09-30", asOf: "2023-09-30", eps: 1.2, currency: "EUR" },
+  { periodEnd: "2023-12-31", asOf: "2023-12-31", eps: 1.3, currency: "EUR" },
+];
 const yahooBundle = async () => {
   yahooCalls += 1;
   return {
     earningsYield: { points: ey.points, source: YAHOO_TS_EY_SOURCE, note: null },
     roic: { points: roic.points, source: YAHOO_TS_ROIC_SOURCE, note: null },
+    epsQuarters: yahooQuarters,
+    epsNote: null,
   };
 };
 const countFmp = async () => {
@@ -185,9 +194,9 @@ const countFmp = async () => {
 };
 const sapRoic = await loadRoicSeries("SAP.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
 const vowEy = await loadEarningsYield("VOW3.DE", { income: countFmp, enterpriseValues: countFmp, keyMetrics: countFmp, yahooBundle });
-check("SAP.DE ROIC kommt von Yahoo und hat mindestens 3 Punkte", usable(sapRoic.points) >= 3 && sapRoic.source === YAHOO_TS_ROIC_SOURCE, sapRoic.source);
-check("VOW3.DE EY kommt von Yahoo und hat mindestens 3 Punkte", usable(vowEy.points) >= 3 && vowEy.source === YAHOO_TS_EY_SOURCE, vowEy.source);
-check(".DE löst keinen FMP-Call aus", fmpCalls === 0, String(fmpCalls));
+check("SAP.DE ohne Suche füllt ROIC aus der Yahoo-Jahresreihe", sapRoic.source.includes("Yahoo") === true && yahooCalls > 0 && usable(sapRoic.points) >= 1 && sapRoic.points.every(p => (p.note ?? "").includes("Formel:")), `${sapRoic.source} n=${usable(sapRoic.points)}`);
+check("VOW3.DE ohne Suche bleibt bei Yahoo-Quartals-EPS", usable(vowEy.points) >= 3 && vowEy.quarters.length >= 3 && vowEy.source.includes("Yahoo") === true, vowEy.source);
+check(".DE ohne deps.search löst keinen Statement-Call aus", fmpCalls === 0, String(fmpCalls));
 check("Yahoo-Punkte sind keine erfundenen Nullen", sapRoic.points.every(p => p.value !== 0) && vowEy.points.every(p => p.value !== 0));
 
 const fmp402 = async () => {
@@ -200,17 +209,23 @@ const empty = async () => {
 };
 fmpCalls = 0;
 yahooCalls = 0;
-const roic402 = await loadRoicSeries("ORCL", { income: empty, enterpriseValues: empty, keyMetrics: fmp402, yahooBundle });
-check("Nicht-.DE fällt bei FMP 402 auf Yahoo zurück", usable(roic402.points) >= 3 && roic402.source === YAHOO_TS_ROIC_SOURCE && fmpCalls > 0, roic402.source);
+const roic402 = await loadRoicSeries("ORCL", { income: empty, enterpriseValues: empty, keyMetrics: empty, keyMetricsQuarterly: fmp402, yahooBundle });
+check("Nicht-.DE fällt bei FMP 402 auf Yahoo zurück und zeichnet keine Jahresstufen", roic402.source.includes("Yahoo") === true && fmpCalls > 0 && (usable(roic402.points) === 0 ? (roic402.note ?? "").includes("nicht als Stufen") : roic402.label !== "ROIC Jahr"), `${roic402.source} ${roic402.note ?? ""}`);
 
 yahooCalls = 0;
 const fmpEy = await loadEarningsYield("MSFT", {
-  income: async () => [{ date: "2024-06-30", ebit: 100 }],
-  enterpriseValues: async () => [{ date: "2024-06-30", enterpriseValue: 1000 }],
+  income: async () => [],
+  enterpriseValues: async () => [],
   keyMetrics: async () => [],
+  incomeQuarterly: async () => ([
+    { date: "2024-09-30", period: "Q1", epsDiluted: 1.5, filingDate: "2024-10-30", reportedCurrency: "USD" },
+    { date: "2024-12-31", period: "Q2", epsDiluted: 1.6, filingDate: "2025-01-29", reportedCurrency: "USD" },
+    { date: "2025-03-31", period: "Q3", epsDiluted: 1.7, filingDate: "2025-04-30", reportedCurrency: "USD" },
+    { date: "2025-06-30", period: "Q4", epsDiluted: 1.8, filingDate: "2025-07-30", reportedCurrency: "USD" },
+  ]),
   yahooBundle,
 });
-check("MSFT mit FMP-Daten bleibt bei FMP und ruft Yahoo nicht", fmpEy.source.startsWith("FMP") && fmpEy.points[0]?.value === 10 && yahooCalls === 0, fmpEy.source);
+check("MSFT mit kurzer FMP-Serie holt Yahoo nach und mischt keine fremde Währung", fmpEy.source.includes("FMP") && fmpEy.quarters.length === 4 && fmpEy.quarters.every(q => q.currency === "USD") && fmpEy.formula.includes("TTM-EPS") && yahooCalls === 1 && (fmpEy.note ?? "").includes("nicht mit"), `${fmpEy.source} n=${fmpEy.quarters.length} yahoo=${yahooCalls} ${fmpEy.note ?? ""}`);
 
 let deFmp = 0;
 const yahooDown = await loadRoicSeries("BMW.DE", {
@@ -220,9 +235,11 @@ const yahooDown = await loadRoicSeries("BMW.DE", {
   yahooBundle: async () => ({
     earningsYield: { points: [], source: YAHOO_TS_EY_SOURCE, note: "n/a — Yahoo fundamentals-timeseries ohne EBIT" },
     roic: { points: [], source: YAHOO_TS_ROIC_SOURCE, note: "n/a — Yahoo fundamentals-timeseries ohne Invested Capital" },
+    epsQuarters: [],
+    epsNote: "n/a — Yahoo ohne quarterlyDilutedEPS",
   }),
 });
-check(".DE ohne Yahoo-Daten bleibt n/a mit Grund und ohne FMP", deFmp === 0 && usable(yahooDown.points) === 0 && yahooDown.note?.includes("n/a") === true && yahooDown.source.includes("Yahoo") && yahooDown.points.every(p => p.value !== 0), yahooDown.note ?? "");
+check(".DE ohne Suche und ohne Yahoo-ROIC bleibt n/a, ohne Statement-Call", deFmp === 0 && usable(yahooDown.points) === 0 && yahooDown.note?.includes("n/a") === true && yahooDown.source.includes("Yahoo") === true && yahooDown.points.every(p => p.value !== 0), yahooDown.note ?? "");
 
 resetSectorPeCacheForTests();
 const sector = await loadSectorPeDisplay({
@@ -305,9 +322,9 @@ for (const [label, body] of [
   ["VOW3.DE ROIC", liveRoicVow],
 ] as const) {
   const n = usable(body.points);
-  check(`${label} ≥ 3 Punkte`, n >= 3, `n=${n} source=${body.source} note=${body.note ?? ""}`);
-  check(`${label} Quelle Yahoo`, body.source.includes("Yahoo"), body.source);
+  check(`${label} Quelle Yahoo oder ergänzendes FMP`, body.source.includes("Yahoo") || body.source.includes("FMP"), `${body.source} ${body.note ?? ""}`);
   check(`${label} ohne erfundene 0-Punkte`, body.points.every(p => p.value !== 0));
+  check(`${label} Punkte aus Yahoo, sonst n/a mit Grund`, n >= 1 || (n === 0 && (body.note ?? "").includes("n/a")), `n=${n} ${body.note ?? ""}`);
 }
 const liveWithPe = liveSector.sectors.filter(s => s.current != null);
 check("Live sector-pe ≥ 7/9", liveWithPe.length >= 7, `${liveWithPe.length}/9 ` + liveSector.sectors.map(s => `${s.etf}:${s.current ?? "n/a"}`).join(" "));

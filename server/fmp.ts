@@ -705,6 +705,12 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpKeyMetricsQuarterly(symbol: string, limit: number) {
+  // GET /stable/key-metrics?symbol=X&period=quarter&limit=
+  // returnOnInvestedCapital bleibt die Dezimalquote, wie in der Jahresreihe.
+  return fmpFetch(`/key-metrics`, { symbol, period: "quarter", limit: String(limit) });
+}
+
 export async function fmpEnterpriseValues(symbol: string, limit = 5) {
   // GET /stable/enterprise-values?symbol=AAPL&limit=5 — gleiche FMP-Quelle, kein neuer Anbieter.
   return fmpFetch(`/enterprise-values`, { symbol, limit: String(limit) });
@@ -767,6 +773,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   currency?: string;
   exchangeFullName?: string;
   exchange?: string;
+  isin?: string;
 }>> {
   if (!query || query.length < 1) return [];
   try {
@@ -789,6 +796,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
         currency: row.currency,
         exchangeFullName: row.exchangeFullName || row.stockExchange || "",
         exchange: row.exchangeShortName || row.exchange,
+        isin: typeof row.isin === "string" ? row.isin : undefined,
       }))
       .slice(0, limit);
   } catch { return []; }

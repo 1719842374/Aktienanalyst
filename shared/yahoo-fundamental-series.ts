@@ -3,12 +3,14 @@
  * Earnings Yield = EBIT / EV, ROIC = NOPAT / Invested Capital.
  * Fehlende oder nur als Platzhalter genullte Felder bleiben n/a, nie 0.
  */
-import { earningsYieldPct, type FundamentalPoint } from "./earnings-yield-roic";
+import { earningsYieldPct, type EpsQuarter, type FundamentalPoint, type RoicPeriod, type TtmPrint } from "./earnings-yield-roic";
 
 export const YAHOO_QS_EY_SOURCE = "Yahoo quoteSummary incomeStatementHistory + defaultKeyStatistics.enterpriseValue";
 export const YAHOO_QS_ROIC_SOURCE = "Yahoo quoteSummary incomeStatementHistory + balanceSheetHistory";
 export const YAHOO_TS_EY_SOURCE = "Yahoo fundamentals-timeseries annualEBIT + annualEnterpriseValue";
 export const YAHOO_TS_ROIC_SOURCE = "Yahoo fundamentals-timeseries annualEBIT, annualTaxProvision, annualPretaxIncome, annualInvestedCapital";
+export const YAHOO_TS_EPS_SOURCE = "Yahoo fundamentals-timeseries quarterlyDilutedEPS";
+export const YAHOO_EPS_ASOF_NOTE = "Zeitstempel ist das Yahoo-asOfDate (Periodenende), kein separates Filing-Datum";
 export const YAHOO_QS_TRAILING_PE_SOURCE = "Yahoo quoteSummary summaryDetail.trailingPE";
 export const YAHOO_V7_TRAILING_PE_SOURCE = "Yahoo v7 quote trailingPE";
 export const YAHOO_TS_TRAILING_PE_SOURCE = "Yahoo fundamentals-timeseries trailingPeRatio";
@@ -19,6 +21,18 @@ const UNIX_MS_CUTOFF = 10_000_000_000;
 
 /** Tage eines Schaltjahrs, damit ein Geschäftsjahresende nicht aus dem Fenster fällt. */
 export const DAYS_PER_FISCAL_YEAR = 366;
+
+export const YAHOO_EPS_TYPES = ["quarterlyDilutedEPS", "quarterlyBasicEPS", "trailingDilutedEPS"] as const;
+export const YAHOO_ANNUAL_EPS_TYPE = "annualDilutedEPS";
+/** Quartalsbestandteile für ROIC. Dieselbe NOPAT/Capital-Rechnung wie die Jahresreihe, je Quartal. */
+export const YAHOO_QUARTER_ROIC_TYPES = [
+  "quarterlyOperatingIncome",
+  "quarterlyEBIT",
+  "quarterlyPretaxIncome",
+  "quarterlyTaxProvision",
+  "quarterlyInvestedCapital",
+] as const;
+export const YAHOO_QUARTER_ROIC_SOURCE = "Yahoo fundamentals-timeseries quarterlyOperatingIncome, quarterlyPretaxIncome, quarterlyTaxProvision, quarterlyInvestedCapital";
 
 export const YAHOO_ANNUAL_TYPES = [
   "annualEBIT",
@@ -211,6 +225,82 @@ export function annualsFromTimeseries(json: unknown): AnnualFundamental[] {
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function dedupeQuarters(rows: EpsQuarter[]): EpsQuarter[] {
+  const byPeriod = new Map<string, EpsQuarter>();
+  for (const row of rows) {
+    const prev = byPeriod.get(row.periodEnd);
+    if (!prev || row.asOf >= prev.asOf) byPeriod.set(row.periodEnd, row);
+  }
+  return Array.from(byPeriod.values()).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+}
+
+/** Quartals-EPS. Yahoo liefert kein Filing-Datum; asOf bleibt das asOfDate der Reihe. */
+export function epsQuartersFromTimeseries(json: unknown): { quarters: EpsQuarter[]; note: string | null } {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byType = new Map<string, EpsQuarter[]>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    if (!rec) continue;
+    for (const type of YAHOO_EPS_TYPES) {
+      const rows = rec[type];
+      if (!Array.isArray(rows)) continue;
+      const list = byType.get(type) ?? [];
+      for (const cell of rows) {
+        const parsed = readTimeseriesCell(cell);
+        if (!parsed || !Number.isFinite(parsed.value)) continue;
+        list.push({ periodEnd: parsed.date, asOf: parsed.date, eps: parsed.value, currency: parsed.currency });
+      }
+      byType.set(type, list);
+    }
+  }
+  const diluted = dedupeQuarters(byType.get("quarterlyDilutedEPS") ?? []);
+  const basic = dedupeQuarters(byType.get("quarterlyBasicEPS") ?? []);
+  const quarters = diluted.length > 0 ? diluted : basic;
+  if (quarters.length === 0) return { quarters: [], note: "n/a — Yahoo ohne quarterlyDilutedEPS" };
+  return { quarters, note: YAHOO_EPS_ASOF_NOTE };
+}
+
+/** Fertiges TTM. Wird nicht als Quartal summiert. */
+export function ttmPrintsFromTimeseries(json: unknown): TtmPrint[] {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byDate = new Map<string, TtmPrint>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    const rows = rec?.trailingDilutedEPS;
+    if (!Array.isArray(rows)) continue;
+    for (const cell of rows) {
+      const parsed = readTimeseriesCell(cell);
+      if (!parsed || !Number.isFinite(parsed.value)) continue;
+      const prev = byDate.get(parsed.date);
+      if (!prev) byDate.set(parsed.date, { asOf: parsed.date, eps: parsed.value, currency: parsed.currency });
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.asOf.localeCompare(b.asOf));
+}
+
+/** Jahres-EPS. Ersatz nach trailingDilutedEPS, nicht als Quartal summiert. */
+export function annualEpsFromTimeseries(json: unknown): TtmPrint[] {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byDate = new Map<string, TtmPrint>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    const rows = rec?.[YAHOO_ANNUAL_EPS_TYPE];
+    if (!Array.isArray(rows)) continue;
+    for (const cell of rows) {
+      const parsed = readTimeseriesCell(cell);
+      if (!parsed || !Number.isFinite(parsed.value)) continue;
+      if (!byDate.has(parsed.date)) byDate.set(parsed.date, { asOf: parsed.date, eps: parsed.value, currency: parsed.currency });
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.asOf.localeCompare(b.asOf));
+}
+
 function operatingResult(row: AnnualFundamental): MoneyPoint | null {
   return row.ebit ?? row.operatingIncome;
 }
@@ -277,6 +367,44 @@ export function roicPointsFromAnnuals(rows: AnnualFundamental[]): { points: Fund
   }
   const any = points.some(p => p.value != null);
   return { points, note: any ? null : (points.find(p => p.note)?.note ?? "n/a — ROIC nicht berechenbar") };
+}
+
+/** Quartals-ROIC als Quote in Prozent. asOf ist das Yahoo-asOfDate, kein separates Filing. */
+export function roicPeriodsFromTimeseries(json: unknown): RoicPeriod[] {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  const byDate = new Map<string, AnnualFundamental>();
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    if (!rec) continue;
+    for (const type of YAHOO_QUARTER_ROIC_TYPES) {
+      const rows = rec[type];
+      if (!Array.isArray(rows)) continue;
+      const field = type === "quarterlyEBIT" || type === "quarterlyOperatingIncome"
+        ? (type === "quarterlyEBIT" ? "ebit" : "operatingIncome")
+        : type === "quarterlyPretaxIncome"
+          ? "pretax"
+          : type === "quarterlyTaxProvision"
+            ? "tax"
+            : "investedCapital";
+      for (const cell of rows) {
+        const parsed = readTimeseriesCell(cell);
+        if (!parsed) continue;
+        const row = byDate.get(parsed.date) ?? emptyAnnual(parsed.date);
+        row[field] = { value: parsed.value, currency: parsed.currency };
+        byDate.set(parsed.date, row);
+      }
+    }
+  }
+  const out: RoicPeriod[] = [];
+  for (const row of Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))) {
+    const built = roicPointsFromAnnuals([row]);
+    const value = built.points[0]?.value;
+    if (value == null || !Number.isFinite(value)) continue;
+    out.push({ asOf: row.date, periodEnd: row.date, value });
+  }
+  return out;
 }
 
 function usableCount(points: FundamentalPoint[]): number {
