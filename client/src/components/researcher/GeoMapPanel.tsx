@@ -17,6 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { naReasonFromError, readApiJson } from "@shared/read-api-json";
 import { MinerMapPanel } from "@/components/researcher/MinerMapPanel";
 import {
+  GEO_BUBBLE_GEOMETRY,
   GEO_MAP_CLIENT_TIMEOUT_MS,
   GEO_MAP_PENDING_RETRY_LIMIT,
   GEO_MAP_PENDING_RETRY_MS,
@@ -24,6 +25,7 @@ import {
   MINER_LOCATION_NOTE,
   colorForPercentile,
   metricPercentiles,
+  geoMapLoadMatches,
   radiusForPercentile,
   SECTOR_LEGEND_FRACTION_DIGITS,
   sectorColor,
@@ -159,7 +161,16 @@ function goldBubbleTitle(c: GoldMapCountry): string {
   return bits.length > 0 ? `${c.name}: ${bits.join(" · ")}` : c.name;
 }
 
-function GoldBubbles({ bubbles, percentiles }: { bubbles: GoldMapCountry[]; percentiles: Map<string, number | null> }) {
+/** Capex, Sektor und Miner bleiben bei 400. Gold braucht oben Platz für Radius und Spreizung. */
+const GOLD_MAP_WIDTH = 800;
+const GOLD_MAP_HEIGHT = 400 + 4 * GEO_BUBBLE_GEOMETRY.maxPx;
+
+function GoldBubbles({ bubbles, percentiles, selected, onSelect }: {
+  bubbles: GoldMapCountry[];
+  percentiles: Map<string, number | null>;
+  selected: string | null;
+  onSelect: (iso2: string) => void;
+}) {
   const { projection } = useMapContext();
   const placed = useMemo(() => {
     const points: MarkerPixel[] = [];
@@ -176,9 +187,12 @@ function GoldBubbles({ bubbles, percentiles }: { bubbles: GoldMapCountry[]; perc
       {placed.map(({ country, dx, dy }) => {
         const pct = percentiles.get(country.iso2) ?? null;
         return (
-          <Marker key={country.iso2} coordinates={[country.lon, country.lat]}>
+          <Marker key={country.iso2} coordinates={[country.lon, country.lat]} onClick={() => onSelect(country.iso2)}>
             <g transform={`translate(${dx}, ${dy})`}>
               <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
+                stroke={country.iso2 === selected ? "#fff" : "rgba(15,23,42,0.6)"}
+                strokeWidth={country.iso2 === selected ? 1.5 : 0.6}
+                style={{ cursor: "pointer" }}
                 data-testid={`geo-gold-bubble-${country.iso2}`}>
                 <title>{goldBubbleTitle(country)}</title>
               </circle>
@@ -200,36 +214,43 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
   const [minerOffsetHint, setMinerOffsetHint] = useState(false);
   const onMinerOffset = useCallback((active: boolean) => setMinerOffsetHint(active), []);
   const retries = useRef(0);
+  const loadGen = useRef(0);
 
   const load = useCallback(async (refresh = false) => {
+    const gen = ++loadGen.current;
+    const requested = layer;
     setLoading(true);
     setError(null);
-    setData(prev => (prev && prev.layer === layer ? prev : null));
+    setData(prev => (prev && prev.layer === requested ? prev : null));
     try {
       const res = await apiRequest(
         "GET",
-        `/api/researcher/geo-map?layer=${layer}${refresh ? "&refresh=1" : ""}`,
+        `/api/researcher/geo-map?layer=${requested}${refresh ? "&refresh=1" : ""}`,
         undefined,
         GEO_MAP_CLIENT_TIMEOUT_MS,
       );
+      if (gen !== loadGen.current) return;
       const parsed = await readApiJson(res);
+      if (gen !== loadGen.current) return;
       if (!parsed.ok) {
         setData(null);
         setError(parsed.reason);
         return;
       }
-      const json = parsed.json as { error?: string };
+      const json = parsed.json as { error?: string; layer?: string };
       if (json?.error) {
         setData(null);
         setError(json.error.startsWith("n/a") ? json.error : `n/a — ${json.error}`);
         return;
       }
+      if (!geoMapLoadMatches(requested, requested, json.layer)) return;
       setData(parsed.json as MapPayload);
     } catch (err) {
+      if (gen !== loadGen.current) return;
       setData(null);
       setError(naReasonFromError(err));
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
   }, [layer]);
 
@@ -286,6 +307,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
     () => (goldData?.countries ?? []).filter(goldCountryHasProduction),
     [goldData],
   );
+  const goldSel = goldBubbles.find(c => c.iso2 === selected) ?? null;
   const goldPercentiles = useMemo(() => {
     const values = goldBubbles.map(c => (
       typeof c.countrySharePct === "number" && c.countrySharePct > 0 ? c.countrySharePct
@@ -559,16 +581,32 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
             <div className="text-foreground/55" data-testid="geo-gold-remainder">{goldData.note}</div>
           )}
           {goldBubbles.length > 0 && (
-            <div className="rounded-md border border-border/30 bg-background/40 overflow-hidden">
-              <ComposableMap projection="geoEqualEarth" projectionConfig={{ scale: 160 }} width={800} height={400} style={{ width: "100%", height: "auto" }}>
-                <Geographies geography={worldUrl}>
-                  {({ geographies }) => geographies.map(geo => (
-                    <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
-                  ))}
-                </Geographies>
-                <GoldBubbles bubbles={goldBubbles} percentiles={goldPercentiles} />
-              </ComposableMap>
-              <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Größe und Farbe = Perzentil des Anteils am Weltvolumen.</div>
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
+              <div className="rounded-md border border-border/30 bg-background/40 overflow-hidden">
+                <ComposableMap projection="geoEqualEarth" projectionConfig={{ scale: 160 }} width={GOLD_MAP_WIDTH} height={GOLD_MAP_HEIGHT} style={{ width: "100%", height: "auto" }}>
+                  <Geographies geography={worldUrl}>
+                    {({ geographies }) => geographies.map(geo => (
+                      <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
+                    ))}
+                  </Geographies>
+                  <GoldBubbles bubbles={goldBubbles} percentiles={goldPercentiles} selected={selected} onSelect={setSelected} />
+                </ComposableMap>
+                <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Größe und Farbe = Perzentil des Anteils am Weltvolumen.</div>
+              </div>
+              <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px]" data-testid="geo-gold-side">
+                {goldSel ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-semibold text-foreground/85">{goldSel.name}</div>
+                      <button type="button" onClick={() => setSelected(null)} className="text-foreground/40 hover:text-foreground" data-testid="geo-gold-side-close"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div className="font-mono" data-testid={`geo-gold-share-${goldSel.iso2}`}>{typeof goldSel.countrySharePct === "number" ? `${goldSel.countrySharePct.toLocaleString("de-DE", { maximumFractionDigits: 2 })} %` : "Anteil n/a"}</div>
+                    <div className="font-mono">{typeof goldSel.productionOz === "number" ? `${Math.round(goldSel.productionOz).toLocaleString("de-DE")} oz` : "Unzen n/a"}</div>
+                  </div>
+                ) : (
+                  <div className="text-foreground/50">Land anklicken für den Anteil am Weltvolumen.</div>
+                )}
+              </div>
             </div>
           )}
           {goldData.goldCompanies.map(co => (
