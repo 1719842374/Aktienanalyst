@@ -303,7 +303,8 @@ async function main() {
   assert.match(missingBin.ok ? "" : missingBin.reason, /nicht installiert/);
   ok("WAV-Verkettung mit fester Pause, exakte Satzstarts; RAM-Grenze aus cgroup (512 MB-Plan → Browser-Fallback mit Grund)");
 
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tts-test-"));
+  const dirRoot = mkdtempSync(path.join(os.tmpdir(), "tts-test-"));
+  const dir = path.join(dirRoot, ".cache", "tts");
   let synthCalls = 0;
   let fail = false;
   const fake: TtsProvider = {
@@ -372,8 +373,8 @@ async function main() {
   assert.equal((await audioResp.arrayBuffer()).byteLength, 44);
   assert.equal((await fetch(`http://127.0.0.1:${tport}/api/tts/audio/stock/MSFT/nope__0123456789abcdef.wav`)).status, 404);
   tserver.close();
-  rmSync(dir, { recursive: true, force: true });
-  ok("GET /api/tts/audio liefert WAV mit Range (206), unbekannte Datei 404");
+  rmSync(dirRoot, { recursive: true, force: true });
+  ok("GET /api/tts/audio liefert WAV mit Range (206) auch unter .cache/, unbekannte Datei 404");
 
   if (LIVE && existsSync("vendor/piper/piper/piper")) {
     const liveDir = mkdtempSync(path.join(os.tmpdir(), "tts-live-"));

@@ -203,6 +203,7 @@ export function registerTtsRoute(app: Express, service?: TtsService): void {
       res.status(404).json({ error: "Audio nicht gefunden" });
       return;
     }
-    res.sendFile(hit.path, { headers: { "Content-Type": hit.mime, "Cache-Control": "public, max-age=31536000, immutable" } });
+    // Der Cache liegt unter .cache/; ohne dotfiles "allow" antwortet send mit 404. Pfad ist oben per Regex geprüft.
+    res.sendFile(hit.path, { dotfiles: "allow", headers: { "Content-Type": hit.mime, "Cache-Control": "public, max-age=31536000, immutable" } });
   });
 }
