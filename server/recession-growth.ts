@@ -400,15 +400,17 @@ async function annualizedFromConsensus(
   }
   const amount = resolved.adjTtm ?? yahooTtm.ttm;
   const amountCcy = resolved.adjTtm != null ? (ttm.currency ?? yahooTtm.currency) : yahooTtm.currency;
-  const fy = yahooTtm.consensus ?? consensus;
-  if (yahooTtm.consensus && yahooTtm.consensus.date !== consensus.date) {
-    notes.push(`${symbol}: FMP-FY ${consensus.date} ist nicht das offene NonGaap-FY ${yahooTtm.consensus.date}`);
+  const fy = yahooTtm.consensus;
+  if (!fy) {
+    notes.push(`${symbol}: FMP-FY ${consensus.date} = ${shownEps(consensus.eps)} nicht als adjusted verwendet`);
+    return { excludeReason: `n/a — Konsens nicht als adjusted nachgewiesen (FMP FY ${consensus.date} = ${shownEps(consensus.eps)})` };
+  }
+  if (fy.date !== consensus.date) {
+    notes.push(`${symbol}: FMP-FY ${consensus.date} ist nicht das offene NonGaap-FY ${fy.date}`);
   }
   const basis = [
     resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite,
-    yahooTtm.consensus
-      ? `Konsens Yahoo earningsTrendNonGaap offenes FY ${fy.date} = ${shownEps(fy.eps)}`
-      : `Konsens FMP FY ${fy.date} = ${shownEps(fy.eps)}`,
+    `Konsens Yahoo earningsTrendNonGaap adjusted offenes FY ${fy.date} = ${shownEps(fy.eps)}`,
   ].filter(Boolean).join(" · ");
   if (amount == null) {
     if (yahooTtm.unusableReason) return { excludeReason: yahooTtm.unusableReason };
@@ -499,7 +501,7 @@ async function growthForHolding(
           yahoo.consensus.date,
           yahoo.consensus.daysToFyEnd,
           yahoo.consensus.horizonDays,
-          `${yahoo.cite} · ${aligned.note}`,
+          `${yahoo.cite} · Konsens Yahoo earningsTrendNonGaap adjusted offenes FY ${yahoo.consensus.date} = ${shownEps(yahoo.consensus.eps)} · ${aligned.note}`,
         );
         if ("reason" in forward) return { gFwdPct: null, via: "", excludeReason: forward.reason, tDays: yahoo.consensus.horizonDays };
         return { gFwdPct: forward.gFwdPct, via: forward.via, excludeReason: null, tDays: yahoo.consensus.horizonDays };

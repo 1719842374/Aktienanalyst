@@ -529,15 +529,15 @@ export interface ResolvedQuarter {
   eps: number;
   fmpEps: number;
   source: "fmp" | "yahoo-nongaap";
-  /** true, wenn ein Yahoo-NonGaap-Quartalsende am oder vor dem Meldetag liegt. */
+  /** true, wenn das Yahoo-NonGaap-Quartal denselben Kalendermonat wie fiscalDateEnding hat. */
   yahooChecked: boolean;
 }
 
 /**
- * FMP nennt den Meldetag oder, wenn vorhanden, fiscalDateEnding.
- * Zugeordnet wird das letzte Yahoo-NonGaap-Quartalsende am oder vor diesem Tag.
- * Der übernommene Wert ist der NonGaap-Druck. Liegt kein Ende davor, ist das
- * Quartal nicht belegt und damit n/a. Keine Prozentgrenze und kein Tagescap.
+ * fiscalDateEnding ist Pflicht. Fehlt es bei einem der letzten vier gemeldeten
+ * Quartale, ist die Reihe n/a. Der Meldetag ist kein Ersatz und kein Zeitfenster.
+ * Zugeordnet wird das Yahoo-NonGaap-Quartal desselben Kalendermonats.
+ * Der übernommene Wert ist der NonGaap-Druck. Kein Tagescap.
  * Liefert Yahoo gar keine NonGaap-Quartale, bleibt der FMP-Druck stehen:
  * es gibt dann keine Gegenprobe, der Aufrufer weist die Quelle aus.
  */
@@ -548,16 +548,19 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
   cite: string;
 } {
   const fmp = fmpQuarterRows(fmpRaw, asOf);
-  if (fmp.length < EPS_BASIS.reportedQuarters) {
+  if ("reason" in fmp) {
+    return { adjTtm: null, quarters: [], unusableReason: fmp.reason, cite: "" };
+  }
+  if (fmp.rows.length < EPS_BASIS.reportedQuarters) {
     return { adjTtm: null, quarters: [], unusableReason: null, cite: "" };
   }
   const yahooLeft = adjTtmFromYahooAdjusted(yahooRaw, asOf).quarters.map(row => ({ date: row.date, eps: row.eps }));
   const yahooSeen = yahooLeft.length > 0;
   const resolved: ResolvedQuarter[] = [];
-  const pending = fmp.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const pending = fmp.rows.slice().sort((a, b) => b.fiscalDateEnding.localeCompare(a.fiscalDateEnding));
   const byReport = new Map<string, ResolvedQuarter>();
   for (const row of pending) {
-    const yahooEps = takeYahooQuarter(yahooLeft, row.anchor);
+    const yahooEps = takeYahooQuarterInMonth(yahooLeft, row.fiscalDateEnding);
     if (yahooEps != null) {
       byReport.set(row.date, {
         date: row.date,
@@ -572,7 +575,7 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
       return {
         adjTtm: null,
         quarters: resolved,
-        unusableReason: `n/a — Quartal ${row.date} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`,
+        unusableReason: `n/a — Quartal ${row.date} fiscalDateEnding ${row.fiscalDateEnding} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`,
         cite: "",
       };
     }
@@ -584,7 +587,7 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
       yahooChecked: false,
     });
   }
-  for (const row of fmp) {
+  for (const row of fmp.rows) {
     const hit = byReport.get(row.date);
     if (hit) resolved.push(hit);
   }
@@ -608,29 +611,38 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
 
 interface FmpQuarterRow {
   date: string;
-  /** Meldetag, oder fiscalDateEnding wenn die Zeile das Quartalsende nennt. */
-  anchor: string;
+  fiscalDateEnding: string;
   eps: number;
   estimate: number | null;
 }
 
-function fmpQuarterRows(raw: unknown, asOf: string): FmpQuarterRow[] {
+function fmpQuarterRows(raw: unknown, asOf: string): { rows: FmpQuarterRow[] } | { reason: string } {
   const list = Array.isArray(raw) ? raw : [];
-  const byDate = new Map<string, FmpQuarterRow>();
+  const byDate = new Map<string, { date: string; fiscalDateEnding: string | null; eps: number; estimate: number | null }>();
   for (const row of list) {
     if (isFullYearPeriod(row)) continue;
     const parsed = epsPrintFromEarningsRow(row);
     if (!parsed || parsed.date > asOf) continue;
     const record = row as Record<string, unknown>;
     const fiscal = String(record.fiscalDateEnding ?? "").slice(0, 10);
-    const anchor = /^\d{4}-\d{2}-\d{2}$/.test(fiscal) ? fiscal : parsed.date;
+    const fiscalDateEnding = /^\d{4}-\d{2}-\d{2}$/.test(fiscal) ? fiscal : null;
     const estimate = finiteLoose(record.epsEstimated);
-    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, anchor, eps: parsed.eps, estimate });
+    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, fiscalDateEnding, eps: parsed.eps, estimate });
   }
-  return Array.from(byDate.values())
+  const latest = Array.from(byDate.values())
     .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, EPS_BASIS.reportedQuarters)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .slice(0, EPS_BASIS.reportedQuarters);
+  if (latest.length < EPS_BASIS.reportedQuarters) return { rows: [] };
+  const missing = latest.filter(row => row.fiscalDateEnding == null).map(row => row.date);
+  if (missing.length) return { reason: `n/a — fiscalDateEnding fehlt bei ${missing.join(", ")}` };
+  const rows: FmpQuarterRow[] = latest.map(row => ({
+    date: row.date,
+    fiscalDateEnding: row.fiscalDateEnding as string,
+    eps: row.eps,
+    estimate: row.estimate,
+  }));
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return { rows };
 }
 
 function finiteLoose(v: unknown): number | null {
@@ -639,19 +651,16 @@ function finiteLoose(v: unknown): number | null {
   return null;
 }
 
-/** Letztes Yahoo-Quartalsende am oder vor dem Meldetag. Jedes Ende nur einmal. Kein Tagescap. */
-function takeYahooQuarter(pool: { date: string; eps: number }[], reportDate: string): number | null {
-  let best = -1;
-  let bestLag = Number.POSITIVE_INFINITY;
+/** Yahoo-Quartalsende im selben Kalendermonat. Jedes Ende nur einmal. Kein Tagesabstand. */
+function takeYahooQuarterInMonth(pool: { date: string; eps: number }[], fiscalDateEnding: string): number | null {
+  const month = fiscalDateEnding.slice(0, 7);
+  const hits: number[] = [];
   for (let i = 0; i < pool.length; i++) {
-    const lag = horizonDays(pool[i].date, reportDate);
-    if (lag < 0 || lag >= bestLag) continue;
-    best = i;
-    bestLag = lag;
+    if (pool[i].date.slice(0, 7) === month) hits.push(i);
   }
-  if (best < 0) return null;
-  const hit = pool[best];
-  pool.splice(best, 1);
+  if (hits.length !== 1) return null;
+  const hit = pool[hits[0]];
+  pool.splice(hits[0], 1);
   return hit.eps;
 }
 

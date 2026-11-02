@@ -782,7 +782,10 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
     if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
     if (path === "/earnings" && (symbol === "AAA" || symbol === "BBB")) {
       const each = symbol === "AAA" ? 2.5 : 5;
-      return { status: 200, json: [0, 1, 2, 3].map(i => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: each })), detail: "" };
+      return { status: 200, json: [0, 1, 2, 3].map(i => {
+        const date = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i];
+        return { date, fiscalDateEnding: date, epsActual: each };
+      }), detail: "" };
     }
     if (path === "/earnings") return { status: 200, json: [{ date: "2026-12-31", epsEstimated: 2 }], detail: "" };
     if (path === "/analyst-estimates" && (symbol === "AAA" || symbol === "BBB")) {
@@ -795,14 +798,22 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
     fetchMultpl: async () => multplTable(),
     probeFmp: probe,
     loadIncome: async () => [],
-    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
       if (modules.includes("topHoldings")) {
         return { topHoldings: { holdings: [
           { symbol: "AAA", holdingPercent: { raw: 0.2 } },
           { symbol: "BBB", holdingPercent: { raw: 0.1 } },
         ] } };
       }
-      return { defaultKeyStatistics: {} };
+      if (!modules.includes("earningsTrendNonGaap")) return { defaultKeyStatistics: {} };
+      const fy = symbol === "AAA" ? 12 : symbol === "BBB" ? 22 : null;
+      const each = symbol === "AAA" ? 2.5 : symbol === "BBB" ? 5 : null;
+      if (fy == null || each == null) return { defaultKeyStatistics: {} };
+      const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+      return {
+        earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: each }, quarter: { fmt: date }, currency: "USD" })) },
+        earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: fy }, earningsCurrency: "USD" } }] },
+      };
     },
     loadVix: async () => [],
     fmpAvailable: true,
@@ -839,9 +850,20 @@ await ok("402 am Index fällt auf Holdings-Konsens, Direkt-Treffer fragt Holding
       directProbes.push(path);
       if (path === "/analyst-estimates" && params.symbol === "SPY") return { status: 200, json: [{ date: "2027-12-31", epsAvg: 110 }], detail: "" };
       if (path === "/earnings" && params.symbol === "SPY") {
-        return { status: 200, json: [25, 25, 25, 25].map((eps, i) => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: eps })), detail: "" };
+        return { status: 200, json: [25, 25, 25, 25].map((eps, i) => {
+          const date = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i];
+          return { date, fiscalDateEnding: date, epsActual: eps };
+        }), detail: "" };
       }
       return { status: 500, json: null, detail: "soll nicht laufen" };
+    },
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
+      if (!(symbol === "SPY" && modules.includes("earningsTrendNonGaap"))) return { defaultKeyStatistics: {} };
+      const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+      return {
+        earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: 25 }, quarter: { fmt: date }, currency: "USD" })) },
+        earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 110 }, earningsCurrency: "USD" } }] },
+      };
     },
   });
   assert.equal(direct.forward.available, true);
@@ -877,7 +899,10 @@ await ok("Deckung unter minCoverage bleibt n/a, Yahoo +1y mit t=null hebt den In
     if (path === "/analyst-estimates" && symbol === "ASHR") return { status: 200, json: [], detail: "" };
     if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
     if (path === "/earnings" && (symbol === "AAA" || symbol === "BBB")) {
-      return { status: 200, json: [2.5, 2.5, 2.5, 2.5].map((eps, i) => ({ date: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i], epsActual: eps })), detail: "" };
+      return { status: 200, json: [2.5, 2.5, 2.5, 2.5].map((eps, i) => {
+        const date = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"][i];
+        return { date, fiscalDateEnding: date, epsActual: eps };
+      }), detail: "" };
     }
     if (path === "/earnings") return { status: 200, json: [], detail: "" };
     if (path === "/etf/holdings") return { status: 402, json: null, detail: "Premium Query Parameter: ETF holdings" };
@@ -897,6 +922,13 @@ await ok("Deckung unter minCoverage bleibt n/a, Yahoo +1y mit t=null hebt den In
         ] } };
       }
       if (symbol === "ASHR") return yahooTrend;
+      if ((symbol === "AAA" || symbol === "BBB") && modules.includes("earningsTrendNonGaap")) {
+        const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+        return {
+          earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: 2.5 }, quarter: { fmt: date }, currency: "USD" })) },
+          earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 12 }, earningsCurrency: "USD" } }] },
+        };
+      }
       return { defaultKeyStatistics: {} };
     },
   });
@@ -911,12 +943,19 @@ await ok("Deckung unter minCoverage bleibt n/a, Yahoo +1y mit t=null hebt den In
   const hidden = await loadRecessionGrowth("ASHR", {
     ...base,
     probeFmp: probe,
-    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
       if (modules.includes("topHoldings")) {
         return { topHoldings: { holdings: [
           { symbol: "AAA", holdingPercent: { raw: 0.05 } },
           { symbol: "BBB", holdingPercent: { raw: 0.06 } },
         ] } };
+      }
+      if ((symbol === "AAA" || symbol === "BBB") && modules.includes("earningsTrendNonGaap")) {
+        const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+        return {
+          earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: 2.5 }, quarter: { fmt: date }, currency: "USD" })) },
+          earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 12 }, earningsCurrency: "USD" } }] },
+        };
       }
       return { defaultKeyStatistics: {} };
     },
@@ -955,7 +994,7 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
   assert.equal(parsed.unusableReason, null);
   const { loadRecessionGrowth } = await import("../server/recession-growth");
   const probes: string[] = [];
-  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, epsActual: each }));
+  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, fiscalDateEnding: date, epsActual: each }));
   const body = await loadRecessionGrowth("SPY", {
     loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
     fetchMultpl: async () => multplTable(),
@@ -994,7 +1033,7 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
       return { status: 404, json: null, detail: "unbekannt" };
     },
     loadIncome: async () => [],
-    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
       if (modules.includes("topHoldings")) {
         return { topHoldings: { holdings: [
           { symbol: "AVGO", holdingPercent: { raw: 0.08 } },
@@ -1005,7 +1044,20 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
           { symbol: "NEG", holdingPercent: { raw: 0.03 } },
         ] } };
       }
-      return { defaultKeyStatistics: {} };
+      const spec: Record<string, { each: number; fy: number; end: string }> = {
+        AVGO: { each: 1, fy: 3, end: "2026-12-12" },
+        NVDA: { each: 1, fy: 2, end: "2027-01-25" },
+        META: { each: 2, fy: 5, end: "2026-12-31" },
+        AMZN: { each: 1, fy: 6, end: "2027-01-25" },
+        GOOGL: { each: 1.5, fy: 7, end: "2028-01-25" },
+      };
+      const picked = spec[symbol];
+      if (!picked || !modules.includes("earningsTrendNonGaap")) return { defaultKeyStatistics: {} };
+      const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+      return {
+        earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: picked.each }, quarter: { fmt: date }, currency: "USD" })) },
+        earningsTrendNonGaap: { trend: [{ period: "0y", endDate: picked.end, earningsEstimate: { avg: { raw: picked.fy }, earningsCurrency: "USD" } }] },
+      };
     },
     loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
     loadVix: async () => [],
@@ -1105,7 +1157,7 @@ await ok("META adjTTM ist die non-GAAP-Summe 29,77, nicht der GAAP-Mix 32,90", (
 await ok("Ticker ohne 4 Quartale adjusted und ohne t bleibt n/a, Yahoo-4Q zählt mit Quelle", async () => {
   const asOf = "2026-11-02";
   const { loadRecessionGrowth } = await import("../server/recession-growth");
-  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, epsActual: each }));
+  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, fiscalDateEnding: date, epsActual: each }));
   const yahoo4 = {
     earningsHistoryNonGaap: { history: quarters(1).map(row => ({ epsActual: { raw: row.epsActual }, quarter: { fmt: row.date }, currency: "USD" })) },
     earningsTrendNonGaap: { trend: [
@@ -1141,6 +1193,13 @@ await ok("Ticker ohne 4 Quartale adjusted und ohne t bleibt n/a, Yahoo-4Q zählt
         ] } };
       }
       if (symbol === "Y4" && modules.includes("earningsHistoryNonGaap")) return yahoo4;
+      if (symbol === "AAA" && modules.includes("earningsTrendNonGaap")) {
+        const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+        return {
+          earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: 2.5 }, quarter: { fmt: date }, currency: "USD" })) },
+          earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 12 }, earningsCurrency: "USD" } }] },
+        };
+      }
       if (symbol === "NA") {
         return {
           defaultKeyStatistics: { trailingEps: { raw: 10 } },
@@ -1198,10 +1257,10 @@ await ok("Ticker ohne 4 Quartale adjusted und ohne t bleibt n/a, Yahoo-4Q zählt
 await ok("FMP-Pfad META: epsActual 10,44 wird nicht zur Summe 32,90", async () => {
   const asOf = "2026-11-02";
   const fmp = [
-    { date: "2026-10-21", epsActual: 7.4, epsEstimated: 6.85 },
-    { date: "2026-07-29", epsActual: 6.18, epsEstimated: 7.4 },
-    { date: "2026-04-29", epsActual: 10.44, epsEstimated: 6.7 },
-    { date: "2026-01-28", epsActual: 8.88, epsEstimated: 8.18 },
+    { date: "2026-10-21", fiscalDateEnding: "2026-09-30", epsActual: 7.4, epsEstimated: 6.85 },
+    { date: "2026-07-29", fiscalDateEnding: "2026-06-30", epsActual: 6.18, epsEstimated: 7.4 },
+    { date: "2026-04-29", fiscalDateEnding: "2026-03-31", epsActual: 10.44, epsEstimated: 6.7 },
+    { date: "2026-01-28", fiscalDateEnding: "2025-12-31", epsActual: 8.88, epsEstimated: 8.18 },
   ];
   const yahoo = {
     earningsHistoryNonGaap: { history: [
@@ -1228,10 +1287,10 @@ await ok("FMP-Pfad META: epsActual 10,44 wird nicht zur Summe 32,90", async () =
   assert.equal(swapped?.fmpEps, 10.44);
   assert.equal(horizonDays("2026-03-31", "2026-04-29"), 29);
   const beforeAnyEnd = resolveAdjustedFmpQuarters([
-    { date: "2024-01-15", epsActual: 1 },
-    { date: "2024-04-15", epsActual: 1 },
-    { date: "2024-07-15", epsActual: 1 },
-    { date: "2024-10-15", epsActual: 1 },
+    { date: "2024-01-15", fiscalDateEnding: "2024-01-31", epsActual: 1 },
+    { date: "2024-04-15", fiscalDateEnding: "2024-04-30", epsActual: 1 },
+    { date: "2024-07-15", fiscalDateEnding: "2024-07-31", epsActual: 1 },
+    { date: "2024-10-15", fiscalDateEnding: "2024-10-31", epsActual: 1 },
   ], yahoo, asOf);
   assert.equal(beforeAnyEnd.adjTtm, null);
   assert.match(beforeAnyEnd.unusableReason ?? "", /nicht auf ein Yahoo-NonGaap-Quartalsende gelegt/);
@@ -1290,8 +1349,9 @@ await ok("LSE: fehlende EPS-Währung, GBp nur bei Faktor 100, sonst die Filingsw
   const { loadRecessionGrowth } = await import("../server/recession-growth");
   const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
   const reports = ["2026-01-30", "2026-04-30", "2026-07-30", "2026-10-30"];
-  const q = (each: number, currency?: string) => reports.map(date => ({
+  const q = (each: number, currency?: string) => reports.map((date, index) => ({
     date,
+    fiscalDateEnding: ends[index],
     epsActual: each,
     ...(currency ? { reportedCurrency: currency } : {}),
   }));
@@ -1386,16 +1446,21 @@ await ok("vier Namen unter minCoverage sind n/a mit Deckung, nicht eine Zahl", a
         return { status: 200, json: [{ date: "2027-12-31", epsAvg: 12, currency: "USD" }], detail: "" };
       }
       if (path === "/earnings" && names.includes(symbol ?? "")) {
-        return { status: 200, json: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, epsActual: 2.5, epsEstimated: 2.5 })), detail: "" };
+        return { status: 200, json: ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, fiscalDateEnding: date, epsActual: 2.5, epsEstimated: 2.5 })), detail: "" };
       }
       return { status: 404, json: null, detail: "unbekannt" };
     },
     loadIncome: async () => [],
-    loadYahooSummary: async (_symbol: string, modules: readonly string[]) => {
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
       if (modules.includes("topHoldings")) {
         return { topHoldings: { holdings: names.map(symbol => ({ symbol, holdingPercent: { raw: 0.03 } })) } };
       }
-      return null;
+      if (!names.includes(symbol) || !modules.includes("earningsTrendNonGaap")) return null;
+      const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+      return {
+        earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: 2.5 }, quarter: { fmt: date }, currency: "USD" })) },
+        earningsTrendNonGaap: { trend: [{ period: "0y", endDate: "2027-12-31", earningsEstimate: { avg: { raw: 12 }, earningsCurrency: "USD" } }] },
+      };
     },
     loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
     loadVix: async () => [],
@@ -1424,6 +1489,128 @@ await ok("vier Namen unter minCoverage sind n/a mit Deckung, nicht eine Zahl", a
   assert.match(visible.slice(forwardAt, forwardAt + 500), /minCoverage/);
 });
 
+await ok("AAPL: fiscalDateEnding ist Pflicht, Meldetag 2026-01-29 wird 2,84 und nicht 1,85", () => {
+  const asOf = "2026-11-02";
+  const yahoo = {
+    earningsHistoryNonGaap: {
+      history: [
+        { epsActual: { raw: 1.85 }, quarter: { fmt: "2025-09-30" }, currency: "USD" },
+        { epsActual: { raw: 2.84 }, quarter: { fmt: "2025-12-31" }, currency: "USD" },
+        { epsActual: { raw: 2.01 }, quarter: { fmt: "2026-03-31" }, currency: "USD" },
+        { epsActual: { raw: 2.02 }, quarter: { fmt: "2026-06-30" }, currency: "USD" },
+        { epsActual: { raw: 2.06 }, quarter: { fmt: "2026-09-30" }, currency: "USD" },
+      ],
+    },
+  };
+  const reported = [
+    { date: "2025-10-30", fiscalDateEnding: "2025-09-27", epsActual: 1.85 },
+    { date: "2026-01-29", fiscalDateEnding: "2025-12-27", epsActual: 2.84 },
+    { date: "2026-04-30", fiscalDateEnding: "2026-03-28", epsActual: 2.01 },
+    { date: "2026-07-30", fiscalDateEnding: "2026-06-27", epsActual: 2.02 },
+    { date: "2026-10-30", fiscalDateEnding: "2026-09-26", epsActual: 2.06 },
+  ];
+  const shifted = resolveAdjustedFmpQuarters(reported, yahoo, asOf);
+  assert.equal(shifted.unusableReason, null, shifted.unusableReason ?? "");
+  assert.ok(Math.abs((shifted.adjTtm ?? 0) - (2.84 + 2.01 + 2.02 + 2.06)) < 1e-9, String(shifted.adjTtm));
+  assert.ok(Math.abs((shifted.adjTtm ?? 0) - 8.93) < 1e-9);
+  const january = shifted.quarters.find(row => row.date === "2026-01-29");
+  assert.equal(january?.eps, 2.84);
+  assert.ok(Math.abs((january?.eps ?? 0) - 1.85) > 0.5);
+  const throughJune = {
+    earningsHistoryNonGaap: {
+      history: yahoo.earningsHistoryNonGaap.history.filter(row => row.quarter.fmt !== "2026-09-30"),
+    },
+  };
+  const stale = resolveAdjustedFmpQuarters(reported.filter(row => row.date !== "2026-10-30"), throughJune, asOf);
+  assert.equal(stale.unusableReason, null, stale.unusableReason ?? "");
+  assert.ok(Math.abs((stale.adjTtm ?? 0) - (1.85 + 2.84 + 2.01 + 2.02)) < 1e-9, String(stale.adjTtm));
+  assert.equal(stale.quarters.find(row => row.date === "2026-01-29")?.eps, 2.84);
+  const missing = reported.map(row => row.date === "2026-01-29" ? { date: row.date, epsActual: row.epsActual } : row);
+  const open = resolveAdjustedFmpQuarters(missing, yahoo, asOf);
+  assert.equal(open.adjTtm, null);
+  assert.match(open.unusableReason ?? "", /fiscalDateEnding fehlt/);
+  assert.match(open.unusableReason ?? "", /2026-01-29/);
+});
+
+await ok("Konsens ohne adjusted-Nachweis ist n/a, ein großes adjusted g bleibt im Mittel", async () => {
+  const asOf = "2026-11-02";
+  const { loadRecessionGrowth } = await import("../server/recession-growth");
+  const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+  const quarters = (each: number) => ends.map(date => ({ date, fiscalDateEnding: date, epsActual: each }));
+  const yahooFor = (each: number, fy: number) => ({
+    earningsHistoryNonGaap: {
+      history: ends.map(date => ({ epsActual: { raw: each }, quarter: { fmt: date }, currency: "USD" })),
+    },
+    earningsTrendNonGaap: {
+      trend: [{ period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: fy }, earningsCurrency: "USD" } }],
+    },
+  });
+  const body = await loadRecessionGrowth("SPY", {
+    loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
+    fetchMultpl: async () => multplTable(),
+    probeFmp: async (path, params) => {
+      const symbol = params.symbol;
+      if (path === "/analyst-estimates" && (symbol === "SPY" || symbol === "^GSPC")) return { status: 200, json: [], detail: "" };
+      if (path === "/financial-estimates") return { status: 404, json: null, detail: "" };
+      if (path === "/etf/holdings") return { status: 402, json: null, detail: "" };
+      if (path === "/analyst-estimates" && symbol === "PLAIN") {
+        return { status: 200, json: [{ date: "2026-12-31", epsAvg: 12.80814, currency: "USD" }], detail: "" };
+      }
+      if (path === "/earnings" && symbol === "PLAIN") return { status: 200, json: quarters(1.84965), detail: "" };
+      if (path === "/analyst-estimates" && symbol === "BIG") {
+        return { status: 200, json: [{ date: "2026-12-31", epsAvg: 4, currency: "USD" }], detail: "" };
+      }
+      if (path === "/earnings" && symbol === "BIG") return { status: 200, json: quarters(1), detail: "" };
+      if (path === "/analyst-estimates" && symbol === "OK") {
+        return { status: 200, json: [{ date: "2026-12-31", epsAvg: 5, currency: "USD" }], detail: "" };
+      }
+      if (path === "/earnings" && symbol === "OK") return { status: 200, json: quarters(1), detail: "" };
+      return { status: 404, json: null, detail: "unbekannt" };
+    },
+    loadIncome: async () => [],
+    loadYahooSummary: async (symbol: string, modules: readonly string[]) => {
+      if (modules.includes("topHoldings")) {
+        return { topHoldings: { holdings: [
+          { symbol: "PLAIN", holdingPercent: { raw: 0.2 } },
+          { symbol: "BIG", holdingPercent: { raw: 0.2 } },
+          { symbol: "OK", holdingPercent: { raw: 0.2 } },
+        ] } };
+      }
+      if (!modules.includes("earningsHistoryNonGaap")) return null;
+      if (symbol === "PLAIN") {
+        return { earningsHistoryNonGaap: yahooFor(1.84965, 99).earningsHistoryNonGaap };
+      }
+      if (symbol === "BIG") return yahooFor(1, 20);
+      if (symbol === "OK") return yahooFor(1, 5);
+      return null;
+    },
+    loadYahooHtml: async () => ({ status: null, html: null, error: "im Test aus" }),
+    loadVix: async () => [],
+    fmpAvailable: true,
+    today: asOf,
+  });
+  assert.equal(body.forward.available, true);
+  if (!body.forward.available) return;
+  const line = Object.fromEntries((body.forward.lines ?? []).map(row => [row.symbol, row]));
+  assert.equal(line.PLAIN.gAnnPct, null);
+  assert.match(line.PLAIN.excludeReason ?? "", /adjusted/);
+  assert.match(line.PLAIN.excludeReason ?? "", /12\.8081/);
+  const tDays = midToMidDays(horizonDays(asOf, "2026-12-31"));
+  const huge = annualizedFwdPct(20, 4, tDays);
+  assert.ok("gFwdPct" in huge);
+  if ("gFwdPct" in huge) {
+    assert.ok(huge.gFwdPct > 100, String(huge.gFwdPct));
+    assert.ok(Math.abs((line.BIG.gAnnPct ?? NaN) - huge.gFwdPct) < 1e-6, String(line.BIG.gAnnPct));
+  }
+  assert.match(line.BIG.source ?? "", /adjusted/);
+  assert.equal(body.forward.lines?.some(row => row.symbol === "PLAIN" && row.weight != null), false);
+  const calm = annualizedFwdPct(5, 4, tDays);
+  assert.ok("gFwdPct" in calm && "gFwdPct" in huge);
+  if ("gFwdPct" in calm && "gFwdPct" in huge) {
+    assert.ok(Math.abs(body.forward.gFwdPct - (huge.gFwdPct + calm.gFwdPct) / 2) < 1e-6, String(body.forward.gFwdPct));
+  }
+});
+
 await ok("echte Yahoo-Abstände: Meldetag auf das letzte Quartalsende, ASML Q3 bleibt 11,82", () => {
   const live = JSON.parse(readFileSync("script/fixtures/recession-yahoo-fy-2026-11-02.json", "utf8")) as {
     names: Record<string, {
@@ -1435,7 +1622,7 @@ await ok("echte Yahoo-Abstände: Meldetag auf das letzte Quartalsende, ASML Q3 b
   const asOf = "2026-11-02";
   for (const symbol of ["META", "AMZN", "GOOGL", "GOOG", "MU", "ASML", "SHEL.L"]) {
     const book = live.names[symbol];
-    const fmp = book.quarters.map(row => ({ date: row.reported, epsActual: row.gaap }));
+    const fmp = book.quarters.map(row => ({ date: row.reported, fiscalDateEnding: row.end, epsActual: row.gaap }));
     const yahoo = {
       earningsHistoryNonGaap: {
         history: book.quarters.map(row => ({
