@@ -3,14 +3,18 @@
  * Grund ist HTTP-Status oder Timeout, Fallback und Chart-Fehler sind sofort veraltet.
  * Ausführen: npx tsx script/test-gold-fetch-policy.ts
  */
+import { readFileSync } from "node:fs";
 import {
   GOLD_FALLBACK_REFETCH_MS,
   GOLD_FALLBACK_STALE_MS,
   GOLD_FETCH_RETRY_BASE_MS,
   GOLD_FETCH_RETRY_COUNT,
   GOLD_FETCH_RETRY_MAX_MS,
+  GOLD_FETCH_BANNER_BUDGET_MS,
+  GOLD_FETCH_TIMEOUT_MS,
   GOLD_LIVE_STALE_MS,
   fetchGoldWithRetry,
+  goldFetchTimeout,
   goldAnalysisRefetchInterval,
   goldAnalysisStaleTime,
   goldChartHistoryRefetchInterval,
@@ -32,6 +36,16 @@ check("Basis und Maximum sind positiv und Maximum ≥ Basis", GOLD_FETCH_RETRY_B
 const delays = [0, 1, 2, 3, 4].map(goldRetryDelay);
 check("Backoff verdoppelt ab der Basis", delays[0] === GOLD_FETCH_RETRY_BASE_MS && delays[1] === GOLD_FETCH_RETRY_BASE_MS * 2 && delays[2] === GOLD_FETCH_RETRY_BASE_MS * 4, delays);
 check("Backoff deckelt am Maximum", delays[3] === GOLD_FETCH_RETRY_MAX_MS && delays[4] === GOLD_FETCH_RETRY_MAX_MS, delays);
+
+check("Gold-Timeout kürzer als 90s und über dem gemessenen 14s-Cold-Start", GOLD_FETCH_TIMEOUT_MS > 14_000 && GOLD_FETCH_TIMEOUT_MS < 90_000, GOLD_FETCH_TIMEOUT_MS);
+check("erster Versuch nutzt den benannten Timeout", goldFetchTimeout(0) === GOLD_FETCH_TIMEOUT_MS);
+const retryTimeouts = [1, 2, 3].map(goldFetchTimeout);
+check("Retries sind kürzer als der erste Versuch", retryTimeouts.every(ms => ms > 0 && ms < GOLD_FETCH_TIMEOUT_MS), retryTimeouts);
+const worstCase = Array.from({ length: GOLD_FETCH_RETRY_COUNT + 1 }, (_, i) => goldFetchTimeout(i))
+  .reduce((sum, ms, i) => sum + ms + (i < GOLD_FETCH_RETRY_COUNT ? goldRetryDelay(i) : 0), 0);
+check("Dauer-Timeout bleibt unter 60s", worstCase < GOLD_FETCH_BANNER_BUDGET_MS && GOLD_FETCH_BANNER_BUDGET_MS <= 60_000, worstCase);
+const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
+check("Analyse-Call übergibt goldFetchTimeout", dash.includes("{ timeoutMs: goldFetchTimeout }"));
 
 check("HTTP-Status aus Gold-API", goldFailureReason(new Error("HTTP 503")) === "HTTP 503");
 check("HTTP-Status aus älterem Gold-API-Text", goldFailureReason(new Error("Gold-API 502")) === "HTTP 502");
@@ -92,6 +106,23 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
     },
   });
   check("Timeout übersteht alle Versuche und bleibt der Grund", result.ok === false && result.reason.startsWith("Timeout:") && calls === GOLD_FETCH_RETRY_COUNT + 1, result);
+}
+
+{
+  const seen: number[] = [];
+  const result = await fetchGoldWithRetry("/api/analyze-gold", {
+    sleep: async () => {},
+    timeoutMs: goldFetchTimeout,
+    request: async (_url, timeout) => {
+      seen.push(timeout);
+      return json(503, { error: "slow" });
+    },
+  });
+  check("jeder Versuch bekommt seinen adaptiven Timeout",
+    result.ok === false &&
+    seen.length === GOLD_FETCH_RETRY_COUNT + 1 &&
+    seen.every((ms, i) => ms === goldFetchTimeout(i)),
+    seen);
 }
 
 {

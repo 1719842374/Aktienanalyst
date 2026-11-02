@@ -5,7 +5,7 @@ import { buildGoldChatContext, enrichChatContext } from "@shared/chat-context";
 import { useQuery } from "@tanstack/react-query";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
 import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
-import { fetchGoldWithRetry, goldAnalysisRefetchInterval, goldAnalysisStaleTime } from "@/lib/goldFetchPolicy";
+import { fetchGoldWithRetry, goldAnalysisRefetchInterval, goldAnalysisStaleTime, goldFetchTimeout } from "@/lib/goldFetchPolicy";
 import { useTheme } from "@/components/ThemeProvider";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
 import { GoldIndicatorsSection } from "@/components/gold/GoldIndicatorsSection";
@@ -54,13 +54,13 @@ export default function GoldDashboard() {
   const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis & { fallbackReason?: string }>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
-      // apiRequest wirft bei HTTP-Fehlern nicht. Timeout (90s) und Status ≠ 200
-      // laufen durch fetchGoldWithRetry (mehr als ein Retry, exponentiell).
+      // apiRequest wirft bei HTTP-Fehlern nicht. Timeout (goldFetchTimeout, nicht 90s)
+      // und Status ≠ 200 laufen durch fetchGoldWithRetry (mehr als ein Retry, exponentiell).
       // Der Fallback ist eine erfolgreiche, aber sofort veraltete Antwort und wird
       // im Hintergrund neu geholt, bis Live-Daten da sind. Er bleibt nicht 5 min frisch.
       const fresh = freshRef.current;
       freshRef.current = false;
-      const result = await fetchGoldWithRetry<GoldAnalysis>(fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold");
+      const result = await fetchGoldWithRetry<GoldAnalysis>(fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold", { timeoutMs: goldFetchTimeout });
       if (result.ok) return result.data;
       return { ...GOLD_FALLBACK_DATA, fallbackReason: result.reason };
     },

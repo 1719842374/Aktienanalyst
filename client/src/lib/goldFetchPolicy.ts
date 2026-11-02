@@ -13,10 +13,34 @@ export const GOLD_LIVE_STALE_MS = 5 * 60 * 1000;
 export const GOLD_FALLBACK_STALE_MS = 0;
 /** Abstand, in dem ein Fallback oder ein Chart-Ladefehler im Hintergrund neu geholt wird. */
 export const GOLD_FALLBACK_REFETCH_MS = 15_000;
+/**
+ * Timeout des ersten GET /api/analyze-gold. Kürzer als die 90s von apiRequest.
+ * Prod-Cold-Start am 02.11. brauchte 14s; 20s lässt den durch (6s Puffer) und
+ * zählt nicht als Ausfall. Die Retries sind kürzer, siehe goldFetchTimeout.
+ */
+export const GOLD_FETCH_TIMEOUT_MS = 20_000;
+/** Schlimmster Fall (jeder Versuch läuft in den Timeout) bis das Offline-Banner steht. */
+export const GOLD_FETCH_BANNER_BUDGET_MS = 60_000;
 
 export function goldRetryDelay(attempt: number): number {
   const step = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
   return Math.min(GOLD_FETCH_RETRY_BASE_MS * 2 ** step, GOLD_FETCH_RETRY_MAX_MS);
+}
+
+/**
+ * Timeout je Versuch für /api/analyze-gold.
+ * Versuch 0 nutzt GOLD_FETCH_TIMEOUT_MS (Cold-Start). Die weiteren Versuche
+ * teilen den Rest von GOLD_FETCH_BANNER_BUDGET_MS abzüglich Backoff und 1s Luft,
+ * damit vier Dauer-Timeouts das Banner vor 60s zeigen. apiRequest bleibt bei 90s.
+ */
+export function goldFetchTimeout(attempt: number): number {
+  const step = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
+  if (step === 0) return GOLD_FETCH_TIMEOUT_MS;
+  const backoff = Array.from({ length: GOLD_FETCH_RETRY_COUNT }, (_, i) => goldRetryDelay(i))
+    .reduce((sum, ms) => sum + ms, 0);
+  const slack = 1_000;
+  const rest = GOLD_FETCH_BANNER_BUDGET_MS - GOLD_FETCH_TIMEOUT_MS - backoff - slack;
+  return Math.floor(rest / GOLD_FETCH_RETRY_COUNT);
 }
 
 /** HTTP-Status oder Timeout-Text aus apiRequest, sonst die Fehlermeldung. */
@@ -63,19 +87,21 @@ export type GoldFetchFailure = { ok: false; reason: string };
 export async function fetchGoldWithRetry<T>(
   url: string,
   opts?: {
-    timeoutMs?: number;
+    timeoutMs?: number | ((attempt: number) => number);
     sleep?: (ms: number) => Promise<void>;
     request?: (url: string, timeoutMs: number) => Promise<Response>;
   },
 ): Promise<GoldFetchSuccess<T> | GoldFetchFailure> {
-  const timeoutMs = opts?.timeoutMs ?? 90_000;
+  const configured = opts?.timeoutMs;
+  const timeoutFor = (attempt: number) =>
+    typeof configured === "function" ? configured(attempt) : (configured ?? 90_000);
   const pause = opts?.sleep ?? defaultSleep;
   const request = opts?.request ?? ((target, timeout) => apiRequest("GET", target, undefined, timeout));
   let last: unknown;
   const attempts = GOLD_FETCH_RETRY_COUNT + 1;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const res = await request(url, timeoutMs);
+      const res = await request(url, timeoutFor(attempt));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return { ok: true, data: (await res.json()) as T };
     } catch (err) {
