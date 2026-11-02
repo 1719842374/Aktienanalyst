@@ -2,6 +2,7 @@ import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchGoldWithRetry, goldChartHistoryRefetchInterval, goldChartHistoryStaleTime } from "@/lib/goldFetchPolicy";
+import { apiRequest } from "@/lib/queryClient";
 import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar,
@@ -20,6 +21,11 @@ import {
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
 import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
+import {
+  FMP_RATIO_SOURCE,
+  goldSilverRatioAvailability,
+  type GoldSilverRatioHistory,
+} from "../../../../shared/gold-silver-ratio";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -53,6 +59,9 @@ const MACRO = [
   { key: "t10yie", label: "Inflations-BE (T10YIE)", name: "Inflations-BE (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE) — Inflationserwartung, nicht die Minenkosten (AISC)" },
   { key: "walcl", label: "WALCL", name: "Fed-Bilanz (WALCL)", color: "#e2e8f0", defaultOn: false, unit: "T", width: 54, step: true, title: "Fed-Bilanzsumme in Bio. USD (FRED WALCL)" },
 ] as const;
+
+const GS_RATIO_COLOR = "#cbd5e1";
+const GS_RATIO_AXIS_WIDTH = 44;
 
 type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
@@ -106,6 +115,7 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
   const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
+  const [showGsRatio, setShowGsRatio] = useState(false);
 
   // 10Y/Max: lange Historie lazy laden (nur Chart-Daten, kein Score). Indikatoren laufen auf der
   // vollen Reihe, danach Fenster + Ausduennung. Pills, Cross-Banner und Rel. RSI bleiben auf `tech`.
@@ -126,6 +136,44 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
     // Ein Ladefehler hat staleTime 0 und wird im Hintergrund wiederholt.
     staleTime: (query) => goldChartHistoryStaleTime(query.state.data),
     refetchInterval: (query) => goldChartHistoryRefetchInterval(query.state.data),
+    retry: false,
+  });
+  const ratioQuery = useQuery<GoldSilverRatioHistory & { loadError?: string | null }>({
+    queryKey: ["/api/gold-silver-ratio/history"],
+    queryFn: async () => {
+      const empty = {
+        points: [] as GoldSilverRatioHistory["points"],
+        source: FMP_RATIO_SOURCE,
+        goldSource: null,
+        silverSource: null,
+        from: null,
+        to: null,
+        unavailableReason: null as string | null,
+        loadError: null as string | null,
+      };
+      try {
+        const res = await apiRequest("GET", "/api/gold-silver-ratio/history");
+        if (!res.ok) {
+          let reason = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (typeof body?.error === "string" && body.error) reason = body.error;
+            else if (typeof body?.unavailableReason === "string" && body.unavailableReason) reason = body.unavailableReason;
+          } catch {
+            /* Status bleibt der Grund */
+          }
+          return { ...empty, unavailableReason: reason, loadError: reason };
+        }
+        const data = await res.json();
+        const points = Array.isArray(data?.points) ? data.points : [];
+        return { ...empty, ...data, points, loadError: null };
+      } catch (err) {
+        const reason = err instanceof Error && err.message ? err.message : "Abruf fehlgeschlagen";
+        return { ...empty, unavailableReason: reason, loadError: reason };
+      }
+    },
+    enabled: fullChart.length > 0,
+    staleTime: (query) => (query.state.data?.points?.length ? 10 * 60 * 1000 : 0),
     retry: false,
   });
   const longTech = useMemo(
@@ -176,15 +224,37 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
 
   const activeMacro = MACRO.filter(m => visibleMacro.has(m.key) && hasMacro[m.key]);
 
+  const ratioByDate = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const point of ratioQuery.data?.points ?? []) {
+      if (typeof point?.date === "string" && typeof point.ratio === "number" && Number.isFinite(point.ratio)) {
+        out.set(point.date, point.ratio);
+      }
+    }
+    return out;
+  }, [ratioQuery.data]);
   const chartDataWithVol = useMemo(() => {
     const rawVols = chartData.map(d => d.volume ?? 0);
     const maxVol = Math.max(...rawVols, 0);
     return chartData.map((d, i) => ({
       ...d,
+      gsRatio: ratioByDate.get(d.date) ?? null,
       _volNorm: maxVol > 0 ? (d.volume ?? 0) / maxVol : 0,
       _volUp: i === 0 ? true : d.price >= chartData[i - 1].price,
     }));
-  }, [chartData]);
+  }, [chartData, ratioByDate]);
+  const gsAvail = useMemo(() => goldSilverRatioAvailability({
+    pending: ratioQuery.isPending,
+    loadError: ratioQuery.data?.loadError ?? null,
+    unavailableReason: ratioQuery.data?.unavailableReason ?? null,
+    source: ratioQuery.data?.source ?? null,
+    windowDates: chartData.map(d => d.date),
+    ratioDates: ratioQuery.data?.points?.map(p => p.date) ?? [],
+  }), [ratioQuery.isPending, ratioQuery.data, chartData]);
+  const showGsLine = showGsRatio && (gsAvail.availability === "ready" || gsAvail.availability === "partial");
+  const gsHint = (gsAvail.availability === "loading" || gsAvail.availability === "partial") && !showGsRatio
+    ? null
+    : gsAvail.hint;
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
   const qeQt = useMemo(() => goldQeQtView(
     rangeTech.points.map(p => ({ date: p.date, price: p.price, walcl: p.walcl })),
@@ -231,6 +301,15 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
   }, [chartDataWithVol, visibleMAs]);
 
+  const gsDomain = useMemo(() => {
+    const vals = chartDataWithVol.map(d => d.gsRatio).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 1] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const pad = Math.max((max - min) * 0.12, 1);
+    return [+(min - pad).toFixed(2), +(max + pad).toFixed(2)] as [number, number];
+  }, [chartDataWithVol]);
+
   const formatDate = (date: string) => {
     const parts = date.split("-");
     if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") return `${parts[1]}/${parts[0].slice(2)}`;
@@ -270,8 +349,9 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
   // Mobile: höchstens eine volle rechte Achse (BTC-Regel), Rest im Tooltip.
   const primaryMacro = narrow ? activeMacro[0]?.key ?? null : null;
   const macroAxisHidden = (key: MacroKey) => narrow && primaryMacro !== key;
-  const visibleRightWidth = primaryMacro ? MACRO.find(m => m.key === primaryMacro)!.width : 0;
-  const desktopRightAxes = narrow ? 0 : activeMacro.reduce((s, m) => s + m.width, 0);
+  const gsAxisWidth = showGsLine ? GS_RATIO_AXIS_WIDTH : 0;
+  const visibleRightWidth = (primaryMacro ? MACRO.find(m => m.key === primaryMacro)!.width : 0) + (narrow ? gsAxisWidth : 0);
+  const desktopRightAxes = (narrow ? 0 : activeMacro.reduce((s, m) => s + m.width, 0)) + gsAxisWidth;
   const plotMinWidth = narrow ? taChartMinWidth(55, visibleRightWidth, 8) : taChartMinWidth(55, desktopRightAxes, 106);
   const hiddenMacroSeries = narrow ? activeMacro.filter(m => m.key !== primaryMacro) : [];
   const priceMargin = narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 106, left: 0, bottom: 5 };
@@ -493,6 +573,35 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
           </div>
         )}
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          {gsAvail.availability === "missing" || gsAvail.availability === "window-miss" ? (
+            <span
+              className={`${chipCls} cursor-default border-dashed border-border font-mono text-muted-foreground opacity-70`}
+              title={gsAvail.hint ?? undefined}
+              data-testid="gold-silver-ratio-na"
+            >
+              Gold/Silber-Ratio n/a
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowGsRatio(v => !v)}
+              className={`${chipCls} font-mono ${showGsRatio ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
+              style={showGsRatio ? { color: GS_RATIO_COLOR } : undefined}
+              title={ratioQuery.data?.source ? `Gold/Silber-Ratio (${ratioQuery.data.source}) ein-/ausblenden` : "Gold/Silber-Ratio ein-/ausblenden"}
+              data-testid="toggle-gold-silver-ratio"
+              aria-pressed={showGsRatio}
+            >
+              {showGsRatio ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              Gold/Silber-Ratio
+            </button>
+          )}
+        </div>
+        {gsHint && (
+          <div className="w-full basis-full text-[10px] text-amber-200/90" data-testid="gold-silver-ratio-note" role="status">
+            {gsHint}
+          </div>
+        )}
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
           <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
           <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Minen:</span>
           <button
@@ -615,6 +724,19 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
                   {...(narrow ? { tickCount: 4 } : {})}
                 />
               ))}
+              {showGsLine && (
+                <YAxis
+                  yAxisId="gsRatio"
+                  orientation="right"
+                  domain={gsDomain}
+                  tickFormatter={(v: number) => v.toFixed(0)}
+                  tick={{ fontSize: narrow ? 10 : 9, fill: GS_RATIO_COLOR }}
+                  width={GS_RATIO_AXIS_WIDTH}
+                  axisLine={{ stroke: GS_RATIO_COLOR }}
+                  tickLine={false}
+                  {...(narrow ? { tickCount: 4 } : {})}
+                />
+              )}
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
@@ -624,15 +746,25 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
                       <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
                       {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => {
                         const macro = MACRO.find(m => m.key === p.dataKey);
+                        const text = p.dataKey === "gsRatio"
+                          ? Number(p.value).toFixed(1)
+                          : macro
+                            ? fmtMacro(macro.key, Number(p.value))
+                            : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
                         return (
                           <div key={p.dataKey} className="flex justify-between gap-3">
                             <span style={{ color: p.color }}>{p.name}</span>
                             <span className="font-mono tabular-nums">
-                              {macro ? fmtMacro(macro.key, Number(p.value)) : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
+                              {text}
                             </span>
                           </div>
                         );
                       })}
+                      {payload.some((p: any) => p.dataKey === "gsRatio") && ratioQuery.data?.source && (
+                        <div className="mt-1 border-t border-border pt-1 text-muted-foreground" data-testid="gold-silver-ratio-tooltip-source">
+                          Quelle {ratioQuery.data.source}
+                        </div>
+                      )}
                       {(pt?.volume ?? 0) > 0 && (
                         <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(pt!.volume ?? 0).toLocaleString("en-US")}</span></div>
                       )}
@@ -722,6 +854,20 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
                   isAnimationActive={false}
                 />
               ))}
+
+              {showGsLine && (
+                <Line
+                  yAxisId="gsRatio"
+                  type="monotone"
+                  dataKey="gsRatio"
+                  name="Gold/Silber-Ratio"
+                  stroke={GS_RATIO_COLOR}
+                  strokeWidth={1.25}
+                  dot={false}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              )}
 
               {/* #201 Golden/Death-Marker auf der 50-DMA (nicht auf dem Kurs). */}
               {visibleMAs.has("ma50") && chartDataWithVol.filter(p => p.cross && p.ma50 != null).map(p => (
@@ -908,6 +1054,12 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
         </span>
+        {showGsLine && ratioQuery.data?.source && (
+          <span className="flex items-center gap-1" data-testid="gold-silver-ratio-legend">
+            <span className="w-3 h-0.5 rounded-full" style={{ background: GS_RATIO_COLOR }} />
+            Gold/Silber-Ratio · Quelle {ratioQuery.data.source}
+          </span>
+        )}
         <span className="min-w-0 break-words" data-testid="gold-qe-qt-status">
           {qeQt.unavailableReason
             ? qeQt.unavailableReason
@@ -955,6 +1107,7 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
         Bei MA200-Break: historischen Max-Drawdown +15-20% (defensiv) bzw. +35-50% (Beta &gt;1.5) als Downside einplanen.
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
+        Gold/Silber-Ratio = Gold-Schluss geteilt durch Silber-Schluss am selben Tag (FMP GCUSD/SIUSD, sonst Yahoo GC=F/SI=F, dieselbe Quellwahl wie die Gold-Historie). Ohne gemeinsamen Tag keine Linie, nur der Hinweis.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
         „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten. Die Minen-AISC steht in Abschnitt 9.
       </div>

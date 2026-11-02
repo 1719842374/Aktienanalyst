@@ -58,7 +58,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/watchlist + GET /api/cache from the disk cache (lost in 57189dd, see watchlist-route.ts)
   const { registerWatchlistRoutes } = await import("./watchlist-route");
   registerWatchlistRoutes(app);
-  // GET /api/gold-silver-ratio (JOB 17, nur Anzeige auf /gold, kein Score)
+  // GET /api/gold-silver-ratio und /api/gold-silver-ratio/history (nur Anzeige auf /gold, kein Score)
   const { registerGoldSilverRatioRoute } = await import("./gold-silver-ratio");
   registerGoldSilverRatioRoute(app);
   // POST /api/chat (KI-Chatbot, WORK_DASHBOARD_FEATURES §4/§4c; nur Kontext lesen, kein Score)
