@@ -83,10 +83,12 @@ export const EPS_BASIS = {
 } as const;
 
 /**
- * Kein Prozentabstand, kein Tagescap. Ein Quartal ist adjusted, wenn das
- * Yahoo-NonGaap-Quartalsende das letzte Ende am oder vor dem Meldetag ist.
- * Der Wert ist dann der von Yahoo bezeichnete NonGaap-Druck.
+ * fiscalDateEnding ordnet das Quartal dem Yahoo-NonGaap-Monat zu.
+ * Fehlt das Feld, gilt der Meldetag: letztes Quartalsende, 0 bis reportLagDays Tage davor.
  */
+export const EPS_REPORT_WINDOW = {
+  reportLagDays: 75,
+} as const;
 
 /**
  * Robust z = madScale · (g − median) / MAD.
@@ -529,15 +531,14 @@ export interface ResolvedQuarter {
   eps: number;
   fmpEps: number;
   source: "fmp" | "yahoo-nongaap";
-  /** true, wenn das Yahoo-NonGaap-Quartal denselben Kalendermonat wie fiscalDateEnding hat. */
+  /** true, wenn fiscalDateEnding oder das Meldetag-Fenster ein Yahoo-NonGaap-Quartal getroffen hat. */
   yahooChecked: boolean;
 }
 
 /**
- * fiscalDateEnding ist Pflicht. Fehlt es bei einem der letzten vier gemeldeten
- * Quartale, ist die Reihe n/a. Der Meldetag ist kein Ersatz und kein Zeitfenster.
- * Zugeordnet wird das Yahoo-NonGaap-Quartal desselben Kalendermonats.
- * Der übernommene Wert ist der NonGaap-Druck. Kein Tagescap.
+ * Liefert die Quelle fiscalDateEnding, ordnet das den Yahoo-NonGaap-Monat zu.
+ * Fehlt das Feld, gilt Meldetag → letztes Quartalsende im Zeitfenster.
+ * Der übernommene Wert ist der NonGaap-Druck.
  * Liefert Yahoo gar keine NonGaap-Quartale, bleibt der FMP-Druck stehen:
  * es gibt dann keine Gegenprobe, der Aufrufer weist die Quelle aus.
  */
@@ -548,19 +549,21 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
   cite: string;
 } {
   const fmp = fmpQuarterRows(fmpRaw, asOf);
-  if ("reason" in fmp) {
-    return { adjTtm: null, quarters: [], unusableReason: fmp.reason, cite: "" };
-  }
   if (fmp.rows.length < EPS_BASIS.reportedQuarters) {
     return { adjTtm: null, quarters: [], unusableReason: null, cite: "" };
   }
   const yahooLeft = adjTtmFromYahooAdjusted(yahooRaw, asOf).quarters.map(row => ({ date: row.date, eps: row.eps }));
   const yahooSeen = yahooLeft.length > 0;
   const resolved: ResolvedQuarter[] = [];
-  const pending = fmp.rows.slice().sort((a, b) => b.fiscalDateEnding.localeCompare(a.fiscalDateEnding));
+  const withFiscal = fmp.rows.filter(row => row.fiscalDateEnding != null)
+    .sort((a, b) => String(b.fiscalDateEnding).localeCompare(String(a.fiscalDateEnding)));
+  const byReportDate = fmp.rows.filter(row => row.fiscalDateEnding == null)
+    .sort((a, b) => b.date.localeCompare(a.date));
   const byReport = new Map<string, ResolvedQuarter>();
-  for (const row of pending) {
-    const yahooEps = takeYahooQuarterInMonth(yahooLeft, row.fiscalDateEnding);
+  for (const row of [...withFiscal, ...byReportDate]) {
+    const yahooEps = row.fiscalDateEnding != null
+      ? takeYahooQuarterInMonth(yahooLeft, row.fiscalDateEnding)
+      : takeYahooQuarterWithinWindow(yahooLeft, row.date);
     if (yahooEps != null) {
       byReport.set(row.date, {
         date: row.date,
@@ -575,7 +578,9 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
       return {
         adjTtm: null,
         quarters: resolved,
-        unusableReason: `n/a — Quartal ${row.date} fiscalDateEnding ${row.fiscalDateEnding} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`,
+        unusableReason: row.fiscalDateEnding != null
+          ? `n/a — Quartal ${row.date} fiscalDateEnding ${row.fiscalDateEnding} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`
+          : `n/a — Quartal ${row.date} nicht auf ein Yahoo-NonGaap-Quartalsende im Zeitfenster gelegt`,
         cite: "",
       };
     }
@@ -611,14 +616,14 @@ export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | 
 
 interface FmpQuarterRow {
   date: string;
-  fiscalDateEnding: string;
+  fiscalDateEnding: string | null;
   eps: number;
   estimate: number | null;
 }
 
-function fmpQuarterRows(raw: unknown, asOf: string): { rows: FmpQuarterRow[] } | { reason: string } {
+function fmpQuarterRows(raw: unknown, asOf: string): { rows: FmpQuarterRow[] } {
   const list = Array.isArray(raw) ? raw : [];
-  const byDate = new Map<string, { date: string; fiscalDateEnding: string | null; eps: number; estimate: number | null }>();
+  const byDate = new Map<string, FmpQuarterRow>();
   for (const row of list) {
     if (isFullYearPeriod(row)) continue;
     const parsed = epsPrintFromEarningsRow(row);
@@ -629,19 +634,11 @@ function fmpQuarterRows(raw: unknown, asOf: string): { rows: FmpQuarterRow[] } |
     const estimate = finiteLoose(record.epsEstimated);
     if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, fiscalDateEnding, eps: parsed.eps, estimate });
   }
-  const latest = Array.from(byDate.values())
+  const rows = Array.from(byDate.values())
     .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, EPS_BASIS.reportedQuarters);
-  if (latest.length < EPS_BASIS.reportedQuarters) return { rows: [] };
-  const missing = latest.filter(row => row.fiscalDateEnding == null).map(row => row.date);
-  if (missing.length) return { reason: `n/a — fiscalDateEnding fehlt bei ${missing.join(", ")}` };
-  const rows: FmpQuarterRow[] = latest.map(row => ({
-    date: row.date,
-    fiscalDateEnding: row.fiscalDateEnding as string,
-    eps: row.eps,
-    estimate: row.estimate,
-  }));
-  rows.sort((a, b) => a.date.localeCompare(b.date));
+    .slice(0, EPS_BASIS.reportedQuarters)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (rows.length < EPS_BASIS.reportedQuarters) return { rows: [] };
   return { rows };
 }
 
@@ -661,6 +658,22 @@ function takeYahooQuarterInMonth(pool: { date: string; eps: number }[], fiscalDa
   if (hits.length !== 1) return null;
   const hit = pool[hits[0]];
   pool.splice(hits[0], 1);
+  return hit.eps;
+}
+
+/** Letztes Yahoo-Quartalsende, 0 bis reportLagDays Tage vor dem Meldetag. Jedes Ende nur einmal. */
+function takeYahooQuarterWithinWindow(pool: { date: string; eps: number }[], reportDate: string): number | null {
+  let best = -1;
+  let bestLag = EPS_REPORT_WINDOW.reportLagDays + 1;
+  for (let i = 0; i < pool.length; i++) {
+    const lag = horizonDays(pool[i].date, reportDate);
+    if (lag < 0 || lag > EPS_REPORT_WINDOW.reportLagDays || lag >= bestLag) continue;
+    best = i;
+    bestLag = lag;
+  }
+  if (best < 0) return null;
+  const hit = pool[best];
+  pool.splice(best, 1);
   return hit.eps;
 }
 
@@ -804,6 +817,67 @@ export function consensusFromYahooAdjusted(raw: unknown, asOf: string): ReturnTy
     rows.push({ date, epsAvg: eps, currency });
   }
   return consensusForOneYear(rows, asOf);
+}
+
+/**
+ * Adjusted-Konsens nur aus earningsTrendNonGaap.
+ * Das Fiskaljahr ist das 0y-Ende. Offen ist 0y, sonst +1y im selben Monat.
+ * Liegen Quartalsenden vor und keiner davon hat diesen Monat, ist das FY nicht belegt.
+ */
+export function provedAdjustedFiscalYear(
+  raw: unknown,
+  quarterEnds: readonly string[],
+  asOf: string,
+): {
+  date: string;
+  eps: number;
+  currency: string | null;
+  daysToFyEnd: number;
+  horizonDays: number;
+  period: "0y" | "+1y";
+  fiscalYearEnd: string;
+} | { reason: string } {
+  if (!raw || typeof raw !== "object") return { reason: "n/a — Konsens nicht als adjusted nachgewiesen" };
+  const trend = (raw as { earningsTrendNonGaap?: { trend?: unknown } }).earningsTrendNonGaap?.trend;
+  if (!Array.isArray(trend)) return { reason: "n/a — Konsens nicht als adjusted nachgewiesen" };
+  const rows: { period: "0y" | "+1y"; date: string; eps: number; currency: string | null }[] = [];
+  for (const row of trend) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = String(record.period ?? "");
+    if (period !== "0y" && period !== "+1y") continue;
+    const date = String(record.endDate ?? "").slice(0, 10);
+    const estimate = record.earningsEstimate && typeof record.earningsEstimate === "object"
+      ? record.earningsEstimate as Record<string, unknown>
+      : {};
+    const eps = yahooRaw(estimate.avg);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof estimate.earningsCurrency === "string" && estimate.earningsCurrency.trim()
+      ? estimate.earningsCurrency.trim()
+      : null;
+    rows.push({ period, date, eps, currency });
+  }
+  const labeled = rows.find(row => row.period === "0y");
+  if (!labeled) return { reason: "n/a — Fiskaljahr nicht belegt" };
+  const fyMonth = labeled.date.slice(5, 7);
+  const open = labeled.date >= asOf
+    ? labeled
+    : rows.find(row => row.period === "+1y" && row.date >= asOf && row.date.slice(5, 7) === fyMonth);
+  if (!open) return { reason: `n/a — kein offenes Fiskaljahr zum Ende ${labeled.date}` };
+  const ends = quarterEnds.filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  if (ends.length && !ends.some(date => date.slice(5, 7) === fyMonth)) {
+    return { reason: `n/a — Konsens-FY Ende ${labeled.date} gehört nicht zu den Quartalen` };
+  }
+  const daysToFyEnd = horizonDays(asOf, open.date);
+  return {
+    date: open.date,
+    eps: open.eps,
+    currency: open.currency,
+    daysToFyEnd,
+    horizonDays: midToMidDays(daysToFyEnd),
+    period: open.period,
+    fiscalYearEnd: labeled.date,
+  };
 }
 
 /** JSON-Objekt hinter `"key":` . Strings und Escapes zählen nicht als Klammer. */

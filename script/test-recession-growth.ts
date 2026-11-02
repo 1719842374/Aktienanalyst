@@ -25,6 +25,7 @@ import {
   adjTtmFromYahooAdjusted,
   completeEpsCurrencies,
   consensusFromYahooAdjusted,
+  provedAdjustedFiscalYear,
   resolveAdjustedFmpQuarters,
   alignConsensusToTtm,
   annualizedFwdPct,
@@ -994,7 +995,10 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
   assert.equal(parsed.unusableReason, null);
   const { loadRecessionGrowth } = await import("../server/recession-growth");
   const probes: string[] = [];
-  const quarters = (each: number) => ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"].map(date => ({ date, fiscalDateEnding: date, epsActual: each }));
+  const calendarEnds = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+  const januaryEnds = ["2026-01-31", "2026-04-30", "2026-07-31", "2026-10-31"];
+  const endsFor = (symbol: string) => (symbol === "NVDA" || symbol === "AMZN" || symbol === "GOOGL" || symbol === "NEG") ? januaryEnds : calendarEnds;
+  const quarters = (symbol: string, each: number) => endsFor(symbol).map(date => ({ date, fiscalDateEnding: date, epsActual: each }));
   const body = await loadRecessionGrowth("SPY", {
     loadBars: async () => ({ bars: [{ date: "2025-10-31", close: 500 }], source: "yahoo" as const, error: null }),
     fetchMultpl: async () => multplTable(),
@@ -1024,12 +1028,12 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
       if (path === "/analyst-estimates" && symbol === "NEG") {
         return { status: 200, json: [{ date: "2027-01-25", epsAvg: 2 }], detail: "" };
       }
-      if (path === "/earnings" && symbol === "AVGO") return { status: 200, json: quarters(1), detail: "" };
-      if (path === "/earnings" && symbol === "NVDA") return { status: 200, json: quarters(1), detail: "" };
-      if (path === "/earnings" && symbol === "META") return { status: 200, json: quarters(2), detail: "" };
-      if (path === "/earnings" && symbol === "AMZN") return { status: 200, json: quarters(1), detail: "" };
-      if (path === "/earnings" && symbol === "GOOGL") return { status: 200, json: quarters(1.5), detail: "" };
-      if (path === "/earnings" && symbol === "NEG") return { status: 200, json: quarters(-1), detail: "" };
+      if (path === "/earnings" && symbol === "AVGO") return { status: 200, json: quarters("AVGO", 1), detail: "" };
+      if (path === "/earnings" && symbol === "NVDA") return { status: 200, json: quarters("NVDA", 1), detail: "" };
+      if (path === "/earnings" && symbol === "META") return { status: 200, json: quarters("META", 2), detail: "" };
+      if (path === "/earnings" && symbol === "AMZN") return { status: 200, json: quarters("AMZN", 1), detail: "" };
+      if (path === "/earnings" && symbol === "GOOGL") return { status: 200, json: quarters("GOOGL", 1.5), detail: "" };
+      if (path === "/earnings" && symbol === "NEG") return { status: 200, json: quarters("NEG", -1), detail: "" };
       return { status: 404, json: null, detail: "unbekannt" };
     },
     loadIncome: async () => [],
@@ -1053,7 +1057,7 @@ await ok("NVDA t=266, META t=241, AMZN/GOOGL GAAP gegen adjusted, AVGO-Stub und 
       };
       const picked = spec[symbol];
       if (!picked || !modules.includes("earningsTrendNonGaap")) return { defaultKeyStatistics: {} };
-      const ends = ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+      const ends = endsFor(symbol);
       return {
         earningsHistoryNonGaap: { history: ends.map(date => ({ epsActual: { raw: picked.each }, quarter: { fmt: date }, currency: "USD" })) },
         earningsTrendNonGaap: { trend: [{ period: "0y", endDate: picked.end, earningsEstimate: { avg: { raw: picked.fy }, earningsCurrency: "USD" } }] },
@@ -1489,7 +1493,7 @@ await ok("vier Namen unter minCoverage sind n/a mit Deckung, nicht eine Zahl", a
   assert.match(visible.slice(forwardAt, forwardAt + 500), /minCoverage/);
 });
 
-await ok("AAPL: fiscalDateEnding ist Pflicht, Meldetag 2026-01-29 wird 2,84 und nicht 1,85", () => {
+await ok("AAPL Fiskaljahr September: fiscalDateEnding ordnet den Monat, sonst das Meldetag-Fenster", () => {
   const asOf = "2026-11-02";
   const yahoo = {
     earningsHistoryNonGaap: {
@@ -1516,6 +1520,7 @@ await ok("AAPL: fiscalDateEnding ist Pflicht, Meldetag 2026-01-29 wird 2,84 und 
   const january = shifted.quarters.find(row => row.date === "2026-01-29");
   assert.equal(january?.eps, 2.84);
   assert.ok(Math.abs((january?.eps ?? 0) - 1.85) > 0.5);
+  assert.equal(shifted.quarters.find(row => row.date === "2026-10-30")?.eps, 2.06);
   const throughJune = {
     earningsHistoryNonGaap: {
       history: yahoo.earningsHistoryNonGaap.history.filter(row => row.quarter.fmt !== "2026-09-30"),
@@ -1525,11 +1530,77 @@ await ok("AAPL: fiscalDateEnding ist Pflicht, Meldetag 2026-01-29 wird 2,84 und 
   assert.equal(stale.unusableReason, null, stale.unusableReason ?? "");
   assert.ok(Math.abs((stale.adjTtm ?? 0) - (1.85 + 2.84 + 2.01 + 2.02)) < 1e-9, String(stale.adjTtm));
   assert.equal(stale.quarters.find(row => row.date === "2026-01-29")?.eps, 2.84);
-  const missing = reported.map(row => row.date === "2026-01-29" ? { date: row.date, epsActual: row.epsActual } : row);
-  const open = resolveAdjustedFmpQuarters(missing, yahoo, asOf);
-  assert.equal(open.adjTtm, null);
-  assert.match(open.unusableReason ?? "", /fiscalDateEnding fehlt/);
-  assert.match(open.unusableReason ?? "", /2026-01-29/);
+  const september = stale.quarters.find(row => row.date === "2025-10-30");
+  assert.equal(september?.eps, 1.85);
+  const byReport = resolveAdjustedFmpQuarters([
+    { date: "2025-10-30", epsActual: 9 },
+    { date: "2026-01-29", epsActual: 9 },
+    { date: "2026-04-30", epsActual: 9 },
+    { date: "2026-07-30", epsActual: 9 },
+  ], throughJune, asOf);
+  assert.equal(byReport.unusableReason, null, byReport.unusableReason ?? "");
+  assert.equal(byReport.quarters.find(row => row.date === "2026-01-29")?.eps, 2.84);
+  assert.equal(byReport.quarters.find(row => row.date === "2025-10-30")?.eps, 1.85);
+  const saturday = resolveAdjustedFmpQuarters([
+    { date: "2025-09-27", epsActual: 9 },
+    { date: "2025-12-27", epsActual: 9 },
+    { date: "2026-03-28", epsActual: 9 },
+    { date: "2026-06-27", epsActual: 9 },
+  ], throughJune, asOf);
+  assert.equal(saturday.adjTtm, null);
+  assert.match(saturday.unusableReason ?? "", /Zeitfenster/);
+  assert.equal(saturday.quarters.some(row => row.eps === 1.85), false);
+});
+
+await ok("AMZN, GOOGL und MU: adjusted Konsens nur im eigenen Fiskaljahr, mit t und Exponent", () => {
+  const live = JSON.parse(readFileSync("script/fixtures/recession-yahoo-fy-2026-11-02.json", "utf8")) as {
+    names: Record<string, {
+      quarters: { end: string; nonGaap: number }[];
+      nonGaapFy: { period: string; end: string; avg: number }[];
+    }>;
+  };
+  const asOf = "2026-11-02";
+  for (const symbol of ["AMZN", "GOOGL", "MU"]) {
+    const book = live.names[symbol];
+    const raw = {
+      earningsHistoryNonGaap: {
+        history: book.quarters.map(row => ({ epsActual: { raw: row.nonGaap }, quarter: { fmt: row.end }, currency: "USD" })),
+      },
+      earningsTrendNonGaap: {
+        trend: book.nonGaapFy.map(row => ({
+          period: row.period,
+          endDate: row.end,
+          earningsEstimate: { avg: { raw: row.avg }, earningsCurrency: "USD" },
+        })),
+      },
+    };
+    const proved = provedAdjustedFiscalYear(raw, book.quarters.map(row => row.end), asOf);
+    assert.ok(!("reason" in proved), `${symbol} ${"reason" in proved ? proved.reason : ""}`);
+    if ("reason" in proved) return;
+    const open = book.nonGaapFy.find(row => row.end >= asOf);
+    assert.equal(proved.date, open?.end, symbol);
+    assert.equal(proved.eps, open?.avg, symbol);
+    assert.equal(proved.fiscalYearEnd, book.nonGaapFy.find(row => row.period === "0y")?.end, symbol);
+    const t = midToMidDays(horizonDays(asOf, proved.date));
+    assert.equal(proved.horizonDays, t, symbol);
+    const exponent = FORWARD_HORIZON.oneYearDays / t;
+    const grown = annualizedFwdPct(proved.eps, book.quarters.reduce((sum, row) => sum + row.nonGaap, 0), t);
+    assert.ok("gFwdPct" in grown, symbol);
+    if ("gFwdPct" in grown) assert.ok(Number.isFinite(grown.gFwdPct), `${symbol} ${exponent}`);
+  }
+  const muEnds = live.names.MU.quarters.map(row => row.end);
+  const wrong = provedAdjustedFiscalYear({
+    earningsTrendNonGaap: {
+      trend: [{ period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: 10 }, earningsCurrency: "USD" } }],
+    },
+  }, muEnds, asOf);
+  assert.ok("reason" in wrong);
+  if ("reason" in wrong) assert.match(wrong.reason, /Quartalen/);
+  const unlabeled = provedAdjustedFiscalYear({
+    earningsTrend: { trend: [{ period: "0y", endDate: "2026-12-31", earningsEstimate: { avg: { raw: 12.80814 } } }] },
+  }, live.names.AMZN.quarters.map(row => row.end), asOf);
+  assert.ok("reason" in unlabeled);
+  if ("reason" in unlabeled) assert.match(unlabeled.reason, /adjusted/);
 });
 
 await ok("Konsens ohne adjusted-Nachweis ist n/a, ein großes adjusted g bleibt im Mittel", async () => {

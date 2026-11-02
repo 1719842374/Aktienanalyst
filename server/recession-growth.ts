@@ -26,6 +26,7 @@ import {
   annualizedFwdPct,
   consensusForOneYear,
   consensusFromYahooAdjusted,
+  provedAdjustedFiscalYear,
   horizonWeightFactor,
   describeAnalystEstimates,
   describeEarningsRows,
@@ -309,7 +310,8 @@ function datedForward(
 ): { gFwdPct: number; via: string } | { reason: string } {
   const adj = annualizedFwdPct(consensus, ttm, tDays);
   if ("reason" in adj) return { reason: adj.reason };
-  const horizon = `Horizont t=${Math.round(tDays)} Tage = ${Math.round(daysToFyEnd)} Tage bis FY-Ende ${fyEnd} + ${FORWARD_HORIZON.midYearDays}, g_ann = (Konsens/adjTTM)^(365/t)−1, g ungedämpft`;
+  const exponent = FORWARD_HORIZON.oneYearDays / tDays;
+  const horizon = `Horizont t=${Math.round(tDays)} Tage = ${Math.round(daysToFyEnd)} Tage bis FY-Ende ${fyEnd} + ${FORWARD_HORIZON.midYearDays}, Exponent 365/t=${exponent.toFixed(4)}, g_ann = (Konsens/adjTTM)^(365/t)−1, g ungedämpft`;
   return { gFwdPct: adj.gFwdPct, via: `${source} · ${horizon}` };
 }
 
@@ -400,17 +402,19 @@ async function annualizedFromConsensus(
   }
   const amount = resolved.adjTtm ?? yahooTtm.ttm;
   const amountCcy = resolved.adjTtm != null ? (ttm.currency ?? yahooTtm.currency) : yahooTtm.currency;
-  const fy = yahooTtm.consensus;
-  if (!fy) {
+  const quarterEnds = adjTtmFromYahooAdjusted(yahooTtm.raw, deps.today).quarters.map(row => row.date);
+  const proved = provedAdjustedFiscalYear(yahooTtm.raw, quarterEnds, deps.today);
+  if ("reason" in proved) {
     notes.push(`${symbol}: FMP-FY ${consensus.date} = ${shownEps(consensus.eps)} nicht als adjusted verwendet`);
-    return { excludeReason: `n/a — Konsens nicht als adjusted nachgewiesen (FMP FY ${consensus.date} = ${shownEps(consensus.eps)})` };
+    return { excludeReason: `${proved.reason} (FMP FY ${consensus.date} = ${shownEps(consensus.eps)} nicht verwendet)` };
   }
+  const fy = proved;
   if (fy.date !== consensus.date) {
     notes.push(`${symbol}: FMP-FY ${consensus.date} ist nicht das offene NonGaap-FY ${fy.date}`);
   }
   const basis = [
     resolved.adjTtm != null ? `FMP ${ttm.cite} · ${resolved.cite}` : yahooTtm.cite,
-    `Konsens Yahoo earningsTrendNonGaap adjusted offenes FY ${fy.date} = ${shownEps(fy.eps)}`,
+    `Konsens Yahoo earningsTrendNonGaap adjusted ${fy.period} offenes FY ${fy.date} Ende ${fy.fiscalYearEnd} = ${shownEps(fy.eps)}`,
   ].filter(Boolean).join(" · ");
   if (amount == null) {
     if (yahooTtm.unusableReason) return { excludeReason: yahooTtm.unusableReason };
@@ -486,27 +490,31 @@ async function growthForHolding(
   }
   const yahoo = await yahooOnce();
   if (yahoo.unusableReason) return { gFwdPct: null, via: "", excludeReason: yahoo.unusableReason, tDays: yahoo.consensus?.horizonDays ?? null };
-  if (yahoo.consensus && yahoo.ttm != null && yahoo.currency) {
-    const consensusCcy = assumedCurrency(symbol, yahoo.consensus.currency);
+  const quarterEnds = adjTtmFromYahooAdjusted(yahoo.raw, deps.today).quarters.map(row => row.date);
+  const proved = provedAdjustedFiscalYear(yahoo.raw, quarterEnds, deps.today);
+  if (!("reason" in proved) && yahoo.ttm != null && yahoo.currency) {
+    const consensusCcy = assumedCurrency(symbol, proved.currency);
     if (!consensusCcy) {
       notes.push(`${symbol}: Währung fehlt`);
     } else {
-      const aligned = alignConsensusToTtm(yahoo.consensus.eps, consensusCcy, yahoo.ttm, yahoo.currency, rates);
+      const aligned = alignConsensusToTtm(proved.eps, consensusCcy, yahoo.ttm, yahoo.currency, rates);
       if ("error" in aligned) {
         notes.push(`${symbol}: ${aligned.error}`);
       } else {
         const forward = datedForward(
           aligned.consensus,
           aligned.ttm,
-          yahoo.consensus.date,
-          yahoo.consensus.daysToFyEnd,
-          yahoo.consensus.horizonDays,
-          `${yahoo.cite} · Konsens Yahoo earningsTrendNonGaap adjusted offenes FY ${yahoo.consensus.date} = ${shownEps(yahoo.consensus.eps)} · ${aligned.note}`,
+          proved.date,
+          proved.daysToFyEnd,
+          proved.horizonDays,
+          `${yahoo.cite} · Konsens Yahoo earningsTrendNonGaap adjusted ${proved.period} offenes FY ${proved.date} Ende ${proved.fiscalYearEnd} = ${shownEps(proved.eps)} · ${aligned.note}`,
         );
-        if ("reason" in forward) return { gFwdPct: null, via: "", excludeReason: forward.reason, tDays: yahoo.consensus.horizonDays };
-        return { gFwdPct: forward.gFwdPct, via: forward.via, excludeReason: null, tDays: yahoo.consensus.horizonDays };
+        if ("reason" in forward) return { gFwdPct: null, via: "", excludeReason: forward.reason, tDays: proved.horizonDays };
+        return { gFwdPct: forward.gFwdPct, via: forward.via, excludeReason: null, tDays: proved.horizonDays };
       }
     }
+  } else if ("reason" in proved && yahoo.ttm != null) {
+    return { gFwdPct: null, via: yahoo.cite, excludeReason: proved.reason, tDays: null };
   }
   const hasQuarters = yahoo.ttm != null;
   const hasHorizon = yahoo.consensus != null || consensus != null;
