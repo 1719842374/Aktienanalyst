@@ -21,6 +21,7 @@ import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedF
 import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "./gold-response-cache";
 import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
 import { loadGoldAiscSeries } from "./gold-aisc";
+import { goldAiscScoreSteps } from "../shared/gold-aisc";
 import { buildGoldMinerZone } from "../shared/gold-miner-zone";
 import type { GoldMinerZone } from "../shared/schema";
 
@@ -809,7 +810,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
       };
 
       // Future_10 §2–§3, §8, §10. GIS, OLS, Multi-Faktor, Monte Carlo und getTechnicalScore bleiben.
-      // AISC hat keine Quelle — die Supply-Dimension wird N/A, nicht 0.
+      // F10-20: Quartals-AISC an die Supply-Schicht. Fehlt die Datei, bleibt das Signal n/a, nicht 0.
+      const aiscSeries = loadGoldAiscSeries();
+      const aiscScoreSteps = goldAiscScoreSteps(aiscSeries);
       let adaptiveScore: import("../shared/gold-schema").GoldAdaptiveScore | null = null;
       let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
       try {
@@ -847,7 +850,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
           rrpBillions: fredHistory.get("RRPONTSYD", startDate),
           breakeven: fredHistory.get("T10YIE", startDate),
           dxy: fredHistory.get("DTWEXBGS", startDate),
-          aisc: null,
+          aisc: aiscScoreSteps,
           regime: realYieldModel?.regime?.regime ?? null,
           newsFlag: goldNewsScoreFlag(goldNews, Date.now()), // lastGood > 24 h zählt nicht (#241)
           gis: gisRounded,
@@ -905,9 +908,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         `CPI ${cpiToday} für Fair Value (${cpiToday > 200 && cpiToday < 500 ? "✅" : "⚠️ geschätzt"})`,
       ];
 
-      // Future_10 §5 (B1): Quartals-AISC einmal laden. Linie und Miner-Zone, kein Score.
-      // aisc: null an scoreGoldAdaptive (oben) bleibt. Fehler der Zone → null.
-      const aiscSeries = loadGoldAiscSeries();
+      // Dieselbe Reihe wie die Supply-Schicht. Fehler der Zone → null, kein Ersatz.
       let aiscZone: GoldMinerZone | null = null;
       try {
         aiscZone = buildGoldMinerZone(historicalPrices, aiscSeries);
@@ -963,7 +964,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         scoreDelta,
         gates,
         technicalSignals,
-        // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
+        // Quartals-AISC für Chart-Pane und Miner-Zone. GIS und getTechnicalScore bleiben ohne AISC.
         aiscLine: aiscSeries,
         aiscZone,
         // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.

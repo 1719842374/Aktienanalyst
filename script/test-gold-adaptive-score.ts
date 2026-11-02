@@ -127,6 +127,12 @@ console.log("\nFehlende Quellen bleiben N/A");
   check("Technik-Signale liegen auch ohne Quelle flach", empty.technicalSignals.some(item => item.id === "technical.volumeSpike" && item.available === false));
   check("News-Flag ist nicht Teil des Scores", empty.newsInScore === false);
   check("Supply ohne AISC ist N/A", signal(empty, "supply", "supply.aisc")?.available === false);
+  const withAisc = scoreGoldAdaptive(baseInput({
+    closes: Array.from({ length: 80 }, (_, i) => ({ date: day(i), close: 2000 + i * 3 })),
+    aisc: [{ date: day(0), aisc: 1400 }, { date: day(40), aisc: 1500 }],
+  }));
+  check("F10-20: Quartals-AISC macht die Marge verfügbar", signal(withAisc, "supply", "supply.aisc")?.available === true, signal(withAisc, "supply", "supply.aisc")?.detail ?? "");
+  check("GIS-Feld bleibt unberührt (Schicht rechnet kein GIS)", withAisc.scoreDelta === null);
   check("Supply-Beitrag ist null", empty.layers.find(layer => layer.id === "supply")?.contribution == null);
   check("Volumen ohne Quelle ist N/A", signal(empty, "technical", "technical.volumeSpike")?.available === false);
   const zeros = scoreGoldAdaptive(baseInput({
@@ -363,7 +369,7 @@ console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
   check("Multi-Faktor bleibt angebunden", routes.includes("runMultiFactorGoldModel("));
   check("Monte Carlo bleibt angebunden", routes.includes("runMonteCarlo("));
   check("adaptive Schicht ist angebunden", routes.includes("scoreGoldAdaptive("));
-  check("AISC wird nicht erfunden", /aisc:\s*null/.test(routes));
+  check("AISC wird nicht erfunden", /aisc: aiscScoreSteps/.test(routes) && /goldAiscScoreSteps\(aiscSeries\)/.test(routes) && !/aisc:\s*\[/.test(routes));
   check("Yahoo GC=F ist die Volumen-Reserve", routes.includes('yahooFetch("GC=F"'));
   check("GIS fließt nur ins Score-Delta", routes.includes("gis: gisRounded"));
   check("Response liefert scoreDelta, gates und technicalSignals", /scoreDelta,\s*gates,\s*technicalSignals,/.test(routes));

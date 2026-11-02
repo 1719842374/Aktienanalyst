@@ -14,6 +14,7 @@ import {
   aiscStressRuns,
   attachAiscToChart,
   buildGoldAiscSeries,
+  goldAiscScoreSteps,
   goldAiscStepAt,
   goldAiscStress,
   quarterPeriodEnd,
@@ -137,7 +138,13 @@ console.log("\nServer-Loader + Verdrahtung");
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
   check("gold-routes liefert aiscLine aus dem Loader", /const aiscSeries = loadGoldAiscSeries\(\)/.test(routes) && /aiscLine: aiscSeries/.test(routes));
   check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(historicalPrices, aiscSeries\)/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
-  check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
+  check("F10-20 reicht die Quartalsstufen an die Supply-Schicht", /const aiscScoreSteps = goldAiscScoreSteps\(aiscSeries\)/.test(routes) && /aisc: aiscScoreSteps/.test(routes));
+  check("kein Platzhalter aisc: null", !/aisc:\s*null/.test(routes));
+  check("goldAiscScoreSteps nimmt availableFrom und lässt n/a weg", (() => {
+    const steps = goldAiscScoreSteps(series);
+    return !!steps && steps.length === series.quarters.filter(q => q.aisc != null).length && steps[0].date === series.quarters[0].availableFrom;
+  })());
+  check("ohne Serie keine Stufen", goldAiscScoreSteps(null) === null);
   check("getTechnicalScore vorhanden", /function getTechnicalScore\(/.test(routes));
   // Schnitt endet vor der Response-Zeile: die Reihe wird einmal geladen, nachdem GIS und
   // scoreGoldAdaptive schon stehen. Der Loader darf nicht in den Indikatorblock rutschen.
@@ -196,8 +203,27 @@ export { renderToStaticMarkup } from "react-dom/server";`,
   const noOverlay = (html: string) => !html.includes('data-testid="toggle-gold-aisc"') && !html.includes('data-testid="gold-aisc-status"') && !html.includes('dataKey="aisc"');
   check("mit Preisen: Link auf Abschnitt 9, kein AISC-Overlay", hasLink(offline) && noOverlay(offline));
   const online = render({ ...base, aiscLine: series });
-  check("mit aiscLine bleibt der TA-Chart ohne AISC-Linie", hasLink(online) && noOverlay(online) && !online.includes("AISC Ø 2026-Q2"));
+  check("mit aiscLine: AISC-Pane, keine Linie auf der Preisachse", hasLink(online) && noOverlay(online) && online.includes('data-testid="gold-aisc-pane"') && !online.includes('data-testid="gold-aisc-pane-na"') && !online.includes("AISC Ø 2026-Q2"));
+  check("ohne aiscLine: Pane n/a, kein Overlay", hasLink(offline) && noOverlay(offline) && offline.includes("n/a — Offline-Daten, keine AISC-Quelle"));
+  check("Kapitulations-Hinweis im TA", offline.includes('data-testid="gold-ta-capitulation"') && offline.includes("Kapitulation n/a — Offline-Daten"));
   check("RSI-Pane bleibt sichtbar", online.includes('data-testid="gold-rsi-relative"'));
+  const withCap = render({
+    ...base,
+    aiscLine: series,
+    aiscZone: {
+      points: [],
+      segments: [{ x1: prices[prices.length - 40].date, x2: prices.at(-1)!.date, zone: "capitulation" as const }],
+      thresholds: {
+        pLowRank: 20, pHighRank: 50, pEuphRank: 90,
+        low: 1.2, high: 2, median: 2, euph: 3, sigma: 0.2, zScore: 0.4,
+        obs: 200, since: prices[0].date,
+      },
+      latest: null,
+      naReason: null,
+      inScore: false as const,
+    },
+  });
+  check("Kapitulations-Overlay im TA-Fenster", withCap.includes('data-testid="gold-ta-capitulation"') && withCap.includes("Kapitulation (rot)"));
   check("#374-Pfade bleiben im Render (Toggle oder n/a)", (online.includes('data-testid="toggle-gold-qe-qt"') || online.includes('data-testid="gold-qe-qt-na"')) && (online.includes('data-testid="toggle-gold-walcl-ratio"') || online.includes('data-testid="gold-walcl-ratio-na"')));
 }
 

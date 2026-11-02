@@ -10,6 +10,7 @@ import { goldAiscStress } from "../shared/gold-aisc";
 import {
   GOLD_MINER_ZONE_MIN_OBS,
   buildGoldMinerZone,
+  clipGoldZoneSegments,
   goldMinerPriceDomain,
   percentileRank,
   percentileValue,
@@ -113,7 +114,7 @@ console.log("\nseries=null und kurze Historie");
   check("kurze Historie: latest null, Zonen null, inScore false",
     short?.latest == null && short?.inScore === false && short.points.every(p => p.zone == null) && short.segments.length === 0);
   check("obs zählt nur Tage mit Stufe", short?.thresholds.obs === GOLD_MINER_ZONE_MIN_OBS - 1);
-  check("Euphorie-Schwelle nicht gesetzt", short?.thresholds.euph == null && short?.thresholds.pEuphRank === 90);
+  check("unter 120 Tagen kein P90, kein Median, kein z", short?.thresholds.euph == null && short?.thresholds.median == null && short?.thresholds.zScore == null && short?.thresholds.pEuphRank === 90);
 }
 
 console.log("\nkein Lookahead: Schwelle an Tag d bleibt, wenn danach Daten folgen");
@@ -208,8 +209,10 @@ console.log("\nechte gold-aisc.json");
     latest ? String(latest.multiple) : "kein latest");
   check("letzte Stufe 2026-Q2 Ø 1649", latest?.quarter === "2026-Q2" && latest.aisc === 1649, `${latest?.quarter} ${latest?.aisc}`);
   check("drei Firmen am letzten Quartal", latest?.perCompany.length === 3);
-  check("keine Euphorie-Zone und euph null",
-    zone?.thresholds.euph == null && zone!.points.every(p => p.zone !== "euphoria") && zone!.segments.every(s => s.zone !== "euphoria"));
+  check("P90 liegt über dem Median", zone?.thresholds.euph != null && zone.thresholds.median != null && zone.thresholds.euph > zone.thresholds.median,
+    `P90 ${zone?.thresholds.euph} Median ${zone?.thresholds.median}`);
+  check("z-Score der steigenden Reihe ist endlich", zone?.thresholds.zScore != null && Number.isFinite(zone.thresholds.zScore), String(zone?.thresholds.zScore));
+  check("steigende Reihe hat eine Euphorie-Fläche", zone!.segments.some(s => s.zone === "euphoria"));
   check("Punkte ≤ 800", (zone?.points.length ?? 999) <= 800);
   const src = readFileSync(path.join(root, "shared/gold-miner-zone.ts"), "utf8");
   check("importiert nur goldAiscStepAt aus gold-aisc", /import \{ goldAiscStepAt \} from "\.\/gold-aisc"/.test(src));
@@ -237,7 +240,33 @@ console.log("\nSkala und Rechnung analog BTC, nicht das TA-Overlay");
     Math.abs(last.multiple - last.spot / last.aisc) < 1e-9 && last.marginUsd === last.spot - last.aisc);
   check("Overlay würde 1,12× als Vorwarnung ×1,15 werten", goldAiscStress(1120, 1000) === "watch");
   check("Sektion wertet 1,12× nach der eigenen Historie, nicht nach ×1,15", last.zone === "capitulation" && last.multiple < (built.thresholds.low ?? 0));
-  check("drei Zonen, keine Euphorie", built.points.every(p => p.zone !== "euphoria") && built.thresholds.euph == null);
+  check("konstante 2× ist nicht Euphorie, P90 nicht über dem Median",
+    built.points.every(p => p.zone !== "euphoria")
+    && built.thresholds.euph != null
+    && built.thresholds.median != null
+    && built.thresholds.euph <= built.thresholds.median);
+  check("z bei σ = 0 ist n/a", built.thresholds.zScore == null && built.thresholds.sigma == null);
+}
+
+console.log("\n1Y: zwei Zonenflächen, Fenster lückenlos");
+{
+  const dates = businessDays("2024-01-02", 400);
+  const series = seriesAt(1000, dates[0]);
+  const px = dates.map((date, i) => ({
+    date,
+    close: i < 200 ? 2000 : i < 300 ? 4000 : 2600,
+  }));
+  const zone = buildGoldMinerZone(px, series, { maxPoints: 5000 })!;
+  const end = zone.points[zone.points.length - 1].date;
+  const start = new Date(Date.parse(`${end}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
+  const windowDates = zone.points.filter(p => p.date >= start).map(p => p.date);
+  const bands = clipGoldZoneSegments(zone.segments, windowDates);
+  const kinds = new Set(bands.map(b => b.zone));
+  check("1Y hat mindestens zwei Zonenflächen", bands.length >= 2 && kinds.has("euphoria") && kinds.has("profitable"),
+    bands.map(b => `${b.zone} ${b.x1}→${b.x2}`).join(" | "));
+  const covered = windowDates.filter(date => bands.some(b => date >= b.x1 && date <= b.x2));
+  check("jede 1Y-Fläche deckt ihre Tage, keine Lücke", covered.length === windowDates.length, `${covered.length}/${windowDates.length}`);
+  check("Flächen-Enden liegen auf Fenster-Daten", bands.every(b => windowDates.includes(b.x1) && windowDates.includes(b.x2)));
 }
 
 console.log("\nScore-Pins (VOW3 / SAP / MSFT)");
