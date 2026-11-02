@@ -431,7 +431,13 @@ export function retainSourcedTamNaFills(fills: TamNaFill[]): { fills: TamNaFill[
 export const TAM_ESTIMATE_MAX_RETRIES = 1;
 
 /** Cache-Schlüssel wechselt mit der Schätzlogik, nicht mit einem stillen Zahlenfaktor. */
-export const TAM_ESTIMATE_CACHE_VERSION = 1;
+export const TAM_ESTIMATE_CACHE_VERSION = 2;
+
+/**
+ * Segment-Wachstum unter dieser Schwelle ist die Unternehmensentwicklung
+ * und kein Markt-CAGR. Der Default ist 0.
+ */
+export const MARKET_CAGR_PROXY_MIN_GROWTH = 0;
 
 /** Spanne = kleinstes bis größtes beobachtetes TAM/Umsatz-Verhältnis. Kein fester Faktor. */
 export const TAM_RATIO_SPREAD = { method: "range" } as const;
@@ -560,8 +566,15 @@ export interface PeerSegmentEvidence {
   segmentName: string;
   /** Umsatz in Mrd. USD. */
   revenueB: number;
-  /** Marktanteil in Prozent, wenn eine Marktgröße ihn belegt. Kein Mix-Anteil der Firma. */
+  /**
+   * Marktanteil in Prozent aus einer belegten Quelle.
+   * Kein Mix-Anteil der Firma und nicht Umsatz geteilt durch den Katalog-TAM.
+   */
   sharePct: number | null;
+  /** Beleg des Marktanteils. Ohne Text zählt der Anteil nicht. */
+  shareSource?: string | null;
+  /** Datum des Belegs. Ohne Datum zählt der Anteil nicht. */
+  shareAsOf?: string | null;
 }
 
 export interface TamRatioBounds {
@@ -590,11 +603,21 @@ export function factTamRevenueRatios(segments: readonly TamNaSegmentRef[]): numb
   return out;
 }
 
-/** Peer-Verhältnis aus belegtem Marktanteil: TAM/Umsatz = 100 / Anteil. */
+function documentedShare(peer: PeerSegmentEvidence): peer is PeerSegmentEvidence & { sharePct: number; shareSource: string; shareAsOf: string } {
+  return typeof peer.sharePct === "number"
+    && Number.isFinite(peer.sharePct)
+    && peer.sharePct > 0
+    && typeof peer.shareSource === "string"
+    && peer.shareSource.trim().length > 0
+    && typeof peer.shareAsOf === "string"
+    && peer.shareAsOf.trim().length > 0;
+}
+
+/** Peer-Verhältnis aus belegtem Marktanteil: TAM/Umsatz = 100 / Anteil. Ohne Quelle und Datum zählt er nicht. */
 export function peerTamRevenueRatios(peers: readonly PeerSegmentEvidence[]): number[] {
   const out: number[] = [];
   for (const peer of peers) {
-    if (peer.sharePct == null || !(peer.sharePct > 0) || !(peer.revenueB > 0)) continue;
+    if (!documentedShare(peer) || !(peer.revenueB > 0)) continue;
     out.push(100 / peer.sharePct);
   }
   return out;
@@ -626,6 +649,17 @@ export function isMarketSizeSource(source: string): boolean {
   return publisher && !growth;
 }
 
+/** Jahr oder ISO-Datum in der Quellenzeile. */
+export function sourceHasDate(source: string): boolean {
+  return /\b(?:19|20)\d{2}(?:-\d{2}(?:-\d{2})?)?\b/.test(source);
+}
+
+/** Markt-CAGR nur mit Verlag und Datum. Eine Wachstumsrate als Quelle zählt nicht. */
+export function isDocumentedMarketCagrSource(source: string): boolean {
+  const text = source.trim();
+  return text.length > 0 && isMarketSizeSource(text) && sourceHasDate(text);
+}
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -635,7 +669,10 @@ export function gateMarketTam(input: {
   revenue: number;
   source: string;
   ratios: readonly number[];
-  /** Formel aus Peer-Umsatz/Anteil. Die Quelle ist die Formel, kein Verlagsname. */
+  /**
+   * Formel aus Peer-Umsatz und belegtem Anteil. Die Quelle ist der Beleg.
+   * Unter zwei beobachteten Verhältnissen bleibt auch dieser Pfad n/a (nicht gegated).
+   */
   formulaPath?: boolean;
 }): { ok: true } | { ok: false; reason: string } {
   if (!(input.tamSize > 0) || !(input.revenue > 0)) {
@@ -648,8 +685,8 @@ export function gateMarketTam(input: {
   const ratio = input.tamSize / input.revenue;
   const bounds = adaptiveTamRatioBounds(input.ratios);
   if (!bounds) {
-    if (input.formulaPath) return { ok: true };
-    return { ok: false, reason: `n/a — TAM/Umsatz-Spanne nicht ableitbar (n=${positiveRatios(input.ratios).length})` };
+    const n = positiveRatios(input.ratios).length;
+    return { ok: false, reason: `n/a — nicht gegated (n=${n} beobachtete Verhältnisse, mindestens 2)` };
   }
   if (ratio < bounds.lo || ratio > bounds.hi) {
     return {
@@ -679,32 +716,65 @@ export interface PeerTamFormula {
 }
 
 /**
- * Genau ein Peer mit demselben Segmentnamen, Umsatz und Marktanteil.
- * Mehrere Treffer werden nicht gemittelt. Kein Treffer bleibt ohne Zahl.
+ * Genau ein Peer mit demselben Segmentnamen, Umsatz und belegtem Marktanteil.
+ * Quelle und Datum müssen am Anteil stehen. Mehrere Treffer werden nicht gemittelt.
  */
 export function peerRevenueShareTam(subjectName: string, peers: readonly PeerSegmentEvidence[]): PeerTamFormula | { reason: string } | null {
-  const hits = peers.filter((peer) => sameSegmentName(subjectName, peer.segmentName) && peer.revenueB > 0 && peer.sharePct != null && peer.sharePct > 0);
-  if (hits.length === 0) return null;
-  if (hits.length > 1) {
-    return { reason: `n/a — ${hits.length} Peers mit Segment „${subjectName}“, kein eindeutiger Umsatz (nicht gemittelt)` };
+  const named = peers.filter((peer) => sameSegmentName(subjectName, peer.segmentName) && peer.revenueB > 0);
+  if (named.length === 0) return null;
+  const documented = named.filter(documentedShare);
+  if (documented.length > 1) {
+    return { reason: `n/a — ${documented.length} Peers mit Segment „${subjectName}“, kein eindeutiger Umsatz (nicht gemittelt)` };
   }
-  const peer = hits[0];
-  const share = peer.sharePct as number;
-  const tamSize = round1(peer.revenueB / (share / 100));
-  return {
-    tamSize,
-    formula: `TAM ${tamSize} = Peer-Umsatz ${round1(peer.revenueB)} / Marktanteil ${round1(share)}% (${peer.symbol} ${peer.segmentName})`,
-    source: `Peer-Segmentumsatz / Marktanteil (${peer.symbol} ${peer.segmentName})`,
-  };
+  if (documented.length === 1) {
+    const peer = documented[0];
+    const share = peer.sharePct;
+    const tamSize = round1(peer.revenueB / (share / 100));
+    const source = `${peer.shareSource.trim()} (${peer.shareAsOf.trim()})`;
+    return {
+      tamSize,
+      formula: `TAM ${tamSize} = Peer-Umsatz ${round1(peer.revenueB)} / Marktanteil ${round1(share)}% (${peer.symbol} ${peer.segmentName}, ${source})`,
+      source,
+    };
+  }
+  const bare = named.filter((peer) => peer.sharePct != null && peer.sharePct > 0);
+  if (bare.length > 0) {
+    return { reason: `n/a — Marktanteil ohne Quelle und Datum (${bare.map((peer) => peer.symbol).join(", ")})` };
+  }
+  return { reason: `n/a — kein belegter Marktanteil für „${subjectName}“` };
 }
 
-export function segmentGrowthCagrProxy(growth: number): { tamCAGR: number; formula: string; source: string; rationale: string } | null {
+/** Kurzname im Proxy-Badge. SAP.DE wird SAP, ein leerer Ticker bleibt „Unternehmen“. */
+export function segmentGrowthProxyLabel(ticker: string): string {
+  const stem = ticker.split(".")[0]?.trim().toUpperCase() ?? "";
+  return stem || "Unternehmen";
+}
+
+/**
+ * Proxy nur ab MARKET_CAGR_PROXY_MIN_GROWTH (Default 0).
+ * Darunter ist die Rate die Unternehmensentwicklung, nicht der Markt-CAGR.
+ * Ein angenommener Proxy trägt die Marke „Proxy: Segmentwachstum …“.
+ */
+export function segmentGrowthCagrProxy(
+  growth: number,
+  input?: { minGrowth?: number; companyLabel?: string },
+): { tamCAGR: number; formula: string; source: string; rationale: string } | { reason: string } | null {
   if (typeof growth !== "number" || !Number.isFinite(growth)) return null;
+  const minGrowth = typeof input?.minGrowth === "number" && Number.isFinite(input.minGrowth)
+    ? input.minGrowth
+    : MARKET_CAGR_PROXY_MIN_GROWTH;
+  if (growth < minGrowth) {
+    return {
+      reason: `n/a — Segment-Wachstum ${round1(growth)}% liegt unter ${minGrowth}% und ist die Unternehmensentwicklung, nicht der Markt-CAGR`,
+    };
+  }
   const tamCAGR = round1(growth);
+  const label = input?.companyLabel?.trim() || "Unternehmen";
+  const mark = `Proxy: Segmentwachstum ${label}`;
   return {
     tamCAGR,
-    formula: `CAGR-Proxy = Segment-Wachstum ${tamCAGR}%`,
-    source: "Segment-Wachstum des Unternehmens, Proxy für den Branchen-CAGR",
-    rationale: "Proxy aus dem berichteten Segment-Wachstum, kein Branchenbericht",
+    formula: `${mark} ${tamCAGR}%`,
+    source: mark,
+    rationale: `${mark}, kein Branchenbericht`,
   };
 }

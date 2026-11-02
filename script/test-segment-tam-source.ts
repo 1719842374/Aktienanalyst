@@ -75,7 +75,7 @@ console.log("\nSchätz-Route relativ zum Peer-Anker");
   check("Prompt nennt den Peer-Median", prompt.includes("PEER-ANKER") && prompt.includes("12"), prompt.slice(0, 240));
   const server = result.ok ? result.fills.find((f) => f.segmentName === "Server") : undefined;
   check("TAM ohne tamSource wird nicht übernommen", result.ok === true && server?.tamSize == null, JSON.stringify(result));
-  check("CAGR-Proxy bleibt das Segment-Wachstum", server?.tamCAGR === 31.5 && server.formula?.includes("CAGR-Proxy"));
+  check("CAGR-Proxy bleibt das Segment-Wachstum", server?.tamCAGR === 31.5 && server.formula?.includes("Proxy: Segmentwachstum MSFT") === true && result.ok === true);
   check("Grund bleibt am Server-TAM", result.ok === true && result.naReasons.some((r) => r.field === "tam"));
 }
 

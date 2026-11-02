@@ -14,13 +14,17 @@
  */
 import { adrCandidatesFor } from "../server/fmp-adr-map";
 import { loadPeerGrowthAnchor, peerLookupSymbols } from "../server/peer-growth-anchor";
-import { estimateSegmentTam, resetTamEstimateCacheForTests } from "../server/segment-tam-estimate-route";
+import { estimateSegmentTam, peerEvidenceFromFmpRows, dropTamEstimateMemoryForTests, resetTamEstimateCacheForTests } from "../server/segment-tam-estimate-route";
+import { matchSegmentTAM } from "../server/sector-data";
 import { buildTamNaFillPrompt } from "../server/tam-na-fill";
 import {
+  MARKET_CAGR_PROXY_MIN_GROWTH,
   TAM_ESTIMATE_MAX_RETRIES,
   adaptiveMinFilledCellRatio,
   adaptiveTamRatioBounds,
   factTamRevenueRatios,
+  gateMarketTam,
+  peerRevenueShareTam,
   tamEstimateCallCeiling,
   type PeerSegmentEvidence,
   type TamNaFill,
@@ -171,11 +175,21 @@ console.log("\nSAP.DE fünf Läufe, Formel statt schwankender LLM-TAM");
     const support = result.ok ? result.fills.find((f) => f.segmentName === "Software support") : undefined;
     const stamp = result.ok ? result.fills.map((f) => `${f.segmentName}:${f.tamSize}:${f.tamCAGR}:${f.formula}`).sort().join(";") : "fail";
     if (run === 1) signature = stamp;
+    const fixtureTam = (size: number | undefined) => size === 35 || size === 129 || size === 420;
     check(`Lauf ${run} ist kein 422`, result.ok === true, JSON.stringify(result).slice(0, 400));
     check(`Lauf ${run} bleibt in der Abruf-Obergrenze`, calls <= tamEstimateCallCeiling(3), String(calls));
-    check(`Lauf ${run} schätzt alle drei offenen Segmente`, services?.tamSize === 129 && support?.tamSize === 420 && licenses?.tamSize === 35);
-    check(`Lauf ${run} CAGR ist der Wachstums-Proxy`, services?.tamCAGR === -1.9 && support?.tamCAGR === -6.8 && licenses?.tamCAGR === -29.2);
-    check(`Lauf ${run} nennt Formel und Quelle`, Boolean(services?.formula?.includes("CAGR-Proxy") && services.formula.includes("Peer-Umsatz") && services.tamSource?.includes("ORCL")));
+    check(`Lauf ${run} meldet die Fixture-TAMs 35/129/420 nicht`, result.ok === true && !fixtureTam(services?.tamSize) && !fixtureTam(support?.tamSize) && !fixtureTam(licenses?.tamSize));
+    check(`Lauf ${run} setzt negatives Wachstum nicht als Markt-CAGR`, services?.tamCAGR == null && support?.tamCAGR == null && licenses?.tamCAGR == null);
+    for (const name of ["Software support", "Services", "Software licenses"]) {
+      check(
+        `Lauf ${run} ${name} TAM bleibt n/a ohne belegten Anteil`,
+        result.ok === true && result.naReasons.some((r) => r.segmentName === name && r.field === "tam" && (r.reason.includes("Quelle") || r.reason.includes("Marktanteil"))),
+      );
+      check(
+        `Lauf ${run} ${name} CAGR bleibt n/a unter ${MARKET_CAGR_PROXY_MIN_GROWTH}`,
+        result.ok === true && result.naReasons.some((r) => r.segmentName === name && r.field === "cagr" && r.reason.includes("unter")),
+      );
+    }
     check(`Lauf ${run} übernimmt 120/320 nicht`, result.ok && !result.fills.some((f) => f.tamSize === 120 || f.tamSize === 320));
     check(`Lauf ${run} überschreibt kein Fakt-Wachstum`, support?.segmentGrowth == null && services?.segmentGrowth == null);
     check(`Lauf ${run} Cloud bleibt Fact`, result.ok && !result.fills.some((f) => f.segmentName === "Cloud"));
@@ -204,8 +218,9 @@ console.log("\nok ohne Zellen");
   check("Abrufe bleiben unter der Obergrenze", calls <= tamEstimateCallCeiling(3) && calls === TAM_ESTIMATE_MAX_RETRIES + 1, String(calls));
   for (const name of ["Software support", "Services", "Software licenses"]) {
     const row = result.ok ? result.fills.find((f) => f.segmentName === name) : undefined;
-    check(`${name} hat den CAGR-Proxy`, row?.formula?.includes("CAGR-Proxy") === true && row.tamSource?.includes("Proxy") === true);
+    check(`${name} bekommt keinen Markt-CAGR aus negativem Wachstum`, row?.tamCAGR == null);
     check(`${name} TAM bleibt n/a mit konkretem Grund`, row?.tamSize == null && result.ok && result.naReasons.some((r) => r.segmentName === name && r.field === "tam" && r.reason.includes(name)));
+    check(`${name} CAGR nennt die Schwelle`, result.ok === true && result.naReasons.some((r) => r.segmentName === name && r.field === "cagr" && r.reason.includes("unter")));
   }
   const again = await estimateSegmentTam({
     ticker: "SAP.DE",
@@ -223,6 +238,22 @@ console.log("\nok ohne Zellen");
   const before = result.ok ? result.fills.map((f) => `${f.segmentName}:${f.tamCAGR}`).sort().join(";") : "";
   const after = again.ok ? again.fills.map((f) => `${f.segmentName}:${f.tamCAGR}`).sort().join(";") : "";
   check("zweiter Lauf liest den Cache und ändert die Zahl nicht", before === after && calls === TAM_ESTIMATE_MAX_RETRIES + 1, `${before} vs ${after}, calls ${calls}`);
+  dropTamEstimateMemoryForTests();
+  const restarted = await estimateSegmentTam({
+    ticker: "SAP.DE",
+    coveragePct: 57.1,
+    peerAnchor: null,
+    peerEvidence: [],
+    segments: SAP_SEGMENTS,
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: (async () => {
+      calls += 1;
+      return { modelUsed: "restart", data: { fills: [{ segmentName: "Software support", tamSize: 420, tamCAGR: -6.8, tamSource: "Peer-CAGR", formula: "420", confidence: "low", rationale: "neu" }] } };
+    }) as Llm,
+  });
+  const afterRestart = restarted.ok ? restarted.fills.map((f) => `${f.segmentName}:${f.tamCAGR}`).sort().join(";") : "fail";
+  check("Cache überlebt den geleerten Prozessspeicher", afterRestart === before && calls === TAM_ESTIMATE_MAX_RETRIES + 1, `${afterRestart}, calls ${calls}`);
 }
 
 console.log("\nMSFT-Regression");
@@ -273,7 +304,7 @@ console.log("\nMSFT-Regression");
   check("Retries bleiben in der Obergrenze", calls <= tamEstimateCallCeiling(4) && calls === TAM_ESTIMATE_MAX_RETRIES + 1, String(calls));
   check("Peer-CAGR wird nicht als TAM-Quelle behalten", server?.tamSource?.includes("IDC") === true && server.tamSize === serverTam);
   check("Fakt-Wachstum 31.5 wird nicht durch 99 ersetzt", server?.segmentGrowth == null);
-  check("CAGR-Proxy des Server bleibt das Fakt-Wachstum", server?.tamCAGR === 31.5);
+  check("CAGR-Proxy des Server bleibt das Fakt-Wachstum", server?.tamCAGR === 31.5 && server.formula?.includes("Proxy: Segmentwachstum MSFT") === true);
   check("XBOX-Wachstum bleibt die Schätzung", xbox?.segmentGrowth === 3 && xbox.formula?.includes("3%"));
   check("Search wird nicht aus XBOX aufgefüllt", search?.segmentGrowth == null);
   check("Fact-TAM von Microsoft 365 wird nicht überschrieben", commercial == null);
@@ -292,8 +323,8 @@ console.log("\nmehrere Peers werden nicht gemittelt");
     ticker: "SAP.DE",
     peerAnchor: null,
     peerEvidence: [
-      { symbol: "ORCL", segmentName: "Services", revenueB: 4, sharePct: 10 },
-      { symbol: "CRM", segmentName: "Services", revenueB: 8, sharePct: 10 },
+      { symbol: "ORCL", segmentName: "Services", revenueB: 4, sharePct: 10, shareSource: "Gartner Services", shareAsOf: "2024-01-15" },
+      { symbol: "CRM", segmentName: "Services", revenueB: 8, sharePct: 10, shareSource: "IDC Services", shareAsOf: "2024-02-01" },
     ],
     segments: SAP_SEGMENTS,
   }, {
@@ -303,6 +334,73 @@ console.log("\nmehrere Peers werden nicht gemittelt");
   const services = result.ok ? result.fills.find((f) => f.segmentName === "Services") : undefined;
   check("Services-TAM ist nicht der Mittelwert 60", result.ok === true && services?.tamSize !== 60 && services?.tamSize == null);
   check("Grund nennt die zwei Peers", result.ok === true && result.naReasons.some((r) => r.segmentName === "Services" && r.reason.includes("nicht gemittelt")));
+}
+
+console.log("\nKatalog-TAM ist kein Marktanteil");
+{
+  const catalog = matchSegmentTAM("Cloud");
+  const evidence = peerEvidenceFromFmpRows("CRM", [{ name: "Cloud", revenue: 10.5e9 }]);
+  const derived = peerRevenueShareTam("Cloud", evidence);
+  check("Katalog trifft Cloud", catalog.matched === true && catalog.tamSize === 1500);
+  check("FMP-Zeile setzt keinen Anteil aus Umsatz/Katalog-TAM", evidence.length === 1 && evidence[0]?.sharePct == null);
+  check("daraus wird nicht der Katalog-TAM 1500", derived == null || !("tamSize" in derived) || derived.tamSize !== 1500);
+  const bare = peerRevenueShareTam("Software support", SAP_PEERS);
+  check("Anteil ohne Quelle und Datum bleibt ohne TAM", bare != null && "reason" in bare && bare.reason.includes("Quelle") && !("tamSize" in bare));
+  const ungated = gateMarketTam({
+    tamSize: 420,
+    revenue: 10.5,
+    source: "Peer-Segmentumsatz / Marktanteil",
+    ratios: factTamRevenueRatios(SAP_SEGMENTS),
+    formulaPath: true,
+  });
+  check("ein beobachtetes Verhältnis lässt den Formelpfad nicht durch", ungated.ok === false && ungated.reason.includes("nicht gegated"));
+}
+
+console.log("\nbelegter Anteil und Proxy-Marke");
+{
+  resetTamEstimateCacheForTests();
+  const share = 2.5;
+  const peerRevenueB = 5;
+  const expectedTam = Math.round((peerRevenueB / (share / 100)) * 10) / 10;
+  const documented = await estimateSegmentTam({
+    ticker: "SYN",
+    peerAnchor: null,
+    peerEvidence: [{
+      symbol: "ORCL",
+      segmentName: "Services",
+      revenueB: peerRevenueB,
+      sharePct: share,
+      shareSource: "Gartner Services",
+      shareAsOf: "2025-06-01",
+    }],
+    segments: [
+      { segmentName: "Cloud", segmentRevenue: 21, segmentGrowth: 22.6, matched: true, tamSize: 1500, tamCAGR: 16 },
+      { segmentName: "Apps", segmentRevenue: 10, segmentGrowth: 8, matched: true, tamSize: 400, tamCAGR: 12 },
+      { segmentName: "Services", segmentRevenue: 4.3, segmentGrowth: -1.9, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: (async () => ({ modelUsed: "x", data: { fills: [] } })) as Llm,
+  });
+  const services = documented.ok ? documented.fills.find((f) => f.segmentName === "Services") : undefined;
+  check("belegter Anteil nennt Quelle und Datum", services?.tamSize === expectedTam && services.formula?.includes("Gartner Services") === true && services.formula.includes("2025-06-01") && services.tamSource?.includes("2025-06-01") === true, JSON.stringify(services));
+  check("das ist nicht die Fixture 420", services?.tamSize !== 420 && services?.tamSize !== 35 && services?.tamSize !== 129);
+
+  resetTamEstimateCacheForTests();
+  const proxy = await estimateSegmentTam({
+    ticker: "SAP.DE",
+    companyName: "SAP SE",
+    peerAnchor: null,
+    peerEvidence: [],
+    segments: [
+      { segmentName: "Erweiterung", segmentRevenue: 2, segmentGrowth: 4, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: (async () => ({ modelUsed: "x", data: { fills: [] } })) as Llm,
+  });
+  const row = proxy.ok ? proxy.fills.find((f) => f.segmentName === "Erweiterung") : undefined;
+  check("Wachstum ab der Schwelle ist Proxy: Segmentwachstum SAP", row?.tamCAGR === 4 && row.formula?.includes("Proxy: Segmentwachstum SAP") === true && row.tamSource?.includes("Proxy: Segmentwachstum SAP") === true, JSON.stringify(row));
 }
 
 console.log(failed === 0 ? "\n✅ SAP.DE TAM" : `\n❌ ${failed} fehlgeschlagen`);

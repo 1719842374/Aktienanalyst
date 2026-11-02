@@ -173,7 +173,9 @@ REGELN:
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
 - Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
 - formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.
-- tamSource nennt eine Marktgröße (Gartner, IDC, Geschäftsbericht, Pressemitteilung), keine Wachstumsrate und kein Peer-CAGR.`;
+- tamSource nennt eine Marktgröße (Gartner, IDC, Geschäftsbericht, Pressemitteilung) und ein Jahr, keine Wachstumsrate und kein Peer-CAGR.
+- Segment-Wachstum unter 0% ist nicht der Markt-CAGR. tamCAGR dann nur mit Verlag und Jahr, sonst das Feld weglassen.
+- Ein Marktanteil braucht Quelle und Datum. Umsatz geteilt durch einen Katalog-TAM ist kein Marktanteil.`;
 }
 
 export async function requestTamNaFills(

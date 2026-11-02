@@ -3,10 +3,13 @@
  *
  * Dieselbe Segment-TAM-Matrix wie /api/analyze/:ticker/tam-na-fill,
  * plus Peer-Median aus FMP und ein Quellenfilter.
- * Jede offene Zeile wird in diesem Lauf geschätzt: CAGR als Proxy aus dem
- * Segment-Wachstum, TAM aus Peer-Umsatz/Marktanteil oder aus einer Marktquelle.
+ * Jede offene Zeile wird in diesem Lauf geschätzt. CAGR als Proxy nur, wenn das
+ * Segment-Wachstum mindestens MARKET_CAGR_PROXY_MIN_GROWTH ist; darunter n/a
+ * oder eine belegte Markt-CAGR. TAM nur aus einem Marktanteil mit Quelle und
+ * Datum oder aus einer Marktquelle. Umsatz durch Katalog-TAM ist kein Anteil.
  * Was die Plausibilitäts-Spanne oder die Quellenprüfung nicht besteht, bleibt
- * n/a mit Grund. Zahlen werden nicht zwischen Zeilen gemittelt.
+ * n/a mit Grund. Unter zwei Verhältnissen ist der Formelpfad nicht gegated.
+ * Zahlen werden nicht zwischen Zeilen gemittelt.
  * Retries je offener Zeile: TAM_ESTIMATE_MAX_RETRIES. Obergrenze: tamEstimateCallCeiling.
  * Catalog-Coverage, tamTotal und der Score bleiben unberührt.
  */
@@ -19,11 +22,13 @@ import {
   deriveTamShare,
   factTamRevenueRatios,
   gateMarketTam,
+  isDocumentedMarketCagrSource,
   peerRevenueShareTam,
   peerTamRevenueRatios,
   retainSourcedTamNaFills,
   scopeNaCells,
   segmentGrowthCagrProxy,
+  segmentGrowthProxyLabel,
   TAM_ESTIMATE_CACHE_VERSION,
   TAM_ESTIMATE_MAX_RETRIES,
   TAM_NA_SHARE_WARN,
@@ -34,8 +39,13 @@ import {
   type TamNaSegmentRef,
 } from "../shared/tam-na-fill";
 import { fmpPeers, fmpSegments, isFmpAvailable } from "./fmp";
-import { matchSegmentTAM } from "./sector-data";
 import { loadPeerGrowthAnchor, peerLookupSymbols } from "./peer-growth-anchor";
+import {
+  clearTamEstimateCache,
+  readTamEstimateCache,
+  writeTamEstimateCache,
+  type TamEstimateCacheBody,
+} from "./tam-estimate-cache";
 import {
   eligibleTamNaSegments,
   requestTamNaFills,
@@ -48,18 +58,32 @@ export interface SegmentTamEstimate extends Extract<TamNaFillResult, { ok: true 
   peerAnchor: PeerGrowthAnchor | null;
 }
 
-interface CachedEstimate {
-  fills: TamNaFill[];
-  naReasons: TamNaReason[];
-  coveragePct: number | null;
-  coverageNote: string;
-  modelUsed: string;
-}
+type CachedEstimate = TamEstimateCacheBody;
 
 const estimateCache = new Map<string, CachedEstimate>();
 
 export function resetTamEstimateCacheForTests(): void {
   estimateCache.clear();
+  clearTamEstimateCache();
+}
+
+/** Nur der Prozessspeicher. Der nächste Lauf liest die Platte, wie nach einem Neustart. */
+export function dropTamEstimateMemoryForTests(): void {
+  estimateCache.clear();
+}
+
+function readCached(key: string): CachedEstimate | undefined {
+  const memoryHit = estimateCache.get(key);
+  if (memoryHit) return memoryHit;
+  const diskHit = readTamEstimateCache(key);
+  if (!diskHit) return undefined;
+  estimateCache.set(key, diskHit);
+  return diskHit;
+}
+
+function writeCached(key: string, body: CachedEstimate): void {
+  estimateCache.set(key, body);
+  writeTamEstimateCache(key, body);
 }
 
 function coverageOf(value: unknown): number | null {
@@ -91,6 +115,11 @@ function rememberReason(reasons: TamNaReason[], reason: TamNaReason): void {
   reasons.push(reason);
 }
 
+function forgetReason(reasons: TamNaReason[], segmentName: string, field: TamNaReason["field"]): void {
+  const index = reasons.findIndex((row) => row.segmentName === segmentName && row.field === field);
+  if (index >= 0) reasons.splice(index, 1);
+}
+
 export function peerEvidenceFromFmpRows(symbol: string, rows: readonly { name?: string; revenue?: number }[]): PeerSegmentEvidence[] {
   const out: PeerSegmentEvidence[] = [];
   for (const row of rows) {
@@ -98,9 +127,9 @@ export function peerEvidenceFromFmpRows(symbol: string, rows: readonly { name?: 
     const revenue = Number(row.revenue);
     if (!name || !(revenue > 0)) continue;
     const revenueB = revenue / 1e9;
-    const match = matchSegmentTAM(name);
-    const sharePct = match.matched && match.tamSize != null && match.tamSize > 0 ? (revenueB / match.tamSize) * 100 : null;
-    out.push({ symbol, segmentName: name, revenueB, sharePct });
+    // FMP nennt den Segmentumsatz, keinen Marktanteil. Anteil = Umsatz / Katalog-TAM
+    // würde den TAM auf den Katalog zurückrechnen. Ohne Quelle und Datum bleibt er leer.
+    out.push({ symbol, segmentName: name, revenueB, sharePct: null });
   }
   return out;
 }
@@ -133,20 +162,23 @@ function applyFreeFormulas(
   ratios: readonly number[],
   fills: Map<string, TamNaFill>,
   reasons: TamNaReason[],
+  companyLabel: string,
 ): void {
   for (const seg of eligible) {
     const open = scopeNaCells(seg, fills.get(seg.segmentName) ?? null);
     const fill = fills.get(seg.segmentName) ?? { segmentName: seg.segmentName, confidence: "low" as const, rationale: "" };
     let used = false;
     if (open.cagr && seg.segmentGrowth != null) {
-      const proxy = segmentGrowthCagrProxy(seg.segmentGrowth);
-      if (proxy) {
+      const proxy = segmentGrowthCagrProxy(seg.segmentGrowth, { companyLabel });
+      if (proxy && "tamCAGR" in proxy) {
         fill.tamCAGR = proxy.tamCAGR;
         fill.formula = joinText(fill.formula, proxy.formula);
         fill.tamSource = joinText(fill.tamSource, proxy.source);
         fill.rationale = proxy.rationale;
         fill.confidence = "low";
         used = true;
+      } else if (proxy && "reason" in proxy) {
+        rememberReason(reasons, { segmentName: seg.segmentName, field: "cagr", reason: proxy.reason });
       }
     }
     if (open.tam) {
@@ -167,6 +199,7 @@ function applyFreeFormulas(
           fill.marketShare = deriveTamShare(seg.segmentRevenue, peer.tamSize);
           fill.shareWarning = fill.marketShare > TAM_NA_SHARE_WARN;
           fill.confidence = "med";
+          forgetReason(reasons, seg.segmentName, "tam");
           used = true;
         } else {
           rememberReason(reasons, { segmentName: seg.segmentName, field: "tam", reason: gate.reason });
@@ -210,13 +243,31 @@ function acceptLlmFills(
         rememberReason(reasons, { segmentName: seg.segmentName, field: "tam", reason: gate.reason });
       } else {
         fill.tamSize = row.tamSize;
-        if (fill.tamCAGR == null && row.tamCAGR != null) fill.tamCAGR = row.tamCAGR;
         if (row.tamLabel) fill.tamLabel = row.tamLabel;
         fill.tamSource = row.tamSource ?? fill.tamSource;
         fill.formula = joinText(fill.formula, row.formula);
         fill.marketShare = deriveTamShare(seg.segmentRevenue, row.tamSize);
         fill.shareWarning = fill.marketShare > TAM_NA_SHARE_WARN;
         fill.confidence = row.confidence;
+        forgetReason(reasons, seg.segmentName, "tam");
+      }
+    }
+    if (open.cagr && fill.tamCAGR == null && row.tamCAGR != null) {
+      const source = row.tamSource?.trim() ?? "";
+      if (isDocumentedMarketCagrSource(source)) {
+        fill.tamCAGR = row.tamCAGR;
+        fill.tamSource = joinText(fill.tamSource, source);
+        fill.formula = joinText(fill.formula, row.formula ?? `Markt-CAGR ${row.tamCAGR}% (${source})`);
+        fill.rationale = row.rationale || fill.rationale;
+        fill.confidence = row.confidence;
+        forgetReason(reasons, seg.segmentName, "cagr");
+      } else if (source.length > 0) {
+        const shown = source.slice(0, 80);
+        rememberReason(reasons, {
+          segmentName: seg.segmentName,
+          field: "cagr",
+          reason: `n/a — Markt-CAGR ohne belegte Quelle und Datum (${shown})`,
+        });
       }
     }
     fill.outperforming = deriveOutperforming(
@@ -231,7 +282,7 @@ function rowsStillOpen(eligible: readonly TamNaSegmentRef[], fills: Map<string, 
   return eligible.filter((seg) => {
     const open = scopeNaCells(seg, fills.get(seg.segmentName) ?? null);
     const used = attempts.get(seg.segmentName) ?? 0;
-    return (open.tam || open.growth) && used < TAM_ESTIMATE_MAX_RETRIES + 1;
+    return (open.tam || open.growth || open.cagr) && used < TAM_ESTIMATE_MAX_RETRIES + 1;
   });
 }
 
@@ -252,12 +303,12 @@ export async function estimateSegmentTam(
   }
   const ratios = [...factTamRevenueRatios(withPeer.segments), ...peerTamRevenueRatios(peerEvidence)];
   const key = cacheKey(ticker, eligible, peerEvidence, peerAnchor);
-  const cached = estimateCache.get(key);
+  const cached = readCached(key);
   if (cached) return { ok: true, ...cached, peerAnchor };
 
   const fills = new Map<string, TamNaFill>();
   const reasons: TamNaReason[] = [];
-  applyFreeFormulas(eligible, peerEvidence, ratios, fills, reasons);
+  applyFreeFormulas(eligible, peerEvidence, ratios, fills, reasons, segmentGrowthProxyLabel(ticker));
 
   const attempts = new Map<string, number>();
   const ceiling = tamEstimateCallCeiling(eligible.length);
@@ -317,7 +368,7 @@ export async function estimateSegmentTam(
     if (!fill || countKiFilledCells([seg], [fill]) === 0) return [];
     return [fill];
   });
-  if (kept.length === 0) {
+  if (kept.length === 0 && reasons.length === 0) {
     return hard ?? { ok: false, status: 422, error: "KI-Schätzung unvollständig — nichts übernommen", code: "INCOMPLETE_FILL" };
   }
   const body: CachedEstimate = {
@@ -327,7 +378,7 @@ export async function estimateSegmentTam(
     coverageNote,
     modelUsed,
   };
-  estimateCache.set(key, body);
+  writeCached(key, body);
   return { ok: true, ...body, peerAnchor };
 }
 
