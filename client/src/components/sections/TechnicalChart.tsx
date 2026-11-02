@@ -25,7 +25,7 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_EDGE_LABEL, CONE_FORMULA, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneIntervalLegend, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonPosLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs,
   type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
@@ -1489,6 +1489,16 @@ function ConeBandFill({
   );
 }
 
+/** Größer als die Achsen-Ticks, damit PoS und die Prozentänderung am Horizont lesbar bleiben. */
+const CONE_HORIZON_LABEL_PX = 13;
+
+function coneMoveParts(anchor: number, price: number): { text: string; color: string; direction: "up" | "down" | "flat" } | null {
+  const pct = conePriceMovePct(anchor, price);
+  const direction = coneMoveDirection(pct);
+  if (pct == null || direction == null) return null;
+  return { text: formatConeMovePct(pct), color: coneMoveColor(direction), direction };
+}
+
 /**
  * Kegel-Labels am Horizont-Ende. Stehen sie sich oder dem Dividenden-Label
  * „4 % attraktiv“ zu nahe, verschiebt separateLabelYs sie um den Fehlbetrag
@@ -1500,12 +1510,14 @@ function ConeEndLabels({
   cone,
   priceFontPx,
   labelShift,
+  formatPx,
 }: {
   xAxisMap?: Record<string, ChartAxis>;
   yAxisMap?: Record<string, ChartAxis>;
   cone: ScenarioCone;
   priceFontPx: number;
   labelShift: Record<string, number>;
+  formatPx: (value: number, digits?: number) => string;
 }) {
   const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
   const priceAxis = yAxisMap?.price;
@@ -1515,15 +1527,19 @@ function ConeEndLabels({
   if (!Number.isFinite(dotX)) return null;
   const markers = cone.markers.filter(m => m.price != null && Number.isFinite(m.price));
   const bands = [
-    { id: "band-outer", y: end.p90, text: "80%" },
-    { id: "band-inner", y: end.innerHigh, text: "50%" },
+    { id: "p90", y: end.p90, name: CONE_EDGE_LABEL.p90 },
+    { id: "p75", y: end.innerHigh, name: CONE_EDGE_LABEL.p75 },
+    { id: "p50", y: end.p50, name: CONE_EDGE_LABEL.p50 },
+    { id: "p25", y: end.innerLow, name: CONE_EDGE_LABEL.p25 },
+    { id: "p10", y: end.p10, name: CONE_EDGE_LABEL.p10 },
   ];
   return (
     <g data-testid="cone-marker-labels">
       <title>{`${CONE_SOURCE}. ${CONE_FORMULA}`}</title>
       {bands.map(b => {
         const anchorY = priceAxis.scale!(b.y);
-        if (!Number.isFinite(anchorY)) return null;
+        const move = coneMoveParts(cone.anchorPrice, b.y);
+        if (!Number.isFinite(anchorY) || !move) return null;
         return (
           <text
             key={b.id}
@@ -1532,15 +1548,18 @@ function ConeEndLabels({
             y={anchorY + (labelShift[b.id] ?? 0)}
             textAnchor="end"
             dominantBaseline="middle"
-            fontSize={priceFontPx}
-            fill={CONE_STYLE.band}
+            fontSize={CONE_HORIZON_LABEL_PX}
+            fontWeight={600}
           >
-            {b.text}
+            <tspan fill={CONE_STYLE.band}>{b.name}</tspan>
+            <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(b.y)} ${move.text}`}</tspan>
           </text>
         );
       })}
       {markers.map(m => {
-        const anchorY = priceAxis.scale!(m.price as number);
+        const price = m.price as number;
+        const anchorY = priceAxis.scale!(price);
+        const move = coneMoveParts(cone.anchorPrice, price);
         if (!Number.isFinite(anchorY)) return null;
         return (
           <text
@@ -1550,11 +1569,12 @@ function ConeEndLabels({
             y={anchorY + (labelShift[m.id] ?? 0)}
             textAnchor="end"
             dominantBaseline="middle"
-            fontSize={priceFontPx}
-            fill={markerFill(m.id)}
+            fontSize={CONE_HORIZON_LABEL_PX}
+            fontWeight={600}
           >
             <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
-            {`${m.name} · ${m.posText}`}
+            <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{coneHorizonPosLabel(CONE_HORIZON_NAME[m.id], m.posText)}</tspan>
+            {move && <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(price)} ${move.text}`}</tspan>}
           </text>
         );
       })}
@@ -1607,13 +1627,36 @@ function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>):
   return changed ? next : null;
 }
 
-function ConeTooltipRows({ p, formatPx }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string }) {
+function ConePriceWithMove({ anchor, price, formatPx }: { anchor: number; price: number; formatPx: (value: number, digits?: number) => string }) {
+  const move = coneMoveParts(anchor, price);
+  if (!move) return <span className="font-mono">{formatPx(price)}</span>;
+  return (
+    <span className="font-mono">
+      {formatPx(price)}{" "}
+      <span data-testid="cone-move" data-direction={move.direction} style={{ color: move.color }}>{move.text}</span>
+    </span>
+  );
+}
+
+function ConeTooltipRows({ p, formatPx, cone }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string; cone: ScenarioCone }) {
   if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
+  const anchor = cone.anchorPrice;
   const row = (color: string, name: string, value: number | null | undefined) => (
     value != null && Number.isFinite(value)
-      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><span className="font-mono">{formatPx(value)}</span></div>
+      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><ConePriceWithMove anchor={anchor} price={value} formatPx={formatPx} /></div>
       : null
   );
+  const scenarioRow = (id: "bull" | "base" | "bear", value: number | null | undefined, caption: string | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return null;
+    const marker = cone.markers.find(m => m.id === id);
+    if (!marker) return null;
+    return (
+      <div key={id} className="flex justify-between gap-3" title={[caption, marker.formula, marker.posReason].filter(Boolean).join(" · ") || undefined} data-testid={`cone-tip-${id}`}>
+        <span style={{ color: markerFill(id) }}>{coneHorizonPosLabel(CONE_HORIZON_NAME[id], marker.posText)}</span>
+        <ConePriceWithMove anchor={anchor} price={value} formatPx={formatPx} />
+      </div>
+    );
+  };
   return (
     <>
       <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[260px] whitespace-normal text-muted-foreground" title={CONE_FORMULA}>
@@ -1626,9 +1669,9 @@ function ConeTooltipRows({ p, formatPx }: { p: ConePlotFields; formatPx: (value:
       {row(CONE_STYLE.midline, CONE_LEGEND.midline, p.coneP50)}
       {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p75, p.coneInnerHigh)}
       {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p90, p.coneP90)}
-      {typeof p.coneBullLabel === "string" && <div style={{ color: CONE_STYLE.bull }}>{p.coneBullLabel}</div>}
-      {typeof p.coneBaseLabel === "string" && <div style={{ color: CONE_STYLE.base }}>{p.coneBaseLabel}</div>}
-      {typeof p.coneBearLabel === "string" && <div style={{ color: CONE_STYLE.bear }}>{p.coneBearLabel}</div>}
+      {scenarioRow("bull", p.coneBull, p.coneBullLabel)}
+      {scenarioRow("base", p.coneBase, p.coneBaseLabel)}
+      {scenarioRow("bear", p.coneBear, p.coneBearLabel)}
     </>
   );
 }
@@ -1818,7 +1861,7 @@ function PricePane({
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
-              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} />}
+              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} cone={cone} />}
               {fund && (dp.close != null && Number.isFinite(dp.close)
                 ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
                 : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
@@ -1873,6 +1916,7 @@ function PricePane({
                 cone={cone}
                 priceFontPx={typeof tick.fontSize === "number" ? tick.fontSize : 0}
                 labelShift={labelShift}
+                formatPx={formatPx}
               />
             )} />
           </>

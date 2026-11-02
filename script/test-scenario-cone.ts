@@ -10,8 +10,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  CONE_EVENT_LABEL, CONE_FORMULA, CONE_LEGEND, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, coneIntervalLegend, conePlotScale, fitLogPriceTrend, horizonTradingDays, separateLabelYs,
+  CONE_EVENT_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
+  coneBandPrice, coneDomainValues, coneHorizonPosLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotScale, conePriceMovePct, fitLogPriceTrend, formatConeMovePct, horizonTradingDays, separateLabelYs,
   realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 import { chartListingPrice, CHART_PRICE_SCALE_IDENTITY } from "../client/src/lib/chartListingPrice";
@@ -501,6 +501,68 @@ assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
   assert.equal(first.terminalPrices[0], second.terminalPrices[0]);
   assert.equal(first.terminalPrices[first.terminalPrices.length - 1], second.terminalPrices[second.terminalPrices.length - 1]);
   assert.equal(first.horizonDays, params.tradingDays);
+}
+
+// Anzeige: Upside/Downside gegen den letzten Kurs. Vorzeichen und Farbe, keine neue Kegel-Rechnung.
+{
+  const near = (actual: number | null, expected: number) => {
+    assert.ok(actual != null && Math.abs(actual - expected) < 1e-9, `${actual} vs ${expected}`);
+  };
+  near(conePriceMovePct(100, 128), 28);
+  near(conePriceMovePct(100, 72), -28);
+  near(conePriceMovePct(100, 100), 0);
+  near(conePriceMovePct(124.31 / 1.28, 124.31), 28);
+  assert.equal(conePriceMovePct(0, 128), null);
+  assert.equal(conePriceMovePct(-5, 128), null);
+  assert.equal(conePriceMovePct(Number.NaN, 128), null);
+  assert.equal(formatConeMovePct(28), "(+28 %)");
+  assert.equal(formatConeMovePct(-17.2), "(-17 %)");
+  assert.equal(formatConeMovePct(0), "(0 %)");
+  assert.equal(formatConeMovePct(0.4), "(0 %)");
+  assert.equal(formatConeMovePct(0.6), "(+1 %)");
+  assert.equal(formatConeMovePct(-0.6), "(-1 %)");
+  assert.equal(coneMoveDirection(28), "up");
+  assert.equal(coneMoveDirection(-17.2), "down");
+  assert.equal(coneMoveDirection(0), "flat");
+  assert.equal(coneMoveDirection(0.4), "flat");
+  assert.equal(coneMoveDirection(null), null);
+  assert.equal(coneMoveColor("up"), CONE_STYLE.upside);
+  assert.equal(coneMoveColor("down"), CONE_STYLE.downside);
+  assert.equal(coneMoveColor("flat"), CONE_STYLE.flat);
+  assert.equal(CONE_STYLE.upside, "#22c55e");
+  assert.equal(CONE_STYLE.downside, "#ef4444");
+  assert.notEqual(coneMoveColor("up"), coneMoveColor("down"));
+  assert.notEqual(coneMoveColor("flat"), coneMoveColor("up"));
+  assert.notEqual(coneMoveColor("flat"), coneMoveColor("down"));
+  const shown = buildScenarioCone(input({
+    closes: [100, 100, 100, 100],
+    anchorPrice: 100,
+    anchorDate: "2026-01-05",
+    gStarPct: 0,
+    forwardConsensusPrice: 128,
+    expectedDamagePct: 20,
+    horizonDays: 5,
+  }));
+  assert.ok(shown);
+  const byId = Object.fromEntries(shown.markers.map(m => [m.id, m]));
+  near(conePriceMovePct(shown.anchorPrice, byId.bull.price!), 28);
+  near(conePriceMovePct(shown.anchorPrice, byId.base.price!), 0);
+  near(conePriceMovePct(shown.anchorPrice, byId.bear.price!), -20);
+  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.bull, byId.bull.posText), `Bull · PoS ${byId.bull.posText}`);
+  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.base, byId.base.posText), `Trend/Base · PoS ${byId.base.posText}`);
+  assert.equal(coneHorizonPosLabel(CONE_HORIZON_NAME.bear, byId.bear.posText), `Bear · PoS ${byId.bear.posText}`);
+  assert.equal(formatConeMovePct(conePriceMovePct(shown.anchorPrice, byId.bull.price!)!), "(+28 %)");
+  assert.equal(formatConeMovePct(conePriceMovePct(shown.anchorPrice, byId.bear.price!)!), "(-20 %)");
+  assert.equal(coneMoveDirection(conePriceMovePct(shown.anchorPrice, byId.base.price!)), "flat");
+  const ui = read("client/src/components/sections/TechnicalChart.tsx");
+  assert.match(ui, /coneHorizonPosLabel\(CONE_HORIZON_NAME\[m\.id\], m\.posText\)/);
+  assert.match(ui, /coneHorizonPosLabel\(CONE_HORIZON_NAME\[id\], marker\.posText\)/);
+  assert.match(ui, /data-direction=\{move\.direction\}/);
+  assert.match(ui, /data-testid="cone-move"/);
+  assert.match(ui, /CONE_HORIZON_LABEL_PX/);
+  assert.match(ui, /CONE_EDGE_LABEL\.p10/);
+  assert.match(ui, /CONE_EDGE_LABEL\.p90/);
+  assert.match(ui, /m\.caption/);
 }
 
 console.log("test-scenario-cone: OK");

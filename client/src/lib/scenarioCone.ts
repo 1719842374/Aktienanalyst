@@ -130,15 +130,29 @@ export const CONE_STYLE = {
   forecastStart: "#f43f5e",
   forecastDash: "4 3",
   forecastWidth: 1.25,
+  /** Upside gegenüber dem letzten Kurs. Nur die Farbe der Anzeige. */
+  upside: "#22c55e",
+  /** Downside gegenüber dem letzten Kurs. Nur die Farbe der Anzeige. */
+  downside: "#ef4444",
+  /** Gerundete Änderung 0 %. Weder grün noch rot. */
+  flat: "#64748b",
 } as const;
 
 /** Namen der Kanten. Die Perzentile stehen in CONE_PARAMS, nicht hier als zweite Zahl. */
 export const CONE_EDGE_LABEL = {
   p10: "P10",
   p25: "P25",
+  p50: "P50",
   p75: "P75",
   p90: "P90",
 } as const;
+
+/** Sichtbarer Szenarioname am Horizont. Base ist das Trendszenario aus g*. */
+export const CONE_HORIZON_NAME: Record<ScenarioMarkerId, string> = {
+  bull: "Bull",
+  base: "Trend/Base",
+  bear: "Bear",
+};
 
 export const CONE_LEGEND = {
   midline: "Prognose P50",
@@ -346,6 +360,56 @@ export function formatPos(probability: number | null | undefined): string {
   if (probability == null || !Number.isFinite(probability)) return POS_NA;
   const pct = Math.round(probability * CONE_PARAMS.percent * 10) / 10;
   return Number.isInteger(pct) ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
+}
+
+/** Horizont-Label: Szenarioname und die schon berechnete PoS. Keine neue Wahrscheinlichkeit. */
+export function coneHorizonPosLabel(name: string, posText: string): string {
+  return `${name} · PoS ${posText}`;
+}
+
+/**
+ * Anzeige: (Kurs − letzter Close) / letzter Close, in Prozent.
+ * Dieselben Kurse, die der Kegel schon hat. Kein neues Ziel und kein Score.
+ */
+export function conePriceMovePct(anchor: number, price: number): number | null {
+  if (!(typeof anchor === "number" && Number.isFinite(anchor) && anchor > 0)) return null;
+  if (!(typeof price === "number" && Number.isFinite(price))) return null;
+  return (price - anchor) / anchor * CONE_PARAMS.percent;
+}
+
+export type ConeMoveDirection = "up" | "down" | "flat";
+
+/** Vorzeichen der gerundeten Anzeige. 0,5 rundet auf die nächste ganze Zahl. */
+export function coneMoveDirection(pct: number | null): ConeMoveDirection | null {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  const rounded = Math.round(pct);
+  if (rounded > 0) return "up";
+  if (rounded < 0) return "down";
+  return "flat";
+}
+
+export function coneMoveColor(direction: ConeMoveDirection): string {
+  switch (direction) {
+    case "up":
+      return CONE_STYLE.upside;
+    case "down":
+      return CONE_STYLE.downside;
+    case "flat":
+      return CONE_STYLE.flat;
+    default: {
+      const unknown: never = direction;
+      return unknown;
+    }
+  }
+}
+
+/** „(+28 %)“ oder „(-17 %)“. Die Farbe kommt aus coneMoveColor, nicht aus diesem Text. */
+export function formatConeMovePct(pct: number): string {
+  const rounded = Math.round(pct);
+  if (!Number.isFinite(rounded)) return "";
+  if (rounded > 0) return `(+${rounded} %)`;
+  if (rounded < 0) return `(${rounded} %)`;
+  return `(0 %)`;
 }
 
 export interface ScenarioMarker {
