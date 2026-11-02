@@ -19,13 +19,10 @@ import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import type { GoldAiscCompanyCode, GoldAiscSeries, GoldMinerZone, GoldMinerZoneName } from "../../../../shared/schema";
 import { GOLD_MINER_P_HIGH_RANK, GOLD_MINER_P_LOW_RANK, GOLD_MINER_ZONE_MIN_OBS, goldMinerPriceDomain } from "../../../../shared/gold-miner-zone";
 import { GOLD_AISC_FORMULA, goldAiscCovering, goldAiscNaReason } from "../../../../shared/gold-aisc";
+import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 
-/** Dieselben Presets wie der Aktien-TA-Chart und der Gold-Preis-Chart. Tagesfenster = GOLD_RANGE_DAYS, Anker = letzter Punkt. */
-const RANGES = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const;
-type MinerRange = (typeof RANGES)[number];
-const RANGE_DAYS: Record<Exclude<MinerRange, "Max">, number> = {
-  "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825, "10Y": 3653,
-};
+/** Dieselben Presets und dieselbe Handelstage-Zahl wie TechnicalChart (TIME_RANGE_CUTOFF). */
+const RANGES = Object.keys(TIME_RANGE_CUTOFF) as TimeRange[];
 const DATE_INPUT_CLASS =
   "h-8 w-full min-w-0 rounded border border-border bg-background px-1.5 text-[10px] text-foreground scheme-light dark:scheme-dark";
 
@@ -97,14 +94,10 @@ function companyLine(latest: NonNullable<GoldMinerZone["latest"]>): { text: stri
   };
 }
 
-function shiftDays(iso: string, days: number): string {
-  return new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86400000).toISOString().slice(0, 10);
-}
-
 export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const narrow = useIsNarrow();
   const fetching = useIsFetching({ queryKey: ["/api/analyze-gold"] });
-  const [range, setRange] = useState<MinerRange>("1Y");
+  const [range, setRange] = useState<TimeRange>("1Y");
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [rangeHint, setRangeHint] = useState<string | null>(null);
   const zone = data.aiscZone;
@@ -118,12 +111,9 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const view = useMemo(() => {
     const points = zone?.points ?? [];
     if (points.length === 0) return { points, segments: [] as GoldMinerZone["segments"], empty: false };
-    const end = points[points.length - 1].date;
     const visible = custom && custom.from <= custom.to
       ? points.filter(point => point.date >= custom.from && point.date <= custom.to)
-      : range === "Max"
-        ? points
-        : points.filter(point => point.date >= shiftDays(end, RANGE_DAYS[range]));
+      : slicePresetWindow(points, range);
     if (visible.length === 0) return { points: [], segments: [] as GoldMinerZone["segments"], empty: true };
     const rows = visible;
     const first = rows[0].date;

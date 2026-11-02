@@ -2,12 +2,14 @@
  * Sektion 9 rendert Offline und die Karten aus aiscZone.latest.
  * Ausführen: npx tsx script/test-gold-miner-section.ts
  */
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import * as esbuild from "esbuild";
 import { buildGoldMinerZone } from "../shared/gold-miner-zone";
 import type { GoldAiscSeries } from "../shared/schema";
+import { TIME_RANGE_CUTOFF, slicePresetWindow } from "../client/src/lib/taRangeCutoff";
 
 const root = process.cwd();
 const outfile = path.join(os.tmpdir(), `gold-miner-section-${process.pid}.cjs`);
@@ -85,6 +87,15 @@ check("Zeitraum-Buttons wie der Aktien-TA-Chart", ["3M", "6M", "1Y", "2Y", "3Y",
 check("Von/Bis", html.includes('data-testid="input-gold-miner-from"') && html.includes('data-testid="input-gold-miner-to"') && html.includes(">Von<") && html.includes(">Bis<"));
 check("Formel am Wert", html.includes("Keine Interpolation"));
 check("kein Overlay-Faktor 1,15 in der Sektion", !html.includes("1,15") && !html.includes("×1.15"));
+
+const bars = Array.from({ length: 400 }, (_, i) => i);
+check("3M = letzte 63 Handelstage, dieselbe Zahl wie TechnicalChart", slicePresetWindow(bars, "3M").length === TIME_RANGE_CUTOFF["3M"] && slicePresetWindow(bars, "3M")[0] === 400 - 63);
+check("1Y = letzte 252, 10Y = letzte 2520 wenn die Serie reicht", slicePresetWindow(bars, "1Y").length === 252 && slicePresetWindow(Array.from({ length: 3000 }, (_, i) => i), "10Y").length === 2520);
+check("Max = ganze Reihe", slicePresetWindow(bars, "Max").length === bars.length);
+const sectionSrc = readFileSync(path.join(root, "client/src/components/gold/GoldMinerBreakevenSection.tsx"), "utf8");
+const chartSrc = readFileSync(path.join(root, "client/src/components/sections/TechnicalChart.tsx"), "utf8");
+check("Sektion schneidet mit slicePresetWindow, nicht mit Kalendertagen", sectionSrc.includes("slicePresetWindow(points, range)") && !/3653|RANGE_DAYS/.test(sectionSrc));
+check("TechnicalChart nutzt denselben Helper, die Zahlen stehen nur in taRangeCutoff", chartSrc.includes('from "@/lib/taRangeCutoff"') && chartSrc.includes("slicePresetWindow(ohlcv, timeRange)") && !/"3M": 63/.test(chartSrc));
 
 console.log(failed === 0 ? "\nSektion 9 grün." : `\n${failed} Test(s) fehlgeschlagen.`);
 process.exit(failed === 0 ? 0 : 1);
