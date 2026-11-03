@@ -39,6 +39,7 @@ import {
   m2ImpliedPrice,
   m2ImpliedTooltipLines,
 } from "@/lib/m2ImpliedBtc";
+import { BTC_SPOT_SOURCE_LABEL } from "@shared/btc-spot";
 import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
@@ -137,6 +138,9 @@ interface BTCAnalysis {
   };
   technicalChart: TechChartPoint[];
   technicalChartFull: TechChartPoint[];
+  spotSource?: string | null;
+  spotSourceUrl?: string | null;
+  spotHistoryError?: string | null;
   technicalSignals: { date: string; type: "BUY" | "SELL"; reason: string; price: number; }[];
   bullConditions: { priceAboveMA200: boolean; ma50AboveMA200: boolean; macdAboveZero: boolean; macdAboveSignal: boolean; macdRising: boolean; };
   isBull: boolean;
@@ -1104,7 +1108,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const taWindow = useMemo(() => sliceBtcTaWindow(fullChart, timeRange), [fullChart, timeRange]);
   const filteredData = taWindow.visible;
 
-  // Downsample for performance: max ~500 points
+  // Anzeige verdichtet auf ~500 Punkte. Die Reihe darunter bleibt täglich;
+  // das Fenster (10Y/Max) bestimmt den ersten und den letzten Punkt.
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
@@ -1173,7 +1178,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // chartData[].date entsprechen, sonst wird die Flaeche gar nicht
   // gezeichnet (kein Fehler, einfach stiller No-Render). capitulation-
   // SegmentsFull wurde bisher aus fullChart (volle, ungefilterte Reihe)
-  // berechnet, aber gegen chartData (auf max. 500 Punkte downgesampelt)
+  // berechnet, aber gegen chartData (auf max. 500 Punkte verdichtet)
   // gerendert -- die exakten Segment-Datumswerte existierten dort meist
   // nicht. Fix: jede Segmentgrenze auf den naechstgelegenen Datumswert
   // in chartData snappen, der tatsaechlich existiert.
@@ -1574,6 +1579,21 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         {showM2AbsoluteLagged && m2Implied.ok && m2ImpliedOffAxis && (
           <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-offaxis">
             {m2ImpliedOffAxis}
+          </div>
+        )}
+        <div
+          className="w-full basis-full text-[10px] text-muted-foreground"
+          data-testid="btc-spot-source"
+          title={data.spotSourceUrl || undefined}
+        >
+          Spot-Quelle: {data.spotSource || BTC_SPOT_SOURCE_LABEL}
+          {(data.chartData?.allPrices?.length ?? 0) > 0
+            ? ` · ${data.chartData.allPrices[0].date} – ${data.chartData.allPrices[data.chartData.allPrices.length - 1].date} · ${data.chartData.allPrices.length} Tage`
+            : ""}
+        </div>
+        {data.spotHistoryError && (
+          <div className="w-full basis-full text-[10px] text-red-400" data-testid="btc-spot-error" role="alert">
+            BTC-Spot-Historie abgebrochen: {data.spotHistoryError}
           </div>
         )}
         {capitulationSegmentsSnapped.length > 0 && (

@@ -1,20 +1,22 @@
 /**
  * BTC-Zeitfenster der Technischen Analyse.
- * blockchain.info market-price (timespan=all) liegt auf einem lückenhaften
- * Raster, oft mit mehreren Tagen zwischen zwei Punkten. Der Schnitt ist
- * deshalb das Kalenderdatum: heute minus den Zeitraum des Presets.
+ * Der Schnitt ist das Kalenderdatum: heute minus den Zeitraum des Presets.
  * Max ist die ganze Reihe. 3M, 6M, 1Y, 2Y, 3Y, 5Y und 10Y nutzen dieselbe Regel.
+ * Krypto handelt täglich, deshalb ist 10Y ein Kalenderfenster und kein
+ * 2520-Börsentage-Schnitt. Lücken in der Reihe bleiben Lücken.
  *
  * Die SMA liegt schon auf der vollen Reihe (btcAnalysis calcSMA, Vorlauf
  * vor dem Schnitt). Angezeigt wird nur das Fenster. Fehlen vor dem ersten
  * sichtbaren Bar die Punkte, bleibt MA50/MA200 null — keine Ersatzlinie.
  * `points` ist aufsteigend nach Datum, wie die Chart-Reihe.
  */
+import { BTC_SPOT_SOURCE_LABEL } from "@shared/btc-spot";
+
 export const BTC_TA_RANGES = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const;
 
 export type BtcTaRange = (typeof BTC_TA_RANGES)[number];
 
-export const BTC_PRICE_SOURCE = "blockchain.info market-price (timespan=all)";
+export const BTC_PRICE_SOURCE = BTC_SPOT_SOURCE_LABEL;
 
 export interface BtcTaPoint {
   date: string;

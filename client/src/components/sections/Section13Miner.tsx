@@ -16,6 +16,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/formatters";
 import type { BTCAnalysis } from "@/lib/btcAnalysis";
 import { BTC_TA_RANGES, type BtcTaRange } from "@/lib/btcTaWindow";
+import { BTC_SPOT_SOURCE_LABEL, minerSpotPriceSeries } from "@shared/btc-spot";
 import {
   buildMinerZoneSeries, buildZoneSegments, classifyMinerZone,
   calcBreakevenPrice, calcHashpriceUsd, difficultyZoneFromCompression,
@@ -66,22 +67,12 @@ export function useMinerData(data: BTCAnalysis) {
     (async () => {
       try {
         setLoading(true);
-        // WICHTIG: calcPuellMultiple() (server/btc-miner.ts) braucht ein
-        // 365-Tage-Kalenderfenster als "Anlaufzeit", bevor der erste
-        // puellHistory-Punkt entsteht. Wird nur prices5Y (=exakt 5 Jahre)
-        // gesendet, verschluckt diese Anlaufzeit fast das gesamte erste
-        // Jahr des gewuenschten Fensters -- verifiziert live: mit
-        // prices5Y (458 Punkte, 2021-08 bis 2026-08) begann puellHistory
-        // erst am 2022-07-06, wodurch die reale Jun/Jul-2022-Kapitulation
-        // nie in den zurueckgegebenen Daten auftauchte, obwohl die
-        // Bedingung selbst dort erfuellt war. allPrices (ungefilterte
-        // Vollhistorie seit 2009) gibt dem 365-Tage-Fenster genug Vorlauf,
-        // damit puellHistory bereits ab dem gewuenschten 5Y-Start Werte hat.
-        const history = data.chartData?.allPrices?.length
-          ? data.chartData.allPrices
-          : data.chartData?.prices5Y?.length
-            ? data.chartData.prices5Y
-            : data.chartData?.prices3Y ?? [];
+        // calcPuellMultiple() (server/btc-miner.ts) braucht ein 365-Tage-
+        // Kalenderfenster als Anlaufzeit. Die Spot-Linie und dieser Aufruf
+        // nutzen dieselbe volle Tagesreihe. Ein 5Y-Schnitt ist kein Ersatz:
+        // damit begann der Spot bei gewähltem 10Y erst um 2021, während
+        // Breakeven und Realized Price weiter zurückreichten.
+        const history = minerSpotPriceSeries(data.chartData);
         const res = await apiRequest("POST", "/api/btc-miner", {
           btcPriceHistory: history,
           btcPrice: data.btcPrice,
@@ -183,9 +174,7 @@ export function Section13Miner({
   const fullSeries: MinerSeriesPoint[] = useMemo(() => {
     if (!minerData) return [];
     const priceByDate = new Map<string, number>();
-    const priceSrc = data.chartData?.prices5Y?.length
-      ? data.chartData.prices5Y
-      : data.chartData?.prices3Y ?? [];
+    const priceSrc = minerSpotPriceSeries(data.chartData);
     for (const p of priceSrc) priceByDate.set(p.date, p.price);
     const puellByDate = new Map<string, number>();
     for (const p of minerData.puellHistory ?? []) puellByDate.set(p.date, p.value);
@@ -400,6 +389,18 @@ export function Section13Miner({
         <div className="text-xs font-semibold text-muted-foreground mb-1">
           Spot vs. Miner-Breakeven — Zonen: Kapitulation (rot) · Übergang (gelb) · Profitabel (grün)
         </div>
+        <div className="text-[10px] text-muted-foreground mb-1" data-testid="btc-miner-spot-source" title={data.spotSourceUrl || undefined}>
+          Spot-Quelle: {data.spotSource || BTC_SPOT_SOURCE_LABEL}
+          {(data.chartData?.allPrices?.length ?? 0) > 0
+            ? ` · ${data.chartData.allPrices[0].date} – ${data.chartData.allPrices[data.chartData.allPrices.length - 1].date} · ${data.chartData.allPrices.length} Tage`
+            : ""}
+        </div>
+        {data.spotHistoryError && (
+          <div className="flex items-start gap-2 text-xs text-red-400 mb-2" data-testid="btc-spot-error" role="alert">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>BTC-Spot-Historie abgebrochen: {data.spotHistoryError}</span>
+          </div>
+        )}
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={series} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -512,7 +513,7 @@ export function Section13Miner({
           <span className="text-emerald-500 font-medium"> Hash Ribbon Buy</span> — Bärenmarkt-Tief historisch oft nahe.
         </div>
         <div className="pt-1">
-          Quellen: Hashrate/Difficulty {minerData.hashrateSource ?? "mempool.space"} · Preis: bestehende BTC-Pipeline (Blockchain.com) ·
+          Quellen: Hashrate/Difficulty {minerData.hashrateSource ?? "mempool.space"} · Preis: {data.spotSource || BTC_SPOT_SOURCE_LABEL} ·
           MPI (Miner-Netflows) nicht verfügbar — erfordert CryptoQuant/Glassnode-API (geht neutral in den Score ein).
           Stand: {new Date(minerData.lastUpdated).toLocaleString("de-DE")}
         </div>

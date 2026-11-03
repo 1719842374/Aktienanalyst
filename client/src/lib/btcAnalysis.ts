@@ -1,8 +1,11 @@
-// Client-side BTC analysis — runs entirely in the browser using fetch().
-// Uses Blockchain.com API for full historical BTC prices (10+ years),
-// CoinGecko simple/price for current price data, and alternative.me for F&G.
+// Client-side BTC analysis. Die Tages-Spot-Historie kommt von
+// GET /api/analyze-btc/spot-history (server/btc-spot.ts, blockchain.info
+// market-price timespan=all sampled=false). CoinGecko simple/price nur für
+// den aktuellen Kurs. Ein Abbruch der Historie bleibt sichtbar und wird
+// nicht durch eine kürzere Reihe ersetzt.
 
 import { apiRequest } from "./queryClient";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL } from "@shared/btc-spot";
 import {
   applyBtcLiquidityBlock,
   walclByDate,
@@ -156,6 +159,11 @@ export interface BTCAnalysis {
   };
   technicalChart: TechChartPoint[];
   technicalChartFull: TechChartPoint[];
+  /** Sichtbare Spot-Quelle. Steht auch, wenn die Reihe leer ist. */
+  spotSource?: string | null;
+  spotSourceUrl?: string | null;
+  /** Gesetz, wenn die Tageshistorie abbricht. Die Kursreihe bleibt dann leer. */
+  spotHistoryError?: string | null;
   technicalSignals: TechSignal[];
   bullConditions: {
     priceAboveMA200: boolean;
@@ -226,6 +234,38 @@ function filterByYears(data: { date: string; price: number }[], years: number) {
   cutoff.setFullYear(cutoff.getFullYear() - years);
   const cutoffStr = cutoff.toISOString().split("T")[0];
   return data.filter(d => d.date >= cutoffStr);
+}
+
+async function fetchSpotHistory(): Promise<{
+  points: { date: string; price: number }[];
+  source: string;
+  sourceUrl: string;
+  error: string | null;
+}> {
+  const empty = {
+    points: [] as { date: string; price: number }[],
+    source: BTC_SPOT_SOURCE_LABEL,
+    sourceUrl: BTC_SPOT_SOURCE_URL,
+    error: `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`,
+  };
+  try {
+    const res = await apiRequest("GET", "/api/analyze-btc/spot-history", undefined, 60000);
+    const body = await res.json().catch(() => ({} as { error?: unknown; source?: unknown; sourceUrl?: unknown; points?: unknown }));
+    const source = typeof body?.source === "string" ? body.source : BTC_SPOT_SOURCE_LABEL;
+    const sourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl : BTC_SPOT_SOURCE_URL;
+    if (!res.ok || !Array.isArray(body?.points)) {
+      const detail = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
+      return { points: [], source, sourceUrl, error: detail };
+    }
+    const points = (body.points as { date?: unknown; price?: unknown }[])
+      .filter((point): point is { date: string; price: number } =>
+        !!point && typeof point.date === "string" && typeof point.price === "number" && point.price > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { points, source, sourceUrl, error: null };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "BTC-Spot-Historie nicht verfügbar";
+    return { ...empty, error: `Abruf abgebrochen: ${message}. Quelle: ${BTC_SPOT_SOURCE_LABEL}` };
+  }
 }
 
 async function fetchJSON(url: string, timeoutMs = 30000): Promise<any> {
@@ -415,10 +455,9 @@ async function fetchETFFlows(): Promise<{ totalFlow: number; days: number; daily
 
 export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // force=true: bypass any in-memory caching (external APIs called fresh regardless)
-  // Strategy: Fetch non-CoinGecko APIs in parallel first, then CoinGecko simple/price,
-  // then Blockchain.com for full history.
+  // Spot-Historie: GET /api/analyze-btc/spot-history, parallel zu den übrigen Quellen.
 
-  // === 1. Parallel fetch: F&G, F&G History, FRED, Blockchain.com, DXY, Hashrate (all non-CoinGecko) ===
+  // === 1. Parallel fetch: F&G, F&G History, FRED, DXY, Hashrate, Spot-Historie ===
   let fearGreedIndex = 50, fearGreedLabel = "Neutral";
   let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
   let fedFundsRate = 3.64; // Updated default: Feb 2026 FRED FEDFUNDS
@@ -426,16 +465,16 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   let hashrateChange = 0; // percent change over 90 days
   let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult, liquidityResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult, liquidityResult, spotResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
-    fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
     fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
     fetchETFFlows(),
     fetchJSON("/api/analyze-btc/fiscal-frontend", 45000),
     fetchBtcLiquidity(),
+    fetchSpotHistory(),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -535,40 +574,16 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     // Binance nicht verfügbar — kein Volume, aber kein Crash
   }
 
-  // === 2. Parse Blockchain.com historical data ===
+  // === 2. Spot-Historie vom Server. Kein stiller Kurz-Fallback. ===
   let allPriceData: { date: string; price: number }[] = [];
-
-  if (blockchainResult.status === "fulfilled" && blockchainResult.value?.values) {
-    const dayMap = new Map<string, number>();
-    for (const point of blockchainResult.value.values as { x: number; y: number }[]) {
-      const d = new Date(point.x * 1000).toISOString().split("T")[0];
-      dayMap.set(d, point.y);
-    }
-    allPriceData = Array.from(dayMap.entries())
-      .map(([date, price]) => ({ date, price }))
-      .filter(d => d.price > 0);
-  }
-
-  // Fallback: CoinGecko market_chart if Blockchain.com failed
-  if (allPriceData.length === 0) {
-    try {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
-      const parsed = await fetchJSON(
-        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fiveYearsAgo}&to=${nowSec}`,
-        60000
-      );
-      if (parsed?.prices && Array.isArray(parsed.prices)) {
-        const dayMap = new Map<string, number>();
-        for (const p of parsed.prices as [number, number][]) {
-          const d = new Date(p[0]).toISOString().split("T")[0];
-          dayMap.set(d, p[1]);
-        }
-        allPriceData = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
-      }
-    } catch {
-      // swallow
-    }
+  let spotSource: string | null = BTC_SPOT_SOURCE_LABEL;
+  let spotSourceUrl: string | null = BTC_SPOT_SOURCE_URL;
+  let spotHistoryError: string | null = `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`;
+  if (spotResult.status === "fulfilled") {
+    allPriceData = spotResult.value.points;
+    spotSource = spotResult.value.source;
+    spotSourceUrl = spotResult.value.sourceUrl;
+    spotHistoryError = spotResult.value.error;
   }
 
   allPriceData.sort((a, b) => a.date.localeCompare(b.date));
@@ -609,8 +624,6 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     } else if (lastDate === today) {
       allPriceData[allPriceData.length - 1].price = btcPrice;
     }
-  } else if (allPriceData.length === 0 && btcPrice > 0) {
-    allPriceData = [{ date: new Date().toISOString().split("T")[0], price: btcPrice }];
   }
 
   // Slice into timeframes
@@ -1221,6 +1234,9 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
 
     technicalChart: technicalChartData.slice(-365 * 5),
     technicalChartFull: technicalChartData,
+    spotSource,
+    spotSourceUrl,
+    spotHistoryError,
     technicalSignals: signals.slice(-100),
     bullConditions,
     isBull,
