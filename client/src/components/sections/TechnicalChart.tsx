@@ -34,9 +34,13 @@ import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFund
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
 import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 import {
-  chartAmpelFromAnalysis, paintPhaseRows, phasesByDate, TA_PHASE_BADGE, TA_PHASE_STROKE,
-  type ChartAmpel, type TaPhase,
+  paintPhaseRows, TA_PHASE_BADGE, TA_PHASE_STROKE,
+  type TaPhase,
 } from "@shared/ta-phase";
+import {
+  ampelFactorsFromAnalysis, symmetricAmpelSeries,
+  type SymmetricSnapshot,
+} from "@shared/symmetric-ampel";
 
 export type { TimeRange };
 
@@ -367,8 +371,12 @@ export function TechnicalChart({
   const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
   // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
-  const chartAmpel = useMemo(() => chartAmpelFromAnalysis(data), [data]);
-  const phaseByDateMap = useMemo(() => phasesByDate(fullSeries.points, chartAmpel.moat), [fullSeries, chartAmpel.moat]);
+  const ampelFactors = useMemo(() => ampelFactorsFromAnalysis(data), [data]);
+  const symmetric = useMemo(
+    () => symmetricAmpelSeries(fullSeries.points, ampelFactors),
+    [fullSeries, ampelFactors],
+  );
+  const phaseByDateMap = symmetric.phases;
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
   const scenarioCone = useMemo(() => {
     if (!showCone) return null;
@@ -378,7 +386,6 @@ export function TechnicalChart({
   }, [showCone, data, aBuilt.points, monteCarlo]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
   const lineEndPhase = aBuilt.points.length ? (phaseByDateMap.get(aBuilt.points[aBuilt.points.length - 1].date) ?? null) : null;
-  const ampelBadge = <ChartAmpelBadge ampel={chartAmpel} lineEndPhase={lineEndPhase} />;
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
@@ -477,6 +484,7 @@ export function TechnicalChart({
     : buyScore === 2 ? "2 / 4 Bedingungen – neutrales Umfeld"
     : buyScore === 1 ? "1 / 4 Bedingungen – klares Warnsignal"
     : "0 / 4 Bedingungen – kein Kaufsignal";
+  const ampelBadge = <ChartAmpelBadge snap={symmetric.last} lineEndPhase={lineEndPhase} buyScore={buyScore} />;
 
   // Leeres Fenster lässt die Controls stehen, damit Von/Bis korrigierbar bleiben.
   // Jedes Band rechnet Y aus der eigenen Serie — keine gemeinsame Absolute-Y, kein closeB.
@@ -657,6 +665,18 @@ export function TechnicalChart({
           </div>
         )}
       </div>
+
+      {symmetric.last && (
+        <div
+          className="mb-3 text-[10px] leading-snug text-muted-foreground break-words"
+          data-testid="symmetric-ampel-facts"
+          data-color={symmetric.last.color ?? ""}
+          data-meaning={symmetric.last.meaning ?? ""}
+          title={symmetric.last.summary}
+        >
+          {symmetric.last.summary}
+        </div>
+      )}
 
       {/* ── Status pills (4 Bedingungen) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
@@ -1883,7 +1903,7 @@ function PricePane({
                 </div>
               )}
               {phase && (
-                <div className="font-semibold" style={{ color: phaseStroke }}>Ampel: {phase}</div>
+                <div className="font-semibold" style={{ color: phaseStroke }}>Ampel: {PHASE_MEANING[phase]}</div>
               )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
@@ -2335,23 +2355,35 @@ function BandStack({
   );
 }
 
-function ChartAmpelBadge({ ampel, lineEndPhase }: { ampel: ChartAmpel; lineEndPhase: TaPhase | null }) {
-  const phase = ampel.phase;
+const PHASE_MEANING: Record<TaPhase, string> = {
+  ATTRAKTIV: "Attraktiv",
+  NEUTRAL: "Neutral",
+  VORSICHTIG: "Unattraktiv",
+};
+
+function ChartAmpelBadge({ snap, lineEndPhase, buyScore }: {
+  snap: SymmetricSnapshot | null;
+  lineEndPhase: TaPhase | null;
+  buyScore: number;
+}) {
+  const phase = snap?.paint ?? null;
+  const meaning = snap?.meaning ?? null;
+  const lineAgrees = phase == null || lineEndPhase == null || phase === lineEndPhase;
   return (
     <div
       className={`pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${
         phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground"
       }`}
       data-testid="chart-ampel-label"
-      data-phase={phase ?? ""}
-      data-buyscore={ampel.buyScore ?? ""}
-      data-consistent={ampel.contradictsHeader ? "0" : "1"}
-      data-override={ampel.overrideActive ? "1" : "0"}
-      data-rsl-percentile={ampel.rslPercentile == null ? "" : String(ampel.rslPercentile)}
+      data-phase={snap?.color ?? ""}
+      data-meaning={meaning ?? ""}
+      data-buyscore={buyScore}
+      data-consistent={lineAgrees ? "1" : "0"}
       data-line-end={lineEndPhase ?? ""}
-      title={ampel.detail ?? undefined}
+      data-adjusted={snap?.adjusted ?? ""}
+      title={snap?.summary}
     >
-      {phase ? `Ampel: ${phase}` : "Ampel: n/a"}
+      {meaning ? `Ampel: ${meaning}` : "Ampel: n/a"}
     </div>
   );
 }
