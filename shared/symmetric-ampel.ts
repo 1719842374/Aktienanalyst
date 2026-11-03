@@ -47,6 +47,10 @@ export const SYMMETRIC = {
   highQuantile: 0.7,
   /** MA200-Steigung über 20 Handelstage. */
   ma200SlopeDays: 20,
+  /** MA50-Steigung über dieselbe Spanne. Death Cross braucht eine fallende MA50. */
+  ma50SlopeDays: 20,
+  /** Moat unter 3 ist nicht Wide. Wide ist 4. */
+  moatNotWideBelow: 3,
   /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.40. */
   rslLowQuantile: 0.4,
   /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.60. */
@@ -131,6 +135,8 @@ export interface SymmetricSnapshot {
   falseBreakdownFactor: number;
   falseBreakdown: boolean;
   falseBreakoutNote: string;
+  /** Verkauf, wenn Death Cross, Bruch unter beide MAs, schwaches RSL und kein Wide-Moat zusammenkommen. */
+  falseBreakoutSell: boolean;
   facts: SignalFact[];
   summary: string;
 }
@@ -262,6 +268,34 @@ export function falseBreakoutFactorOf(input: FalseBreakoutInput): number {
   if (base === SYMMETRIC.neutralFactor) return SYMMETRIC.neutralFactor;
   if (input.moatScore == null || !Number.isFinite(input.moatScore)) return base;
   return base * moatFalseBreakoutFactor(input.moatScore);
+}
+
+/**
+ * Antizyklischer Verkauf. Nur wenn alle vier zugleich gelten:
+ * MA50 unter MA200 und fallend, Kurs unter beiden MAs, RSL-Rang unter dem eigenen p40, Moat unter 3.
+ * Wide, ein fehlender Death Cross oder ein Kurs über einer MA lässt den Tag in der normalen Ampel.
+ */
+export function falseBreakoutSell(input: {
+  price: number | null;
+  ma50: number | null;
+  ma200: number | null;
+  ma50Slope: number | null;
+  rslPercentile: number | null;
+  moatScore: number | null;
+}): boolean {
+  const deathCross = input.ma50 != null
+    && input.ma200 != null
+    && input.ma50 < input.ma200
+    && input.ma50Slope != null
+    && input.ma50Slope < 0;
+  const brokeDown = input.price != null
+    && input.ma50 != null
+    && input.ma200 != null
+    && input.price < input.ma50
+    && input.price < input.ma200;
+  const weakRsl = input.rslPercentile != null && input.rslPercentile < SYMMETRIC.rslLowQuantile;
+  const weakMoat = input.moatScore != null && input.moatScore < SYMMETRIC.moatNotWideBelow;
+  return deathCross && brokeDown && weakRsl && weakMoat;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -489,6 +523,7 @@ export function symmetricAmpelSeries(
   const ma50Ratio: (number | null)[] = [];
   const maGap: (number | null)[] = [];
   const ma200Series: (number | null)[] = [];
+  const ma50Series: (number | null)[] = [];
   const rsi: (number | null)[] = [];
   const macd: (number | null)[] = [];
   const volRatio: (number | null)[] = [];
@@ -499,6 +534,7 @@ export function symmetricAmpelSeries(
     const ma50 = finite(bars[i].ma50) ? bars[i].ma50 as number : smaAt(closes, i, SYMMETRIC.ma50Days);
     const ma200 = finite(bars[i].ma200) ? bars[i].ma200 as number : smaAt(closes, i, SYMMETRIC.ma200Days);
     ma200Series.push(ma200);
+    ma50Series.push(ma50);
     ma50Ratio.push(ma50 != null && ma50 !== 0 ? closes[i] / ma50 : null);
     maGap.push(ma50 != null && ma200 != null && ma200 !== 0 ? ma50 / ma200 : null);
     rsi.push(finite(bars[i].rsi) ? bars[i].rsi as number : null);
@@ -519,7 +555,7 @@ export function symmetricAmpelSeries(
   const techAt: (number | null)[] = [];
   const factsAt: SignalFact[][] = [];
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
-  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; note: string }[] = [];
+  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; note: string }[] = [];
 
   const rslHist: number[] = [];
   const volHist: number[] = [];
@@ -577,9 +613,19 @@ export function symmetricAmpelSeries(
     const moatBit = factors.moatScore == null
       ? ""
       : ` · Moat ${factors.moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(factors.moatScore).toFixed(2)}`;
-    const breakoutNote = bearFlag || bullFlag
-      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
-      : "False-Breakout-Faktor 1";
+    const sell = falseBreakoutSell({
+      price: closes[i],
+      ma50: ma50Series[i],
+      ma200: ma200Series[i],
+      ma50Slope: slopeSignOf(ma50Series, i, SYMMETRIC.ma50SlopeDays),
+      rslPercentile: rslFact?.percentile ?? null,
+      moatScore: factors.moatScore,
+    });
+    const breakoutNote = sell
+      ? `False-Breakout-Verkauf ROT · Death Cross · Bruch unter MA50 und MA200${moatBit}`
+      : bearFlag || bullFlag
+        ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
+        : "False-Breakout-Faktor 1";
     const product = tech == null
       ? null
       : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor * damp;
@@ -587,7 +633,7 @@ export function symmetricAmpelSeries(
     adjusted.push(product);
     factsAt.push(bucket);
     volAt.push({ ratio: volRatio[i], factor: vol.factor, note: vol.note });
-    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, note: breakoutNote });
+    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, note: breakoutNote });
   }
 
   const stdevs: number[] = [];
@@ -623,6 +669,7 @@ export function symmetricAmpelSeries(
         else color = "GELB";
       }
     }
+    if (breakoutAt[i].sell) color = "ROT";
     phases.set(bars[i].date, symmetricColorPhase(color));
     colors.set(bars[i].date, color);
     const base = {
@@ -644,6 +691,7 @@ export function symmetricAmpelSeries(
       falseBreakdownFactor: breakoutAt[i].breakdownFactor,
       falseBreakdown: breakoutAt[i].breakdown,
       falseBreakoutNote: breakoutAt[i].note,
+      falseBreakoutSell: breakoutAt[i].sell,
       facts: factsAt[i],
     };
     last = { ...base, summary: describeSnapshot(base) };

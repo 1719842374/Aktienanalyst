@@ -8,6 +8,7 @@ import {
   SYMMETRIC,
   ampelFactorsFromAnalysis,
   falseBreakoutFactorOf,
+  falseBreakoutSell,
   historyPercentile,
   isFalseBreakdown,
   isFalseBreakout,
@@ -259,6 +260,49 @@ console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow wird an dem Tag 
   check("NVO Narrow: derselbe Tag wechselt auf GELB", narrow.last?.falseBreakout === true && narrow.last?.color === "GELB" && narrow.colors.get(prev) === "GRÜN" && narrow.colors.get(day) === "GELB", narrow.last?.summary);
   check("kein Moat: derselbe Tag ist nicht GRÜN", none.last?.color !== "GRÜN" && none.colors.get(day) !== "GRÜN", none.last?.summary);
   check("Wide dämpft weniger als Narrow und kein Moat", (wide.last?.falseBreakoutFactor ?? 0) > (narrow.last?.falseBreakoutFactor ?? 1) && (narrow.last?.falseBreakoutFactor ?? 0) > (none.last?.falseBreakoutFactor ?? 1));
+}
+
+console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
+{
+  const sell = {
+    price: 80, ma50: 90, ma200: 100, ma50Slope: -1, rslPercentile: 0.2, moatScore: SYMMETRIC.moatNarrowScore,
+  };
+  check("Death Cross + Bruch + schwaches RSL + Narrow ist Verkauf", falseBreakoutSell(sell));
+  check("Wide ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatWideScore }) === false);
+  check("Moat-Score 3 ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatNotWideBelow }) === false);
+  check("kein Death Cross ist kein Verkauf", falseBreakoutSell({ ...sell, ma50: 110 }) === false);
+  check("steigende MA50 ist kein Verkauf", falseBreakoutSell({ ...sell, ma50Slope: 1 }) === false);
+  check("Kurs über MA50 ist kein Verkauf", falseBreakoutSell({ ...sell, price: 95 }) === false);
+  check("RSL auf dem p40 ist kein Verkauf", falseBreakoutSell({ ...sell, rslPercentile: SYMMETRIC.rslLowQuantile }) === false);
+  check("unbekannter Moat ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: null }) === false);
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("Beta verschiebt die RSL-Schwelle nicht", !ampelSrc.includes("betaAdj") && SYMMETRIC.rslLowQuantile === 0.4);
+
+  const delta = 1.6;
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.03;
+    const close = ma200 * (i >= 390 ? 0.88 : 1.02);
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 2000 : (i >= 400 && i < 419 ? 2300 : 2000),
+      rsi: 50 + 15 * Math.sin(i / 3) - (i === 419 ? delta : 0),
+      histogram: 0.2 * Math.sin(i / 5) - (i === 419 ? delta * 0.01 : 0),
+      ma50: close * 1.05,
+      ma200,
+    });
+  }
+  const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const wide = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Wide" } as StockAnalysis));
+  const bounce = bars.map((bar, i) => i < 419 ? bar : { ...bar, close: bar.ma200 * 1.04, ma50: bar.ma200 * 0.98 });
+  const recovered = symmetricAmpelSeries(bounce, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Bruch Narrow ${narrow.last?.color} Verkauf ${narrow.last?.falseBreakoutSell} RSL ${narrow.last?.facts.find(f => f.name === "Kurs/MA52")?.percentile?.toFixed(2)}`);
+  console.log(`  ℹ Bruch Wide ${wide.last?.color} Verkauf ${wide.last?.falseBreakoutSell}`);
+  console.log(`  ℹ Erholung Narrow ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
+  check("Narrow nach Death Cross und Bruch ist ROT", narrow.last?.falseBreakoutSell === true && narrow.last?.color === "ROT", narrow.last?.falseBreakoutNote);
+  check("Wide nach demselben Bruch ist kein Verkauf", wide.last?.falseBreakoutSell === false, wide.last?.falseBreakoutNote);
+  check("Erholung über den MAs ist kein Verkauf", recovered.last?.falseBreakoutSell === false && recovered.last?.color !== "ROT", recovered.last?.summary);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
