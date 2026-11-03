@@ -55,6 +55,14 @@ export const SYMMETRIC = {
   volMedianQuantile: 0.5,
   /** Maximale Dämpfung 25 %. Faktor = 1 − Stärke × Spanne, also 0.75–1. */
   falseBreakoutDampSpan: 0.25,
+  /** Moat-Skala der Dämpfung. Wide 4, Narrow 2, kein Moat 0. */
+  moatScoreMax: 5,
+  moatWideScore: 4,
+  moatNarrowScore: 2,
+  moatNoneScore: 0,
+  /** 0.9 + (Score / 5) × 0.2, also 0.9–1.1. */
+  moatFactorFloor: 0.9,
+  moatFactorSpan: 0.2,
 } as const;
 
 export type SymmetricColor = "GRÜN" | "GELB" | "ROT";
@@ -79,6 +87,9 @@ export interface AmpelFactors {
   bsNote: string;
   betaFactor: number;
   betaNote: string;
+  /** null: Moat unbekannt, die Dämpfung bleibt technisch. */
+  moatScore: number | null;
+  moatNote: string;
 }
 
 export interface SymmetricBar {
@@ -178,6 +189,8 @@ export interface FalseBreakoutInput {
   rslHistory: readonly number[];
   volRatio: number | null;
   volHistory: readonly number[];
+  /** 0–5. null lässt die technische Dämpfung unverändert. */
+  moatScore?: number | null;
 }
 
 function regimeThresholds(rslHistory: readonly number[], volHistory: readonly number[]) {
@@ -220,16 +233,35 @@ export function isFalseBreakdown(input: FalseBreakoutInput): boolean {
     && input.volRatio < volMed;
 }
 
+/** Wide 4, Narrow 2, kein Moat 0. Unbekannte Ratings bleiben leer. */
+export function moatScoreFromRating(rating: string | null | undefined): number | null {
+  const key = String(rating ?? "").trim().toLowerCase();
+  if (!key) return null;
+  if (key.includes("none") || key.includes("kein") || key.includes("no moat")) return SYMMETRIC.moatNoneScore;
+  if (key.includes("wide") || key.includes("strong")) return SYMMETRIC.moatWideScore;
+  if (key.includes("narrow") || key.includes("limited")) return SYMMETRIC.moatNarrowScore;
+  return null;
+}
+
+/** 0.9 bei Score 0, 1.1 bei Score 5. */
+export function moatFalseBreakoutFactor(score: number): number {
+  const clamped = Math.min(SYMMETRIC.moatScoreMax, Math.max(0, score));
+  return SYMMETRIC.moatFactorFloor + (clamped / SYMMETRIC.moatScoreMax) * SYMMETRIC.moatFactorSpan;
+}
+
 /**
- * 1, wenn eine Bedingung fehlt.
- * Sonst 1 − Stärke × 0.25. Stärke ist 2 × |RSL-Perzentil − 0.5|, höchstens 1.
- * Der Faktor liegt damit zwischen 0.75 und 1 und multipliziert den ganzen adjusted Score.
+ * 1, wenn eine Bedingung fehlt. Dann bleibt auch ein Moat ohne Wirkung.
+ * Sonst 1 − Stärke × 0.25, mal Moat 0.9–1.1, wenn ein Score vorliegt.
+ * Stärke ist 2 × |RSL-Perzentil − 0.5|, höchstens 1.
  */
 export function falseBreakoutFactorOf(input: FalseBreakoutInput): number {
   if (!isFalseBreakout(input) && !isFalseBreakdown(input)) return SYMMETRIC.neutralFactor;
   if (input.rslPercentile == null) return SYMMETRIC.neutralFactor;
   const strength = Math.min(Math.abs(input.rslPercentile - 0.5) * 2, 1);
-  return 1 - strength * SYMMETRIC.falseBreakoutDampSpan;
+  const base = 1 - strength * SYMMETRIC.falseBreakoutDampSpan;
+  if (base === SYMMETRIC.neutralFactor) return SYMMETRIC.neutralFactor;
+  if (input.moatScore == null || !Number.isFinite(input.moatScore)) return base;
+  return base * moatFalseBreakoutFactor(input.moatScore);
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -302,6 +334,11 @@ export function ampelFactorsFromAnalysis(data: StockAnalysis & { styleConfidence
     ndEbitda != null ? `NetDebt/EBITDA ${ndEbitda.toFixed(2)}` : "NetDebt/EBITDA n/a",
     "Zinsdeckung n/a",
   ];
+  const rating = data.moatAssessment?.overallRating ?? data.moatRating ?? null;
+  const moatScore = moatScoreFromRating(rating);
+  const moatNote = moatScore == null
+    ? "Moat n/a — Dämpfung bleibt technisch"
+    : `Moat ${rating} ${moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(moatScore).toFixed(2)}`;
   return {
     thesisFactor: thesis.factor,
     thesisNote: thesis.note,
@@ -311,6 +348,8 @@ export function ampelFactorsFromAnalysis(data: StockAnalysis & { styleConfidence
     betaNote: finite(data.beta5Y)
       ? `Beta ${data.beta5Y.toFixed(2)} — keine Beta-Historie, kein Vergleich mit einem festen Pegel, Faktor 1`
       : "Beta n/a — Faktor 1",
+    moatScore,
+    moatNote,
   };
 }
 
@@ -417,6 +456,7 @@ export function describeSnapshot(snap: Omit<SymmetricSnapshot, "summary">): stri
     snap.volumeNote,
     snap.falseBreakoutNote,
     `Thesis ${snap.factors.thesisNote} ×${snap.factors.thesisFactor.toFixed(2)}`,
+    snap.factors.moatNote,
     `Bilanz ${snap.factors.bsNote}`,
     snap.factors.betaNote,
     band,
@@ -431,6 +471,8 @@ const EMPTY_FACTORS: AmpelFactors = {
   bsNote: "n/a",
   betaFactor: 1,
   betaNote: "n/a",
+  moatScore: null,
+  moatNote: "Moat n/a",
 };
 
 /**
@@ -525,14 +567,18 @@ export function symmetricAmpelSeries(
       rslHistory: rslHist,
       volRatio: volRatio[i],
       volHistory: volHist,
+      moatScore: factors.moatScore,
     };
     const bearFlag = isFalseBreakout(regime);
     const bullFlag = isFalseBreakdown(regime);
     const damp = falseBreakoutFactorOf(regime);
     const tech = signals.length ? signals.reduce((a, b) => a + b, 0) / signals.length : null;
     const vol = volumeFactor(volRatio[i]);
-    const breakoutNote = damp < 1
-      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}`
+    const moatBit = factors.moatScore == null
+      ? ""
+      : ` · Moat ${factors.moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(factors.moatScore).toFixed(2)}`;
+    const breakoutNote = bearFlag || bullFlag
+      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
       : "False-Breakout-Faktor 1";
     const product = tech == null
       ? null

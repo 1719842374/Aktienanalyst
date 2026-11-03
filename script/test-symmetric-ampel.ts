@@ -15,6 +15,8 @@ import {
   symmetricSignal,
   thesisFactorFromClass,
   thesisFactorFromShares,
+  moatFalseBreakoutFactor,
+  moatScoreFromRating,
   volumeFactor,
 } from "../shared/symmetric-ampel";
 
@@ -129,6 +131,20 @@ check("False Breakout und False Breakdown erkennen dieselben Lagen", isFalseBrea
   check("NVO-Mix ergibt etwa 1.03", Math.abs(thesis.factor - expected) < 1e-9 && Math.abs(expected - 1.0315) < 1e-9, `${thesis.factor} vs ${expected}`);
   const stacked = 0.4 * bearFactor * thesis.factor * SYMMETRIC.volLowFactor;
   check("NVO-Stapel Tech × Stärke × Thesis × Volumen liegt bei etwa 0.27", Math.abs(stacked - 0.2736) < 0.005, String(stacked));
+  const narrow = moatFalseBreakoutFactor(SYMMETRIC.moatNarrowScore);
+  const wide = moatFalseBreakoutFactor(SYMMETRIC.moatWideScore);
+  const none = moatFalseBreakoutFactor(SYMMETRIC.moatNoneScore);
+  check("Narrow 2.0 ist ×0.98", Math.abs(narrow - 0.98) < 1e-9, String(narrow));
+  check("Wide 4.0 ist ×1.06", Math.abs(wide - 1.06) < 1e-9, String(wide));
+  check("Kein Moat 0 ist ×0.90", Math.abs(none - 0.9) < 1e-9, String(none));
+  check("Rating Narrow, Wide, None", moatScoreFromRating("Narrow") === 2 && moatScoreFromRating("Wide") === 4 && moatScoreFromRating("None") === 0);
+  const nvoMoat = falseBreakoutFactorOf({ ...bearAll, moatScore: SYMMETRIC.moatNarrowScore });
+  check("NVO Narrow multipliziert die 0.78 mit 0.98", Math.abs(nvoMoat - bearFactor * narrow) < 1e-9, String(nvoMoat));
+  const nvoAdjusted = 0.4 * nvoMoat * thesis.factor * SYMMETRIC.volLowFactor;
+  check("NVO mit Narrow bleibt bei etwa 0.26", Math.abs(nvoAdjusted - stacked * narrow) < 1e-9 && Math.abs(nvoAdjusted - 0.26) < 0.01, String(nvoAdjusted));
+  check("ohne False-Breakout bleibt Wide wirkungslos", falseBreakoutFactorOf({ ...bearAll, price: 110, moatScore: SYMMETRIC.moatWideScore }) === 1);
+  const msftTech = 0.6;
+  check("MSFT ohne Dämpfung bleibt beim technischen Score, nicht bei 0.64", msftTech * falseBreakoutFactorOf({ ...bullAll, rslValue: 1.0, moatScore: SYMMETRIC.moatWideScore }) === msftTech);
 }
 
 function regime(mode: "bounce" | "dip" | "breakdown") {
@@ -204,11 +220,12 @@ function regime(mode: "bounce" | "dip" | "breakdown") {
   }
   const nvo = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({
     styleConfidences: { "Fast Grower": 0.45, Cyclical: 0.36, Stalwart: 0.12, Turnaround: 0.04, Value: 0.03 },
+    moatRating: "Narrow",
   } as StockAnalysis));
   console.log(`  ℹ NVO-Lage ${nvo.last?.color} adjusted ${nvo.last?.adjusted?.toFixed(3)} p70 ${nvo.last?.p70?.toFixed(3)} Faktor ${nvo.last?.falseBreakoutFactor?.toFixed(2)} Thesis ${nvo.last?.factors.thesisFactor}`);
   check("NVO-Lage: alle vier Bedingungen, Faktor unter 1", nvo.last?.falseBreakout === true && (nvo.last?.falseBreakoutFactor ?? 1) < 1 && (nvo.last?.falseBreakoutFactor ?? 0) >= 1 - SYMMETRIC.falseBreakoutDampSpan);
   check("NVO-Lage: Thesis-Mix etwa 1.03 und Volumen ×0.85", Math.abs((nvo.last?.factors.thesisFactor ?? 0) - 1.0315) < 1e-9 && nvo.last?.volumeFactor === SYMMETRIC.volLowFactor);
-  check("NVO-Lage bleibt GELB, adjusted unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0), nvo.last?.summary);
+  check("NVO-Lage: Narrow ×0.98 und GELB unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0) && nvo.last?.factors.moatScore === SYMMETRIC.moatNarrowScore && (nvo.last?.falseBreakoutNote.includes("×0.98") ?? false), nvo.last?.summary);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
