@@ -617,6 +617,7 @@ export function symmetricAmpelSeries(
       p30 = quantile(recent, SYMMETRIC.lowQuantile);
       p70 = quantile(recent, SYMMETRIC.highQuantile);
       if (p30 != null && p70 != null) {
+        // Ein Tag genügt. Eine Mehrheit über mehrere Tage würde Wide und Narrow gleich halten.
         if (current > p70) color = "GRÜN";
         else if (current < p30) color = "ROT";
         else color = "GELB";

@@ -228,6 +228,39 @@ function regime(mode: "bounce" | "dip" | "breakdown") {
   check("NVO-Lage: Narrow ×0.98 und GELB unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0) && nvo.last?.factors.moatScore === SYMMETRIC.moatNarrowScore && (nvo.last?.falseBreakoutNote.includes("×0.98") ?? false), nvo.last?.summary);
 }
 
+console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow wird an dem Tag gelb ===");
+{
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("keine Hysterese und keine Mindest-Dauer", !ampelSrc.includes("stabilizeAmpel") && !ampelSrc.includes("minDays"));
+  const delta = 1.6;
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.03;
+    const close = ma200 * (i >= 390 ? 0.88 : 1.02);
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 2000 : (i >= 400 && i < 419 ? 2300 : 2000),
+      rsi: 50 + 15 * Math.sin(i / 3) - (i === 419 ? delta : 0),
+      histogram: 0.2 * Math.sin(i / 5) - (i === 419 ? delta * 0.01 : 0),
+      ma50: close,
+      ma200,
+    });
+  }
+  const wide = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Wide" } as StockAnalysis));
+  const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const none = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "None" } as StockAnalysis));
+  const prev = bars[418].date;
+  const day = bars[419].date;
+  console.log(`  ℹ Wide ${wide.colors.get(prev)} → ${wide.last?.color} Faktor ${wide.last?.falseBreakoutFactor?.toFixed(2)}`);
+  console.log(`  ℹ Narrow ${narrow.colors.get(prev)} → ${narrow.last?.color} Faktor ${narrow.last?.falseBreakoutFactor?.toFixed(2)}`);
+  console.log(`  ℹ Kein Moat ${none.colors.get(prev)} → ${none.last?.color} Faktor ${none.last?.falseBreakoutFactor?.toFixed(2)}`);
+  check("MSFT Wide: die Erholung bleibt GRÜN", wide.last?.falseBreakout === true && wide.last?.color === "GRÜN" && wide.colors.get(prev) === "GRÜN", wide.last?.summary);
+  check("NVO Narrow: derselbe Tag wechselt auf GELB", narrow.last?.falseBreakout === true && narrow.last?.color === "GELB" && narrow.colors.get(prev) === "GRÜN" && narrow.colors.get(day) === "GELB", narrow.last?.summary);
+  check("kein Moat: derselbe Tag ist nicht GRÜN", none.last?.color !== "GRÜN" && none.colors.get(day) !== "GRÜN", none.last?.summary);
+  check("Wide dämpft weniger als Narrow und kein Moat", (wide.last?.falseBreakoutFactor ?? 0) > (narrow.last?.falseBreakoutFactor ?? 1) && (narrow.last?.falseBreakoutFactor ?? 0) > (none.last?.falseBreakoutFactor ?? 1));
+}
+
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
 {
   const ui = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
