@@ -270,6 +270,8 @@ export function goldRangeNote(
   inRange: Array<{ date: string } & Partial<Record<GoldMacroKey, number | null>>>,
   source: string | null,
   labels: Record<GoldMacroKey, string>,
+  /** true = das Fenster hat die vollen 2520 Handelstage, auch wenn das weniger als 9,9 Kalenderjahre sind. */
+  windowFull = false,
 ): string | null {
   if (!needsLongHistory(range) || inRange.length === 0) return null;
   const first = inRange[0].date;
@@ -278,7 +280,7 @@ export function goldRangeNote(
   const yr = years.toFixed(1).replace(".", ",");
   const head = range === "Max"
     ? `Max = ab ${first} (${yr} J${source ? `, ${source}` : ""})`
-    : years < 9.9 ? `10Y: nur ${yr} J verfügbar (ab ${first})` : `10Y ab ${first}${source ? ` (${source})` : ""}`;
+    : years < 9.9 && !windowFull ? `10Y: nur ${yr} J verfügbar (ab ${first})` : `10Y ab ${first}${source ? ` (${source})` : ""}`;
   const late: string[] = [];
   for (const key of Object.keys(labels) as GoldMacroKey[]) {
     const hit = inRange.find(d => d[key] != null);

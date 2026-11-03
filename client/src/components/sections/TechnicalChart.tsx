@@ -11,6 +11,7 @@ import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
   type WindowPoint, type WindowSeries,
 } from "@/lib/taWindowSeries";
+import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -36,6 +37,8 @@ import {
   chartAmpelFromAnalysis, paintPhaseRows, phasesByDate, TA_PHASE_BADGE, TA_PHASE_STROKE,
   type ChartAmpel, type TaPhase,
 } from "@shared/ta-phase";
+
+export type { TimeRange };
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -79,14 +82,6 @@ const MA_LINES = [
 type MAKey = typeof MA_LINES[number]["key"];
 
 const SIGNALS_PAGE_SIZE = 10;
-
-// Preset-Schnitte in Handelstagen — identisch zum bisherigen IST (slice vom letzten Bar).
-const TIME_RANGE_CUTOFF = {
-  "3M": 63, "6M": 126, "1Y": 252, "2Y": 504, "3Y": 756, "5Y": 1260, "10Y": 2520,
-  /** Only offered via `rangePresets` (recession TA). Slices the whole series. */
-  "Max": Number.MAX_SAFE_INTEGER,
-} as const;
-export type TimeRange = keyof typeof TIME_RANGE_CUTOFF;
 
 const EMPTY_WINDOW_HINT = "Keine Bars in diesem Fenster";
 
@@ -317,7 +312,7 @@ export function TechnicalChart({
     if (customA && customA.from <= customA.to) {
       return ohlcv.filter(d => d.date >= customA.from && d.date <= customA.to);
     }
-    return ohlcv.slice(-Math.min(rangeCutoff, ohlcv.length));
+    return slicePresetWindow(ohlcv, timeRange);
   }, [ohlcv, customA, rangeCutoff]);
 
   // WORK_DATA_PROVIDERS.md §4: Chart-Domain muss an tatsaechlich geladene
