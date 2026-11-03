@@ -9,7 +9,6 @@ import {
   ampelFactorsFromAnalysis,
   falseBreakoutFactorOf,
   falseBreakoutSell,
-  fallingGoldenCross,
   historyPercentile,
   isFalseBreakdown,
   isFalseBreakout,
@@ -19,7 +18,7 @@ import {
   thesisFactorFromShares,
   moatFalseBreakoutFactor,
   moatScoreFromRating,
-  weakGoldenCross,
+  weakCross,
   volumeFactor,
 } from "../shared/symmetric-ampel";
 
@@ -231,7 +230,7 @@ function regime(mode: "bounce" | "dip" | "breakdown") {
   check("NVO-Lage: Narrow ×0.98 und GELB unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0) && nvo.last?.factors.moatScore === SYMMETRIC.moatNarrowScore && (nvo.last?.falseBreakoutNote.includes("×0.98") ?? false), nvo.last?.summary);
 }
 
-console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow ohne Golden Cross wird rot ===");
+console.log("\n=== Konvergierender Death Cross bleibt gelb ===");
 {
   const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
   check("keine Hysterese und keine Mindest-Dauer", !ampelSrc.includes("stabilizeAmpel") && !ampelSrc.includes("minDays"));
@@ -254,13 +253,12 @@ console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow ohne Golden Cros
   const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
   const none = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "None" } as StockAnalysis));
   const prev = bars[418].date;
-  const day = bars[419].date;
   console.log(`  ℹ Wide ${wide.colors.get(prev)} → ${wide.last?.color} Faktor ${wide.last?.falseBreakoutFactor?.toFixed(2)}`);
   console.log(`  ℹ Narrow ${narrow.colors.get(prev)} → ${narrow.last?.color} Faktor ${narrow.last?.falseBreakoutFactor?.toFixed(2)}`);
   console.log(`  ℹ Kein Moat ${none.colors.get(prev)} → ${none.last?.color} Faktor ${none.last?.falseBreakoutFactor?.toFixed(2)}`);
-  check("MSFT Wide: die Erholung bleibt GRÜN", wide.last?.falseBreakout === true && wide.last?.color === "GRÜN" && wide.colors.get(prev) === "GRÜN", wide.last?.summary);
-  check("NVO Narrow: Kurs unter MA200 ohne Golden Cross wird ROT", narrow.last?.falseBreakoutSell === true && narrow.last?.color === "ROT" && narrow.colors.get(day) === "ROT", narrow.last?.summary);
-  check("kein Moat: derselbe Tag wird ROT", none.last?.falseBreakoutSell === true && none.last?.color === "ROT", none.last?.summary);
+  check("konvergierender Death Cross bleibt GELB, auch bei Wide", wide.last?.weakCross === true && wide.last?.crossType === "death" && wide.last?.color === "GELB", wide.last?.summary);
+  check("NVO Narrow: derselbe konvergierende Death Cross bleibt GELB", narrow.last?.weakCross === true && narrow.last?.color === "GELB", narrow.last?.summary);
+  check("kein Moat: derselbe Tag bleibt GELB", none.last?.weakCross === true && none.last?.color === "GELB", none.last?.summary);
   check("Wide dämpft weniger als Narrow und kein Moat", (wide.last?.falseBreakoutFactor ?? 0) > (narrow.last?.falseBreakoutFactor ?? 1) && (narrow.last?.falseBreakoutFactor ?? 0) > (none.last?.falseBreakoutFactor ?? 1));
 }
 
@@ -318,22 +316,20 @@ console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
   console.log(`  ℹ Bruch Wide ${wide.last?.color} Verkauf ${wide.last?.falseBreakoutSell}`);
   console.log(`  ℹ Bounce über MA50 ${bounced.last?.color} Verkauf ${bounced.last?.falseBreakoutSell}`);
   console.log(`  ℹ Golden Cross ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
-  check("Narrow nach Death Cross und Bruch ist ROT", narrow.last?.falseBreakoutSell === true && narrow.last?.color === "ROT", narrow.last?.falseBreakoutNote);
+  check("Narrow bei konvergierendem Death Cross bleibt GELB", narrow.last?.weakCross === true && narrow.last?.color === "GELB", narrow.last?.falseBreakoutNote);
   check("Kurzer Bounce über MA50 ohne Golden Cross bleibt ROT", bounced.last?.falseBreakoutSell === true && bounced.last?.color === "ROT", bounced.last?.falseBreakoutNote);
   check("Wide nach demselben Bruch ist kein Verkauf und GELB", wide.last?.falseBreakoutSell === false && wide.last?.color === "GELB", wide.last?.falseBreakoutNote);
   check("Golden Cross über den MAs ist GRÜN", recovered.last?.falseBreakoutSell === false && recovered.last?.color === "GRÜN", recovered.last?.summary);
 }
 
-console.log("\n=== Nicht bestätigtes Golden Cross ===");
+console.log("\n=== Konvergenz nach Golden und Death Cross ===");
 {
-  const gap = 4;
-  check("Abstand schrumpft nach 40 Tagen ist unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 6, goldenCrossDays: 41 }));
-  check("Abstand gleich nach 40 Tagen ist unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 4, goldenCrossDays: 41 }));
-  check("wachsender Abstand ist bestätigt", weakGoldenCross({ ma50: 106, ma200: 100, gap: 6, previousGap: 4, goldenCrossDays: 80 }) === false);
-  check("vor dem 40. Tag noch nicht unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 6, goldenCrossDays: 40 }) === false);
-  check("ohne Golden Cross keine Schwäche", weakGoldenCross({ ma50: 90, ma200: 100, gap: -10, previousGap: -4, goldenCrossDays: 80 }) === false);
-  check("fallende MA50 über dem MA200", fallingGoldenCross(104, 100, -0.4));
-  check("steigende MA50 ist kein fallendes Golden Cross", fallingGoldenCross(104, 100, 0.4) === false);
+  check("Golden Cross, Abstand schrumpft, ist schwach", weakCross({ ma50: 104, ma200: 100, previousGap: 6, crossType: "golden" }));
+  check("Golden Cross, Abstand steht, ist schwach", weakCross({ ma50: 104, ma200: 100, previousGap: 4, crossType: "golden" }));
+  check("Golden Cross, Abstand wächst, ist bestätigt", weakCross({ ma50: 108, ma200: 100, previousGap: 4, crossType: "golden" }) === false);
+  check("Death Cross, Abstand schrumpft, ist schwach", weakCross({ ma50: 94, ma200: 100, previousGap: 8, crossType: "death" }));
+  check("Death Cross, Abstand wächst, bleibt bestätigt", weakCross({ ma50: 90, ma200: 100, previousGap: 6, crossType: "death" }) === false);
+  check("Death-Vergleich auf einem Golden Cross ist kein Death-Cross", weakCross({ ma50: 104, ma200: 100, previousGap: 6, crossType: "death" }) === false);
 
   const bars = [];
   for (let i = 0; i < 420; i++) {
@@ -352,17 +348,16 @@ console.log("\n=== Nicht bestätigtes Golden Cross ===");
     });
   }
   const faded = symmetricAmpelSeries(bars);
-  const fallingBars = bars.map((bar, i) => {
-    if (i < 300) return bar;
-    const ma200 = 120;
-    const ma50 = 130 - (i - 300) * 0.08;
-    return { ...bar, ma200, ma50, close: ma50 * 1.01 };
+  const deathBars = bars.map((bar, i) => {
+    const ma200 = 140 - i * 0.02;
+    const ma50 = i < 300 ? ma200 + 2 : ma200 - 4 - (i - 300) * 0.08;
+    return { ...bar, ma200, ma50, close: Math.min(ma50, ma200) * 0.98 };
   });
-  const falling = symmetricAmpelSeries(fallingBars);
-  console.log(`  ℹ Schrumpfend ${faded.last?.color} schwach ${faded.last?.weakGoldenCross} fallend ${faded.last?.fallingGolden}`);
-  console.log(`  ℹ MA50 fällt ${falling.last?.color} fallend ${falling.last?.fallingGolden}`);
-  check("langes Golden Cross mit schrumpfendem Abstand wird GELB", faded.last?.weakGoldenCross === true && faded.last?.fallingGolden === false && faded.last?.color === "GELB", faded.last?.falseBreakoutNote);
-  check("fallende MA50 im Golden Cross wird ROT", falling.last?.fallingGolden === true && falling.last?.color === "ROT", falling.last?.falseBreakoutNote);
+  const death = symmetricAmpelSeries(deathBars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Golden konvergiert ${faded.last?.color} schwach ${faded.last?.weakCross}`);
+  console.log(`  ℹ Death divergiert ${death.last?.color} schwach ${death.last?.weakCross} Cross ${death.last?.crossType}`);
+  check("Golden Cross mit schrumpfendem Abstand wird GELB", faded.last?.weakCross === true && faded.last?.crossType === "golden" && faded.last?.color === "GELB", faded.last?.falseBreakoutNote);
+  check("Death Cross mit wachsendem Abstand wird ROT", death.last?.weakCross === false && death.last?.crossType === "death" && death.last?.color === "ROT", death.last?.falseBreakoutNote);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
