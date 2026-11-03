@@ -51,6 +51,8 @@ export const SYMMETRIC = {
   ma50SlopeDays: 20,
   /** Moat unter 3 ist nicht Wide. Wide ist 4. */
   moatNotWideBelow: 3,
+  /** Ein Golden Cross ohne wachsenden Abstand gilt nach so vielen Tagen als unbestätigt. */
+  goldenConfirmDays: 40,
   /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.40. */
   rslLowQuantile: 0.4,
   /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.60. */
@@ -135,8 +137,12 @@ export interface SymmetricSnapshot {
   falseBreakdownFactor: number;
   falseBreakdown: boolean;
   falseBreakoutNote: string;
-  /** Verkauf, wenn Death Cross, Bruch unter beide MAs, schwaches RSL und kein Wide-Moat zusammenkommen. */
+  /** Verkauf nach Death Cross ohne Golden Cross. */
   falseBreakoutSell: boolean;
+  /** Golden Cross länger als 40 Tage, Abstand zwischen MA50 und MA200 wächst nicht. */
+  weakGoldenCross: boolean;
+  /** MA50 fällt, obwohl sie noch über dem MA200 liegt. */
+  fallingGolden: boolean;
   facts: SignalFact[];
   summary: string;
 }
@@ -301,6 +307,28 @@ export function falseBreakoutSell(input: {
   const weakRsl = input.rslPercentile != null && input.rslPercentile < SYMMETRIC.rslLowQuantile;
   const notWideMoat = input.moatScore != null && input.moatScore < SYMMETRIC.moatNotWideBelow;
   return deathCross && !input.goldenCrossActive && brokeOrNear && weakRsl && notWideMoat;
+}
+
+/**
+ * Nicht bestätigtes Golden Cross: MA50 liegt über MA200, der Abstand zur MA200
+ * ist über die Steigungs-Spanne nicht größer geworden, und das schon länger als 40 Tage.
+ * Eine fallende MA50 ist stärker und wird getrennt als Rot geführt.
+ */
+export function weakGoldenCross(input: {
+  ma50: number | null;
+  ma200: number | null;
+  gap: number | null;
+  previousGap: number | null;
+  goldenCrossDays: number;
+}): boolean {
+  const goldenActive = input.ma50 != null && input.ma200 != null && input.ma50 > input.ma200;
+  const gapNotGrowing = input.gap != null && input.previousGap != null && input.gap <= input.previousGap;
+  return goldenActive && input.goldenCrossDays > SYMMETRIC.goldenConfirmDays && gapNotGrowing;
+}
+
+/** MA50 liegt noch über MA200, die Änderung über die Steigungs-Spanne ist negativ. */
+export function fallingGoldenCross(ma50: number | null, ma200: number | null, ma50Delta: number | null): boolean {
+  return ma50 != null && ma200 != null && ma50 > ma200 && ma50Delta != null && ma50Delta < 0;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -560,10 +588,11 @@ export function symmetricAmpelSeries(
   const techAt: (number | null)[] = [];
   const factsAt: SignalFact[][] = [];
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
-  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; note: string }[] = [];
+  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; weakGolden: boolean; fallingGolden: boolean; note: string }[] = [];
 
   const rslHist: number[] = [];
   const volHist: number[] = [];
+  let goldenDays = 0;
 
   const pushSignal = (
     name: string,
@@ -619,20 +648,40 @@ export function symmetricAmpelSeries(
       ? ""
       : ` · Moat ${factors.moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(factors.moatScore).toFixed(2)}`;
     const ma50Slope = slopeSignOf(ma50Series, i, SYMMETRIC.ma50SlopeDays);
+    const ma50Now = ma50Series[i];
+    const ma200Now = ma200Series[i];
+    const golden = ma50Now != null && ma200Now != null && ma50Now > ma200Now;
+    goldenDays = golden ? goldenDays + 1 : 0;
+    const lookback = i - SYMMETRIC.ma50SlopeDays;
+    const prevMa50 = lookback >= 0 ? ma50Series[lookback] : null;
+    const prevMa200 = lookback >= 0 ? ma200Series[lookback] : null;
+    const gap = ma50Now != null && ma200Now != null ? ma50Now - ma200Now : null;
+    const previousGap = prevMa50 != null && prevMa200 != null ? prevMa50 - prevMa200 : null;
+    const ma50Delta = ma50Now != null && prevMa50 != null ? ma50Now - prevMa50 : null;
+    const weakGolden = weakGoldenCross({ ma50: ma50Now, ma200: ma200Now, gap, previousGap, goldenCrossDays: goldenDays });
+    const fallingGolden = fallingGoldenCross(ma50Now, ma200Now, ma50Delta);
     const sell = falseBreakoutSell({
       price: closes[i],
-      ma50: ma50Series[i],
-      ma200: ma200Series[i],
+      ma50: ma50Now,
+      ma200: ma200Now,
       ma50Slope,
-      goldenCrossActive: goldenCrossActive(ma50Series[i], ma200Series[i], ma50Slope),
+      goldenCrossActive: goldenCrossActive(ma50Now, ma200Now, ma50Slope),
       rslPercentile: rslFact?.percentile ?? null,
       moatScore: factors.moatScore,
     });
-    const breakoutNote = sell
-      ? `False-Breakout-Verkauf ROT · Death Cross ohne Golden Cross · Bruch unter MA50 oder MA200${moatBit}`
-      : bearFlag || bullFlag
-        ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
-        : "False-Breakout-Faktor 1";
+    const goldenNote = fallingGolden
+      ? "Golden Cross, MA50 fällt"
+      : weakGolden
+        ? "Golden Cross nicht bestätigt, Abstand wächst nicht"
+        : "";
+    const breakoutNote = [
+      sell
+        ? `False-Breakout-Verkauf ROT · Death Cross ohne Golden Cross · Bruch unter MA50 oder MA200${moatBit}`
+        : bearFlag || bullFlag
+          ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
+          : "False-Breakout-Faktor 1",
+      goldenNote,
+    ].filter(part => part.length > 0).join(" · ");
     const product = tech == null
       ? null
       : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor * damp;
@@ -640,7 +689,7 @@ export function symmetricAmpelSeries(
     adjusted.push(product);
     factsAt.push(bucket);
     volAt.push({ ratio: volRatio[i], factor: vol.factor, note: vol.note });
-    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, note: breakoutNote });
+    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, weakGolden, fallingGolden, note: breakoutNote });
   }
 
   const stdevs: number[] = [];
@@ -676,6 +725,8 @@ export function symmetricAmpelSeries(
         else color = "GELB";
       }
     }
+    if (breakoutAt[i].weakGolden) color = "GELB";
+    if (breakoutAt[i].fallingGolden) color = "ROT";
     if (breakoutAt[i].sell) color = "ROT";
     phases.set(bars[i].date, symmetricColorPhase(color));
     colors.set(bars[i].date, color);
@@ -699,6 +750,8 @@ export function symmetricAmpelSeries(
       falseBreakdown: breakoutAt[i].breakdown,
       falseBreakoutNote: breakoutAt[i].note,
       falseBreakoutSell: breakoutAt[i].sell,
+      weakGoldenCross: breakoutAt[i].weakGolden,
+      fallingGolden: breakoutAt[i].fallingGolden,
       facts: factsAt[i],
     };
     last = { ...base, summary: describeSnapshot(base) };

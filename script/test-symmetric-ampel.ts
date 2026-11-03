@@ -9,6 +9,7 @@ import {
   ampelFactorsFromAnalysis,
   falseBreakoutFactorOf,
   falseBreakoutSell,
+  fallingGoldenCross,
   historyPercentile,
   isFalseBreakdown,
   isFalseBreakout,
@@ -18,6 +19,7 @@ import {
   thesisFactorFromShares,
   moatFalseBreakoutFactor,
   moatScoreFromRating,
+  weakGoldenCross,
   volumeFactor,
 } from "../shared/symmetric-ampel";
 
@@ -320,6 +322,47 @@ console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
   check("Kurzer Bounce über MA50 ohne Golden Cross bleibt ROT", bounced.last?.falseBreakoutSell === true && bounced.last?.color === "ROT", bounced.last?.falseBreakoutNote);
   check("Wide nach demselben Bruch ist kein Verkauf und GELB", wide.last?.falseBreakoutSell === false && wide.last?.color === "GELB", wide.last?.falseBreakoutNote);
   check("Golden Cross über den MAs ist GRÜN", recovered.last?.falseBreakoutSell === false && recovered.last?.color === "GRÜN", recovered.last?.summary);
+}
+
+console.log("\n=== Nicht bestätigtes Golden Cross ===");
+{
+  const gap = 4;
+  check("Abstand schrumpft nach 40 Tagen ist unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 6, goldenCrossDays: 41 }));
+  check("Abstand gleich nach 40 Tagen ist unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 4, goldenCrossDays: 41 }));
+  check("wachsender Abstand ist bestätigt", weakGoldenCross({ ma50: 106, ma200: 100, gap: 6, previousGap: 4, goldenCrossDays: 80 }) === false);
+  check("vor dem 40. Tag noch nicht unbestätigt", weakGoldenCross({ ma50: 104, ma200: 100, gap, previousGap: 6, goldenCrossDays: 40 }) === false);
+  check("ohne Golden Cross keine Schwäche", weakGoldenCross({ ma50: 90, ma200: 100, gap: -10, previousGap: -4, goldenCrossDays: 80 }) === false);
+  check("fallende MA50 über dem MA200", fallingGoldenCross(104, 100, -0.4));
+  check("steigende MA50 ist kein fallendes Golden Cross", fallingGoldenCross(104, 100, 0.4) === false);
+
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 100 + i * 0.05;
+    const age = i - 300;
+    const golden = i >= 300;
+    const ma50 = golden ? ma200 + 8 - age * 0.02 : ma200 - 4;
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close: ma50 * 1.01,
+      volume: 2000,
+      rsi: 62,
+      histogram: 0.3,
+      ma50,
+      ma200,
+    });
+  }
+  const faded = symmetricAmpelSeries(bars);
+  const fallingBars = bars.map((bar, i) => {
+    if (i < 300) return bar;
+    const ma200 = 120;
+    const ma50 = 130 - (i - 300) * 0.08;
+    return { ...bar, ma200, ma50, close: ma50 * 1.01 };
+  });
+  const falling = symmetricAmpelSeries(fallingBars);
+  console.log(`  ℹ Schrumpfend ${faded.last?.color} schwach ${faded.last?.weakGoldenCross} fallend ${faded.last?.fallingGolden}`);
+  console.log(`  ℹ MA50 fällt ${falling.last?.color} fallend ${falling.last?.fallingGolden}`);
+  check("langes Golden Cross mit schrumpfendem Abstand wird GELB", faded.last?.weakGoldenCross === true && faded.last?.fallingGolden === false && faded.last?.color === "GELB", faded.last?.falseBreakoutNote);
+  check("fallende MA50 im Golden Cross wird ROT", falling.last?.fallingGolden === true && falling.last?.color === "ROT", falling.last?.falseBreakoutNote);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
