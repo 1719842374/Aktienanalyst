@@ -12,6 +12,7 @@ import {
   historyPercentile,
   isFalseBreakdown,
   isFalseBreakout,
+  reclaimedMa50DuringDeathCross,
   symmetricAmpelSeries,
   symmetricSignal,
   thesisFactorFromClass,
@@ -317,7 +318,7 @@ console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
   console.log(`  ℹ Bounce über MA50 ${bounced.last?.color} Verkauf ${bounced.last?.falseBreakoutSell}`);
   console.log(`  ℹ Golden Cross ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
   check("Narrow bei konvergierendem Death Cross bleibt GELB", narrow.last?.weakCross === true && narrow.last?.color === "GELB", narrow.last?.falseBreakoutNote);
-  check("Kurzer Bounce über MA50 ohne Golden Cross bleibt ROT", bounced.last?.falseBreakoutSell === true && bounced.last?.color === "ROT", bounced.last?.falseBreakoutNote);
+  check("Kurzer Bounce über MA50 ohne geschrumpften Abstand ist nicht ROT", bounced.last?.reclaimedMa50 === true && bounced.last?.color !== "ROT", bounced.last?.falseBreakoutNote);
   check("Wide nach demselben Bruch ist kein Verkauf und GELB", wide.last?.falseBreakoutSell === false && wide.last?.color === "GELB", wide.last?.falseBreakoutNote);
   check("Golden Cross über den MAs ist GRÜN", recovered.last?.falseBreakoutSell === false && recovered.last?.color === "GRÜN", recovered.last?.summary);
 }
@@ -358,6 +359,19 @@ console.log("\n=== Konvergenz nach Golden und Death Cross ===");
   console.log(`  ℹ Death divergiert ${death.last?.color} schwach ${death.last?.weakCross} Cross ${death.last?.crossType}`);
   check("Golden Cross mit schrumpfendem Abstand wird GELB", faded.last?.weakCross === true && faded.last?.crossType === "golden" && faded.last?.color === "GELB", faded.last?.falseBreakoutNote);
   check("Death Cross mit wachsendem Abstand wird ROT", death.last?.weakCross === false && death.last?.crossType === "death" && death.last?.color === "ROT", death.last?.falseBreakoutNote);
+  check("Kurs unter MA50 im Death Cross ist kein Reclaim", reclaimedMa50DuringDeathCross({ price: 80, ma50: 90, ma200: 100, previousGap: 8 }) === false);
+  check("Kurs über MA50, Abstand nicht geschrumpft", reclaimedMa50DuringDeathCross({ price: 95, ma50: 90, ma200: 100, previousGap: 8 }));
+  check("geschrumpfter Abstand ist kein Reclaim", reclaimedMa50DuringDeathCross({ price: 95, ma50: 90, ma200: 100, previousGap: 12 }) === false);
+
+  const reclaimBars = deathBars.map((bar, i) => {
+    if (i < 400) return bar;
+    return { ...bar, close: bar.ma50 * 1.02 };
+  });
+  const reclaimed = symmetricAmpelSeries(reclaimBars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Über MA50 ${reclaimed.last?.color} reclaim ${reclaimed.last?.reclaimedMa50} Abstand ${reclaimed.last?.weakCross}`);
+  check("Kurs über MA50 nach Death Cross ohne geschrumpften Abstand ist GELB", reclaimed.last?.reclaimedMa50 === true && reclaimed.last?.color === "GELB", reclaimed.last?.falseBreakoutNote);
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("keine Ticker-Schwelle in der Ampel", !ampelSrc.includes("TSLA") && !ampelSrc.includes("0.001"));
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");

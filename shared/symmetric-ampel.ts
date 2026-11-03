@@ -139,6 +139,8 @@ export interface SymmetricSnapshot {
   falseBreakoutSell: boolean;
   /** Golden oder Death Cross, dessen absoluter MA-Abstand nicht größer wird. */
   weakCross: boolean;
+  /** Death Cross, Kurs über der MA50, Abstand nicht geschrumpft. */
+  reclaimedMa50: boolean;
   crossType: "golden" | "death" | "none";
   facts: SignalFact[];
   summary: string;
@@ -309,8 +311,9 @@ export function falseBreakoutSell(input: {
 /**
  * Konvergenz nach einem Cross. Der Abstand ist |MA50 − MA200|.
  * Er gilt als nicht bestätigt, wenn er gegenüber vor 20 Tagen nicht größer ist.
- * Golden bleibt dann gelb, ein Death Cross auch. Wächst der Abstand, bleibt
- * Golden grün und Death rot.
+ * Golden bleibt dann gelb, ein Death Cross auch. Wächst der Abstand und der Kurs
+ * liegt noch unter der MA50, bleibt der Death Cross rot. Liegt der Kurs wieder
+ * über der MA50, wird er gelb, auch wenn der Abstand nicht geschrumpft ist.
  */
 export type MaCross = "golden" | "death";
 
@@ -325,6 +328,22 @@ export function weakCross(input: {
   const converging = currentGap <= input.previousGap;
   if (input.crossType === "golden") return input.ma50 > input.ma200 && converging;
   return input.ma50 < input.ma200 && converging;
+}
+
+/**
+ * Death Cross, der Kurs liegt wieder über der eigenen MA50, und der Abstand
+ * zur MA200 ist gegenüber vor 20 Tagen nicht kleiner. Dann bleibt der Tag nicht rot.
+ */
+export function reclaimedMa50DuringDeathCross(input: {
+  price: number | null;
+  ma50: number | null;
+  ma200: number | null;
+  previousGap: number | null;
+}): boolean {
+  if (input.price == null || input.ma50 == null || input.ma200 == null) return false;
+  if (!(input.ma50 < input.ma200) || !(input.price > input.ma50)) return false;
+  if (input.previousGap == null) return false;
+  return Math.abs(input.ma50 - input.ma200) >= input.previousGap;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -584,7 +603,7 @@ export function symmetricAmpelSeries(
   const techAt: (number | null)[] = [];
   const factsAt: SignalFact[][] = [];
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
-  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; weakCross: boolean; crossType: "golden" | "death" | "none"; note: string }[] = [];
+  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; weakCross: boolean; reclaimedMa50: boolean; crossType: "golden" | "death" | "none"; note: string }[] = [];
 
   const rslHist: number[] = [];
   const volHist: number[] = [];
@@ -653,6 +672,12 @@ export function symmetricAmpelSeries(
     const prevMa200 = lookback >= 0 ? ma200Series[lookback] : null;
     const previousGap = prevMa50 != null && prevMa200 != null ? Math.abs(prevMa50 - prevMa200) : null;
     const converging = crossType !== "none" && weakCross({ ma50: ma50Now, ma200: ma200Now, previousGap, crossType });
+    const reclaimed = reclaimedMa50DuringDeathCross({
+      price: closes[i],
+      ma50: ma50Now,
+      ma200: ma200Now,
+      previousGap,
+    });
     const sell = falseBreakoutSell({
       price: closes[i],
       ma50: ma50Now,
@@ -664,11 +689,13 @@ export function symmetricAmpelSeries(
     });
     const crossNote = converging
       ? `${crossType === "golden" ? "Golden" : "Death"} Cross konvergiert`
-      : crossType === "death"
-        ? "Death Cross, Abstand wächst"
-        : "";
+      : reclaimed
+        ? "Death Cross, Kurs über MA50, Abstand nicht geschrumpft"
+        : crossType === "death"
+          ? "Death Cross, Abstand wächst"
+          : "";
     const breakoutNote = [
-      sell && !converging
+      sell && !converging && !reclaimed
         ? `False-Breakout-Verkauf ROT · Death Cross ohne Golden Cross · Bruch unter MA50 oder MA200${moatBit}`
         : bearFlag || bullFlag
           ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
@@ -682,7 +709,7 @@ export function symmetricAmpelSeries(
     adjusted.push(product);
     factsAt.push(bucket);
     volAt.push({ ratio: volRatio[i], factor: vol.factor, note: vol.note });
-    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, weakCross: converging, crossType, note: breakoutNote });
+    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, weakCross: converging, reclaimedMa50: reclaimed, crossType, note: breakoutNote });
   }
 
   const stdevs: number[] = [];
@@ -719,6 +746,7 @@ export function symmetricAmpelSeries(
       }
     }
     if (breakoutAt[i].weakCross) color = "GELB";
+    else if (breakoutAt[i].reclaimedMa50) color = "GELB";
     else if (breakoutAt[i].crossType === "death") color = "ROT";
     else if (breakoutAt[i].sell) color = "ROT";
     phases.set(bars[i].date, symmetricColorPhase(color));
@@ -744,6 +772,7 @@ export function symmetricAmpelSeries(
       falseBreakoutNote: breakoutAt[i].note,
       falseBreakoutSell: breakoutAt[i].sell,
       weakCross: breakoutAt[i].weakCross,
+      reclaimedMa50: breakoutAt[i].reclaimedMa50,
       crossType: breakoutAt[i].crossType,
       facts: factsAt[i],
     };
