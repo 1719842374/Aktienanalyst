@@ -7,7 +7,10 @@ import type { StockAnalysis } from "../shared/schema";
 import {
   SYMMETRIC,
   ampelFactorsFromAnalysis,
+  falseBreakoutFactorOf,
   historyPercentile,
+  isFalseBreakdown,
+  isFalseBreakout,
   symmetricAmpelSeries,
   symmetricSignal,
   thesisFactorFromClass,
@@ -93,6 +96,74 @@ function path(mode: "crash" | "recover") {
   check("Beta ohne Historie bleibt Faktor 1", crash.last?.factors.betaFactor === 1);
   const colored = [...crash.colors.values()].filter(c => c != null);
   check("die Linie wechselt oder hält eine Farbe über viele Tage", colored.length > 30, String(colored.length));
+}
+
+console.log("\n=== False-Breakout-Faktor, nur wenn alle vier Bedingungen gelten ===");
+const bearAll = { price: 90, ma200: 100, ma200Slope: -1, rslPercentile: 0.3, volRatio: 1 };
+const bullAll = { price: 110, ma200: 100, ma200Slope: 1, rslPercentile: 0.7, volRatio: 1 };
+check("Bär, alle vier: ×0.75", falseBreakoutFactorOf(bearAll) === SYMMETRIC.falseBreakoutFactor);
+check("Bulle, alle vier: ×0.75", falseBreakoutFactorOf(bullAll) === SYMMETRIC.falseBreakoutFactor);
+check("Bär ohne tiefes RSL: Faktor 1", falseBreakoutFactorOf({ ...bearAll, rslPercentile: 0.55 }) === 1);
+check("Bär ohne fallenden MA200: Faktor 1", falseBreakoutFactorOf({ ...bearAll, ma200Slope: 1 }) === 1);
+check("Bär mit Kurs über MA200: Faktor 1", falseBreakoutFactorOf({ ...bearAll, price: 110 }) === 1);
+check("Bär mit Volumen ab 1.2×: Faktor 1", falseBreakoutFactorOf({ ...bearAll, volRatio: 1.2 }) === 1);
+check("Bulle ohne hohes RSL: Faktor 1", falseBreakoutFactorOf({ ...bullAll, rslPercentile: 0.5 }) === 1);
+check("Bulle ohne steigenden MA200: Faktor 1", falseBreakoutFactorOf({ ...bullAll, ma200Slope: 0 }) === 1);
+check("Bulle mit Kurs unter MA200: Faktor 1", falseBreakoutFactorOf({ ...bullAll, price: 90 }) === 1);
+check("Bulle mit Volumen ab 1.2×: Faktor 1", falseBreakoutFactorOf({ ...bullAll, volRatio: 1.6 }) === 1);
+check("NVO-Muster erfüllt alle vier Bären-Bedingungen", isFalseBreakout(bearAll) && falseBreakoutFactorOf(bearAll) === 0.75);
+
+function regime(mode: "bounce" | "dip" | "breakdown") {
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const bull = mode !== "bounce";
+    const ma200 = bull ? 80 + i * 0.15 : 160 - i * 0.08;
+    const late = i > 390;
+    let close = bull ? ma200 * 1.06 : ma200 * 0.9;
+    let volume = 1000;
+    let rsi = bull ? 62 : 38;
+    let histogram = bull ? 0.3 : -0.3;
+    if (mode === "bounce" && late) {
+      close = ma200 * (0.9 + (i - 390) * 0.002);
+      rsi = 34 + (i - 390);
+      histogram = -0.2;
+      volume = 900;
+    }
+    if (mode === "dip" && late) {
+      close = ma200 * 1.05;
+      rsi = 61;
+      histogram = 0.3;
+      volume = 950;
+    }
+    if (mode === "breakdown" && i > 370) {
+      close = ma200 * (1.02 - (i - 370) * 0.012);
+      rsi = 55 - (i - 370);
+      histogram = -0.4 - (i - 370) * 0.01;
+      volume = 2200;
+    }
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume,
+      rsi,
+      histogram,
+      ma50: mode === "breakdown" && i > 370 ? close * 1.03 : close * (bull ? 0.98 : 1.03),
+      ma200,
+    });
+  }
+  return bars;
+}
+{
+  const bounce = symmetricAmpelSeries(regime("bounce"));
+  const dip = symmetricAmpelSeries(regime("dip"));
+  const breakdown = symmetricAmpelSeries(regime("breakdown"));
+  console.log(`  ℹ Bären-Bounce ${bounce.last?.color} Faktor ${bounce.last?.falseBreakoutFactor} ${bounce.last?.falseBreakoutNote}`);
+  console.log(`  ℹ Bullen-Dip ${dip.last?.color} Negativ-Faktor ${dip.last?.falseBreakdownFactor} ${dip.last?.falseBreakoutNote}`);
+  console.log(`  ℹ Breakdown ${breakdown.last?.color} Bär ${breakdown.last?.falseBreakoutFactor} Bulle ${breakdown.last?.falseBreakdownFactor}`);
+  check("Bären-Bounce bleibt unter dem Grün", bounce.last?.color !== "GRÜN", bounce.last?.summary);
+  check("Bullen-Dip bleibt unter dem Grün", dip.last?.color !== "GRÜN", dip.last?.summary);
+  check("Echter Einbruch mit Volumen hat Faktor 1", breakdown.last?.falseBreakoutFactor === 1 && breakdown.last?.falseBreakdownFactor === 1, breakdown.last?.falseBreakoutNote);
+  check("Echter Einbruch ist nicht GRÜN", breakdown.last?.color !== "GRÜN", breakdown.last?.summary);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");

@@ -45,6 +45,16 @@ export const SYMMETRIC = {
   volLookback: 20,
   lowQuantile: 0.3,
   highQuantile: 0.7,
+  /** MA200-Steigung über 20 Handelstage. */
+  ma200SlopeDays: 20,
+  /** Kurs unter fallendem MA200 dämpft den ganzen Score. */
+  falseBreakoutFactor: 0.75,
+  /** RSL-Perzentil darunter bleibt ein schwaches Long-Signal. */
+  falseBreakoutRslPct: 0.4,
+  /** RSL-Perzentil darüber bleibt ein schwaches Short-Signal. */
+  falseBreakdownRslPct: 0.6,
+  /** Ausbruch oder Einbruch ohne Volumen: unter 1.2× des 20-Tage-Schnitts. */
+  falseBreakoutVolMax: 1.2,
 } as const;
 
 export type SymmetricColor = "GRÜN" | "GELB" | "ROT";
@@ -103,6 +113,13 @@ export interface SymmetricSnapshot {
   volumeRatio: number | null;
   volumeFactor: number;
   volumeNote: string;
+  /** ×0.75 auf den Score, wenn der Kurs unter einem fallenden MA200 liegt, sonst 1. */
+  falseBreakoutFactor: number;
+  falseBreakout: boolean;
+  /** ×0.75 nur auf negative Signale, wenn der Kurs über einem steigenden MA200 liegt, sonst 1. */
+  falseBreakdownFactor: number;
+  falseBreakdown: boolean;
+  falseBreakoutNote: string;
   facts: SignalFact[];
   summary: string;
 }
@@ -150,6 +167,59 @@ export function symmetricSignal(value: number, history: readonly number[], slope
   const pct = historyPercentile(history, value);
   if (pct == null || !Number.isFinite(slopeSign)) return null;
   return signalFromPercentile(pct, slopeSign);
+}
+
+/** False Breakout: alle vier Bären-Bedingungen zugleich. */
+export function isFalseBreakout(input: {
+  price: number | null;
+  ma200: number | null;
+  ma200Slope: number | null;
+  rslPercentile: number | null;
+  volRatio: number | null;
+}): boolean {
+  return input.price != null
+    && input.ma200 != null
+    && input.price < input.ma200
+    && input.ma200Slope != null
+    && input.ma200Slope < 0
+    && input.rslPercentile != null
+    && input.rslPercentile < SYMMETRIC.falseBreakoutRslPct
+    && input.volRatio != null
+    && input.volRatio < SYMMETRIC.falseBreakoutVolMax;
+}
+
+/** False Breakdown: alle vier Bullen-Bedingungen zugleich. */
+export function isFalseBreakdown(input: {
+  price: number | null;
+  ma200: number | null;
+  ma200Slope: number | null;
+  rslPercentile: number | null;
+  volRatio: number | null;
+}): boolean {
+  return input.price != null
+    && input.ma200 != null
+    && input.price > input.ma200
+    && input.ma200Slope != null
+    && input.ma200Slope > 0
+    && input.rslPercentile != null
+    && input.rslPercentile > SYMMETRIC.falseBreakdownRslPct
+    && input.volRatio != null
+    && input.volRatio < SYMMETRIC.falseBreakoutVolMax;
+}
+
+/**
+ * 0.75 nur wenn alle vier Bedingungen eines Regimes zugleich gelten.
+ * Fehlt eine, bleibt der Faktor 1. Der Faktor multipliziert den ganzen adjusted Score.
+ */
+export function falseBreakoutFactorOf(input: {
+  price: number | null;
+  ma200: number | null;
+  ma200Slope: number | null;
+  rslPercentile: number | null;
+  volRatio: number | null;
+}): number {
+  if (isFalseBreakout(input) || isFalseBreakdown(input)) return SYMMETRIC.falseBreakoutFactor;
+  return SYMMETRIC.neutralFactor;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -312,6 +382,7 @@ export function describeSnapshot(snap: Omit<SymmetricSnapshot, "summary">): stri
   return [
     ...signals,
     snap.volumeNote,
+    snap.falseBreakoutNote,
     `Thesis ${snap.factors.thesisNote} ×${snap.factors.thesisFactor.toFixed(2)}`,
     `Bilanz ${snap.factors.bsNote}`,
     snap.factors.betaNote,
@@ -342,6 +413,7 @@ export function symmetricAmpelSeries(
   const rsl: (number | null)[] = [];
   const ma50Ratio: (number | null)[] = [];
   const maGap: (number | null)[] = [];
+  const ma200Series: (number | null)[] = [];
   const rsi: (number | null)[] = [];
   const macd: (number | null)[] = [];
   const volRatio: (number | null)[] = [];
@@ -351,6 +423,7 @@ export function symmetricAmpelSeries(
     rsl.push(ma52 != null && ma52 !== 0 ? closes[i] / ma52 : null);
     const ma50 = finite(bars[i].ma50) ? bars[i].ma50 as number : smaAt(closes, i, SYMMETRIC.ma50Days);
     const ma200 = finite(bars[i].ma200) ? bars[i].ma200 as number : smaAt(closes, i, SYMMETRIC.ma200Days);
+    ma200Series.push(ma200);
     ma50Ratio.push(ma50 != null && ma50 !== 0 ? closes[i] / ma50 : null);
     maGap.push(ma50 != null && ma200 != null && ma200 !== 0 ? ma50 / ma200 : null);
     rsi.push(finite(bars[i].rsi) ? bars[i].rsi as number : null);
@@ -371,6 +444,7 @@ export function symmetricAmpelSeries(
   const techAt: (number | null)[] = [];
   const factsAt: SignalFact[][] = [];
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
+  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; note: string }[] = [];
 
   const pushSignal = (
     name: string,
@@ -400,15 +474,31 @@ export function symmetricAmpelSeries(
     pushSignal("MACD-Hist", macd, i, ranks.macd, bucket, signals);
     pushSignal("MA50", ma50Ratio, i, ranks.ma50, bucket, signals);
     pushSignal("MA-Lage", maGap, i, ranks.gap, bucket, signals);
+    const ma200Slope = slopeSignOf(ma200Series, i, SYMMETRIC.ma200SlopeDays);
+    const rslFact = bucket.find(item => item.name === "Kurs/MA52");
+    const regime = {
+      price: closes[i],
+      ma200: ma200Series[i],
+      ma200Slope,
+      rslPercentile: rslFact?.percentile ?? null,
+      volRatio: volRatio[i],
+    };
+    const bearFlag = isFalseBreakout(regime);
+    const bullFlag = isFalseBreakdown(regime);
+    const damp = falseBreakoutFactorOf(regime);
     const tech = signals.length ? signals.reduce((a, b) => a + b, 0) / signals.length : null;
     const vol = volumeFactor(volRatio[i]);
+    const breakoutNote = damp < 1
+      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp}`
+      : "False-Breakout-Faktor 1";
     const product = tech == null
       ? null
-      : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor;
+      : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor * damp;
     techAt.push(tech);
     adjusted.push(product);
     factsAt.push(bucket);
     volAt.push({ ratio: volRatio[i], factor: vol.factor, note: vol.note });
+    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, note: breakoutNote });
   }
 
   const stdevs: number[] = [];
@@ -459,6 +549,11 @@ export function symmetricAmpelSeries(
       volumeRatio: volAt[i].ratio,
       volumeFactor: volAt[i].factor,
       volumeNote: volAt[i].note,
+      falseBreakoutFactor: breakoutAt[i].factor,
+      falseBreakout: breakoutAt[i].active,
+      falseBreakdownFactor: breakoutAt[i].breakdownFactor,
+      falseBreakdown: breakoutAt[i].breakdown,
+      falseBreakoutNote: breakoutAt[i].note,
       facts: factsAt[i],
     };
     last = { ...base, summary: describeSnapshot(base) };
