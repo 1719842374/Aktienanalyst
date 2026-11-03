@@ -193,6 +193,41 @@ await fetchDailyHistory({
   check("junges Listing: sichtbare 10Y bleibt truncated", loaded.truncated === true);
 });
 
+{
+  const { contiguousSameScale, nasdaqFetch } = await import("../server/history-fallback");
+  const fmpLate = [{ date: "2024-01-19", open: 96, high: 96, low: 96, close: 96, volume: 10, source: "fmp" as const }];
+  const older = [
+    { date: "2020-12-16", open: 11, high: 11, low: 11, close: 11, volume: 1, source: "nasdaq" as const },
+    { date: "2020-12-17", open: 54, high: 54, low: 54, close: 54, volume: 1, source: "nasdaq" as const },
+    { date: "2024-01-18", open: 97, high: 97, low: 97, close: 97, volume: 1, source: "nasdaq" as const },
+  ];
+  const kept = contiguousSameScale(older);
+  check("Skalensprung vor der nutzbaren Serie fällt weg", kept.length === 2 && kept[0].date === "2020-12-17", kept.map(b => b.date).join(","));
+  const loaded = await fetchDailyHistory({
+    symbol: "KSPI",
+    timeframe: "10Y",
+    fetchFrom: "2015-11-01",
+    fmpFetch: async () => fmpLate,
+    altFetch: async () => older,
+  });
+  check("Nachzug beginnt auf der gleichen Kursskala, nicht am Sprung davor", loaded.bars[0]?.date === "2020-12-17" && loaded.bars.length === 3, loaded.bars.map(b => b.date).join(","));
+  check("volle nutzbare Historie ist nicht unvollständig", loaded.truncated === false && loaded.source === "fmp+nasdaq");
+  const ma = smaSeries(loaded.bars.map(b => b.close), 2);
+  check("MA läuft auf der nachgeladenen Serie, nicht erst auf dem FMP-Anfang", ma[1] != null && loaded.bars[1].date < "2024-01-19");
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    data: { tradesTable: { rows: [
+      { date: "12/17/2020", close: "$54.10", volume: "4,636", open: "$54.10", high: "$55", low: "$53" },
+      { date: "1/19/2024", close: "$95.97", volume: "3,410,518", open: "$96", high: "$98", low: "$91" },
+    ] } },
+  }), { status: 200 })) as any;
+  const parsed = await nasdaqFetch("KSPI", "2020-01-01", "2026-11-03");
+  globalThis.fetch = realFetch;
+  check("Nasdaq-Tageskurse werden als ISO-Datum gelesen", parsed.length === 2 && parsed[0].date === "2020-12-17" && parsed[0].close === 54.1 && parsed[1].volume === 3410518, JSON.stringify(parsed));
+  check("Nasdaq überspringt Börsenkürzel mit Punkt", (await nasdaqFetch("SAP.DE", "2020-01-01", "2026-11-03")).length === 0);
+}
+
 // Production screenshot: 5Y is the last 1260 sessions and the loaded chart
 // shows 23.09.2021–30.09.2026. That span has more raw weekdays than 1260, so
 // the visible slice keeps the endpoints and drops a few sessions in between.

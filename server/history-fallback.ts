@@ -24,7 +24,7 @@
  */
 import { stooqListing, yahooBarsToMajor } from "../shared/listing-units";
 
-export type HistoryProvider = "fmp" | "yahoo" | "stooq";
+export type HistoryProvider = "fmp" | "yahoo" | "stooq" | "nasdaq";
 
 export interface DailyBar {
   date: string; // YYYY-MM-DD
@@ -201,6 +201,67 @@ export function altSeamUnitMismatch(fmpBars: DailyBar[], alt: DailyBar[]): boole
 }
 
 /**
+ * Keep the newest run whose day-to-day closes stay within the seam factor.
+ * A jump above 2× or below 0.5× is a unit break, not a trading day, so the
+ * older prefix is dropped instead of feeding the moving averages a cliff.
+ */
+export function contiguousSameScale(bars: DailyBar[]): DailyBar[] {
+  const sorted = bars.filter((b) => b.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  let start = 0;
+  for (let i = sorted.length - 1; i > 0; i--) {
+    const ratio = sorted[i - 1].close / sorted[i].close;
+    if (ratio > 2 || ratio < 0.5) {
+      start = i;
+      break;
+    }
+  }
+  return sorted.slice(start);
+}
+
+/** Nasdaq public daily history. US symbols only; dotted listings stay on Yahoo/Stooq. */
+export async function nasdaqFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
+  const sym = symbol.trim().toUpperCase();
+  if (sym.includes(".") || !/^[A-Z][A-Z0-9-]{0,9}$/.test(sym)) return [];
+  const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(sym)}/historical?assetclass=stocks&fromdate=${from}&todate=${to}&limit=10000`;
+  const resp = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      "Accept": "application/json",
+    },
+  });
+  if (!resp.ok) throw new Error(`Nasdaq historical HTTP ${resp.status}`);
+  const json: any = await resp.json();
+  const rows: any[] = json?.data?.tradesTable?.rows ?? [];
+  const bars: DailyBar[] = [];
+  for (const row of rows) {
+    const rawDate = String(row?.date ?? "");
+    const parts = rawDate.split("/");
+    if (parts.length !== 3) continue;
+    const [month, day, year] = parts;
+    const date = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    if (date < from || date > to) continue;
+    const close = Number(String(row?.close ?? "").replace(/[$,]/g, ""));
+    if (!isFinite(close) || close <= 0) continue;
+    const num = (value: unknown, fallback: number) => {
+      const parsed = Number(String(value ?? "").replace(/[$,]/g, ""));
+      return isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+    const volume = Number(String(row?.volume ?? "").replace(/[,]/g, ""));
+    bars.push({
+      date,
+      open: num(row?.open, close),
+      high: num(row?.high, close),
+      low: num(row?.low, close),
+      close,
+      volume: isFinite(volume) && volume > 0 ? volume : 0,
+      source: "nasdaq",
+    });
+  }
+  return bars.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
  * 1) FMP full historical from..to
  * 2) Wenn rawEarliest zu jung fuer tf -> Alternative nachladen
  * 3) Merge nach date (Alternative fuellt Luecken / verlaengert links)
@@ -230,17 +291,19 @@ export async function fetchDailyHistory(opts: {
   let truncated = !gotFrom || gotFrom > visibleFrom;
   const wantsEarlier = !gotFrom || gotFrom > from;
   let source = "fmp";
+  let altOldest: string | undefined;
 
   if ((truncated || wantsEarlier) && opts.altFetch) {
     try {
-      const alt = await opts.altFetch(from, gotFrom ?? to);
+      const alt = contiguousSameScale(await opts.altFetch(from, gotFrom ?? to));
       if (alt.length > 0 && altSeamUnitMismatch(bars, alt)) {
         console.warn(`[HISTORY-FALLBACK] ${opts.symbol}: Alt-Provider-Einheit passt nicht zu FMP (Sprung an der Nahtstelle) -- verworfen`);
       } else if (alt.length > 0) {
+        altOldest = alt[0].date;
         const byDate = new Map(bars.map((b) => [b.date, b]));
         for (const a of alt) if (!byDate.has(a.date)) byDate.set(a.date, a);
         bars = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
-        source = "fmp+alt";
+        source = alt.some((a) => a.source === "nasdaq") ? "fmp+nasdaq" : "fmp+alt";
       }
     } catch (err) {
       // Alt-Provider fehlgeschlagen (z.B. Rate-Limit) -> ehrlich truncated
@@ -249,6 +312,10 @@ export async function fetchDailyHistory(opts: {
       console.warn(`[HISTORY-FALLBACK] altFetch fehlgeschlagen fuer ${opts.symbol}: ${(err as Error)?.message ?? err}`);
     }
     truncated = !bars[0] || bars[0].date > visibleFrom;
+    // Older same-scale bars from the alt provider are the listing's real start.
+    // That series is complete even when it begins after the 10Y window.
+    const extended = Boolean(altOldest && gotFrom && bars[0] && bars[0].date < gotFrom && bars[0].date <= altOldest);
+    if (truncated && extended) truncated = false;
   }
 
   return { bars, source, truncated };
@@ -261,12 +328,26 @@ export async function fetchDailyHistory(opts: {
  * an der Call-Site duplizieren zu muessen.
  */
 export async function altFetchYahooThenStooq(symbol: string, from: string, to: string): Promise<DailyBar[]> {
+  let yahoo: DailyBar[] = [];
   try {
-    const bars = await yahooFetch(symbol, from, to);
-    if (bars.length > 0) return bars;
+    yahoo = await yahooFetch(symbol, from, to);
   } catch (err) {
     console.warn(`[HISTORY-FALLBACK] Yahoo fehlgeschlagen fuer ${symbol}: ${(err as Error)?.message ?? err}`);
   }
+  const yahooFrom = yahoo[0]?.date;
+  let nasdaq: DailyBar[] = [];
+  if (!yahooFrom || yahooFrom > from) {
+    try {
+      nasdaq = await nasdaqFetch(symbol, from, to);
+    } catch (err) {
+      console.warn(`[HISTORY-FALLBACK] Nasdaq fehlgeschlagen fuer ${symbol}: ${(err as Error)?.message ?? err}`);
+    }
+  }
+  const merged = new Map<string, DailyBar>();
+  for (const bar of nasdaq) merged.set(bar.date, bar);
+  for (const bar of yahoo) merged.set(bar.date, bar);
+  const combined = contiguousSameScale(Array.from(merged.values()));
+  if (combined.length > 0) return combined;
   try {
     return await stooqFetch(symbol, from, to);
   } catch (err) {

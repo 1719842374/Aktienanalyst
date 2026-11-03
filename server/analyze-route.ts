@@ -798,7 +798,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           if (bars.length > ohlcvPoints.length) {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
           }
-          historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
+          historyDataSource = (
+            source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : "fmp"
+          ) as StockAnalysis["historyDataSource"];
           historyTruncated = truncated;
           console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
         }

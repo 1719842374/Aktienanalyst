@@ -641,7 +641,7 @@ export interface StockAnalysis {
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
    *  alten Cache-Eintraegen vor diesem Ticket.
    *  'yahoo' = C1 (#252): FMP 402, Historie komplett aus dem Yahoo-Fallback. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'fmp+nasdaq' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
