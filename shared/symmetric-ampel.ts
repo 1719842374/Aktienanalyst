@@ -47,14 +47,14 @@ export const SYMMETRIC = {
   highQuantile: 0.7,
   /** MA200-Steigung über 20 Handelstage. */
   ma200SlopeDays: 20,
-  /** Kurs unter fallendem MA200 dämpft den ganzen Score. */
-  falseBreakoutFactor: 0.75,
-  /** RSL-Perzentil darunter bleibt ein schwaches Long-Signal. */
-  falseBreakoutRslPct: 0.4,
-  /** RSL-Perzentil darüber bleibt ein schwaches Short-Signal. */
-  falseBreakdownRslPct: 0.6,
-  /** Ausbruch oder Einbruch ohne Volumen: unter 1.2× des 20-Tage-Schnitts. */
-  falseBreakoutVolMax: 1.2,
+  /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.40. */
+  rslLowQuantile: 0.4,
+  /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.60. */
+  rslHighQuantile: 0.6,
+  /** Median der eigenen Volumen-Ratio, nicht ein festes 1.2×. */
+  volMedianQuantile: 0.5,
+  /** Maximale Dämpfung 25 %. Faktor = 1 − Stärke × Spanne, also 0.75–1. */
+  falseBreakoutDampSpan: 0.25,
 } as const;
 
 export type SymmetricColor = "GRÜN" | "GELB" | "ROT";
@@ -113,10 +113,10 @@ export interface SymmetricSnapshot {
   volumeRatio: number | null;
   volumeFactor: number;
   volumeNote: string;
-  /** ×0.75 auf den Score, wenn der Kurs unter einem fallenden MA200 liegt, sonst 1. */
+  /** 0.75–1 auf den ganzen Score, wenn alle vier Bedingungen gelten, sonst 1. */
   falseBreakoutFactor: number;
   falseBreakout: boolean;
-  /** ×0.75 nur auf negative Signale, wenn der Kurs über einem steigenden MA200 liegt, sonst 1. */
+  /** Derselbe Faktor, wenn der Bulle falsch bricht, sonst 1. */
   falseBreakdownFactor: number;
   falseBreakdown: boolean;
   falseBreakoutNote: string;
@@ -145,7 +145,7 @@ export function historyPercentile(history: readonly number[], value: number): nu
 }
 
 /** Steigung der letzten `days` Punkte. 0 = flach. Zu kurz → null. */
-export function slopeSignOf(series: readonly (number | null | undefined)[], index: number, days = SYMMETRIC.slopeDays): number | null {
+export function slopeSignOf(series: readonly (number | null | undefined)[], index: number, days: number = SYMMETRIC.slopeDays): number | null {
   if (index < days - 1) return null;
   const start = series[index - (days - 1)];
   const end = series[index];
@@ -169,57 +169,67 @@ export function symmetricSignal(value: number, history: readonly number[], slope
   return signalFromPercentile(pct, slopeSign);
 }
 
-/** False Breakout: alle vier Bären-Bedingungen zugleich. */
-export function isFalseBreakout(input: {
+export interface FalseBreakoutInput {
   price: number | null;
   ma200: number | null;
   ma200Slope: number | null;
+  rslValue: number | null;
   rslPercentile: number | null;
+  rslHistory: readonly number[];
   volRatio: number | null;
-}): boolean {
+  volHistory: readonly number[];
+}
+
+function regimeThresholds(rslHistory: readonly number[], volHistory: readonly number[]) {
+  return {
+    rslLow: quantile(rslHistory, SYMMETRIC.rslLowQuantile),
+    rslHigh: quantile(rslHistory, SYMMETRIC.rslHighQuantile),
+    volMed: quantile(volHistory, SYMMETRIC.volMedianQuantile),
+  };
+}
+
+/** False Breakout: Kurs unter fallendem MA200, RSL unter dem eigenen p40, Volumen unter dem eigenen Median. */
+export function isFalseBreakout(input: FalseBreakoutInput): boolean {
+  const { rslLow, volMed } = regimeThresholds(input.rslHistory, input.volHistory);
   return input.price != null
     && input.ma200 != null
     && input.price < input.ma200
     && input.ma200Slope != null
     && input.ma200Slope < 0
-    && input.rslPercentile != null
-    && input.rslPercentile < SYMMETRIC.falseBreakoutRslPct
+    && input.rslValue != null
+    && rslLow != null
+    && input.rslValue < rslLow
     && input.volRatio != null
-    && input.volRatio < SYMMETRIC.falseBreakoutVolMax;
+    && volMed != null
+    && input.volRatio < volMed;
 }
 
-/** False Breakdown: alle vier Bullen-Bedingungen zugleich. */
-export function isFalseBreakdown(input: {
-  price: number | null;
-  ma200: number | null;
-  ma200Slope: number | null;
-  rslPercentile: number | null;
-  volRatio: number | null;
-}): boolean {
+/** False Breakdown: Kurs über steigendem MA200, RSL über dem eigenen p60, Volumen unter dem eigenen Median. */
+export function isFalseBreakdown(input: FalseBreakoutInput): boolean {
+  const { rslHigh, volMed } = regimeThresholds(input.rslHistory, input.volHistory);
   return input.price != null
     && input.ma200 != null
     && input.price > input.ma200
     && input.ma200Slope != null
     && input.ma200Slope > 0
-    && input.rslPercentile != null
-    && input.rslPercentile > SYMMETRIC.falseBreakdownRslPct
+    && input.rslValue != null
+    && rslHigh != null
+    && input.rslValue > rslHigh
     && input.volRatio != null
-    && input.volRatio < SYMMETRIC.falseBreakoutVolMax;
+    && volMed != null
+    && input.volRatio < volMed;
 }
 
 /**
- * 0.75 nur wenn alle vier Bedingungen eines Regimes zugleich gelten.
- * Fehlt eine, bleibt der Faktor 1. Der Faktor multipliziert den ganzen adjusted Score.
+ * 1, wenn eine Bedingung fehlt.
+ * Sonst 1 − Stärke × 0.25. Stärke ist 2 × |RSL-Perzentil − 0.5|, höchstens 1.
+ * Der Faktor liegt damit zwischen 0.75 und 1 und multipliziert den ganzen adjusted Score.
  */
-export function falseBreakoutFactorOf(input: {
-  price: number | null;
-  ma200: number | null;
-  ma200Slope: number | null;
-  rslPercentile: number | null;
-  volRatio: number | null;
-}): number {
-  if (isFalseBreakout(input) || isFalseBreakdown(input)) return SYMMETRIC.falseBreakoutFactor;
-  return SYMMETRIC.neutralFactor;
+export function falseBreakoutFactorOf(input: FalseBreakoutInput): number {
+  if (!isFalseBreakout(input) && !isFalseBreakdown(input)) return SYMMETRIC.neutralFactor;
+  if (input.rslPercentile == null) return SYMMETRIC.neutralFactor;
+  const strength = Math.min(Math.abs(input.rslPercentile - 0.5) * 2, 1);
+  return 1 - strength * SYMMETRIC.falseBreakoutDampSpan;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -233,6 +243,26 @@ export function volumeFactor(ratio: number | null): { factor: number; note: stri
     return { factor: SYMMETRIC.volLowFactor, note: `Volumen ${ratio.toFixed(2)}× < ${SYMMETRIC.volLowRatio}×, dämpft ×${SYMMETRIC.volLowFactor}` };
   }
   return { factor: SYMMETRIC.neutralFactor, note: `Volumen ${ratio.toFixed(2)}×, Faktor 1` };
+}
+
+/** Anteile der Thesis-Klassen. Nur Fast Grower und Cyclical verschieben den Faktor. */
+export function thesisFactorFromShares(shares: Record<string, number> | null | undefined): { factor: number; note: string } {
+  if (!shares) return { factor: SYMMETRIC.neutralFactor, note: "n/a — keine Thesis-Anteile, Faktor 1" };
+  let fast = 0;
+  let cyclical = 0;
+  let weight = 0;
+  for (const [name, share] of Object.entries(shares)) {
+    if (!Number.isFinite(share) || share <= 0) continue;
+    weight += share;
+    const key = name.toLowerCase();
+    if (key.includes("fast")) fast += share;
+    else if (key.includes("cycl")) cyclical += share;
+  }
+  if (weight <= 0) return { factor: SYMMETRIC.neutralFactor, note: "n/a — Thesis-Anteile leer, Faktor 1" };
+  const add = (fast / weight) * SYMMETRIC.thesisFastGrowerAdd + (cyclical / weight) * SYMMETRIC.thesisCyclicalAdd;
+  const factor = Math.min(SYMMETRIC.thesisCeil, Math.max(SYMMETRIC.thesisFloor, 1 + add));
+  const note = `Fast Grower ${(fast / weight * 100).toFixed(0)} % ×${(1 + (fast / weight) * SYMMETRIC.thesisFastGrowerAdd).toFixed(2)} · Cyclical ${(cyclical / weight * 100).toFixed(0)} % ×${(1 + (cyclical / weight) * SYMMETRIC.thesisCyclicalAdd).toFixed(2)} · gesamt ×${factor.toFixed(2)}`;
+  return { factor, note };
 }
 
 export function thesisFactorFromClass(lynchClass: string | null | undefined): { factor: number; note: string } {
@@ -255,8 +285,11 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-export function ampelFactorsFromAnalysis(data: StockAnalysis): AmpelFactors {
-  const thesis = thesisFactorFromClass(data.lynchClass);
+export function ampelFactorsFromAnalysis(data: StockAnalysis & { styleConfidences?: Record<string, number> | null }): AmpelFactors {
+  const shares = data.styleConfidences;
+  const thesis = shares && Object.keys(shares).length > 0
+    ? thesisFactorFromShares(shares)
+    : thesisFactorFromClass(data.lynchClass);
   const bs = data.financialStatements?.balanceSheet;
   const ebitda = data.ebitda;
   const netDebt = bs?.netDebt;
@@ -446,6 +479,9 @@ export function symmetricAmpelSeries(
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
   const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; note: string }[] = [];
 
+  const rslHist: number[] = [];
+  const volHist: number[] = [];
+
   const pushSignal = (
     name: string,
     series: readonly (number | null)[],
@@ -476,12 +512,19 @@ export function symmetricAmpelSeries(
     pushSignal("MA-Lage", maGap, i, ranks.gap, bucket, signals);
     const ma200Slope = slopeSignOf(ma200Series, i, SYMMETRIC.ma200SlopeDays);
     const rslFact = bucket.find(item => item.name === "Kurs/MA52");
-    const regime = {
+    const rslNow = rsl[i];
+    const volNow = volRatio[i];
+    if (rslNow != null) rslHist.push(rslNow);
+    if (volNow != null) volHist.push(volNow);
+    const regime: FalseBreakoutInput = {
       price: closes[i],
       ma200: ma200Series[i],
       ma200Slope,
+      rslValue: rsl[i],
       rslPercentile: rslFact?.percentile ?? null,
+      rslHistory: rslHist,
       volRatio: volRatio[i],
+      volHistory: volHist,
     };
     const bearFlag = isFalseBreakout(regime);
     const bullFlag = isFalseBreakdown(regime);
@@ -489,7 +532,7 @@ export function symmetricAmpelSeries(
     const tech = signals.length ? signals.reduce((a, b) => a + b, 0) / signals.length : null;
     const vol = volumeFactor(volRatio[i]);
     const breakoutNote = damp < 1
-      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp}`
+      ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}`
       : "False-Breakout-Faktor 1";
     const product = tech == null
       ? null

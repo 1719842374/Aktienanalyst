@@ -14,6 +14,7 @@ import {
   symmetricAmpelSeries,
   symmetricSignal,
   thesisFactorFromClass,
+  thesisFactorFromShares,
   volumeFactor,
 } from "../shared/symmetric-ampel";
 
@@ -98,20 +99,37 @@ function path(mode: "crash" | "recover") {
   check("die Linie wechselt oder hält eine Farbe über viele Tage", colored.length > 30, String(colored.length));
 }
 
-console.log("\n=== False-Breakout-Faktor, nur wenn alle vier Bedingungen gelten ===");
-const bearAll = { price: 90, ma200: 100, ma200Slope: -1, rslPercentile: 0.3, volRatio: 1 };
-const bullAll = { price: 110, ma200: 100, ma200Slope: 1, rslPercentile: 0.7, volRatio: 1 };
-check("Bär, alle vier: ×0.75", falseBreakoutFactorOf(bearAll) === SYMMETRIC.falseBreakoutFactor);
-check("Bulle, alle vier: ×0.75", falseBreakoutFactorOf(bullAll) === SYMMETRIC.falseBreakoutFactor);
-check("Bär ohne tiefes RSL: Faktor 1", falseBreakoutFactorOf({ ...bearAll, rslPercentile: 0.55 }) === 1);
-check("Bär ohne fallenden MA200: Faktor 1", falseBreakoutFactorOf({ ...bearAll, ma200Slope: 1 }) === 1);
-check("Bär mit Kurs über MA200: Faktor 1", falseBreakoutFactorOf({ ...bearAll, price: 110 }) === 1);
-check("Bär mit Volumen ab 1.2×: Faktor 1", falseBreakoutFactorOf({ ...bearAll, volRatio: 1.2 }) === 1);
-check("Bulle ohne hohes RSL: Faktor 1", falseBreakoutFactorOf({ ...bullAll, rslPercentile: 0.5 }) === 1);
-check("Bulle ohne steigenden MA200: Faktor 1", falseBreakoutFactorOf({ ...bullAll, ma200Slope: 0 }) === 1);
-check("Bulle mit Kurs unter MA200: Faktor 1", falseBreakoutFactorOf({ ...bullAll, price: 90 }) === 1);
-check("Bulle mit Volumen ab 1.2×: Faktor 1", falseBreakoutFactorOf({ ...bullAll, volRatio: 1.6 }) === 1);
-check("NVO-Muster erfüllt alle vier Bären-Bedingungen", isFalseBreakout(bearAll) && falseBreakoutFactorOf(bearAll) === 0.75);
+console.log("\n=== False-Breakout-Faktor aus eigener Historie ===");
+const rslHistory = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6];
+const volHistory = [0.6, 0.8, 1.0, 1.2, 1.4];
+const bearAll = {
+  price: 90, ma200: 100, ma200Slope: -1,
+  rslValue: 0.75, rslPercentile: 0.06, rslHistory,
+  volRatio: 0.7, volHistory,
+};
+const bullAll = {
+  price: 110, ma200: 100, ma200Slope: 1,
+  rslValue: 1.55, rslPercentile: 0.94, rslHistory,
+  volRatio: 0.7, volHistory,
+};
+const bearFactor = falseBreakoutFactorOf(bearAll);
+check("Bär, alle vier: Faktor aus der Stärke, zwischen 0.75 und 1", bearFactor < 1 && bearFactor >= 1 - SYMMETRIC.falseBreakoutDampSpan, String(bearFactor));
+check("NVO-Stärke 0.06 ergibt etwa 0.78", Math.abs(bearFactor - (1 - Math.min(Math.abs(0.06 - 0.5) * 2, 1) * SYMMETRIC.falseBreakoutDampSpan)) < 1e-9, String(bearFactor));
+check("Bulle, alle vier: ebenfalls gedämpft", falseBreakoutFactorOf(bullAll) < 1);
+check("eine Bedingung fehlt: RSL nicht mehr unter dem eigenen p40", falseBreakoutFactorOf({ ...bearAll, rslValue: 1.3 }) === 1);
+check("eine Bedingung fehlt: MA200 fällt nicht", falseBreakoutFactorOf({ ...bearAll, ma200Slope: 1 }) === 1);
+check("eine Bedingung fehlt: Kurs über MA200", falseBreakoutFactorOf({ ...bearAll, price: 110 }) === 1);
+check("eine Bedingung fehlt: Volumen über dem eigenen Median", falseBreakoutFactorOf({ ...bearAll, volRatio: 1.3 }) === 1);
+check("Bulle ohne hohes RSL: Faktor 1", falseBreakoutFactorOf({ ...bullAll, rslValue: 1.0 }) === 1);
+check("False Breakout und False Breakdown erkennen dieselben Lagen", isFalseBreakout(bearAll) && isFalseBreakdown(bullAll) && !isFalseBreakdown(bearAll));
+{
+  const nvoShares = { "Fast Grower": 0.45, Cyclical: 0.36, Stalwart: 0.12, Turnaround: 0.04, Value: 0.03 };
+  const thesis = thesisFactorFromShares(nvoShares);
+  const expected = 1 + 0.45 * SYMMETRIC.thesisFastGrowerAdd + 0.36 * SYMMETRIC.thesisCyclicalAdd;
+  check("NVO-Mix ergibt etwa 1.03", Math.abs(thesis.factor - expected) < 1e-9 && Math.abs(expected - 1.0315) < 1e-9, `${thesis.factor} vs ${expected}`);
+  const stacked = 0.4 * bearFactor * thesis.factor * SYMMETRIC.volLowFactor;
+  check("NVO-Stapel Tech × Stärke × Thesis × Volumen liegt bei etwa 0.27", Math.abs(stacked - 0.2736) < 0.005, String(stacked));
+}
 
 function regime(mode: "bounce" | "dip" | "breakdown") {
   const bars = [];
@@ -164,6 +182,33 @@ function regime(mode: "bounce" | "dip" | "breakdown") {
   check("Bullen-Dip bleibt unter dem Grün", dip.last?.color !== "GRÜN", dip.last?.summary);
   check("Echter Einbruch mit Volumen hat Faktor 1", breakdown.last?.falseBreakoutFactor === 1 && breakdown.last?.falseBreakdownFactor === 1, breakdown.last?.falseBreakoutNote);
   check("Echter Einbruch ist nicht GRÜN", breakdown.last?.color !== "GRÜN", breakdown.last?.summary);
+}
+{
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.04;
+    const late = i >= 390;
+    const rebound = i >= 400;
+    const ratio = late ? (rebound ? 0.84 + Math.min(i - 400, 8) * 0.004 : 0.82) : 0.98;
+    const close = ma200 * ratio;
+    const loud = i >= 395 && i < 419;
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 500 : (loud ? 4000 : 2000),
+      rsi: rebound ? 34 + Math.min(i - 400, 12) : (late ? 31 : 48),
+      histogram: rebound ? -0.3 + Math.min(i - 400, 12) * 0.02 : (late ? -0.45 : 0.1),
+      ma50: close * (late ? 1.03 : 0.99),
+      ma200,
+    });
+  }
+  const nvo = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({
+    styleConfidences: { "Fast Grower": 0.45, Cyclical: 0.36, Stalwart: 0.12, Turnaround: 0.04, Value: 0.03 },
+  } as StockAnalysis));
+  console.log(`  ℹ NVO-Lage ${nvo.last?.color} adjusted ${nvo.last?.adjusted?.toFixed(3)} p70 ${nvo.last?.p70?.toFixed(3)} Faktor ${nvo.last?.falseBreakoutFactor?.toFixed(2)} Thesis ${nvo.last?.factors.thesisFactor}`);
+  check("NVO-Lage: alle vier Bedingungen, Faktor unter 1", nvo.last?.falseBreakout === true && (nvo.last?.falseBreakoutFactor ?? 1) < 1 && (nvo.last?.falseBreakoutFactor ?? 0) >= 1 - SYMMETRIC.falseBreakoutDampSpan);
+  check("NVO-Lage: Thesis-Mix etwa 1.03 und Volumen ×0.85", Math.abs((nvo.last?.factors.thesisFactor ?? 0) - 1.0315) < 1e-9 && nvo.last?.volumeFactor === SYMMETRIC.volLowFactor);
+  check("NVO-Lage bleibt GELB, adjusted unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0), nvo.last?.summary);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
