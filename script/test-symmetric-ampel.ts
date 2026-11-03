@@ -229,7 +229,7 @@ function regime(mode: "bounce" | "dip" | "breakdown") {
   check("NVO-Lage: Narrow ×0.98 und GELB unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0) && nvo.last?.factors.moatScore === SYMMETRIC.moatNarrowScore && (nvo.last?.falseBreakoutNote.includes("×0.98") ?? false), nvo.last?.summary);
 }
 
-console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow wird an dem Tag gelb ===");
+console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow ohne Golden Cross wird rot ===");
 {
   const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
   check("keine Hysterese und keine Mindest-Dauer", !ampelSrc.includes("stabilizeAmpel") && !ampelSrc.includes("minDays"));
@@ -257,22 +257,24 @@ console.log("\n=== Dieselbe Erholung: Wide bleibt grün, Narrow wird an dem Tag 
   console.log(`  ℹ Narrow ${narrow.colors.get(prev)} → ${narrow.last?.color} Faktor ${narrow.last?.falseBreakoutFactor?.toFixed(2)}`);
   console.log(`  ℹ Kein Moat ${none.colors.get(prev)} → ${none.last?.color} Faktor ${none.last?.falseBreakoutFactor?.toFixed(2)}`);
   check("MSFT Wide: die Erholung bleibt GRÜN", wide.last?.falseBreakout === true && wide.last?.color === "GRÜN" && wide.colors.get(prev) === "GRÜN", wide.last?.summary);
-  check("NVO Narrow: derselbe Tag wechselt auf GELB", narrow.last?.falseBreakout === true && narrow.last?.color === "GELB" && narrow.colors.get(prev) === "GRÜN" && narrow.colors.get(day) === "GELB", narrow.last?.summary);
-  check("kein Moat: derselbe Tag ist nicht GRÜN", none.last?.color !== "GRÜN" && none.colors.get(day) !== "GRÜN", none.last?.summary);
+  check("NVO Narrow: Kurs unter MA200 ohne Golden Cross wird ROT", narrow.last?.falseBreakoutSell === true && narrow.last?.color === "ROT" && narrow.colors.get(day) === "ROT", narrow.last?.summary);
+  check("kein Moat: derselbe Tag wird ROT", none.last?.falseBreakoutSell === true && none.last?.color === "ROT", none.last?.summary);
   check("Wide dämpft weniger als Narrow und kein Moat", (wide.last?.falseBreakoutFactor ?? 0) > (narrow.last?.falseBreakoutFactor ?? 1) && (narrow.last?.falseBreakoutFactor ?? 0) > (none.last?.falseBreakoutFactor ?? 1));
 }
 
 console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
 {
   const sell = {
-    price: 80, ma50: 90, ma200: 100, ma50Slope: -1, rslPercentile: 0.2, moatScore: SYMMETRIC.moatNarrowScore,
+    price: 80, ma50: 90, ma200: 100, ma50Slope: -1, goldenCrossActive: false, rslPercentile: 0.2, moatScore: SYMMETRIC.moatNarrowScore,
   };
   check("Death Cross + Bruch + schwaches RSL + Narrow ist Verkauf", falseBreakoutSell(sell));
+  check("Bounce über MA50, noch unter MA200, bleibt Verkauf", falseBreakoutSell({ ...sell, price: 95 }) === true);
+  check("Kurs über beiden MAs ist kein Verkauf", falseBreakoutSell({ ...sell, price: 110 }) === false);
+  check("Golden Cross hebt den Verkauf auf", falseBreakoutSell({ ...sell, goldenCrossActive: true }) === false);
   check("Wide ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatWideScore }) === false);
   check("Moat-Score 3 ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatNotWideBelow }) === false);
-  check("kein Death Cross ist kein Verkauf", falseBreakoutSell({ ...sell, ma50: 110 }) === false);
+  check("kein Death Cross ist kein Verkauf", falseBreakoutSell({ ...sell, ma50: 110, ma50Slope: 1, goldenCrossActive: true }) === false);
   check("steigende MA50 ist kein Verkauf", falseBreakoutSell({ ...sell, ma50Slope: 1 }) === false);
-  check("Kurs über MA50 ist kein Verkauf", falseBreakoutSell({ ...sell, price: 95 }) === false);
   check("RSL auf dem p40 ist kein Verkauf", falseBreakoutSell({ ...sell, rslPercentile: SYMMETRIC.rslLowQuantile }) === false);
   check("unbekannter Moat ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: null }) === false);
   const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
@@ -295,14 +297,29 @@ console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
   }
   const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
   const wide = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Wide" } as StockAnalysis));
-  const bounce = bars.map((bar, i) => i < 419 ? bar : { ...bar, close: bar.ma200 * 1.04, ma50: bar.ma200 * 0.98 });
-  const recovered = symmetricAmpelSeries(bounce, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const bounce = bars.map((bar, i) => i < 419 ? bar : { ...bar, close: bar.ma200 * 0.97, ma50: bar.ma200 * 0.9 });
+  const bounced = symmetricAmpelSeries(bounce, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const golden = bars.map((bar, i) => {
+    if (i < 370) return bar;
+    const k = i - 370;
+    return {
+      ...bar,
+      close: bar.ma200 * (1.01 + k * 0.0004),
+      ma50: bar.ma200 * (1.005 + k * 0.0005),
+      rsi: 55 + k * 0.15,
+      histogram: 0.05 + k * 0.004,
+      volume: 2200,
+    };
+  });
+  const recovered = symmetricAmpelSeries(golden, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
   console.log(`  ℹ Bruch Narrow ${narrow.last?.color} Verkauf ${narrow.last?.falseBreakoutSell} RSL ${narrow.last?.facts.find(f => f.name === "Kurs/MA52")?.percentile?.toFixed(2)}`);
   console.log(`  ℹ Bruch Wide ${wide.last?.color} Verkauf ${wide.last?.falseBreakoutSell}`);
-  console.log(`  ℹ Erholung Narrow ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
+  console.log(`  ℹ Bounce über MA50 ${bounced.last?.color} Verkauf ${bounced.last?.falseBreakoutSell}`);
+  console.log(`  ℹ Golden Cross ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
   check("Narrow nach Death Cross und Bruch ist ROT", narrow.last?.falseBreakoutSell === true && narrow.last?.color === "ROT", narrow.last?.falseBreakoutNote);
-  check("Wide nach demselben Bruch ist kein Verkauf", wide.last?.falseBreakoutSell === false, wide.last?.falseBreakoutNote);
-  check("Erholung über den MAs ist kein Verkauf", recovered.last?.falseBreakoutSell === false && recovered.last?.color !== "ROT", recovered.last?.summary);
+  check("Kurzer Bounce über MA50 ohne Golden Cross bleibt ROT", bounced.last?.falseBreakoutSell === true && bounced.last?.color === "ROT", bounced.last?.falseBreakoutNote);
+  check("Wide nach demselben Bruch ist kein Verkauf und GELB", wide.last?.falseBreakoutSell === false && wide.last?.color === "GELB", wide.last?.falseBreakoutNote);
+  check("Golden Cross über den MAs ist GRÜN", recovered.last?.falseBreakoutSell === false && recovered.last?.color === "GRÜN", recovered.last?.summary);
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");

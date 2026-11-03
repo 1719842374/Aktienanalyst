@@ -270,16 +270,22 @@ export function falseBreakoutFactorOf(input: FalseBreakoutInput): number {
   return base * moatFalseBreakoutFactor(input.moatScore);
 }
 
+/** Golden Cross: MA50 über MA200 und steigend. Das Gegenstück zum Death Cross. */
+export function goldenCrossActive(ma50: number | null, ma200: number | null, ma50Slope: number | null): boolean {
+  return ma50 != null && ma200 != null && ma50 > ma200 && ma50Slope != null && ma50Slope > 0;
+}
+
 /**
- * Antizyklischer Verkauf. Nur wenn alle vier zugleich gelten:
- * MA50 unter MA200 und fallend, Kurs unter beiden MAs, RSL-Rang unter dem eigenen p40, Moat unter 3.
- * Wide, ein fehlender Death Cross oder ein Kurs über einer MA lässt den Tag in der normalen Ampel.
+ * Verkauf nach Death Cross, solange kein Golden Cross aktiv ist.
+ * Es reicht, dass der Kurs unter einer der beiden MAs liegt.
+ * Wide-Moat, ein Golden Cross oder ein Kurs über beiden MAs lässt den Tag in der normalen Ampel.
  */
 export function falseBreakoutSell(input: {
   price: number | null;
   ma50: number | null;
   ma200: number | null;
   ma50Slope: number | null;
+  goldenCrossActive: boolean;
   rslPercentile: number | null;
   moatScore: number | null;
 }): boolean {
@@ -288,14 +294,13 @@ export function falseBreakoutSell(input: {
     && input.ma50 < input.ma200
     && input.ma50Slope != null
     && input.ma50Slope < 0;
-  const brokeDown = input.price != null
+  const brokeOrNear = input.price != null
     && input.ma50 != null
     && input.ma200 != null
-    && input.price < input.ma50
-    && input.price < input.ma200;
+    && (input.price < input.ma50 || input.price < input.ma200);
   const weakRsl = input.rslPercentile != null && input.rslPercentile < SYMMETRIC.rslLowQuantile;
-  const weakMoat = input.moatScore != null && input.moatScore < SYMMETRIC.moatNotWideBelow;
-  return deathCross && brokeDown && weakRsl && weakMoat;
+  const notWideMoat = input.moatScore != null && input.moatScore < SYMMETRIC.moatNotWideBelow;
+  return deathCross && !input.goldenCrossActive && brokeOrNear && weakRsl && notWideMoat;
 }
 
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
@@ -613,16 +618,18 @@ export function symmetricAmpelSeries(
     const moatBit = factors.moatScore == null
       ? ""
       : ` · Moat ${factors.moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(factors.moatScore).toFixed(2)}`;
+    const ma50Slope = slopeSignOf(ma50Series, i, SYMMETRIC.ma50SlopeDays);
     const sell = falseBreakoutSell({
       price: closes[i],
       ma50: ma50Series[i],
       ma200: ma200Series[i],
-      ma50Slope: slopeSignOf(ma50Series, i, SYMMETRIC.ma50SlopeDays),
+      ma50Slope,
+      goldenCrossActive: goldenCrossActive(ma50Series[i], ma200Series[i], ma50Slope),
       rslPercentile: rslFact?.percentile ?? null,
       moatScore: factors.moatScore,
     });
     const breakoutNote = sell
-      ? `False-Breakout-Verkauf ROT · Death Cross · Bruch unter MA50 und MA200${moatBit}`
+      ? `False-Breakout-Verkauf ROT · Death Cross ohne Golden Cross · Bruch unter MA50 oder MA200${moatBit}`
       : bearFlag || bullFlag
         ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
         : "False-Breakout-Faktor 1";
