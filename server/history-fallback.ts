@@ -218,6 +218,30 @@ export function contiguousSameScale(bars: DailyBar[]): DailyBar[] {
   return sorted.slice(start);
 }
 
+function sameClose(a: number, b: number): boolean {
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1);
+  return Math.abs(a - b) <= scale * 1e-6;
+}
+
+/**
+ * A vendor day with no volume and no high-low range that repeats the previous
+ * close is a carried last sale, not a session. Keeping it draws a staircase
+ * and lets that stale quote count as many days in the moving averages.
+ * A print with volume, a range, or a new close stays. Nothing is interpolated.
+ */
+export function tradedSessions(bars: DailyBar[]): DailyBar[] {
+  const sorted = bars.filter((b) => b.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const kept: DailyBar[] = [];
+  for (const bar of sorted) {
+    const prev = kept[kept.length - 1];
+    const flat = sameClose(bar.open, bar.close) && sameClose(bar.high, bar.close) && sameClose(bar.low, bar.close);
+    const repeat = prev != null && sameClose(bar.close, prev.close);
+    if (prev && !(bar.volume > 0) && flat && repeat) continue;
+    kept.push(bar);
+  }
+  return kept;
+}
+
 /** Nasdaq public daily history. US symbols only; dotted listings stay on Yahoo/Stooq. */
 export async function nasdaqFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
   const sym = symbol.trim().toUpperCase();
@@ -318,6 +342,7 @@ export async function fetchDailyHistory(opts: {
     if (truncated && extended) truncated = false;
   }
 
+  bars = tradedSessions(bars);
   return { bars, source, truncated };
 }
 
@@ -346,7 +371,7 @@ export async function altFetchYahooThenStooq(symbol: string, from: string, to: s
   const merged = new Map<string, DailyBar>();
   for (const bar of nasdaq) merged.set(bar.date, bar);
   for (const bar of yahoo) merged.set(bar.date, bar);
-  const combined = contiguousSameScale(Array.from(merged.values()));
+  const combined = tradedSessions(contiguousSameScale(Array.from(merged.values())));
   if (combined.length > 0) return combined;
   try {
     return await stooqFetch(symbol, from, to);

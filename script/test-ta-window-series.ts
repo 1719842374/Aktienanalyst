@@ -194,7 +194,7 @@ await fetchDailyHistory({
 });
 
 {
-  const { contiguousSameScale, nasdaqFetch } = await import("../server/history-fallback");
+  const { contiguousSameScale, nasdaqFetch, tradedSessions } = await import("../server/history-fallback");
   const fmpLate = [{ date: "2024-01-19", open: 96, high: 96, low: 96, close: 96, volume: 10, source: "fmp" as const }];
   const older = [
     { date: "2020-12-16", open: 11, high: 11, low: 11, close: 11, volume: 1, source: "nasdaq" as const },
@@ -226,6 +226,33 @@ await fetchDailyHistory({
   globalThis.fetch = realFetch;
   check("Nasdaq-Tageskurse werden als ISO-Datum gelesen", parsed.length === 2 && parsed[0].date === "2020-12-17" && parsed[0].close === 54.1 && parsed[1].volume === 3410518, JSON.stringify(parsed));
   check("Nasdaq überspringt Börsenkürzel mit Punkt", (await nasdaqFetch("SAP.DE", "2020-01-01", "2026-11-03")).length === 0);
+
+  const carried = [
+    { date: "2021-07-06", open: 99.9, high: 99.9, low: 99.9, close: 99.9, volume: 0, source: "nasdaq" as const },
+    { date: "2021-07-07", open: 99.9, high: 99.9, low: 99.9, close: 99.9, volume: 0, source: "nasdaq" as const },
+    { date: "2021-07-08", open: 99.9, high: 99.9, low: 99.9, close: 99.9, volume: 0, source: "nasdaq" as const },
+    { date: "2021-07-09", open: 99.9, high: 101, low: 99.9, close: 99.9, volume: 1200, source: "nasdaq" as const },
+    { date: "2021-07-12", open: 99.9, high: 99.9, low: 99.9, close: 99.9, volume: 0, source: "nasdaq" as const },
+    { date: "2021-09-15", open: 112.5, high: 112.5, low: 112.5, close: 112.5, volume: 0, source: "nasdaq" as const },
+  ];
+  const sessions = tradedSessions(carried);
+  check(
+    "fortgeschriebene Schlusskurse ohne Umsatz sind keine Handelstage",
+    sessions.length === 3 && sessions.map(b => b.date).join(",") === "2021-07-06,2021-07-09,2021-09-15",
+    sessions.map(b => b.date).join(","),
+  );
+  const withPad = await fetchDailyHistory({
+    symbol: "KSPI",
+    timeframe: "10Y",
+    fetchFrom: "2015-11-01",
+    fmpFetch: async () => fmpLate,
+    altFetch: async () => [...older, ...carried],
+  });
+  check(
+    "nachgeladene Reihe enthält den neuen Druck, nicht die Tageswiederholungen",
+    withPad.bars.some(b => b.date === "2021-09-15") && !withPad.bars.some(b => b.date === "2021-07-07"),
+    withPad.bars.map(b => b.date).join(","),
+  );
 }
 
 // Production screenshot: 5Y is the last 1260 sessions and the loaded chart

@@ -332,7 +332,17 @@ export function TechnicalChart({
   // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
   // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
   const isHistoryTruncated = !customA && timeRange !== "Max" && ti.maData.length > 0 && ti.maData.length < rangeCutoff * 0.95;
-  const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
+  // Calendar span of the loaded series. Session count / 252 under-counts a
+  // listing whose vendor only printed a sale on some days; the from/to dates
+  // are that same span.
+  const actualYearsAvailable = (() => {
+    const first = ti.maData[0]?.date;
+    const last = ti.maData[ti.maData.length - 1]?.date;
+    if (!first || !last) return 0;
+    const ms = Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`);
+    if (!Number.isFinite(ms) || ms < 0) return 0;
+    return +(ms / (365.25 * 86400000)).toFixed(1);
+  })();
   const hasEnoughForMA200 = ti.maData.length >= 200;
 
   const fromADisplay = customA?.from
