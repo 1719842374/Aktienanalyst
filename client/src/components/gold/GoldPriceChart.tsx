@@ -120,7 +120,8 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
   const [showGsRatio, setShowGsRatio] = useState(false);
 
   // 10Y/Max: lange Historie lazy laden (nur Chart-Daten, kein Score). Indikatoren laufen auf der
-  // vollen Reihe, danach Fenster + Ausduennung. Pills, Cross-Banner und Rel. RSI bleiben auf `tech`.
+  // vollen Reihe, danach nur das Fenster. Jeder Handelstag bleibt im Plot. Pills, Cross-Banner
+  // und Rel. RSI bleiben auf `tech`.
   const longRange = needsLongHistory(timeRange);
   // Je Fenster eigene Antwort: 10Y = Fenster + 300 Punkte Vorlauf (MA/EMA/MACD eingeschwungen), Max = volle Reihe.
   const historyRange = timeRange === "10Y" ? "10Y" : "Max";
@@ -190,17 +191,9 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
     return slicePresetWindow(rangeTech.points, timeRange);
   }, [rangeTech, timeRange]);
 
-  // Downsampling wie BTC (max ~500 Punkte). Cross-Tage bleiben erhalten,
-  // damit die #201-Marker nicht aus dem Plot fallen.
-  const chartData = useMemo(() => {
-    if (filteredData.length <= 500) return filteredData;
-    const step = Math.ceil(filteredData.length / 500);
-    // 10Y/Max: nur Cross-Tage zusaetzlich behalten — Volumen-Marker-Tage wuerden sonst bei
-    // Jahrzehnten Historie hunderte Extra-Punkte erzwingen und die Ausduennung aushebeln.
-    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || (!longRange && (d.volSpike || d.volDivergence)));
-    if (result[result.length - 1] !== filteredData[filteredData.length - 1]) result.push(filteredData[filteredData.length - 1]);
-    return result;
-  }, [filteredData, longRange]);
+  // Kein 500er-Schnitt: Gleitende, MACD, RSI, Volumen und Signale bleiben auf jedem Handelstag
+  // des Fensters. Ein ausgedünntes Raster hat auf Max die Linien und Volumen-Tage aus der frühen Historie geworfen.
+  const chartData = filteredData;
 
   const hasMacro = useMemo(() => {
     const out = {} as Record<MacroKey, boolean>;
@@ -280,7 +273,9 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
     const startDate = chartData[0].date;
-    return rangeTech.signals.filter(s => s.date >= startDate);
+    const drawn = new Set(chartData.map(d => d.date));
+    // Jedes Signal im Fenster, auch 2017 auf 10Y. Die Linie braucht denselben Tag in der X-Achse.
+    return rangeTech.signals.filter(s => s.date >= startDate && drawn.has(s.date));
   }, [rangeTech.signals, chartData, showSignals]);
 
   const toggleSet = <K,>(setter: React.Dispatch<React.SetStateAction<Set<K>>>, key: K) =>
@@ -1074,8 +1069,8 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
 
       {visibleSignals.length > 0 && (
         <div className="mt-4">
-          <div className="text-[10px] font-medium text-muted-foreground mb-2">Letzte Signale ({visibleSignals.length} im Zeitraum)</div>
-          <div className="overflow-x-auto">
+          <div className="text-[10px] font-medium text-muted-foreground mb-2">Signale im Zeitraum ({visibleSignals.length})</div>
+          <div className="max-h-64 overflow-auto">
             <table className="w-full text-[10px]">
               <thead>
                 <tr className="border-b border-border">
@@ -1086,7 +1081,7 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {visibleSignals.slice(-10).reverse().map((s, i) => (
+                {[...visibleSignals].reverse().map((s, i) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-1 pr-2 font-mono tabular-nums">{s.date}</td>
                     <td className="py-1 pr-2">
@@ -1113,7 +1108,7 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
         Gold/Silber-Ratio = Gold-Schluss geteilt durch Silber-Schluss am selben Tag (FMP GCUSD/SIUSD, sonst Yahoo GC=F/SI=F, dieselbe Quellwahl wie die Gold-Historie). Ohne gemeinsamen Tag keine Linie, nur der Hinweis.
-        10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
+        10Y/Max laden die lange Historie separat. Gleitende, MACD, RSI, Volumen und Signale werden auf der vollen Reihe gerechnet und im Fenster an jedem Handelstag gezeichnet. Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
         „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten. Die Minen-AISC steht in Abschnitt 9.
       </div>
       </div>

@@ -4,8 +4,9 @@
  * Ausfuehren: npx tsx script/test-gold-chart-10y-max.ts
  */
 import { readFileSync } from "node:fs";
-import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage, zoneSpotSeries, GOLD_ZONE_HISTORY_START } from "../server/gold-chart-history";
+import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage, zoneSpotSeries, GOLD_ZONE_HISTORY_START, trimChartHistory } from "../server/gold-chart-history";
 import { buildGoldTechnical, filterGoldRange, macroRangeState, goldRangeNote, needsLongHistory } from "../client/src/components/gold/goldTechnical";
+import { slicePresetWindow } from "../client/src/lib/taRangeCutoff";
 
 let failed = 0;
 const check = (name: string, cond: boolean, detail?: unknown) => {
@@ -133,6 +134,58 @@ console.log("\nScore/Gates unberuehrt");
   check("analyze-gold behaelt das FRED-Memo (#223, seit JOB 11 mit Prefetch)", analyze.includes("createFredHistoryMemo(fredFetcher)"));
   const chart = readFileSync(new URL("../client/src/components/gold/GoldPriceChart.tsx", import.meta.url), "utf-8");
   check("Sektion 2 schneidet mit slicePresetWindow und den Presets aus TIME_RANGE_CUTOFF", chart.includes("slicePresetWindow(rangeTech.points, timeRange)") && chart.includes("Object.keys(TIME_RANGE_CUTOFF)") && chart.includes("button-gold-range-"));
+  check("Chart wirft auf 10Y/Max keine Volumen-Tage weg", !chart.includes("!longRange && (d.volSpike"));
+  check("Chart verdichtet die Anzeige nicht mehr auf 500 Punkte", !chart.includes("filteredData.length <= 500") && !chart.includes("ausgedünnt auf ~500"));
+  check("Signaltabelle zeigt den ganzen Zeitraum", !chart.includes("visibleSignals.slice(-10)"));
+  const techSrc = readFileSync(new URL("../client/src/components/gold/goldTechnical.ts", import.meta.url), "utf-8");
+  check("Signalliste wird nicht auf die letzten 100 gekappt", !techSrc.includes("signals.slice(-100)"));
+}
+
+console.log("\nVolle Reihe: Signale und Volumen bleiben, Gleitende ab dem Vorlauf");
+{
+  const start = new Date("2010-01-04T00:00:00Z");
+  const pts: { date: string; close: number; volume: number; ma200?: number }[] = [];
+  for (let i = 0; i < 2600; i++) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    if (d.getUTCDay() % 6 === 0) continue;
+    const close = 1500 + 120 * Math.sin(i / 5);
+    pts.push({ date: iso(d), close, volume: i % 22 === 0 ? 9000 : 1000, ...(i >= 199 ? { ma200: close } : {}) });
+  }
+  const built = buildGoldTechnical(pts);
+  check("mehr als 100 Signale bleiben auf der Reihe", built.signals.length > 100, built.signals.length);
+  const firstSig = built.signals[0]?.date;
+  const lastSig = built.signals[built.signals.length - 1]?.date;
+  check("erstes Signal liegt in der ersten Hälfte, nicht erst am Ende", !!firstSig && firstSig < pts[Math.floor(pts.length / 2)].date, firstSig);
+  check("letztes Signal liegt nach dem ersten", !!lastSig && !!firstSig && lastSig > firstSig);
+  const early = built.points[250];
+  check("nach 250 Tagen sind MA50, MA200, MACD und RSI gesetzt", early.ma50 != null && early.ma200 != null && early.macd != null && early.rsi14 != null, early);
+  const firstSpike = built.points.find(p => p.volSpike);
+  check("Volumen-Spike liegt auf der Reihe und nicht nur am Ende", !!firstSpike && firstSpike.date < pts[Math.floor(pts.length / 2)].date, firstSpike?.date);
+  const maxWindow = filterGoldRange(built.points, "Max", new Date("2026-01-01T00:00:00Z"));
+  check("Max behält jeden Punkt, auch frühe Volumen-Spikes", maxWindow.length === built.points.length && maxWindow.some(p => p.volSpike && p.date === firstSpike?.date));
+}
+
+console.log("\n10Y: Signallinien ab dem Fensterbeginn");
+{
+  const rows: { date: string; close: number; volume: number }[] = [];
+  for (let d = new Date("2008-01-02T00:00:00Z"), i = 0; iso(d) <= "2026-11-04"; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() % 6 === 0) continue;
+    rows.push({ date: iso(d), close: 1200 + i * 0.15 + 80 * Math.sin(i / 7), volume: 1000 });
+    i++;
+  }
+  const points = buildGoldChartHistoryPoints(rows, { real10y: [], dxy: [], t10yie: [], walcl: [], m2: [] });
+  const today = new Date("2026-11-04T12:00:00Z");
+  const trimmed = trimChartHistory({ points }, "10Y", today);
+  const tech = buildGoldTechnical(trimmed.points);
+  const shown = slicePresetWindow(tech.points, "10Y");
+  const start = shown[0].date;
+  const sigs = tech.signals.filter(s => s.date >= start && shown.some(p => p.date === s.date));
+  const yearLater = new Date(`${start}T00:00:00Z`);
+  yearLater.setUTCFullYear(yearLater.getUTCFullYear() + 1);
+  check("10Y zeigt mehr als die letzten hundert Signale", sigs.length > 100, sigs.length);
+  check("erstes 10Y-Signal liegt im ersten Jahr, nicht erst Jahre später", !!sigs[0] && sigs[0].date <= iso(yearLater), { start, first: sigs[0]?.date });
+  check("jedes 10Y-Signal hat einen gezeichneten Tag", sigs.every(s => shown.some(p => p.date === s.date)));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
