@@ -26,6 +26,7 @@ import {
   type MarketFactpack,
   type MarketWindow,
 } from "@shared/recession-market-charts";
+import { spyPeValueSuffix } from "@shared/spy-holdings-pe";
 import {
   ResponsiveContainer,
   LineChart,
@@ -198,13 +199,24 @@ function chartClickDate(state: { activeLabel?: string | number } | null): string
   return typeof label === "string" && label ? label : null;
 }
 
+function peWithSource(
+  pe: number | null,
+  formatted: string,
+  note: string | null | undefined,
+  source: string | null | undefined,
+  coverage: number | null | undefined,
+  estimate: boolean | undefined,
+): string {
+  return `${displayNa(pe, formatted, note, "PE")}${spyPeValueSuffix({ source, coverage, estimate })}`;
+}
+
 function SnapshotRow({ market }: { market: MarketChart }) {
   const s = market.snapshot;
   const pegNote = s.pegKind === "formula" && s.peg != null && s.peg > 3 ? " · teuer je Wachstumseinheit" : "";
   return (
     <>
       <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-        {market.valuationLabel} · PE {displayNa(s.pe, fmt(s.pe, 1), s.missing, "PE")} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+        {market.valuationLabel} · PE {peWithSource(s.pe, fmt(s.pe, 1), s.missing, s.peSource, s.peCoverage, s.peEstimate)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
         {pegDisplaySuffix(s.pegKind)}
         {pegNote} · PEG fwd {fmt(s.pegFwd, 2)}
         {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
@@ -223,7 +235,7 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
   if (error) return <p className="text-xs text-red-500">{error instanceof Error ? error.message : "Factpack fehlgeschlagen"}</p>;
   if (!pack) return null;
   const rows: { label: string; value: string; warn?: boolean }[] = [
-    { label: "PE ttm", value: displayNa(pack.pe, fmt(pack.pe, 2), pack.note, "PE") },
+    { label: "PE ttm", value: peWithSource(pack.pe, fmt(pack.pe, 2), pack.note, pack.peSource, pack.peCoverage, pack.peEstimate) },
     { label: "PE fwd", value: fmt(pack.peFwd, 2) },
     { label: "EPS YoY", value: pack.epsYoy == null ? "n/a" : `${fmt(pack.epsYoy, 2)} %` },
     { label: "PEG ttm", value: `${fmt(pack.peg, 2)}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
@@ -693,7 +705,7 @@ function ChartsBody() {
   const snapFacts: Record<string, string> = {};
   for (const m of q.data?.markets ?? []) {
     const s = m.snapshot;
-    snapFacts[m.id] = `${m.valuationLabel} · PE ${fmt(s.pe, 1)} · fwd ${fmt(s.peFwd, 1)} · EPS YoY ${fmt(s.epsYoy, 1)}% · PEG ${fmt(s.peg, 2)}${pegDisplaySuffix(s.pegKind)} · PEG fwd ${fmt(s.pegFwd, 2)}${pegDisplaySuffix(s.pegFwdKind)} · RSI ${fmt(s.rsi, 1)} · MACD H ${fmt(s.macdHist, 2)}`;
+    snapFacts[m.id] = `${m.valuationLabel} · PE ${fmt(s.pe, 1)}${spyPeValueSuffix({ source: s.peSource, coverage: s.peCoverage, estimate: s.peEstimate })} · fwd ${fmt(s.peFwd, 1)} · EPS YoY ${fmt(s.epsYoy, 1)}% · PEG ${fmt(s.peg, 2)}${pegDisplaySuffix(s.pegKind)} · PEG fwd ${fmt(s.pegFwd, 2)}${pegDisplaySuffix(s.pegFwdKind)} · RSI ${fmt(s.rsi, 1)} · MACD H ${fmt(s.macdHist, 2)}`;
   }
   usePublishChatSection("recession", "markt", q.data ? {
     stand: q.data.asOf, fenster: q.data.window, aktiverTab: tab, ...snapFacts,

@@ -738,6 +738,12 @@ export async function fmpBatchQuote(symbols: string[]) {
   return results.filter(Boolean);
 }
 
+/** GET /stable/batch-quote?symbols=AAPL,MSFT — ein Request für mehrere Market Caps. */
+export async function fmpStableBatchQuote(symbols: string[]) {
+  if (symbols.length === 0) return [];
+  return fmpFetch(`/batch-quote`, { symbols: symbols.join(",") });
+}
+
 export function isFmpAvailable(): boolean {
   return !!process.env.FMP_API_KEY;
 }
@@ -992,6 +998,11 @@ export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
  */
 export async function fmpIncomeStatementQuarterly(symbol: string, limit = 16) {
   return fmpFetch(`/income-statement`, { symbol, period: "quarter", limit: String(limit) });
+}
+
+/** GET /stable/income-statement-ttm?symbol=AAPL — netIncome ist bereits TTM. */
+export async function fmpIncomeStatementTtm(symbol: string) {
+  return fmpFetch(`/income-statement-ttm`, { symbol });
 }
 
 /**

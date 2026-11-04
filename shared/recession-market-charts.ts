@@ -682,6 +682,10 @@ export const snapshotSchema = z.object({
   macdHist: z.number().nullable(),
   /** Named FMP calls that came back empty for a field that is still n/a. */
   missing: z.string().nullable(),
+  /** Holdings-KGV: Quelle der PE-Zahl. Leer, wenn das KGV nicht aus den Holdings kommt. */
+  peSource: z.string().nullable().optional(),
+  peCoverage: z.number().nullable().optional(),
+  peEstimate: z.boolean().optional(),
 });
 
 export const marketChartSchema = z.object({
@@ -732,6 +736,9 @@ export const factpackSchema = z.object({
   pegExpensive: z.boolean(),
   pegFwdExpensive: z.boolean(),
   note: z.string().nullable(),
+  peSource: z.string().nullable().optional(),
+  peCoverage: z.number().nullable().optional(),
+  peEstimate: z.boolean().optional(),
 });
 
 export type MarketChart = z.infer<typeof marketChartSchema>;
