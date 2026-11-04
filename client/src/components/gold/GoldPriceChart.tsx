@@ -273,7 +273,9 @@ export function GoldPriceChart({ data, onRetryPrices }: Props) {
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
     const startDate = chartData[0].date;
-    return rangeTech.signals.filter(s => s.date >= startDate);
+    const drawn = new Set(chartData.map(d => d.date));
+    // Jedes Signal im Fenster, auch 2017 auf 10Y. Die Linie braucht denselben Tag in der X-Achse.
+    return rangeTech.signals.filter(s => s.date >= startDate && drawn.has(s.date));
   }, [rangeTech.signals, chartData, showSignals]);
 
   const toggleSet = <K,>(setter: React.Dispatch<React.SetStateAction<Set<K>>>, key: K) =>

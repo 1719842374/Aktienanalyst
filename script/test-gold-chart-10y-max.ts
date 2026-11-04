@@ -4,8 +4,9 @@
  * Ausfuehren: npx tsx script/test-gold-chart-10y-max.ts
  */
 import { readFileSync } from "node:fs";
-import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage, zoneSpotSeries, GOLD_ZONE_HISTORY_START } from "../server/gold-chart-history";
+import { historyWindows, mergeGoldRows, pickLongerSource, buildGoldChartHistoryPoints, seriesCoverage, zoneSpotSeries, GOLD_ZONE_HISTORY_START, trimChartHistory } from "../server/gold-chart-history";
 import { buildGoldTechnical, filterGoldRange, macroRangeState, goldRangeNote, needsLongHistory } from "../client/src/components/gold/goldTechnical";
+import { slicePresetWindow } from "../client/src/lib/taRangeCutoff";
 
 let failed = 0;
 const check = (name: string, cond: boolean, detail?: unknown) => {
@@ -163,6 +164,28 @@ console.log("\nVolle Reihe: Signale und Volumen bleiben, Gleitende ab dem Vorlau
   check("Volumen-Spike liegt auf der Reihe und nicht nur am Ende", !!firstSpike && firstSpike.date < pts[Math.floor(pts.length / 2)].date, firstSpike?.date);
   const maxWindow = filterGoldRange(built.points, "Max", new Date("2026-01-01T00:00:00Z"));
   check("Max behält jeden Punkt, auch frühe Volumen-Spikes", maxWindow.length === built.points.length && maxWindow.some(p => p.volSpike && p.date === firstSpike?.date));
+}
+
+console.log("\n10Y: Signallinien ab dem Fensterbeginn");
+{
+  const rows: { date: string; close: number; volume: number }[] = [];
+  for (let d = new Date("2008-01-02T00:00:00Z"), i = 0; iso(d) <= "2026-11-04"; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() % 6 === 0) continue;
+    rows.push({ date: iso(d), close: 1200 + i * 0.15 + 80 * Math.sin(i / 7), volume: 1000 });
+    i++;
+  }
+  const points = buildGoldChartHistoryPoints(rows, { real10y: [], dxy: [], t10yie: [], walcl: [], m2: [] });
+  const today = new Date("2026-11-04T12:00:00Z");
+  const trimmed = trimChartHistory({ points }, "10Y", today);
+  const tech = buildGoldTechnical(trimmed.points);
+  const shown = slicePresetWindow(tech.points, "10Y");
+  const start = shown[0].date;
+  const sigs = tech.signals.filter(s => s.date >= start && shown.some(p => p.date === s.date));
+  const yearLater = new Date(`${start}T00:00:00Z`);
+  yearLater.setUTCFullYear(yearLater.getUTCFullYear() + 1);
+  check("10Y zeigt mehr als die letzten hundert Signale", sigs.length > 100, sigs.length);
+  check("erstes 10Y-Signal liegt im ersten Jahr, nicht erst Jahre später", !!sigs[0] && sigs[0].date <= iso(yearLater), { start, first: sigs[0]?.date });
+  check("jedes 10Y-Signal hat einen gezeichneten Tag", sigs.every(s => shown.some(p => p.date === s.date)));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
