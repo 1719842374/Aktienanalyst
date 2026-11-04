@@ -5,6 +5,7 @@
  *
  * Run: npx tsx script/test-ta-window-series.ts
  */
+import { readFileSync } from "node:fs";
 import type { OHLCVPoint } from "../shared/schema";
 import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars, smaFromStart, smaSeries,
@@ -468,6 +469,12 @@ check(
     && swingSeries.points[swingIdx].ma50! > swingSeries.points[swingIdx].ma200!,
   `idx=${swingIdx}`,
 );
+
+{
+  const chartSrc = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
+  check("Tooltip zeigt MA-Werte aus dem Datenpunkt, nicht über yAxisId", chartSrc.includes("const value = dp[ma.key];") && !chartSrc.includes('p.yAxisId === "price"'));
+  check("Tooltip zeigt den Abstand MA50 − MA200", chartSrc.includes('data-testid="tooltip-ma-gap"'));
+}
 
 if (failed) {
   console.error(`\n${failed} checks failed`);
