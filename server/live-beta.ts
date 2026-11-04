@@ -1,4 +1,4 @@
-import { liveBeta, type ClosePoint } from "../shared/live-beta";
+import { LIVE_BETA_MIN_OBS, liveBeta, type ClosePoint } from "../shared/live-beta";
 import { yahooFetch } from "./history-fallback";
 
 const SPY_TTL_MS = 6 * 60 * 60 * 1000;
@@ -16,7 +16,7 @@ export async function loadSpyCloses(now = Date.now()): Promise<ClosePoint[]> {
   const points = bars
     .filter((bar) => bar.close > 0 && Number.isFinite(bar.close))
     .map((bar) => ({ date: bar.date, close: bar.close }));
-  if (points.length > 0) spyCache = { at: now, points };
+  if (points.length > LIVE_BETA_MIN_OBS) spyCache = { at: now, points };
   return points;
 }
 
