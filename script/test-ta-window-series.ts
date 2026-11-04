@@ -67,7 +67,12 @@ const full = buildFullSeries(bars);
 const fullMa200 = smaSeries(bars.map(b => b.close), 200);
 
 check(`volle Serie hat ${bars.length} Punkte`, full.points.length === bars.length);
-check("MA200 der vollen Serie startet bei Index 199", firstFiniteIndex(full.points.map(p => ({ ...p, _volNorm: 0 })), "ma200") === 199);
+check("MA200 beginnt am ersten Kurs", full.points[0].ma200 === bars[0].close);
+check("MA200 ab vollem Fenster ist die SMA", full.points[199].ma200 === fullMa200[199]);
+{
+  const cross = full.signals.find(s => s.reason.startsWith("Golden") || s.reason.startsWith("Death"));
+  check("Cross erst nach vollem MA200-Fenster", cross != null && cross.date >= bars[199].date, cross?.date);
+}
 
 for (const [label, n] of Object.entries(CUTOFFS)) {
   const windowBars = bars.slice(-n);
@@ -101,20 +106,23 @@ const gapBars = weekdayBars(TA_VISIBLE_10Y_BARS + 80);
 const gapFull = buildFullSeries(gapBars);
 const gapMa200 = smaSeries(gapBars.map(b => b.close), 200);
 const gapWindow = buildWindowSeries(gapFull, gapBars.slice(-TA_VISIBLE_10Y_BARS));
-const gapFirst = Math.max(0, 199 - 80);
+const gapFullIdx = 199;
+const gapWindowIdx = gapFullIdx - 80;
 check(
-  "10Y ohne 200 Prefix-Bars: MA200-Lücke bleibt ehrlich",
-  firstFiniteIndex(gapWindow.points, "ma200") === gapFirst,
-  `first=${firstFiniteIndex(gapWindow.points, "ma200")} expected=${gapFirst}`,
+  "10Y ohne 200 Prefix: MA200 geht bis zum ersten sichtbaren Kurs",
+  firstFiniteIndex(gapWindow.points, "ma200") === 0 && gapWindow.points[0].ma200 === gapBars.slice(0, 81).reduce((a, b) => a + b.close, 0) / 81,
 );
 check(
-  "ehrliche Lücke: erster gültiger MA200 = SMA der kurzen Serie",
-  gapWindow.points[gapFirst].ma200 === gapMa200[80 + gapFirst],
+  "wo das Fenster voll ist, bleibt es die SMA",
+  gapWindow.points[gapWindowIdx].ma200 === gapMa200[gapFullIdx],
 );
 
 const young = weekdayBars(150);
-const youngWindow = buildWindowSeries(buildFullSeries(young), young.slice(-TA_VISIBLE_10Y_BARS));
-check("Listing kürzer als 200 Sessions: MA200 fehlt komplett", firstFiniteIndex(youngWindow.points, "ma200") === -1);
+const youngFull = buildFullSeries(young);
+const youngWindow = buildWindowSeries(youngFull, young.slice(-TA_VISIBLE_10Y_BARS));
+const youngMean = young.reduce((a, b) => a + b.close, 0) / young.length;
+check("kurzes Listing: MA200 ab dem ersten Kurs", youngWindow.points[0].ma200 === young[0].close);
+check("kurzes Listing: letzter MA200 ist der Mittelwert aller Schlüsse", youngWindow.points[youngWindow.points.length - 1].ma200 === youngMean);
 
 const copied = bars.slice(-126).map(b => ({ ...b }));
 const fromCopies = buildWindowSeries(full, copied);
@@ -127,7 +135,8 @@ check("Datumsfenster in der Mitte behält MA200", firstFiniteIndex(midBuilt.poin
 check("Datumsfenster: Wert = volle Serie", midBuilt.points[0].ma200 === full.points[400].ma200);
 
 const head = buildWindowSeries(full, bars.slice(0, 63));
-check("Fenster am Serienanfang: MA200 fehlt ehrlich (keine 200 Tage davor)", firstFiniteIndex(head.points, "ma200") === -1);
+const headMean = bars.slice(0, 63).reduce((a, b) => a + b.close, 0) / 63;
+check("Fenster am Serienanfang: MA200 ab dem ersten Kurs", head.points[0].ma200 === bars[0].close && head.points[62].ma200 === headMean);
 
 const reversed = buildFullSeries([...bars].reverse());
 const revWindow = buildWindowSeries(reversed, bars.slice(-63));

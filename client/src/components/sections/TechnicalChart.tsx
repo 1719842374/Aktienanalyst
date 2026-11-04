@@ -385,7 +385,13 @@ export function TechnicalChart({
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
   const ampelFactors = useMemo(() => ampelFactorsFromAnalysis(data), [data]);
   const symmetric = useMemo(
-    () => symmetricAmpelSeries(fullSeries.points, ampelFactors),
+    () => symmetricAmpelSeries(fullSeries.points.map(p => ({
+      date: p.date,
+      close: p.close,
+      volume: p.volume,
+      rsi: p.rsi,
+      histogram: p.histogram,
+    })), ampelFactors),
     [fullSeries, ampelFactors],
   );
   const phaseByDateMap = symmetric.phases;

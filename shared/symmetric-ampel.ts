@@ -211,6 +211,22 @@ export function ampelFactorsFromAnalysis(data: StockAnalysis): AmpelFactors {
   };
 }
 
+/** Kurs gegen die eigene Historie, solange RSI und MA noch kein Signal haben. Tag 0 ist flach. */
+function closeSignalAt(closes: readonly number[], index: number): number | null {
+  const value = closes[index];
+  if (!Number.isFinite(value)) return null;
+  if (index < 1) return 0;
+  const start = closes[Math.max(0, index - (SYMMETRIC.slopeDays - 1))];
+  if (!Number.isFinite(start)) return 0;
+  const history: number[] = [];
+  for (let j = 0; j <= index; j++) {
+    if (Number.isFinite(closes[j])) history.push(closes[j]);
+  }
+  const pct = historyPercentile(history, value);
+  if (pct == null) return null;
+  return signalFromPercentile(pct, Math.sign(value - start));
+}
+
 function smaAt(values: readonly number[], index: number, period: number): number | null {
   if (index + 1 < period) return null;
   let sum = 0;
@@ -434,13 +450,33 @@ export function symmetricAmpelSeries(
     let p30: number | null = null;
     let p70: number | null = null;
     const current = adjusted[i];
-    if (current != null && recent.length >= SYMMETRIC.baseWindow) {
+    // Volle Schwelle ab 20 Werten. Davor dieselbe p30/p70-Regel auf den Werten, die es schon gibt,
+    // damit der Kurs ab dem ersten Tag eine Farbe hat und die spätere Linie gleich bleibt.
+    if (current != null && recent.length >= 1) {
       p30 = quantile(recent, SYMMETRIC.lowQuantile);
       p70 = quantile(recent, SYMMETRIC.highQuantile);
       if (p30 != null && p70 != null) {
         if (current > p70) color = "GRÜN";
         else if (current < p30) color = "ROT";
         else color = "GELB";
+      }
+    }
+    if (color == null && Number.isFinite(closes[i])) {
+      const lead: number[] = [];
+      for (let j = from; j <= i; j++) {
+        const sig = closeSignalAt(closes, j);
+        if (sig == null) continue;
+        lead.push(sig * factors.thesisFactor * factors.bsFactor * volAt[j].factor * factors.betaFactor);
+      }
+      const cur = lead.length ? lead[lead.length - 1] : null;
+      if (cur != null) {
+        p30 = quantile(lead, SYMMETRIC.lowQuantile);
+        p70 = quantile(lead, SYMMETRIC.highQuantile);
+        if (p30 != null && p70 != null) {
+          if (cur > p70) color = "GRÜN";
+          else if (cur < p30) color = "ROT";
+          else color = "GELB";
+        }
       }
     }
     phases.set(bars[i].date, symmetricColorPhase(color));

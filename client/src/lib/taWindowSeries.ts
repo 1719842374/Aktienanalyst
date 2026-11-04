@@ -81,6 +81,26 @@ export function smaSeries(data: number[], period: number): (number | undefined)[
   return out;
 }
 
+/**
+ * Gezeichnete SMA. Ab dem vollen Fenster identisch mit `strict`.
+ * Davor der Mittelwert aller vorhandenen Schlüsse, damit die Linie am ersten Kurs beginnt.
+ * Signale bleiben auf `strict`, damit ein unvolles Fenster kein Cross erzeugt.
+ */
+export function smaThroughStart(strict: readonly (number | undefined)[], closes: readonly number[]): (number | undefined)[] {
+  const out = strict.slice();
+  let sum = 0;
+  for (let i = 0; i < closes.length; i++) {
+    const close = closes[i];
+    if (!Number.isFinite(close)) {
+      out[i] = undefined;
+      continue;
+    }
+    sum += close;
+    if (out[i] == null) out[i] = sum / (i + 1);
+  }
+  return out;
+}
+
 function emaSeries(data: number[], period: number): (number | undefined)[] {
   const out: (number | undefined)[] = new Array(data.length);
   const k = 2 / (period + 1);
@@ -120,10 +140,10 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
   if (bars.length === 0) return { points: [], signals: [], indexOf, indexByDate };
   const closes = bars.map(b => b.close);
   const dates = bars.map(b => b.date);
-  const ma200 = smaSeries(closes, 200);
-  const ma100 = smaSeries(closes, 100);
-  const ma50 = smaSeries(closes, 50);
-  const ma20 = smaSeries(closes, 20);
+  const ma200Strict = smaSeries(closes, 200);
+  const ma100Strict = smaSeries(closes, 100);
+  const ma50Strict = smaSeries(closes, 50);
+  const ma20Strict = smaSeries(closes, 20);
   const ema26 = emaSeries(closes, 26);
   const ema12 = emaSeries(closes, 12);
   const ema9 = emaSeries(closes, 9);
@@ -143,8 +163,8 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
   const macdAt = (i: number) => (isFinite(macdRaw[i]) ? macdRaw[i] : undefined);
   const signals: TradingSignal[] = [];
   for (let i = 1; i < bars.length; i++) {
-    const cur50 = ma50[i], prev50 = ma50[i - 1];
-    const cur200 = ma200[i], prev200 = ma200[i - 1];
+    const cur50 = ma50Strict[i], prev50 = ma50Strict[i - 1];
+    const cur200 = ma200Strict[i], prev200 = ma200Strict[i - 1];
     if (cur50 != null && cur200 != null && prev50 != null && prev200 != null) {
       if (prev50 <= prev200 && cur50 > cur200) {
         signals.push({ date: dates[i], type: "buy", reason: "Golden Cross (MA50 > MA200)", price: closes[i] });
@@ -169,6 +189,11 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
     arr.push(s);
     signalsByDate.set(s.date, arr);
   }
+
+  const ma200 = smaThroughStart(ma200Strict, closes);
+  const ma100 = smaThroughStart(ma100Strict, closes);
+  const ma50 = smaThroughStart(ma50Strict, closes);
+  const ma20 = smaThroughStart(ma20Strict, closes);
 
   const points: FullPoint[] = bars.map((b, i) => {
     const m = macdAt(i);
@@ -197,7 +222,8 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
 /**
  * Fenster = Ausschnitt der vollen Serie. Wert am Datum D = Wert der Gesamt-Historie an D.
  * Kopien der Bars (anderes Objekt, gleiches Datum) treffen denselben Index.
- * Fehlt Historie vor Fensterbeginn, bleiben lange Perioden am Anfang leer.
+ * SMA liegt auch vor dem vollen Fenster: Mittelwert der vorhandenen Schlüsse, ab dem Fenster die normale Periode.
+ * EMA bleibt leer, bis ihr Fenster voll ist.
  */
 export function buildWindowSeries(full: FullSeries, bars: OHLCVPoint[]): WindowSeries {
   if (bars.length === 0) return { points: [], signals: [] };
