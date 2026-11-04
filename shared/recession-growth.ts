@@ -7,6 +7,7 @@
  * Kegel = dieser Median ± coneSigma · Stichproben-Streuung.
  * Fehlende Größen bleiben available:false mit Grund, nie 0 und nie interpoliert.
  */
+import { epsPrintFromEarningsRow } from "./recession-market-charts";
 import { asOfJoin } from "./recession-ta";
 
 export const GROWTH_INDEXES = ["SPY", "VGK", "ASHR"] as const;
@@ -57,10 +58,59 @@ export const GROWTH_GAP_PARAMS = {
 export const GROWTH_HOLDINGS_PARAMS = {
   maxNames: 10,
   percentAbove: 1,
+  /** Fund fraction. Below this the weighted g_fwd is n/a. */
+  minCoverage: 0.15,
+  /** Below this the value stays, and the UI names the thin sample. */
+  warnCoverage: 0.5,
 } as const;
 
-export const FORWARD_FORMULA_EPS = "g_fwd = EPS_consensus / EPS_TTM − 1";
-export const FORWARD_FORMULA_HOLDINGS = "g_fwd = Σ (w_i / Σ w) · (EPS_consensus,i / EPS_TTM,i − 1)";
+/**
+ * t ist der Abstand Mitte TTM zu Mitte Konsens-FY: Tage bis zum FY-Ende (FMP `date`) + midYearDays.
+ * g_ann = (consensus / adjTTM) ^ (oneYearDays / t) − 1. Keine Schwelle, kein Folgejahr, kein Floor, kein Cap.
+ * g wird nicht gedämpft.
+ * Das Aggregationsgewicht ist Index-Gewicht × min(1, t/oneYearDays) × Huber, mit diesem t. Das ist technische Stabilisierung.
+ * Der Index zählt Yahoo nur mit vier adjusted Quartalen und einem FY-Ende. trailingEps und +1y ohne t zählen nicht.
+ */
+export const FORWARD_HORIZON = {
+  oneYearDays: 365,
+  /** Halbes Jahr, von Philip festgelegt. t = Tage bis FY-Ende + midYearDays. */
+  midYearDays: 182,
+} as const;
+
+/** adjTTM = Summe der letzten reportedQuarters gemeldeten epsActual. */
+export const EPS_BASIS = {
+  reportedQuarters: 4,
+} as const;
+
+/**
+ * fiscalDateEnding ordnet das Quartal dem Yahoo-NonGaap-Monat zu.
+ * Fehlt das Feld, gilt der Meldetag: letztes Quartalsende, 0 bis reportLagDays Tage davor.
+ */
+export const EPS_REPORT_WINDOW = {
+  reportLagDays: 75,
+} as const;
+
+/**
+ * Robust z = madScale · (g − median) / MAD.
+ * Huber-Gewicht = 1 bei |z| ≤ robustZMax, sonst robustZMax / |z|. Symmetrisch, kein harter Ausschluss.
+ * madZeroFallback gilt bei MAD 0 (mindestens die Hälfte sitzt auf dem Median).
+ * "meanAD" skaliert mit der mittleren absoluten Abweichung. Ist die auch 0, ist jeder Druck der Median und der Filter ruht.
+ */
+export const FORWARD_OUTLIER = {
+  robustZMax: 2.5,
+  madScale: 0.6745,
+  minNames: 4,
+  madZeroFallback: "meanAD",
+} as const;
+
+export const EPS_CURRENCY = {
+  pencePerPound: 100,
+} as const;
+
+export const FORWARD_FORMULA_EPS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende + 182";
+/** Unannualisierter Quotient. Nur Yahoo-Felder ohne FY-Ende, nicht der FMP-Konsens. */
+export const FORWARD_FORMULA_LEVEL = "g_fwd = EPS_consensus / EPS_TTM − 1";
+export const FORWARD_FORMULA_HOLDINGS = "g_ann = (EPS_consensus / adjTTM)^(365/t) − 1, t = Tage bis FY-Ende + 182; g_fwd = Σ (w_i · min(1, t_i/365) · h_i · g_ann,i) / Σ (w_i · min(1, t_i/365) · h_i); g_ann ungedämpft; h = Huber(|MAD-z|, symmetrisch); technische Stabilisierung";
 export const FORWARD_FORMULA_YAHOO_RATIO = "g_fwd = earningsTrend[+1y].avg / trailingEps − 1";
 export const FORWARD_FORMULA_YAHOO_GROWTH = "g_fwd = earningsTrend[+1y].growth (Yahoo-YoY, nicht Konsens/TTM)";
 export const FORWARD_FORMULA_YAHOO_HTML = "g_fwd = forwardEps / trailingEps − 1";
@@ -123,8 +173,27 @@ export type ForwardReading =
       asOf: string;
       source: string;
       formula: string;
+      /** Set when the sample is thinner than warnCoverage but still published. */
+      coverageWarn?: string | null;
+      /** Pro Ticker: ungedämpftes g, Aggregationsgewicht, t und Quelle. */
+      lines?: ForwardHoldingLine[];
     }
-  | NaReading;
+  | (NaReading & { lines?: ForwardHoldingLine[] });
+
+export interface ForwardHoldingLine {
+  symbol: string;
+  /** Ungedämpftes g_ann in Prozent. null, wenn der Ticker nicht im Mittel ist. */
+  gAnnPct: number | null;
+  /** Index-Gewicht in der Einheit der Holdings-Quelle. */
+  indexWeight: number;
+  /** Index-Gewicht × min(1, t/365) × Huber. null, wenn der Ticker nicht im Mittel ist. */
+  weight: number | null;
+  /** t = Tage bis FY-Ende + 182. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
+  tDays: number | null;
+  /** Herkunft von g und t. null, wenn keine Quelle vorliegt. */
+  source: string | null;
+  excludeReason: string | null;
+}
 
 export type SigmaBand = "innerhalb_nearZero" | "zwischen_nearZero_und_cone" | "ausserhalb_cone";
 
@@ -274,13 +343,13 @@ export function forwardFromEps(
   ttm: number | null,
   asOf: string,
   source: string,
-  formula: string = FORWARD_FORMULA_EPS,
+  formula: string = FORWARD_FORMULA_LEVEL,
 ): ForwardReading {
   if (consensus == null || !Number.isFinite(consensus)) {
     return { available: false, reason: "n/a — Forward-Konsens: epsAvg fehlt" };
   }
   if (!(consensus > 0)) return { available: false, reason: "n/a — Forward-Konsens: epsAvg ist nicht positiv" };
-  if (ttm == null || !Number.isFinite(ttm)) return { available: false, reason: "n/a — TTM-EPS fehlt (ratios-ttm)" };
+  if (ttm == null || !Number.isFinite(ttm)) return { available: false, reason: "n/a — TTM-EPS fehlt" };
   if (!(ttm > 0)) return { available: false, reason: "n/a — TTM-EPS ist nicht positiv (keine Division durch 0)" };
   return {
     available: true,
@@ -312,6 +381,30 @@ export function holdingsFromYahooHtml(html: string): HoldingWeightRow[] {
   return weightsFromHoldingsPayload(out);
 }
 
+/**
+ * trailingEps and forwardEps from the quote page, plus the currency those EPS use.
+ * financialCurrency is the reporting currency of both EPS fields.
+ * quoteCurrency is the trading currency and can differ (GBp quote, USD EPS).
+ */
+export function yahooEpsContext(html: string, symbol: string): {
+  trailing: number | null;
+  forward: number | null;
+  financialCurrency: string | null;
+  quoteCurrency: string | null;
+} {
+  const pair = epsPairFromYahooHtml(html);
+  const text = unescapeYahooHtml(html);
+  const fin = text.match(/"financialCurrency":"([A-Za-z]{3})"/);
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const quote = text.match(new RegExp(`"currency":"([A-Za-z]{3})","symbol":"${escaped}"`));
+  return {
+    trailing: pair.trailing,
+    forward: pair.forward,
+    financialCurrency: fin?.[1] ?? null,
+    quoteCurrency: quote?.[1] ?? null,
+  };
+}
+
 /** trailingEps und forwardEps aus der eingebetteten Quote-Summary der Quote-Seite. */
 export function epsPairFromYahooHtml(html: string): { trailing: number | null; forward: number | null } {
   if (!html) return { trailing: null, forward: null };
@@ -324,22 +417,551 @@ export function epsPairFromYahooHtml(html: string): { trailing: number | null; f
   return { trailing: read("trailingEps"), forward: read("forwardEps") };
 }
 
-/** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
-export function nextConsensusEps(raw: unknown, asOf: string): { date: string; eps: number } | null {
-  if (!Array.isArray(raw)) return null;
-  const rows: { date: string; eps: number }[] = [];
+function consensusRows(raw: unknown): { date: string; eps: number; currency: string | null }[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: { date: string; eps: number; currency: string | null }[] = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const r = row as Record<string, unknown>;
     const date = String(r.date ?? "").slice(0, 10);
     const eps = [r.epsAvg, r.estimatedEpsAvg, r.estimatedEpsDiluted, r.estimatedEps]
       .map(v => (typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN))
-      .find(v => Number.isFinite(v) && v > 0);
+      .find(v => Number.isFinite(v));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
-    rows.push({ date, eps });
+    const currencyRaw = r.currency ?? r.reportedCurrency ?? r.epsCurrency;
+    const currency = typeof currencyRaw === "string" && currencyRaw.trim() ? currencyRaw.trim() : null;
+    rows.push({ date, eps, currency });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
-  return rows.find(r => r.date >= asOf) ?? null;
+  return rows;
+}
+
+export function horizonDays(from: string, to: string): number {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000;
+}
+
+/** t = Tage bis FY-Ende + 182. Reine Summe, kein Floor und kein Cap. */
+export function midToMidDays(daysToFyEnd: number): number {
+  return daysToFyEnd + FORWARD_HORIZON.midYearDays;
+}
+
+/** Nächster Konsens-EPS ab asOf. Vergangene Schätzjahre zählen nicht als Forward. */
+export function nextConsensusEps(raw: unknown, asOf: string): { date: string; eps: number } | null {
+  const row = consensusRows(raw).find(r => r.date >= asOf);
+  return row ? { date: row.date, eps: row.eps } : null;
+}
+
+/**
+ * Nächstes FY-Ende ab asOf, einschließlich heute. Kein Sprung ins Folgejahr und keine Schwelle.
+ * t = Tage bis FY-Ende + 182. Ein nicht positives eps bleibt die gewählte Zeile und fällt in annualizedFwdPct heraus.
+ */
+export function consensusForOneYear(raw: unknown, asOf: string): {
+  date: string;
+  eps: number;
+  currency: string | null;
+  /** Kalendertage von asOf bis zum FY-Ende. 0, wenn das FY heute endet. */
+  daysToFyEnd: number;
+  /** t = daysToFyEnd + 182. */
+  horizonDays: number;
+} | null {
+  const rows = consensusRows(raw)
+    .filter(row => row.date >= asOf)
+    .map(row => {
+      const daysToFyEnd = horizonDays(asOf, row.date);
+      return { ...row, daysToFyEnd, horizonDays: midToMidDays(daysToFyEnd) };
+    });
+  return rows[0] ?? null;
+}
+
+/** g_ann in Prozent. (consensus/adjTTM)^(365/t) − 1, ohne Dämpfung und ohne Tagesfloor. */
+export function annualizedFwdPct(consensus: number, ttm: number, days: number): { gFwdPct: number } | { reason: string } {
+  if (!(consensus > 0)) return { reason: "n/a — Konsens-EPS ist nicht positiv" };
+  if (!(ttm > 0)) return { reason: "n/a — adjTTM ≤ 0" };
+  if (!(days > 0)) return { reason: "n/a — Horizont t ist nicht positiv" };
+  const g = (consensus / ttm) ** (FORWARD_HORIZON.oneYearDays / days) - 1;
+  if (!Number.isFinite(g)) return { reason: "n/a — g_ann nicht endlich" };
+  return { gFwdPct: g * GROWTH_GAP_PARAMS.percentScale };
+}
+
+/** Technische Stabilisierung. Ohne t (Yahoo-1J ohne FY-Ende) bleibt der Faktor 1. */
+export function horizonWeightFactor(tDays: number | null | undefined): number {
+  if (tDays == null || !Number.isFinite(tDays)) return 1;
+  if (!(tDays > 0)) return 0;
+  return Math.min(1, tDays / FORWARD_HORIZON.oneYearDays);
+}
+
+function isFullYearPeriod(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  const period = String((row as Record<string, unknown>).period ?? "").trim().toUpperCase();
+  return period === "FY" || period === "ANNUAL" || period === "YEAR";
+}
+
+/**
+ * adjTTM = Summe der letzten 4 gemeldeten epsActual bis asOf.
+ * Ein FY-Abschluss zählt nicht als Quartal. Weniger als 4 Drucke → null.
+ * Summe ≤ 0 → unusableReason, kein stiller Ersatz.
+ */
+export function adjTtmFromEarnings(raw: unknown, asOf: string): {
+  adjTtm: number | null;
+  quarters: { date: string; eps: number }[];
+  unusableReason: string | null;
+} {
+  const list = Array.isArray(raw) ? raw : [];
+  const byDate = new Map<string, { date: string; eps: number }>();
+  for (const row of list) {
+    if (isFullYearPeriod(row)) continue;
+    const parsed = epsPrintFromEarningsRow(row);
+    if (!parsed || parsed.date > asOf) continue;
+    byDate.set(parsed.date, parsed);
+  }
+  const quarters = Array.from(byDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, EPS_BASIS.reportedQuarters)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (quarters.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters, unusableReason: null };
+  }
+  const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) return { adjTtm, quarters, unusableReason: "n/a — adjTTM ≤ 0" };
+  return { adjTtm, quarters, unusableReason: null };
+}
+
+export interface ResolvedQuarter {
+  date: string;
+  eps: number;
+  fmpEps: number;
+  source: "fmp" | "yahoo-nongaap";
+  /** true, wenn fiscalDateEnding oder das Meldetag-Fenster ein Yahoo-NonGaap-Quartal getroffen hat. */
+  yahooChecked: boolean;
+}
+
+/**
+ * Liefert die Quelle fiscalDateEnding, ordnet das den Yahoo-NonGaap-Monat zu.
+ * Fehlt das Feld, gilt Meldetag → letztes Quartalsende im Zeitfenster.
+ * Der übernommene Wert ist der NonGaap-Druck.
+ * Liefert Yahoo gar keine NonGaap-Quartale, bleibt der FMP-Druck stehen:
+ * es gibt dann keine Gegenprobe, der Aufrufer weist die Quelle aus.
+ */
+export function resolveAdjustedFmpQuarters(fmpRaw: unknown, yahooRaw: unknown | null, asOf: string): {
+  adjTtm: number | null;
+  quarters: ResolvedQuarter[];
+  unusableReason: string | null;
+  cite: string;
+} {
+  const fmp = fmpQuarterRows(fmpRaw, asOf);
+  if (fmp.rows.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters: [], unusableReason: null, cite: "" };
+  }
+  const yahooLeft = adjTtmFromYahooAdjusted(yahooRaw, asOf).quarters.map(row => ({ date: row.date, eps: row.eps }));
+  const yahooSeen = yahooLeft.length > 0;
+  const resolved: ResolvedQuarter[] = [];
+  const withFiscal = fmp.rows.filter(row => row.fiscalDateEnding != null)
+    .sort((a, b) => String(b.fiscalDateEnding).localeCompare(String(a.fiscalDateEnding)));
+  const byReportDate = fmp.rows.filter(row => row.fiscalDateEnding == null)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const byReport = new Map<string, ResolvedQuarter>();
+  for (const row of [...withFiscal, ...byReportDate]) {
+    const yahooEps = row.fiscalDateEnding != null
+      ? takeYahooQuarterInMonth(yahooLeft, row.fiscalDateEnding)
+      : takeYahooQuarterWithinWindow(yahooLeft, row.date);
+    if (yahooEps != null) {
+      byReport.set(row.date, {
+        date: row.date,
+        eps: yahooEps,
+        fmpEps: row.eps,
+        source: "yahoo-nongaap",
+        yahooChecked: true,
+      });
+      continue;
+    }
+    if (yahooSeen) {
+      return {
+        adjTtm: null,
+        quarters: resolved,
+        unusableReason: row.fiscalDateEnding != null
+          ? `n/a — Quartal ${row.date} fiscalDateEnding ${row.fiscalDateEnding} nicht auf ein Yahoo-NonGaap-Quartalsende gelegt`
+          : `n/a — Quartal ${row.date} nicht auf ein Yahoo-NonGaap-Quartalsende im Zeitfenster gelegt`,
+        cite: "",
+      };
+    }
+    byReport.set(row.date, {
+      date: row.date,
+      eps: row.eps,
+      fmpEps: row.eps,
+      source: "fmp",
+      yahooChecked: false,
+    });
+  }
+  for (const row of fmp.rows) {
+    const hit = byReport.get(row.date);
+    if (hit) resolved.push(hit);
+  }
+  const adjTtm = resolved.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) {
+    return { adjTtm, quarters: resolved, unusableReason: "n/a — adjTTM ≤ 0", cite: "" };
+  }
+  const parts = resolved.map(row => {
+    const value = shownPlain(row.eps);
+    return row.source === "yahoo-nongaap"
+      ? `${row.date} Yahoo NonGaap ${value} (FMP epsActual ${shownPlain(row.fmpEps)})`
+      : `${row.date} epsActual ${value}`;
+  });
+  return {
+    adjTtm,
+    quarters: resolved,
+    unusableReason: null,
+    cite: `adjTTM Summe letzter ${EPS_BASIS.reportedQuarters} adjusted = ${shownPlain(adjTtm)} (${parts.join(" + ")})`,
+  };
+}
+
+interface FmpQuarterRow {
+  date: string;
+  fiscalDateEnding: string | null;
+  eps: number;
+  estimate: number | null;
+}
+
+function fmpQuarterRows(raw: unknown, asOf: string): { rows: FmpQuarterRow[] } {
+  const list = Array.isArray(raw) ? raw : [];
+  const byDate = new Map<string, FmpQuarterRow>();
+  for (const row of list) {
+    if (isFullYearPeriod(row)) continue;
+    const parsed = epsPrintFromEarningsRow(row);
+    if (!parsed || parsed.date > asOf) continue;
+    const record = row as Record<string, unknown>;
+    const fiscal = String(record.fiscalDateEnding ?? "").slice(0, 10);
+    const fiscalDateEnding = /^\d{4}-\d{2}-\d{2}$/.test(fiscal) ? fiscal : null;
+    const estimate = finiteLoose(record.epsEstimated);
+    if (!byDate.has(parsed.date)) byDate.set(parsed.date, { date: parsed.date, fiscalDateEnding, eps: parsed.eps, estimate });
+  }
+  const rows = Array.from(byDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, EPS_BASIS.reportedQuarters)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (rows.length < EPS_BASIS.reportedQuarters) return { rows: [] };
+  return { rows };
+}
+
+function finiteLoose(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
+/** Yahoo-Quartalsende im selben Kalendermonat. Jedes Ende nur einmal. Kein Tagesabstand. */
+function takeYahooQuarterInMonth(pool: { date: string; eps: number }[], fiscalDateEnding: string): number | null {
+  const month = fiscalDateEnding.slice(0, 7);
+  const hits: number[] = [];
+  for (let i = 0; i < pool.length; i++) {
+    if (pool[i].date.slice(0, 7) === month) hits.push(i);
+  }
+  if (hits.length !== 1) return null;
+  const hit = pool[hits[0]];
+  pool.splice(hits[0], 1);
+  return hit.eps;
+}
+
+/** Letztes Yahoo-Quartalsende, 0 bis reportLagDays Tage vor dem Meldetag. Jedes Ende nur einmal. */
+function takeYahooQuarterWithinWindow(pool: { date: string; eps: number }[], reportDate: string): number | null {
+  let best = -1;
+  let bestLag = EPS_REPORT_WINDOW.reportLagDays + 1;
+  for (let i = 0; i < pool.length; i++) {
+    const lag = horizonDays(pool[i].date, reportDate);
+    if (lag < 0 || lag > EPS_REPORT_WINDOW.reportLagDays || lag >= bestLag) continue;
+    best = i;
+    bestLag = lag;
+  }
+  if (best < 0) return null;
+  const hit = pool[best];
+  pool.splice(best, 1);
+  return hit.eps;
+}
+
+function shownPlain(value: number): string {
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * Fehlende EPS-Währung. Eine bezeichnete Filingswährung wird übernommen.
+ * GBp gegen GBP rechnet nur alignConsensusToTtm, und nur wenn beide Kürzel dastehen.
+ * Aus dem Größenverhältnis wird keine Währung geraten.
+ */
+export function completeEpsCurrencies(
+  _consensus: number,
+  consensusCcy: string | null,
+  _ttm: number,
+  ttmCcy: string | null,
+): { consensusCcy: string | null; ttmCcy: string | null; inferred: string | null } {
+  if (consensusCcy && ttmCcy) return { consensusCcy, ttmCcy, inferred: null };
+  const known = consensusCcy ?? ttmCcy;
+  if (!known) return { consensusCcy, ttmCcy, inferred: null };
+  return {
+    consensusCcy: consensusCcy ?? known,
+    ttmCcy: ttmCcy ?? known,
+    inferred: `fehlende EPS-Währung ${known}`,
+  };
+}
+
+/** London-Listing. Adjusted und Währung müssen von Yahoo NonGaap bezeichnet sein, sonst n/a. */
+export function londonListingIssue(
+  symbol: string,
+  _consensus: number,
+  _ttm: number,
+  consensusCcy: string | null,
+  ttmCcy: string | null,
+  yahooChecked: boolean,
+): string | null {
+  if (!symbol.endsWith(".L")) return null;
+  if (!yahooChecked) return "n/a — .L Quartale nicht gegen Yahoo NonGaap gesichert";
+  if (!consensusCcy || !ttmCcy) return "n/a — .L Währung nicht gesichert";
+  return null;
+}
+
+export interface YahooAdjQuarter {
+  date: string;
+  eps: number;
+}
+
+/**
+ * adjTTM aus Yahoo adjusted, nie aus GAAP und nie aus trailingEps.
+ * Quelle ist earningsHistoryNonGaap, ersatzweise earningsNonGaap.earningsChart.
+ * Weniger als 4 Quartale → null. Eine Mischung mit earningsGaap ist kein adjTTM.
+ */
+export function adjTtmFromYahooAdjusted(raw: unknown, asOf: string): {
+  adjTtm: number | null;
+  quarters: YahooAdjQuarter[];
+  currency: string | null;
+  unusableReason: string | null;
+} {
+  const history = readYahooAdjustedHistory(raw);
+  const chart = readYahooAdjustedChart(raw);
+  const picked = history.length >= chart.length ? history : chart;
+  const quarters = picked
+    .filter(row => row.date <= asOf)
+    .slice(0, EPS_BASIS.reportedQuarters);
+  const currency = picked.find(row => row.currency)?.currency ?? null;
+  if (quarters.length < EPS_BASIS.reportedQuarters) {
+    return { adjTtm: null, quarters, currency, unusableReason: null };
+  }
+  const adjTtm = quarters.reduce((sum, row) => sum + row.eps, 0);
+  if (!(adjTtm > 0)) return { adjTtm, quarters, currency, unusableReason: "n/a — adjTTM ≤ 0" };
+  return { adjTtm, quarters, currency, unusableReason: null };
+}
+
+interface YahooAdjRow {
+  date: string;
+  eps: number;
+  currency: string | null;
+}
+
+function readYahooAdjustedHistory(raw: unknown): YahooAdjRow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const history = (raw as { earningsHistoryNonGaap?: { history?: unknown } }).earningsHistoryNonGaap?.history;
+  if (!Array.isArray(history)) return [];
+  const byDate = new Map<string, YahooAdjRow>();
+  for (const row of history) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const quarter = record.quarter && typeof record.quarter === "object" ? record.quarter as Record<string, unknown> : {};
+    const date = String(quarter.fmt ?? "").slice(0, 10);
+    const eps = yahooRaw(record.epsActual);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof record.currency === "string" && record.currency.trim() ? record.currency.trim() : null;
+    if (!byDate.has(date)) byDate.set(date, { date, eps, currency });
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function readYahooAdjustedChart(raw: unknown): YahooAdjRow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const quarterly = (raw as { earningsNonGaap?: { earningsChart?: { quarterly?: unknown } } }).earningsNonGaap?.earningsChart?.quarterly;
+  if (!Array.isArray(quarterly)) return [];
+  const byDate = new Map<string, YahooAdjRow>();
+  for (const row of quarterly) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const periodEnd = record.periodEndDate && typeof record.periodEndDate === "object"
+      ? record.periodEndDate as Record<string, unknown>
+      : {};
+    const date = String(periodEnd.fmt ?? "").slice(0, 10);
+    const eps = yahooRaw(record.actual);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    if (!byDate.has(date)) byDate.set(date, { date, eps, currency: null });
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * Nächstes offenes FY aus earningsTrendNonGaap (0y, sonst +1y), dieselbe Regel wie consensusForOneYear.
+ * Das growth-Feld und ein +1y ohne endDate sind kein g und kein t.
+ */
+export function consensusFromYahooAdjusted(raw: unknown, asOf: string): ReturnType<typeof consensusForOneYear> {
+  if (!raw || typeof raw !== "object") return null;
+  const trend = (raw as { earningsTrendNonGaap?: { trend?: unknown } }).earningsTrendNonGaap?.trend;
+  if (!Array.isArray(trend)) return null;
+  const rows: { date: string; epsAvg: number; currency: string | null }[] = [];
+  for (const row of trend) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = String(record.period ?? "");
+    if (period !== "0y" && period !== "+1y") continue;
+    const date = String(record.endDate ?? "").slice(0, 10);
+    const estimate = record.earningsEstimate && typeof record.earningsEstimate === "object"
+      ? record.earningsEstimate as Record<string, unknown>
+      : {};
+    const eps = yahooRaw(estimate.avg);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof estimate.earningsCurrency === "string" && estimate.earningsCurrency.trim()
+      ? estimate.earningsCurrency.trim()
+      : null;
+    rows.push({ date, epsAvg: eps, currency });
+  }
+  return consensusForOneYear(rows, asOf);
+}
+
+/**
+ * Adjusted-Konsens nur aus earningsTrendNonGaap.
+ * Das Fiskaljahr ist das 0y-Ende. Offen ist 0y, sonst +1y im selben Monat.
+ * Liegen Quartalsenden vor und keiner davon hat diesen Monat, ist das FY nicht belegt.
+ */
+export function provedAdjustedFiscalYear(
+  raw: unknown,
+  quarterEnds: readonly string[],
+  asOf: string,
+): {
+  date: string;
+  eps: number;
+  currency: string | null;
+  daysToFyEnd: number;
+  horizonDays: number;
+  period: "0y" | "+1y";
+  fiscalYearEnd: string;
+} | { reason: string } {
+  if (!raw || typeof raw !== "object") return { reason: "n/a — Konsens nicht als adjusted nachgewiesen" };
+  const trend = (raw as { earningsTrendNonGaap?: { trend?: unknown } }).earningsTrendNonGaap?.trend;
+  if (!Array.isArray(trend)) return { reason: "n/a — Konsens nicht als adjusted nachgewiesen" };
+  const rows: { period: "0y" | "+1y"; date: string; eps: number; currency: string | null }[] = [];
+  for (const row of trend) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = String(record.period ?? "");
+    if (period !== "0y" && period !== "+1y") continue;
+    const date = String(record.endDate ?? "").slice(0, 10);
+    const estimate = record.earningsEstimate && typeof record.earningsEstimate === "object"
+      ? record.earningsEstimate as Record<string, unknown>
+      : {};
+    const eps = yahooRaw(estimate.avg);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    const currency = typeof estimate.earningsCurrency === "string" && estimate.earningsCurrency.trim()
+      ? estimate.earningsCurrency.trim()
+      : null;
+    rows.push({ period, date, eps, currency });
+  }
+  const labeled = rows.find(row => row.period === "0y");
+  if (!labeled) return { reason: "n/a — Fiskaljahr nicht belegt" };
+  const fyMonth = labeled.date.slice(5, 7);
+  const open = labeled.date >= asOf
+    ? labeled
+    : rows.find(row => row.period === "+1y" && row.date >= asOf && row.date.slice(5, 7) === fyMonth);
+  if (!open) return { reason: `n/a — kein offenes Fiskaljahr zum Ende ${labeled.date}` };
+  const ends = quarterEnds.filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  if (ends.length && !ends.some(date => date.slice(5, 7) === fyMonth)) {
+    return { reason: `n/a — Konsens-FY Ende ${labeled.date} gehört nicht zu den Quartalen` };
+  }
+  const daysToFyEnd = horizonDays(asOf, open.date);
+  return {
+    date: open.date,
+    eps: open.eps,
+    currency: open.currency,
+    daysToFyEnd,
+    horizonDays: midToMidDays(daysToFyEnd),
+    period: open.period,
+    fiscalYearEnd: labeled.date,
+  };
+}
+
+/** JSON-Objekt hinter `"key":` . Strings und Escapes zählen nicht als Klammer. */
+export function sliceJsonObject(text: string, key: string): unknown | null {
+  const token = `"${key}":`;
+  const at = text.indexOf(token);
+  if (at < 0) return null;
+  let i = at + token.length;
+  while (text[i] === " ") i++;
+  if (text[i] !== "{") return null;
+  const start = i;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as unknown;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function majorCurrency(amount: number, code: string): { amount: number; code: string } {
+  const trimmed = code.trim();
+  if (trimmed === "GBp" || trimmed === "GBX") {
+    return { amount: amount / EPS_CURRENCY.pencePerPound, code: "GBP" };
+  }
+  return { amount, code: trimmed.toUpperCase() };
+}
+
+/**
+ * Put consensus into the TTM currency. Same code, or GBp versus GBP, needs no FX table.
+ * Differing majors need usdPerUnit (units of that currency for 1 USD, USD itself is 1).
+ */
+export function alignConsensusToTtm(
+  consensus: number,
+  consensusCcy: string | null,
+  ttm: number,
+  ttmCcy: string | null,
+  usdPerUnit: Record<string, number> | null,
+): { consensus: number; ttm: number; currency: string; note: string } | { error: string } {
+  if (!consensusCcy || !ttmCcy) return { error: "Währung fehlt auf einer EPS-Seite" };
+  const cons = majorCurrency(consensus, consensusCcy);
+  const trail = majorCurrency(ttm, ttmCcy);
+  if (cons.code === trail.code) {
+    const scaled = consensusCcy.trim() !== ttmCcy.trim();
+    return {
+      consensus: cons.amount,
+      ttm: trail.amount,
+      currency: cons.code,
+      note: scaled ? `${consensusCcy} und ${ttmCcy} auf ${cons.code} (pencePerPound ${EPS_CURRENCY.pencePerPound})` : cons.code,
+    };
+  }
+  const rates: Record<string, number> | null = usdPerUnit ? { USD: 1, ...usdPerUnit } : null;
+  const from = rates ? rates[cons.code] : undefined;
+  const to = rates ? rates[trail.code] : undefined;
+  if (from == null || to == null || !(from > 0) || !(to > 0)) {
+    return { error: `keine FX für ${cons.code}→${trail.code}` };
+  }
+  return {
+    consensus: (cons.amount / from) * to,
+    ttm: trail.amount,
+    currency: trail.code,
+    note: `${cons.code}→${trail.code} via USD (Frankfurter/ECB)`,
+  };
 }
 
 function median(xs: number[]): number {
@@ -650,46 +1272,208 @@ export interface HoldingGrowthRow {
   symbol: string;
   weight: number;
   gFwdPct: number | null;
+  /** t = Tage bis FY-Ende + 182. null = Quelle ohne FY-Ende, Horizontfaktor 1. */
+  tDays?: number | null;
+  /** Herkunft von g und t. Bleibt an der Zeile, auch wenn der Ticker nicht im Mittel ist. */
+  source?: string | null;
+  /** Gesetzter Grund: nicht im Mittel, das Index-Gewicht bleibt im Abdeckungstext. */
+  excludeReason?: string | null;
 }
 
 export type WeightedForward =
-  | { available: true; gFwdPct: number; fundFraction: number | null; used: string[]; formula: string; note: string }
-  | { available: false; reason: string };
+  | {
+      available: true;
+      gFwdPct: number;
+      fundFraction: number | null;
+      used: string[];
+      downweighted: string[];
+      lines: ForwardHoldingLine[];
+      formula: string;
+      note: string;
+      coverageWarn: string | null;
+    }
+  | { available: false; reason: string; lines?: ForwardHoldingLine[] };
 
 function deFixed(v: number, digits: number): string {
   const sign = v < 0 ? "−" : "";
   return sign + Math.abs(v).toFixed(digits).replace(".", ",");
 }
 
+/** Sichtbarer Hinweis. Der Parametername warnCoverage bleibt intern. */
+function lowCoverageBanner(coverage: number, excluded: string[], downweighted: string[]): string {
+  const pct = deFixed(coverage, 1);
+  const limit = (GROWTH_HOLDINGS_PARAMS.warnCoverage * 100).toFixed(0);
+  const parts = [`Geringe Abdeckung: ${pct} % < ${limit} %`];
+  if (downweighted.length) {
+    const z = deFixed(FORWARD_OUTLIER.robustZMax, 1);
+    parts.push(`Huber-Gewicht (MAD-z, Schwelle ${z}, symmetrisch): ${downweighted.join(", ")}`);
+  }
+  if (excluded.length) parts.push(`ausgeschlossen: ${excluded.join(", ")}`);
+  return parts.join(", ");
+}
+
+function huberWeight(z: number): number {
+  const absZ = Math.abs(z);
+  if (!(absZ > FORWARD_OUTLIER.robustZMax)) return 1;
+  return FORWARD_OUTLIER.robustZMax / absZ;
+}
+
+type OutlierScale = "mad" | "meanAD" | "suspended";
+
+/** MAD, or madZeroFallback when MAD is 0. A zero meanAD suspends the filter. */
+function robustZ(values: number[]): { z: number[]; scale: OutlierScale } {
+  const med = median(values);
+  const absDev = values.map(value => Math.abs(value - med));
+  const mad = median(absDev);
+  if (mad > 0) {
+    return { z: values.map(value => FORWARD_OUTLIER.madScale * (value - med) / mad), scale: "mad" };
+  }
+  switch (FORWARD_OUTLIER.madZeroFallback) {
+    case "meanAD": {
+      const meanAd = absDev.reduce((sum, value) => sum + value, 0) / values.length;
+      if (meanAd > 0) {
+        return { z: values.map(value => FORWARD_OUTLIER.madScale * (value - med) / meanAd), scale: "meanAD" };
+      }
+      return { z: values.map(() => 0), scale: "suspended" };
+    }
+    default: {
+      const neverFallback: never = FORWARD_OUTLIER.madZeroFallback;
+      return neverFallback;
+    }
+  }
+}
+
+function scaleLabel(scale: OutlierScale): string {
+  switch (scale) {
+    case "mad":
+      return "";
+    case "meanAD":
+      return ` (${FORWARD_OUTLIER.madZeroFallback})`;
+    case "suspended":
+      return "";
+    default: {
+      const neverScale: never = scale;
+      return neverScale;
+    }
+  }
+}
+
 /**
- * Gewichtetes Mittel. Ein Holding ohne g zählt nicht als 0.
- * Die Veröffentlichung scheitert, wenn das belegte Gewicht nicht breiter ist als die größte Position.
+ * Gewichtetes Mittel. g_ann bleibt ungedämpft.
+ * Aggregationsgewicht = Index-Gewicht × min(1, t/365) × Huber(|MAD-z|). Das ist technische Stabilisierung, kein Deckeln von g.
+ * Ab minNames. Huber ist symmetrisch und streicht niemanden.
+ * Die Veröffentlichung scheitert, wenn das Index-Gewicht nicht breiter ist als die größte Position
+ * oder die Deckung unter minCoverage liegt. Darunter warnCoverage bleibt der Wert, mit Hinweis.
+ * Ein Ticker mit excludeReason ist nicht im Mittel. Sein Index-Gewicht steht im Abdeckungstext.
  * Der nicht gelistete Rest des Fonds ist keine einzelne Aktie und kippt die Regel nicht.
  */
 export function weightedHoldingsForward(rows: HoldingGrowthRow[]): WeightedForward {
   const listed = rows.filter(r => Number.isFinite(r.weight) && r.weight > 0);
   if (!listed.length) return { available: false, reason: "n/a — Holdings ohne positives Gewicht" };
   const used = listed.filter(r => r.gFwdPct != null && Number.isFinite(r.gFwdPct));
-  if (!used.length) return { available: false, reason: "n/a — kein Holding mit Forward-Wachstum" };
+  if (!used.length) {
+    return {
+      available: false,
+      reason: "n/a — kein Holding mit Forward-Wachstum",
+      lines: listed.map(row => ({
+        symbol: row.symbol,
+        gAnnPct: null,
+        indexWeight: row.weight,
+        weight: null,
+        tDays: row.tDays ?? null,
+        source: row.source ?? null,
+        excludeReason: row.excludeReason ?? "n/a — kein Forward",
+      })),
+    };
+  }
+  const huber = used.map(() => 1);
+  let scale: OutlierScale = "suspended";
+  if (used.length >= FORWARD_OUTLIER.minNames) {
+    const scored = robustZ(used.map(row => row.gFwdPct as number));
+    scale = scored.scale;
+    if (scale !== "suspended") {
+      scored.z.forEach((z, index) => {
+        huber[index] = huberWeight(z);
+      });
+    }
+  }
+  const horizon = used.map(row => horizonWeightFactor(row.tDays));
+  const downweighted = used.filter((_, index) => huber[index] < 1).map(row => row.symbol);
   const included = used.reduce((s, r) => s + r.weight, 0);
+  const mass = used.reduce((s, r, index) => s + r.weight * horizon[index] * huber[index], 0);
   const largest = used.reduce((m, r) => Math.max(m, r.weight), 0);
   if (!(included > largest)) {
     return { available: false, reason: "n/a — belegtes Gewicht ist nicht breiter als die größte Position" };
   }
-  const g = used.reduce((s, r) => s + r.weight * (r.gFwdPct as number), 0) / included;
+  if (!(mass > 0)) return { available: false, reason: "n/a — Aggregationsgewichte summieren sich auf 0" };
+  const g = used.reduce((s, r, index) => s + r.weight * horizon[index] * huber[index] * (r.gFwdPct as number), 0) / mass;
   const maxListed = listed.reduce((m, r) => Math.max(m, r.weight), 0);
-  const fundFraction = maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? included / 100 : included;
+  const asFraction = (weight: number) => (maxListed > GROWTH_HOLDINGS_PARAMS.percentAbove ? weight / 100 : weight);
+  const fundFraction = asFraction(included);
   const coverage = fundFraction <= 1.05 ? fundFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  const huberBySymbol = new Map<string, number>();
+  used.forEach((row, index) => huberBySymbol.set(row.symbol, huber[index] * horizon[index]));
+  const lines: ForwardHoldingLine[] = listed.map(row => {
+    const scaleW = huberBySymbol.get(row.symbol);
+    const inMean = scaleW != null;
+    return {
+      symbol: row.symbol,
+      gAnnPct: inMean ? (row.gFwdPct ?? null) : null,
+      indexWeight: row.weight,
+      weight: inMean ? row.weight * scaleW : null,
+      tDays: row.tDays ?? null,
+      source: row.source ?? null,
+      excludeReason: inMean ? null : (row.excludeReason ?? null),
+    };
+  });
+  if (coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.minCoverage) {
+    const dropped = lines
+      .filter(row => row.gAnnPct == null && row.excludeReason)
+      .map(row => `${row.symbol} (${String(row.excludeReason).replace(/^n\/a — /, "")})`);
+    const droppedNote = dropped.length ? `; ausgeschlossen: ${dropped.join(", ")}` : "";
+    return {
+      available: false,
+      reason: `n/a — Deckung ${deFixed(coverage, 1)} % < minCoverage ${(GROWTH_HOLDINGS_PARAMS.minCoverage * 100).toFixed(0)} %, ${used.length} Namen${droppedNote}`,
+      lines,
+    };
+  }
+  const reasoned = listed.filter(row => row.excludeReason && !used.some(kept => kept.symbol === row.symbol));
+  const reasonedFraction = asFraction(reasoned.reduce((s, row) => s + row.weight, 0));
+  const reasonedPct = reasonedFraction <= 1.05 ? reasonedFraction * GROWTH_GAP_PARAMS.percentScale : null;
+  const huberNote = downweighted.length
+    ? `, Huber-Gewicht (MAD-z, Schwelle ${deFixed(FORWARD_OUTLIER.robustZMax, 1)}${scaleLabel(scale)}, symmetrisch): ${downweighted.join(", ")}`
+    : "";
+  const stabilize = ", technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber, g ungedämpft";
+  const reasonedNote = reasoned.length
+    ? `, ausgeschlossen (nicht im Mittel, Gewicht zählt in der Abdeckung${reasonedPct != null ? ` ${deFixed(reasonedPct, 1)} %` : ""}): ${reasoned.map(row => `${row.symbol} (${String(row.excludeReason).replace(/^n\/a — /, "")})`).join(", ")}`
+    : "";
+  const listedWeight = listed.reduce((s, row) => s + row.weight, 0);
   const note = coverage != null
-    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position`
-    : `Deckung der gelisteten Gewichte ${deFixed((included / listed.reduce((s, r) => s + r.weight, 0)) * 100, 1)} %, Regel belegtes Gewicht > größte Position`;
+    ? `Deckung ${deFixed(coverage, 1)} % des Fonds, ${used.length} Namen, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`
+    : `Deckung der gelisteten Gewichte ${deFixed((included / listedWeight) * 100, 1)} %, Regel belegtes Gewicht > größte Position${stabilize}${huberNote}${reasonedNote}`;
+  const excluded = listed
+    .filter(row => !used.some(kept => kept.symbol === row.symbol))
+    .map(row => {
+      const fraction = asFraction(row.weight);
+      const pct = fraction <= 1.05 ? `${deFixed(fraction * GROWTH_GAP_PARAMS.percentScale, 1)} %` : "";
+      const reason = row.excludeReason ? String(row.excludeReason).replace(/^n\/a — /, "") : "";
+      if (reason && pct) return `${row.symbol} ${pct} (${reason})`;
+      if (reason) return `${row.symbol} (${reason})`;
+      return row.symbol;
+    });
+  const coverageWarn = coverage != null && coverage / GROWTH_GAP_PARAMS.percentScale < GROWTH_HOLDINGS_PARAMS.warnCoverage
+    ? lowCoverageBanner(coverage, excluded, downweighted)
+    : null;
   return {
     available: true,
     gFwdPct: g,
     fundFraction: coverage != null ? fundFraction : null,
     used: used.map(r => r.symbol),
+    downweighted,
+    lines,
     formula: FORWARD_FORMULA_HOLDINGS,
     note,
+    coverageWarn,
   };
 }
 
