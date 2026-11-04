@@ -15,7 +15,9 @@ import {
   assessBtcSpotCoverage,
   assessBtcTradeVolumeCoverage,
   attachBtcTradeVolume,
+  formatBtcVolumeUsd,
   minerSpotPriceSeries,
+  normalizeBtcVolumeBars,
   normalizeBlockchainMarketPrice,
   normalizeBlockchainTradeVolume,
   shiftUtcDays,
@@ -96,8 +98,8 @@ check(
 );
 
 check(
-  "Volumenquelle ist blockchain.info trade-volume, täglich",
-  BTC_VOLUME_SOURCE_URL.includes("api.blockchain.info/charts/trade-volume")
+  "Volumenquelle ist On-Chain-USD, täglich, ab der frühen Kursreihe",
+  BTC_VOLUME_SOURCE_URL.includes("api.blockchain.info/charts/estimated-transaction-volume-usd")
     && BTC_VOLUME_SOURCE_URL.includes("timespan=all")
     && BTC_VOLUME_SOURCE_URL.includes("sampled=false"),
 );
@@ -142,6 +144,25 @@ check(
   "Volumen erst ab 2021 fällt durch",
   lateCoverage.ok === false && lateCoverage.matchedBefore2021 === 0,
   lateCoverage.reason,
+);
+const zeroEarly = fullVolumes.map((point, index) => (
+  point.date < "2017-01-01" && index > 20 ? { ...point, volume: 0 } : point
+));
+const zeroEarlyCoverage = assessBtcTradeVolumeCoverage(historyPrices, zeroEarly);
+check(
+  "Nullen bis 2016 fallen durch, auch wenn das Datum existiert",
+  zeroEarlyCoverage.ok === false && (zeroEarlyCoverage.reason ?? "").includes("vor 2017"),
+  zeroEarlyCoverage.reason,
+);
+const bars = normalizeBtcVolumeBars([5_000, 1_700_000, 5_000_000_000, 0]);
+check(
+  "2010-Volumen bleibt als Balken sichtbar neben der 2021-Spitze",
+  bars[0] >= 0.12 && bars[0] < bars[1] && bars[1] < bars[2] && bars[2] === 1 && bars[3] === 0,
+  bars,
+);
+check(
+  "kleine Beträge bleiben im Tooltip lesbar",
+  formatBtcVolumeUsd(5_000) === "5.0K" && formatBtcVolumeUsd(1_700_000) === "1.70M" && formatBtcVolumeUsd(5_200_000_000) === "5.20B",
 );
 
 const analysis = readFileSync(join(root, "client/src/lib/btcAnalysis.ts"), "utf8");
@@ -190,18 +211,19 @@ check(
     reason: liveCoverage.reason,
   },
 );
-const liveBefore2021 = live.points.filter((point) => point.date < "2021-01-01" && (point.volume ?? 0) > 0);
+const liveBefore2017 = live.points.filter((point) => point.date < "2017-01-01" && (point.volume ?? 0) > 0);
+const live2011 = live.points.find((point) => point.date === "2011-06-15");
 const live2016 = live.points.find((point) => point.date === "2016-11-04");
 check(
-  "Live-Volumen liegt auf den Kurstagen vor 2021, nicht erst ab dem Binance-Fenster",
-  liveBefore2021.length > 2000
-    && (live.points[0]?.volume ?? 0) >= 0
+  "Live-Volumen ist vor 2017 größer als 0, nicht erst ab dem Binance-Fenster",
+  liveBefore2017.length > 1500
     && live.points[0]?.date < "2011-01-01"
+    && (live2011?.volume ?? 0) > 0
     && (live2016?.volume ?? 0) > 0,
   {
     first: live.points[0]?.date,
-    firstVolume: live.points[0]?.volume,
-    before2021: liveBefore2021.length,
+    before2017: liveBefore2017.length,
+    volume2011: live2011?.volume ?? null,
     volume2016: live2016?.volume ?? null,
   },
 );

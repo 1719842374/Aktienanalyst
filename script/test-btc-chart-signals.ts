@@ -6,7 +6,7 @@
  * Run: npx tsx script/test-btc-chart-signals.ts
  */
 import { readFileSync } from "node:fs";
-import { detectBtcChartSignals, type BtcChartSignalBar } from "../shared/btc-signals";
+import { detectBtcChartSignals, snapBtcSignalsToChart, type BtcChartSignalBar } from "../shared/btc-signals";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -60,10 +60,20 @@ check(
 
 const dashboard = readFileSync(new URL("../client/src/pages/BTCDashboard.tsx", import.meta.url), "utf8");
 check(
-  "seltene Kreuze bleiben ein Zeichenpunkt, MACD wird nicht auf 100 gekürzt",
-  dashboard.includes('signal.reason.startsWith("Golden Cross")')
-    && dashboard.includes('signal.reason === "Pi Cycle Top"')
+  "der Chart snappt jede Marke auf die gezeichnete Reihe",
+  dashboard.includes("snapBtcSignalsToChart(visibleSignals")
+    && dashboard.includes("plottedSignals.map")
     && !dashboard.includes("signals.slice(-100)"),
+);
+const grid = ["2015-06-01", "2016-01-01", "2024-01-01"];
+const snapped = snapBtcSignalsToChart(
+  [{ date: "2015-06-20", type: "BUY" as const }, { date: "2015-06-22", type: "SELL" as const }],
+  grid,
+);
+check(
+  "ein Signaltag, der nicht gezeichnet wird, bleibt vor 2021 sichtbar",
+  snapped.length === 1 && snapped[0]?.date === "2015-06-01",
+  snapped,
 );
 
 if (failed > 0) {

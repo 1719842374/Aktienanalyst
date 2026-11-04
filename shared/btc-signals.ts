@@ -76,3 +76,42 @@ export function detectBtcChartSignals(series: readonly BtcChartSignalBar[]): Btc
 
   return signals;
 }
+
+function utcDayMs(iso: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!match) return Number.NaN;
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+/**
+ * Die Zeichenreihe ist auf etwa 500 Tage verdichtet. Eine ReferenceLine mit
+ * dem echten Signaltag zeichnet nicht, wenn dieser Tag fehlt. Jede Marke
+ * rückt auf den nächsten gezeichneten Tag, eine Linie pro Tag.
+ */
+export function snapBtcSignalsToChart<T extends { date: string }>(
+  signals: readonly T[],
+  chartDates: readonly string[],
+): T[] {
+  if (chartDates.length === 0 || signals.length === 0) return [];
+  const grid = [...chartDates].sort();
+  const gridMs = grid.map(utcDayMs);
+  const seen = new Set<string>();
+  const snapped: T[] = [];
+  for (const signal of signals) {
+    const target = utcDayMs(signal.date);
+    let best = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < gridMs.length; i++) {
+      const diff = Math.abs(gridMs[i] - target);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = i;
+      }
+    }
+    const date = grid[best];
+    if (seen.has(date)) continue;
+    seen.add(date);
+    snapped.push({ ...signal, date });
+  }
+  return snapped;
+}

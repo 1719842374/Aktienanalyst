@@ -39,7 +39,8 @@ import {
   m2ImpliedPrice,
   m2ImpliedTooltipLines,
 } from "@/lib/m2ImpliedBtc";
-import { BTC_SPOT_SOURCE_LABEL, BTC_VOLUME_SOURCE_LABEL } from "@shared/btc-spot";
+import { BTC_SPOT_SOURCE_LABEL, BTC_VOLUME_SOURCE_LABEL, formatBtcVolumeUsd, normalizeBtcVolumeBars } from "@shared/btc-spot";
+import { snapBtcSignalsToChart } from "@shared/btc-signals";
 import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
@@ -1110,34 +1111,15 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   // Anzeige verdichtet auf ~500 Punkte. Die Reihe darunter bleibt täglich;
   // das Fenster (10Y/Max) bestimmt den ersten und den letzten Punkt.
-  // Golden Cross, Death Cross, Pi Cycle und 2-Year-MA bleiben immer ein
-  // Zeichenpunkt, sonst verschluckt der Schritt genau diese seltenen Tage.
-  // MACD-Kreuze liegen dicht; sie zeichnen mit, wenn ihr Tag in der Reihe bleibt.
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
-    const first = filteredData[0]?.date;
-    const last = filteredData[filteredData.length - 1]?.date;
-    const anchorDates = new Set(
-      (data.technicalSignals ?? [])
-        .filter((signal) =>
-          first != null
-          && last != null
-          && signal.date >= first
-          && signal.date <= last
-          && (signal.reason.startsWith("Golden Cross")
-            || signal.reason.startsWith("Death Cross")
-            || signal.reason === "Pi Cycle Top"
-            || signal.reason === "Unter 2-Year MA"
-            || signal.reason === "Über 2-Year MA"))
-        .map((signal) => signal.date),
-    );
-    const result = filteredData.filter((point, i) => i % step === 0 || anchorDates.has(point.date));
+    const result = filteredData.filter((_, i) => i % step === 0);
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) {
       result.push(filteredData[filteredData.length - 1]);
     }
     return result;
-  }, [filteredData, data.technicalSignals]);
+  }, [filteredData]);
 
   // Koeffizienten aus den echten Monatswerten der Historie bis zum Fensterende,
   // nicht aus dem sichtbaren Fenster und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
@@ -1235,21 +1217,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     const hasServerRSI = chartData.some(d => d.rsi14 != null);
     const clientRsiArr = hasServerRSI ? [] : calcRSI(prices);
 
-    // Volume: absolut in USD auf jedem Kurstag der Spot-Historie, hier auf 0–1 normiert
-    const rawVols = chartData.map(d => d.volume ?? 0);
-    const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
-    const hasServerVol = serverVolNorms.some(v => v > 0);
-    const hasRawVol = rawVols.some(v => v > 0);
-
-    let volNorms: number[];
-    if (hasServerVol) {
-      volNorms = serverVolNorms;
-    } else if (hasRawVol) {
-      const maxRawVol = Math.max(...rawVols);
-      volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
-    } else {
-      volNorms = chartData.map(() => 0);
-    }
+    // Balkenhöhe aus dem USD-Betrag, logarithmisch. Die lineare Norm am
+    // Maximum lässt die Jahre vor 2017 auf der Max-Skala verschwinden.
+    const volNorms = normalizeBtcVolumeBars(chartData.map(d => d.volume ?? 0));
 
     return chartData.map((d, i) => ({
       ...d,
@@ -1260,12 +1230,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }));
   }, [chartData, m2Implied]);
 
-  // Filter signals within the displayed time range
+  // Filter signals within the displayed time range. Gezeichnet wird auf dem
+  // nächsten Punkt der verdichteten Reihe, sonst fehlt die Linie, sobald der
+  // genaue Tag ausgedünnt wurde.
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0 || !data.technicalSignals) return [];
     const startDate = chartData[0].date;
     return data.technicalSignals.filter(s => s.date >= startDate);
   }, [data.technicalSignals, chartData, showSignals]);
+  const plottedSignals = useMemo(
+    () => snapBtcSignalsToChart(visibleSignals, chartData.map(point => point.date)),
+    [visibleSignals, chartData],
+  );
 
   const toggleMA = (key: MAKey) => {
     setVisibleMAs(prev => {
@@ -1939,7 +1915,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                       </div>
                     ))}
                     {(volPoint?.volume ?? 0) > 0 && (
-                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{((volPoint!.volume ?? 0) / 1e9).toFixed(2)}B</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{formatBtcVolumeUsd(volPoint!.volume ?? 0)}</span></div>
                     )}
                     {showM2AbsoluteLagged && (
                       <div className="mt-1 space-y-0.5 border-t border-border pt-1" data-testid="btc-m2-implied-tooltip">
@@ -1952,7 +1928,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                         ))}
                       </div>
                     )}
-                    {visibleSignals.filter(s => s.date === label).map((s, i) => (
+                    {plottedSignals.filter(s => s.date === label).map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
                       </div>
@@ -2137,7 +2113,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
 
             {/* Buy/Sell signal markers — senkrechte Linien, keine Kreise auf dem Kurs. */}
-            {showSignals && visibleSignals.map((s, i) => (
+            {showSignals && plottedSignals.map((s, i) => (
               <Fragment key={`sig-${i}`}>
                 <ReferenceLine
                   x={s.date}

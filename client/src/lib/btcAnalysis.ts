@@ -5,7 +5,7 @@
 // nicht durch eine kürzere Reihe ersetzt.
 
 import { apiRequest } from "./queryClient";
-import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL } from "@shared/btc-spot";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL, normalizeBtcVolumeBars } from "@shared/btc-spot";
 import { detectBtcChartSignals } from "@shared/btc-signals";
 import {
   applyBtcLiquidityBlock,
@@ -549,7 +549,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   }
 
   // === 2. Spot-Historie vom Server. Kein stiller Kurz-Fallback. ===
-  // Volumen hängt an jedem Kurstag (blockchain.info trade-volume, volle Historie).
+  // Volumen hängt an jedem Kurstag (On-Chain-USD, volle Historie).
   let allPriceData: { date: string; price: number; volume: number }[] = [];
   let spotSource: string | null = BTC_SPOT_SOURCE_LABEL;
   let spotSourceUrl: string | null = BTC_SPOT_SOURCE_URL;
@@ -967,9 +967,9 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     return m - s;
   });
 
-  // Volume-Normalisierung für Overlay (0–1, USD-Handelsvolumen der Kursquelle)
+  // Balkenhöhe logarithmisch, sonst verschluckt das Maximum die Jahre vor 2017.
   const allVolumes = allPriceData.map(d => d.volume ?? 0);
-  const maxVol = Math.max(...allVolumes.filter(v => v > 0), 1);
+  const volNorms = normalizeBtcVolumeBars(allVolumes);
 
   // RSI(14) für alle Preise
   const rsi14All = calcRSI14(closePrices);
@@ -981,7 +981,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       date: d.date,
       price: d.price,
       volume: vol,
-      _volNorm: vol > 0 ? vol / maxVol : 0,
+      _volNorm: volNorms[i] ?? 0,
       _volUp: i === 0 ? true : d.price >= allPriceData[i - 1].price,
       ma20: ma20[i],
       ma50: ma50[i],

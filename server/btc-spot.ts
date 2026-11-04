@@ -2,8 +2,8 @@
  * Tägliche BTC-Spot-Historie für alle BTC-Charts.
  * Eine Quelle. Schlägt der Abruf fehl oder ist die Reihe kürzer als zehn Jahre,
  * wirft der Handler — es gibt keine zweite, kürzere Quelle.
- * Das USD-Handelsvolumen kommt vom selben Anbieter und Tagesraster
- * (trade-volume, sampled=false) und wird pro Kurstag angehängt.
+ * Das USD-Volumen ist das tägliche On-Chain-Volumen derselben Quelle
+ * (estimated-transaction-volume-usd, sampled=false), an jedem Kurstag.
  */
 import {
   BTC_SPOT_SOURCE_LABEL,
