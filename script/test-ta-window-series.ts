@@ -7,7 +7,7 @@
  */
 import type { OHLCVPoint } from "../shared/schema";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars, smaSeries,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars, smaSeries,
 } from "../client/src/lib/taWindowSeries";
 import {
   TA_INDICATOR_WARMUP_BARS, TA_OHLCV_MAX_POINTS, TA_VISIBLE_10Y_BARS, TA_WARMUP_CALENDAR_DAYS,
@@ -392,6 +392,22 @@ check(
   "10Y: MA200 am linken Rand = SMA der Serie inkl. Warmup",
   tenWindow.points[0].ma200 === tenMa[tenSeries.length - TA_VISIBLE_10Y_BARS],
 );
+
+const tail = weekdayBars(260);
+tail[210].close = Number.NaN;
+const tailSma = smaSeries(tail.map(b => b.close), 200);
+const finiteTail = tail.map(b => b.close).filter(v => Number.isFinite(v));
+const expectTail = finiteTail.slice(-200).reduce((a, b) => a + b, 0) / 200;
+check("MA200 am letzten Kurs bleibt gesetzt, ein NaN davor löscht das Ende nicht", tailSma[tailSma.length - 1] != null && Math.abs((tailSma[tailSma.length - 1] as number) - expectTail) < 1e-6);
+
+const crossBars = weekdayBars(220);
+for (let i = 0; i < crossBars.length; i++) {
+  crossBars[i].close = i < 205 ? 100 + i * 0.1 : 100 + (i - 180) * 2;
+}
+const crossSeries = buildFullSeries(crossBars);
+const crosses = maCrossMarkers(crossSeries.points);
+check("Golden Cross wird auf der Linie markiert, nicht nur als letztes Banner", crosses.some(c => c.type === "golden"));
+check("MA200 der Kreuz-Serie reicht bis zum letzten Bar", crossSeries.points[crossSeries.points.length - 1].ma200 != null);
 
 if (failed) {
   console.error(`\n${failed} checks failed`);

@@ -8,7 +8,7 @@ import {
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars,
   type WindowPoint, type WindowSeries,
 } from "@/lib/taWindowSeries";
 import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
@@ -1039,10 +1039,9 @@ export function TechnicalChart({
 
       {/* Golden / Death Cross banner */}
       {(() => {
-        const maData = ti.maData;
+        const maData = aBuilt.points;
         let lastCrossType: 'golden'|'death'|null = null, lastCrossDate = '';
-        const lookback = Math.min(504, maData.length - 1);
-        for (let i = maData.length - 1; i >= maData.length - lookback; i--) {
+        for (let i = maData.length - 1; i >= 1; i--) {
           const cur = maData[i], prev = maData[i-1];
           if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
             if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) { lastCrossType='golden'; lastCrossDate=cur.date; break; }
@@ -2024,6 +2023,20 @@ function PricePane({
         )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
+        ))}
+        {visibleMAs.has("ma50") && visibleMAs.has("ma200") && maCrossMarkers(points).map(cross => (
+          <ReferenceDot
+            key={`${cross.type}-${cross.date}`}
+            yAxisId="price"
+            x={cross.date}
+            y={cross.ma50}
+            r={4}
+            fill={cross.type === "golden" ? "#10b981" : "#ef4444"}
+            stroke="var(--card)"
+            strokeWidth={1}
+            ifOverflow="discard"
+            label={{ value: cross.type === "golden" ? "GC" : "DC", position: "top", fontSize: 8, fill: cross.type === "golden" ? "#10b981" : "#ef4444", fontWeight: 700 }}
+          />
         ))}
         {showBollinger && (
           <>

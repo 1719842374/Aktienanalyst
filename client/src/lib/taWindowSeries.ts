@@ -72,11 +72,38 @@ function calcBollinger(closes: number[], period = 20, k = 2) {
 
 export function smaSeries(data: number[], period: number): (number | undefined)[] {
   const out: (number | undefined)[] = new Array(data.length);
+  if (period <= 0) return out;
+  const window: number[] = [];
   let sum = 0;
   for (let i = 0; i < data.length; i++) {
-    sum += data[i];
-    if (i >= period) sum -= data[i - period];
-    out[i] = i >= period - 1 ? sum / period : undefined;
+    const value = data[i];
+    // Ein nicht endlicher Schluss darf die Summe nicht für den Rest der Reihe vergiften.
+    if (!Number.isFinite(value)) {
+      out[i] = undefined;
+      continue;
+    }
+    window.push(value);
+    sum += value;
+    if (window.length > period) sum -= window.shift() as number;
+    out[i] = window.length === period ? sum / period : undefined;
+  }
+  return out;
+}
+
+export type MaCrossMarker = { date: string; type: "golden" | "death"; ma50: number };
+
+/** Jedes MA50/MA200-Kreuz in der gezeichneten Reihe, nicht nur das letzte. */
+export function maCrossMarkers(points: readonly { date: string; ma50?: number; ma200?: number }[]): MaCrossMarker[] {
+  const out: MaCrossMarker[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const prev50 = points[i - 1].ma50;
+    const prev200 = points[i - 1].ma200;
+    const ma50 = points[i].ma50;
+    const ma200 = points[i].ma200;
+    if (prev50 == null || prev200 == null || ma50 == null || ma200 == null) continue;
+    if (!Number.isFinite(prev50) || !Number.isFinite(prev200) || !Number.isFinite(ma50) || !Number.isFinite(ma200)) continue;
+    if (prev50 <= prev200 && ma50 > ma200) out.push({ date: points[i].date, type: "golden", ma50 });
+    else if (prev50 >= prev200 && ma50 < ma200) out.push({ date: points[i].date, type: "death", ma50 });
   }
   return out;
 }
