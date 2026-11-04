@@ -202,6 +202,8 @@ export function TechnicalChart({
     return s;
   });
   const [showSignals,   setShowSignals]   = useState(true);
+  // Ampel färbt den Kurs nur als Lage. Aus bleibt die blaue Kurslinie.
+  const [showAmpel,     setShowAmpel]     = useState(false);
   const [showVolume,    setShowVolume]    = useState(true);
   const [showBollinger, setShowBollinger] = useState(false);
   // Immer an, solange der Nutzer sie nicht ausblendet — Ein-Band bleibt MACD/RSI wie nach #97.
@@ -821,6 +823,13 @@ export function TechnicalChart({
               {showVolume ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Volumen
             </button>
+            <button type="button" onClick={() => setShowAmpel(v => !v)} data-testid="button-ampel" aria-pressed={showAmpel}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showAmpel ? "border-emerald-400 text-emerald-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showAmpel ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Ampel
+            </button>
             <button type="button" onClick={() => setShowSignals(v => !v)}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
@@ -1091,6 +1100,7 @@ export function TechnicalChart({
                 showVolume={showVolume}
                 showBollinger={showBollinger}
                 showSignals={showSignals}
+                showAmpel={showAmpel}
                 dense={false}
                 onPlotClick={handleChartClick}
                 measurePoints={measurePoints}
@@ -1165,6 +1175,7 @@ export function TechnicalChart({
               measurePoints={measurePoints}
               measurement={measurement}
               phases={phaseByDateMap}
+              showAmpel={showAmpel}
               overlay={ampelBadge}
             />
           )}
@@ -1735,7 +1746,7 @@ function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: C
 
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
-  visibleMAs, showVolume, showBollinger, showSignals, dense,
+  visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
   priceFactor = 1, cone = null, fund = null, phases = null,
 }: {
@@ -1749,6 +1760,8 @@ function PricePane({
   showVolume: boolean;
   showBollinger: boolean;
   showSignals: boolean;
+  /** Farbige Kurslage. Die blaue Close-Linie bleibt darunter. */
+  showAmpel?: boolean;
   dense: boolean;
   onPlotClick?: (e: any) => void;
   measurePoints?: { date: string; close: number }[];
@@ -1784,7 +1797,10 @@ function PricePane({
     const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
-  const painted = useMemo(() => (phases ? paintPhaseRows(chartData, phases) : null), [chartData, phases]);
+  const painted = useMemo(
+    () => (showAmpel && phases ? paintPhaseRows(chartData, phases) : null),
+    [chartData, phases, showAmpel],
+  );
   const plotData = painted ?? chartData;
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
@@ -1914,7 +1930,7 @@ function PricePane({
                   <span className="font-mono">{formatPx(dp.close)}</span>
                 </div>
               )}
-              {phase && (
+              {showAmpel && phase && (
                 <div className="font-semibold" style={{ color: phaseStroke }}>Ampel: {PHASE_MEANING[phase]}</div>
               )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
@@ -1992,15 +2008,13 @@ function PricePane({
             )} />
           </>
         )}
-        {painted ? (
+        <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.75} dot={false} connectNulls isAnimationActive={false} />
+        {painted && (
           <>
-            <Line yAxisId="price" type="monotone" dataKey="_phBase" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="_phA" name="ATTRAKTIV" stroke={TA_PHASE_STROKE.ATTRAKTIV} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="_phN" name="NEUTRAL" stroke={TA_PHASE_STROKE.NEUTRAL} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="_phV" name="VORSICHTIG" stroke={TA_PHASE_STROKE.VORSICHTIG} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
           </>
-        ) : (
-          <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
         )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
@@ -2264,7 +2278,7 @@ function RsiPane({
 
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
-  visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
+  visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
   priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
 }: {
@@ -2280,6 +2294,7 @@ function BandStack({
   showVolume: boolean;
   showBollinger: boolean;
   showSignals: boolean;
+  showAmpel?: boolean;
   showMacd: boolean;
   showRsi: boolean;
   count: number;
@@ -2349,6 +2364,7 @@ function BandStack({
               priceFactor={priceFactor}
               cone={cone}
               phases={phases}
+              showAmpel={showAmpel}
             />
           )}
         </div>
