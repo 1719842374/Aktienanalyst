@@ -184,7 +184,7 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
 
   return {
     points,
-    signals: signals.slice(-100),
+    signals,
     bullConditions,
     currentMA50: last?.ma50 ?? null,
     currentMA200: last?.ma200 ?? null,
