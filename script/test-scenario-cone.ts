@@ -392,6 +392,17 @@ assertSeparated([
   ];
   assert.equal(separateLabelYs(sideBySide).find(p => p.id === "bull")!.yPx, 50);
 }
+{
+  const tight = [
+    { id: "bull", xPx: 0, widthPx: 80, yPx: 100, heightPx: 16 },
+    { id: "p25", xPx: 0, widthPx: 80, yPx: 104, heightPx: 16 },
+  ];
+  const aired = separateLabelYs(tight, 10);
+  const bullY = aired.find(p => p.id === "bull")!.yPx;
+  const p25Y = aired.find(p => p.id === "p25")!.yPx;
+  assert.ok(Math.abs(p25Y - bullY) >= 16 + 10 - 1e-9, `${bullY} vs ${p25Y}`);
+  assert.equal(separateLabelYs(tight).find(p => p.id === "bull")!.yPx, 100);
+}
 assertSeparated([
   { id: "div-attractive", xPx: 700, widthPx: 90, yPx: 120, heightPx: 8, fixed: true },
   { id: "bull", xPx: 640, widthPx: 110, yPx: 118, heightPx: 9 },
