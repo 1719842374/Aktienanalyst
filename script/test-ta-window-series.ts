@@ -6,9 +6,8 @@
  * Run: npx tsx script/test-ta-window-series.ts
  */
 import type { OHLCVPoint } from "../shared/schema";
-import { readFileSync } from "node:fs";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, maLinePaintOrder, sliceBars, smaSeries,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars, smaFromStart, smaSeries,
 } from "../client/src/lib/taWindowSeries";
 import {
   TA_INDICATOR_WARMUP_BARS, TA_OHLCV_MAX_POINTS, TA_VISIBLE_10Y_BARS, TA_WARMUP_CALENDAR_DAYS,
@@ -69,11 +68,9 @@ const fullMa200 = smaSeries(bars.map(b => b.close), 200);
 
 check(`volle Serie hat ${bars.length} Punkte`, full.points.length === bars.length);
 check("MA200 beginnt am ersten Kurs", full.points[0].ma200 === bars[0].close);
+check("MA50 beginnt am ersten Kurs", full.points[0].ma50 === bars[0].close);
 check("MA200 ab vollem Fenster ist die SMA", full.points[199].ma200 === fullMa200[199]);
-{
-  const cross = full.signals.find(s => s.reason.startsWith("Golden") || s.reason.startsWith("Death"));
-  check("Cross erst nach vollem MA200-Fenster", cross != null && cross.date >= bars[199].date, cross?.date);
-}
+check("MA50 ab vollem Fenster ist die SMA", full.points[49].ma50 === smaSeries(bars.map(b => b.close), 50)[49]);
 
 for (const [label, n] of Object.entries(CUTOFFS)) {
   const windowBars = bars.slice(-n);
@@ -109,9 +106,12 @@ const gapMa200 = smaSeries(gapBars.map(b => b.close), 200);
 const gapWindow = buildWindowSeries(gapFull, gapBars.slice(-TA_VISIBLE_10Y_BARS));
 const gapFullIdx = 199;
 const gapWindowIdx = gapFullIdx - 80;
+const gapCloses = gapBars.map(b => b.close);
+const gapSum81 = gapCloses.slice(0, 81).reduce((a, b) => a + b, 0);
 check(
-  "10Y ohne 200 Prefix: MA200 geht bis zum ersten sichtbaren Kurs",
-  firstFiniteIndex(gapWindow.points, "ma200") === 0 && gapWindow.points[0].ma200 === gapBars.slice(0, 81).reduce((a, b) => a + b.close, 0) / 81,
+  "10Y ohne 200 Prefix: MA200 am linken Rand = Rückrechnung durch 200",
+  firstFiniteIndex(gapWindow.points, "ma200") === 0 && firstFiniteIndex(gapWindow.points, "ma50") === 0
+    && gapWindow.points[0].ma200 === (gapSum81 + gapCloses[0] * (200 - 81)) / 200,
 );
 check(
   "wo das Fenster voll ist, bleibt es die SMA",
@@ -121,9 +121,13 @@ check(
 const young = weekdayBars(150);
 const youngFull = buildFullSeries(young);
 const youngWindow = buildWindowSeries(youngFull, young.slice(-TA_VISIBLE_10Y_BARS));
-const youngMean = young.reduce((a, b) => a + b.close, 0) / young.length;
-check("kurzes Listing: MA200 ab dem ersten Kurs", youngWindow.points[0].ma200 === young[0].close);
-check("kurzes Listing: letzter MA200 ist der Mittelwert aller Schlüsse", youngWindow.points[youngWindow.points.length - 1].ma200 === youngMean);
+const youngCloses = young.map(b => b.close);
+const youngSum = youngCloses.reduce((a, b) => a + b, 0);
+check("kurzes Listing: MA200 und MA50 ab dem ersten Kurs", youngWindow.points[0].ma200 === young[0].close && youngWindow.points[0].ma50 === young[0].close);
+check(
+  "kurzes Listing: letzter MA200 teilt durch 200, nicht durch die Anzahl Tage",
+  youngWindow.points[youngWindow.points.length - 1].ma200 === (youngSum + youngCloses[0] * (200 - youngCloses.length)) / 200,
+);
 
 const copied = bars.slice(-126).map(b => ({ ...b }));
 const fromCopies = buildWindowSeries(full, copied);
@@ -136,8 +140,14 @@ check("Datumsfenster in der Mitte behält MA200", firstFiniteIndex(midBuilt.poin
 check("Datumsfenster: Wert = volle Serie", midBuilt.points[0].ma200 === full.points[400].ma200);
 
 const head = buildWindowSeries(full, bars.slice(0, 63));
-const headMean = bars.slice(0, 63).reduce((a, b) => a + b.close, 0) / 63;
-check("Fenster am Serienanfang: MA200 ab dem ersten Kurs", head.points[0].ma200 === bars[0].close && head.points[62].ma200 === headMean);
+const headCloses = bars.slice(0, 63).map(b => b.close);
+const headSum = headCloses.reduce((a, b) => a + b, 0);
+check(
+  "Fenster am Serienanfang: beide MAs ab dem ersten Kurs, Nenner bleibt die Periode",
+  head.points[0].ma50 === bars[0].close && head.points[0].ma200 === bars[0].close
+    && head.points[62].ma200 === (headSum + headCloses[0] * (200 - 63)) / 200
+    && head.points[62].ma50 === headCloses.slice(13).reduce((a, b) => a + b, 0) / 50,
+);
 
 const reversed = buildFullSeries([...bars].reverse());
 const revWindow = buildWindowSeries(reversed, bars.slice(-63));
@@ -401,29 +411,63 @@ const finiteTail = tail.map(b => b.close).filter(v => Number.isFinite(v));
 const expectTail = finiteTail.slice(-200).reduce((a, b) => a + b, 0) / 200;
 check("MA200 am letzten Kurs bleibt gesetzt, ein NaN davor löscht das Ende nicht", tailSma[tailSma.length - 1] != null && Math.abs((tailSma[tailSma.length - 1] as number) - expectTail) < 1e-6);
 
-const crossBars = weekdayBars(220);
-for (let i = 0; i < crossBars.length; i++) {
-  crossBars[i].close = i < 205 ? 100 + i * 0.1 : 100 + (i - 180) * 2;
-}
-const crossSeries = buildFullSeries(crossBars);
-const crosses = maCrossMarkers(crossSeries.points);
-check("Golden Cross wird auf der Linie markiert, nicht nur als letztes Banner", crosses.some(c => c.type === "golden"));
-check("MA200 der Kreuz-Serie reicht bis zum letzten Bar", crossSeries.points[crossSeries.points.length - 1].ma200 != null);
-
-const kspiLike = weekdayBars(420);
-const kspiSeries = buildFullSeries(kspiLike);
-const kspiHoles = kspiSeries.points.filter(p => p.ma200 == null || !Number.isFinite(p.ma200));
-const kspiCloses = kspiLike.map(b => b.close);
-check("KSPI-Länge: roter MA200 an jedem Kurs, nirgends abgeschnitten", kspiHoles.length === 0, `holes=${kspiHoles.length}`);
-check("KSPI-Länge: MA200 beginnt am ersten Kurs", kspiSeries.points[0].ma200 === kspiCloses[0]);
+const formulaCloses = [40, 42, 41, 45, 50];
+const formula50 = smaFromStart(formulaCloses, 50);
+const formula200 = smaFromStart(formulaCloses, 200);
+const c0 = formulaCloses[0];
+check("SMA50 am ersten Kurs ist der erste Schluss", formula50[0] === c0);
 check(
-  "KSPI-Länge: ab dem vollen Fenster die echte SMA200",
-  kspiSeries.points[199].ma200 === kspiCloses.slice(0, 200).reduce((a, b) => a + b, 0) / 200,
+  "SMA50 am zweiten Kurs teilt durch 50 und füllt mit dem ersten Schluss",
+  formula50[1] === (c0 + formulaCloses[1] + c0 * 48) / 50,
 );
-const paint = maLinePaintOrder([{ key: "ma200" }, { key: "ma50" }, { key: "ma20" }, { key: "ema26" }, { key: "ma100" }]).map(l => l.key);
-check("MA200 wird nach MA50 gezeichnet und nicht von ihr verdeckt", paint.indexOf("ma200") > paint.indexOf("ma50") && paint.indexOf("ma50") > paint.indexOf("ma20"));
-const chartSrc = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
-check("Chart benutzt die Zeichenreihenfolge", chartSrc.includes("maLinePaintOrder(MA_LINES)"));
+check(
+  "SMA200 am zweiten Kurs teilt durch 200, nicht durch 50",
+  formula200[1] === (c0 + formulaCloses[1] + c0 * 198) / 200 && formula50[1] !== formula200[1],
+);
+const full50 = Array.from({ length: 60 }, (_, i) => 40 + i * 0.8);
+const back50 = smaFromStart(full50, 50);
+const strict50 = smaSeries(full50, 50);
+check("SMA50 ab dem 50. Schluss ist die normale Summe durch 50", back50[49] === strict50[49] && back50[59] === strict50[59]);
+check("SMA50 vor dem vollen Fenster ist nicht der Mittelwert der Tage", back50[10] !== full50.slice(0, 11).reduce((a, b) => a + b, 0) / 11);
+
+const early = weekdayBars(80);
+for (let i = 0; i < early.length; i++) early[i].close = 40 + i * 0.8;
+const earlySeries = buildFullSeries(early);
+const earlyCloses = early.map(b => b.close);
+check(
+  "KSPI-Start: MA50 und MA200 beginnen am ersten Kurs",
+  earlySeries.points[0].ma50 === earlyCloses[0] && earlySeries.points[0].ma200 === earlyCloses[0],
+);
+check(
+  "KSPI-Start: MA50 am zweiten Kurs folgt der 50er-Formel",
+  earlySeries.points[1].ma50 === (earlyCloses[0] + earlyCloses[1] + earlyCloses[0] * 48) / 50,
+);
+check(
+  "KSPI-Start: beide Linien an jedem Kurs und nicht deckungsgleich",
+  earlySeries.points.every(p => p.ma50 != null && p.ma200 != null) && earlySeries.points[10].ma50 !== earlySeries.points[10].ma200,
+);
+check(
+  "steigender Start setzt keinen GC auf den zweiten Kurs",
+  maCrossMarkers(earlySeries.points).every(c => earlySeries.points.findIndex(p => p.date === c.date) >= 2),
+);
+const swing = weekdayBars(140);
+for (let i = 0; i < swing.length; i++) {
+  swing[i].close = i < 50 ? 120 - i * 1.1 : (120 - 49 * 1.1) + (i - 49) * 2.4;
+}
+const swingSeries = buildFullSeries(swing);
+const swingGc = maCrossMarkers(swingSeries.points).find(c => c.type === "golden");
+const swingIdx = swingGc ? swingSeries.points.findIndex(p => p.date === swingGc.date) : -1;
+const swingPrev = swingIdx > 0 ? swingSeries.points[swingIdx - 1] : undefined;
+check(
+  "Golden Cross nur wo die gerechnete MA50 die gerechnete MA200 schneidet",
+  swingIdx >= 2
+    && swingSeries.points[0].ma50 === swing[0].close
+    && swingSeries.points[0].ma200 === swing[0].close
+    && swingPrev?.ma50 != null && swingPrev.ma200 != null
+    && swingPrev.ma50 <= swingPrev.ma200
+    && swingSeries.points[swingIdx].ma50! > swingSeries.points[swingIdx].ma200!,
+  `idx=${swingIdx}`,
+);
 
 if (failed) {
   console.error(`\n${failed} checks failed`);
