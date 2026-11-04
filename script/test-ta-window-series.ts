@@ -6,8 +6,9 @@
  * Run: npx tsx script/test-ta-window-series.ts
  */
 import type { OHLCVPoint } from "../shared/schema";
+import { readFileSync } from "node:fs";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars, smaSeries,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, maLinePaintOrder, sliceBars, smaSeries,
 } from "../client/src/lib/taWindowSeries";
 import {
   TA_INDICATOR_WARMUP_BARS, TA_OHLCV_MAX_POINTS, TA_VISIBLE_10Y_BARS, TA_WARMUP_CALENDAR_DAYS,
@@ -408,6 +409,21 @@ const crossSeries = buildFullSeries(crossBars);
 const crosses = maCrossMarkers(crossSeries.points);
 check("Golden Cross wird auf der Linie markiert, nicht nur als letztes Banner", crosses.some(c => c.type === "golden"));
 check("MA200 der Kreuz-Serie reicht bis zum letzten Bar", crossSeries.points[crossSeries.points.length - 1].ma200 != null);
+
+const kspiLike = weekdayBars(420);
+const kspiSeries = buildFullSeries(kspiLike);
+const kspiHoles = kspiSeries.points.filter(p => p.ma200 == null || !Number.isFinite(p.ma200));
+const kspiCloses = kspiLike.map(b => b.close);
+check("KSPI-Länge: roter MA200 an jedem Kurs, nirgends abgeschnitten", kspiHoles.length === 0, `holes=${kspiHoles.length}`);
+check("KSPI-Länge: MA200 beginnt am ersten Kurs", kspiSeries.points[0].ma200 === kspiCloses[0]);
+check(
+  "KSPI-Länge: ab dem vollen Fenster die echte SMA200",
+  kspiSeries.points[199].ma200 === kspiCloses.slice(0, 200).reduce((a, b) => a + b, 0) / 200,
+);
+const paint = maLinePaintOrder([{ key: "ma200" }, { key: "ma50" }, { key: "ma20" }, { key: "ema26" }, { key: "ma100" }]).map(l => l.key);
+check("MA200 wird nach MA50 gezeichnet und nicht von ihr verdeckt", paint.indexOf("ma200") > paint.indexOf("ma50") && paint.indexOf("ma50") > paint.indexOf("ma20"));
+const chartSrc = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
+check("Chart benutzt die Zeichenreihenfolge", chartSrc.includes("maLinePaintOrder(MA_LINES)"));
 
 if (failed) {
   console.error(`\n${failed} checks failed`);

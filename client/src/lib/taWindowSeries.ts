@@ -90,6 +90,26 @@ export function smaSeries(data: number[], period: number): (number | undefined)[
   return out;
 }
 
+const MA_LINE_PERIOD: Record<string, number> = {
+  ema9: 9,
+  ema12: 12,
+  ma20: 20,
+  ema26: 26,
+  ma50: 50,
+  ma100: 100,
+  ma200: 200,
+};
+
+/**
+ * Kürzere Periode zuerst, längste zuletzt.
+ * Bis die echte Periode voll ist, sind die gezeichneten SMAs derselbe Mittelwert
+ * der vorhandenen Schlüsse. Die später gezeichnete Linie liegt oben und bleibt
+ * vom ersten Kurs an sichtbar, statt von der kürzeren verdeckt zu werden.
+ */
+export function maLinePaintOrder<T extends { key: string }>(lines: readonly T[]): T[] {
+  return [...lines].sort((a, b) => (MA_LINE_PERIOD[a.key] ?? 0) - (MA_LINE_PERIOD[b.key] ?? 0) || a.key.localeCompare(b.key));
+}
+
 export type MaCrossMarker = { date: string; type: "golden" | "death"; ma50: number };
 
 /** Jedes MA50/MA200-Kreuz in der gezeichneten Reihe, nicht nur das letzte. */
