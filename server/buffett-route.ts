@@ -10,6 +10,7 @@
 import type { Express, Request, Response } from "express";
 import { buffettOverlayFromLoaded, type RecessionTaBuffett } from "../shared/recession-ta";
 import { registerTradeBalanceRoute } from "./trade-balance-route";
+import { registerBuffettPhiRoute } from "./buffett-phi-route";
 import {
   applyTrend,
   fitLogTrend,
@@ -640,6 +641,8 @@ export async function loadBuffettOverlay(region: RegionId): Promise<RecessionTaB
 export function registerBuffettRatioRoute(app: Express): void {
   // F1-38: Handelsbilanz/BIP (FRED BOPGSTB ÷ GDP) als eigene Route neben der Buffett-Route — die Buffett-Antwort bleibt unverändert.
   registerTradeBalanceRoute(app);
+  // F1-36/F1-37/F1-40: φ und die bereinigte Quote als eigene Route. Die Buffett-JSON bleibt byte-identisch.
+  registerBuffettPhiRoute(app);
   app.get("/api/analyze-recession/buffett", async (req: Request, res: Response) => {
     const region = String(req.query.region || "US").toUpperCase();
     if (!isRegion(region)) {
