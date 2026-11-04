@@ -8,7 +8,7 @@ import {
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, maLinePaintOrder, sliceBars,
   type WindowPoint, type WindowSeries,
 } from "@/lib/taWindowSeries";
 import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
@@ -2021,7 +2021,7 @@ function PricePane({
             <Line yAxisId="price" type="monotone" dataKey="_phV" name="VORSICHTIG" stroke={TA_PHASE_STROKE.VORSICHTIG} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
           </>
         )}
-        {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
+        {maLinePaintOrder(MA_LINES).map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
         ))}
         {visibleMAs.has("ma50") && visibleMAs.has("ma200") && maCrossMarkers(points).map(cross => (
