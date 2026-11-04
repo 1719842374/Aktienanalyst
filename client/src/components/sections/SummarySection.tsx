@@ -380,6 +380,22 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             {bias.techMoatOverride.active && bias.techMoatOverride.capScore != null ? ` · Deckel ${formatNumber(bias.techMoatOverride.capScore, 2)} (ohne Deckel ${formatNumber(bias.overallScoreUncapped, 2)})` : ""}
           </div>
         )}
+        {bias.scoringAdditions?.enabled && bias.scoringAdditions.moatRivalry && (
+          <div className={`font-mono tabular-nums ${bias.scoringAdditions.moatRivalry.factor < 1 ? "text-amber-500" : ""}`} data-testid="moat-rivalry-damping">
+            Moat-Rivalität {bias.scoringAdditions.moatRivalry.available && bias.scoringAdditions.moatRivalry.factor < 1 ? "aktiv" : "nicht aktiv"} · {bias.scoringAdditions.moatRivalry.detail || bias.scoringAdditions.moatRivalry.reason}
+            {bias.scoringAdditions.moatRivalry.heritageNoted ? " · Heritage-Moat erkannt" : ""}
+          </div>
+        )}
+        {bias.scoringAdditions?.enabled && (bias.scoringAdditions.earningsYield || bias.scoringAdditions.accruals) && (
+          <div className="font-mono tabular-nums" data-testid="scoring-additions-quality">
+            Earnings Yield {bias.scoringAdditions.earningsYield?.available && bias.scoringAdditions.earningsYield.yieldPct != null
+              ? `${formatNumber(bias.scoringAdditions.earningsYield.yieldPct, 2)} % (Peer-Median ${bias.scoringAdditions.earningsYield.peerMedianPct != null ? formatNumber(bias.scoringAdditions.earningsYield.peerMedianPct, 2) : "n/a"} %)`
+              : (bias.scoringAdditions.earningsYield?.reason ?? "n/a")}
+            {" · "}Accruals {bias.scoringAdditions.accruals?.available && bias.scoringAdditions.accruals.ratio != null
+              ? formatNumber(bias.scoringAdditions.accruals.ratio, 2)
+              : (bias.scoringAdditions.accruals?.reason ?? "n/a")}
+          </div>
+        )}
         <div className="font-mono tabular-nums">
           Kat.-adj. Zielwert = {catalystBaseFallback ? 'Analyst PT' : bias.valuationBaseLabel} × (1 + Σ positive GB / 100)
         </div>
