@@ -92,10 +92,7 @@ export function smaSeries(data: number[], period: number): (number | undefined)[
 
 export type MaCrossMarker = { date: string; type: "golden" | "death"; ma50: number; ma200: number };
 
-/**
- * Kreuz nur, wenn beide echten Fenster voll sind.
- * Ein Teilmittel der ersten Sessions ist keine MA200 und darf keinen GC auf die gelbe Linie setzen.
- */
+/** Kreuz der gezeichneten MA50 und MA200. Beide Linien müssen an dem Tag einen Wert haben. */
 export function maCrossMarkers(points: readonly { date: string; ma50?: number; ma200?: number }[]): MaCrossMarker[] {
   const out: MaCrossMarker[] = [];
   for (let i = 1; i < points.length; i++) {
@@ -191,10 +188,17 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
   const rsi = calcRSI(closes);
 
   const macdAt = (i: number) => (isFinite(macdRaw[i]) ? macdRaw[i] : undefined);
+  // Beide Linien vom ersten Kurs an: bis das Fenster voll ist der Mittelwert der vorhandenen Schlüsse,
+  // danach die normale SMA. So können MA50 und MA200 sich kreuzen, statt eine Linie später zu beginnen.
+  const ma200 = smaThroughStart(ma200Strict, closes);
+  const ma100 = smaThroughStart(ma100Strict, closes);
+  const ma50 = smaThroughStart(ma50Strict, closes);
+  const ma20 = smaThroughStart(ma20Strict, closes);
+
   const signals: TradingSignal[] = [];
   for (let i = 1; i < bars.length; i++) {
-    const cur50 = ma50Strict[i], prev50 = ma50Strict[i - 1];
-    const cur200 = ma200Strict[i], prev200 = ma200Strict[i - 1];
+    const cur50 = ma50[i], prev50 = ma50[i - 1];
+    const cur200 = ma200[i], prev200 = ma200[i - 1];
     if (cur50 != null && cur200 != null && prev50 != null && prev200 != null) {
       if (prev50 <= prev200 && cur50 > cur200) {
         signals.push({ date: dates[i], type: "buy", reason: "Golden Cross (MA50 > MA200)", price: closes[i] });
@@ -219,13 +223,6 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
     arr.push(s);
     signalsByDate.set(s.date, arr);
   }
-
-  // MA50 und MA200 bleiben die echten Fenster. Ein Mittelwert aus weniger Schlüssen
-  // liegt auf derselben Spur und setzt ein Golden Cross, bevor die rote Linie die gelbe schneidet.
-  const ma200 = ma200Strict;
-  const ma100 = smaThroughStart(ma100Strict, closes);
-  const ma50 = ma50Strict;
-  const ma20 = smaThroughStart(ma20Strict, closes);
 
   const points: FullPoint[] = bars.map((b, i) => {
     const m = macdAt(i);
@@ -254,7 +251,7 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
 /**
  * Fenster = Ausschnitt der vollen Serie. Wert am Datum D = Wert der Gesamt-Historie an D.
  * Kopien der Bars (anderes Objekt, gleiches Datum) treffen denselben Index.
- * MA50 und MA200 sind leer, bis ihr Fenster voll ist. Ein vorgelagerter Warmup füllt sie am linken Rand.
+ * MA50 und MA200 liegen ab dem ersten Kurs: vorher der Mittelwert der vorhandenen Schlüsse, ab dem vollen Fenster die SMA.
  * EMA bleibt leer, bis ihr Fenster voll ist.
  */
 export function buildWindowSeries(full: FullSeries, bars: OHLCVPoint[]): WindowSeries {
