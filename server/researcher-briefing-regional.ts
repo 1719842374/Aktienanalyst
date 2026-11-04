@@ -89,6 +89,8 @@ export interface SourceEvent {
   category?: string;
   severity?: string;
   description?: string;
+  timeframe?: string;
+  rationale?: string;
   inflationImpact?: string;
   rateImpact?: string;
   equityImpact?: string;
