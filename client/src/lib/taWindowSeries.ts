@@ -90,29 +90,12 @@ export function smaSeries(data: number[], period: number): (number | undefined)[
   return out;
 }
 
-const MA_LINE_PERIOD: Record<string, number> = {
-  ema9: 9,
-  ema12: 12,
-  ma20: 20,
-  ema26: 26,
-  ma50: 50,
-  ma100: 100,
-  ma200: 200,
-};
+export type MaCrossMarker = { date: string; type: "golden" | "death"; ma50: number; ma200: number };
 
 /**
- * Kürzere Periode zuerst, längste zuletzt.
- * Bis die echte Periode voll ist, sind die gezeichneten SMAs derselbe Mittelwert
- * der vorhandenen Schlüsse. Die später gezeichnete Linie liegt oben und bleibt
- * vom ersten Kurs an sichtbar, statt von der kürzeren verdeckt zu werden.
+ * Kreuz nur, wenn beide echten Fenster voll sind.
+ * Ein Teilmittel der ersten Sessions ist keine MA200 und darf keinen GC auf die gelbe Linie setzen.
  */
-export function maLinePaintOrder<T extends { key: string }>(lines: readonly T[]): T[] {
-  return [...lines].sort((a, b) => (MA_LINE_PERIOD[a.key] ?? 0) - (MA_LINE_PERIOD[b.key] ?? 0) || a.key.localeCompare(b.key));
-}
-
-export type MaCrossMarker = { date: string; type: "golden" | "death"; ma50: number };
-
-/** Jedes MA50/MA200-Kreuz in der gezeichneten Reihe, nicht nur das letzte. */
 export function maCrossMarkers(points: readonly { date: string; ma50?: number; ma200?: number }[]): MaCrossMarker[] {
   const out: MaCrossMarker[] = [];
   for (let i = 1; i < points.length; i++) {
@@ -122,8 +105,8 @@ export function maCrossMarkers(points: readonly { date: string; ma50?: number; m
     const ma200 = points[i].ma200;
     if (prev50 == null || prev200 == null || ma50 == null || ma200 == null) continue;
     if (!Number.isFinite(prev50) || !Number.isFinite(prev200) || !Number.isFinite(ma50) || !Number.isFinite(ma200)) continue;
-    if (prev50 <= prev200 && ma50 > ma200) out.push({ date: points[i].date, type: "golden", ma50 });
-    else if (prev50 >= prev200 && ma50 < ma200) out.push({ date: points[i].date, type: "death", ma50 });
+    if (prev50 <= prev200 && ma50 > ma200) out.push({ date: points[i].date, type: "golden", ma50, ma200 });
+    else if (prev50 >= prev200 && ma50 < ma200) out.push({ date: points[i].date, type: "death", ma50, ma200 });
   }
   return out;
 }
@@ -237,9 +220,11 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
     signalsByDate.set(s.date, arr);
   }
 
-  const ma200 = smaThroughStart(ma200Strict, closes);
+  // MA50 und MA200 bleiben die echten Fenster. Ein Mittelwert aus weniger Schlüssen
+  // liegt auf derselben Spur und setzt ein Golden Cross, bevor die rote Linie die gelbe schneidet.
+  const ma200 = ma200Strict;
   const ma100 = smaThroughStart(ma100Strict, closes);
-  const ma50 = smaThroughStart(ma50Strict, closes);
+  const ma50 = ma50Strict;
   const ma20 = smaThroughStart(ma20Strict, closes);
 
   const points: FullPoint[] = bars.map((b, i) => {
@@ -269,7 +254,7 @@ export function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
 /**
  * Fenster = Ausschnitt der vollen Serie. Wert am Datum D = Wert der Gesamt-Historie an D.
  * Kopien der Bars (anderes Objekt, gleiches Datum) treffen denselben Index.
- * SMA liegt auch vor dem vollen Fenster: Mittelwert der vorhandenen Schlüsse, ab dem Fenster die normale Periode.
+ * MA50 und MA200 sind leer, bis ihr Fenster voll ist. Ein vorgelagerter Warmup füllt sie am linken Rand.
  * EMA bleibt leer, bis ihr Fenster voll ist.
  */
 export function buildWindowSeries(full: FullSeries, bars: OHLCVPoint[]): WindowSeries {

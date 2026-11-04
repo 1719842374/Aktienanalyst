@@ -6,9 +6,8 @@
  * Run: npx tsx script/test-ta-window-series.ts
  */
 import type { OHLCVPoint } from "../shared/schema";
-import { readFileSync } from "node:fs";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, maLinePaintOrder, sliceBars, smaSeries,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars, smaSeries,
 } from "../client/src/lib/taWindowSeries";
 import {
   TA_INDICATOR_WARMUP_BARS, TA_OHLCV_MAX_POINTS, TA_VISIBLE_10Y_BARS, TA_WARMUP_CALENDAR_DAYS,
@@ -68,8 +67,9 @@ const full = buildFullSeries(bars);
 const fullMa200 = smaSeries(bars.map(b => b.close), 200);
 
 check(`volle Serie hat ${bars.length} Punkte`, full.points.length === bars.length);
-check("MA200 beginnt am ersten Kurs", full.points[0].ma200 === bars[0].close);
+check("MA200 beginnt am 200. Schluss", firstFiniteIndex(full.points, "ma200") === 199 && full.points[198].ma200 == null);
 check("MA200 ab vollem Fenster ist die SMA", full.points[199].ma200 === fullMa200[199]);
+check("MA50 beginnt am 50. Schluss", firstFiniteIndex(full.points, "ma50") === 49);
 {
   const cross = full.signals.find(s => s.reason.startsWith("Golden") || s.reason.startsWith("Death"));
   check("Cross erst nach vollem MA200-Fenster", cross != null && cross.date >= bars[199].date, cross?.date);
@@ -110,8 +110,9 @@ const gapWindow = buildWindowSeries(gapFull, gapBars.slice(-TA_VISIBLE_10Y_BARS)
 const gapFullIdx = 199;
 const gapWindowIdx = gapFullIdx - 80;
 check(
-  "10Y ohne 200 Prefix: MA200 geht bis zum ersten sichtbaren Kurs",
-  firstFiniteIndex(gapWindow.points, "ma200") === 0 && gapWindow.points[0].ma200 === gapBars.slice(0, 81).reduce((a, b) => a + b.close, 0) / 81,
+  "10Y mit 80 Bars Vorspann: MA200 beginnt am 200. Schluss der Serie",
+  firstFiniteIndex(gapWindow.points, "ma200") === 119 && gapWindow.points[119].ma200 === gapMa200[199],
+  `first=${firstFiniteIndex(gapWindow.points, "ma200")}`,
 );
 check(
   "wo das Fenster voll ist, bleibt es die SMA",
@@ -122,8 +123,8 @@ const young = weekdayBars(150);
 const youngFull = buildFullSeries(young);
 const youngWindow = buildWindowSeries(youngFull, young.slice(-TA_VISIBLE_10Y_BARS));
 const youngMean = young.reduce((a, b) => a + b.close, 0) / young.length;
-check("kurzes Listing: MA200 ab dem ersten Kurs", youngWindow.points[0].ma200 === young[0].close);
-check("kurzes Listing: letzter MA200 ist der Mittelwert aller Schlüsse", youngWindow.points[youngWindow.points.length - 1].ma200 === youngMean);
+check("kurzes Listing: keine MA200 vor dem 200. Schluss", youngWindow.points.every(p => p.ma200 == null));
+check("kurzes Listing: kein GC ohne rote Linie", maCrossMarkers(youngWindow.points).length === 0 && youngMean > 0);
 
 const copied = bars.slice(-126).map(b => ({ ...b }));
 const fromCopies = buildWindowSeries(full, copied);
@@ -137,7 +138,7 @@ check("Datumsfenster: Wert = volle Serie", midBuilt.points[0].ma200 === full.poi
 
 const head = buildWindowSeries(full, bars.slice(0, 63));
 const headMean = bars.slice(0, 63).reduce((a, b) => a + b.close, 0) / 63;
-check("Fenster am Serienanfang: MA200 ab dem ersten Kurs", head.points[0].ma200 === bars[0].close && head.points[62].ma200 === headMean);
+check("Fenster am Serienanfang ohne 200 Schlüsse: keine MA200", head.points.every(p => p.ma200 == null) && headMean > 0);
 
 const reversed = buildFullSeries([...bars].reverse());
 const revWindow = buildWindowSeries(reversed, bars.slice(-63));
@@ -401,29 +402,29 @@ const finiteTail = tail.map(b => b.close).filter(v => Number.isFinite(v));
 const expectTail = finiteTail.slice(-200).reduce((a, b) => a + b, 0) / 200;
 check("MA200 am letzten Kurs bleibt gesetzt, ein NaN davor löscht das Ende nicht", tailSma[tailSma.length - 1] != null && Math.abs((tailSma[tailSma.length - 1] as number) - expectTail) < 1e-6);
 
-const crossBars = weekdayBars(220);
+const early = weekdayBars(80);
+for (let i = 0; i < early.length; i++) early[i].close = 40 + i * 0.8;
+const earlySeries = buildFullSeries(early);
+check("KSPI-Start: keine MA200 vor dem 200. Schluss", earlySeries.points.every(p => p.ma200 == null));
+check("KSPI-Start: kein GC auf der gelben Linie, solange Rot fehlt", maCrossMarkers(earlySeries.points).length === 0);
+check("KSPI-Start: MA50 ab dem 50. Schluss", firstFiniteIndex(earlySeries.points, "ma50") === 49);
+
+const crossBars = weekdayBars(280);
 for (let i = 0; i < crossBars.length; i++) {
-  crossBars[i].close = i < 205 ? 100 + i * 0.1 : 100 + (i - 180) * 2;
+  crossBars[i].close = i < 240 ? 150 - i * 0.2 : (150 - 239 * 0.2) + (i - 239) * 2.5;
 }
 const crossSeries = buildFullSeries(crossBars);
 const crosses = maCrossMarkers(crossSeries.points);
-check("Golden Cross wird auf der Linie markiert, nicht nur als letztes Banner", crosses.some(c => c.type === "golden"));
-check("MA200 der Kreuz-Serie reicht bis zum letzten Bar", crossSeries.points[crossSeries.points.length - 1].ma200 != null);
-
-const kspiLike = weekdayBars(420);
-const kspiSeries = buildFullSeries(kspiLike);
-const kspiHoles = kspiSeries.points.filter(p => p.ma200 == null || !Number.isFinite(p.ma200));
-const kspiCloses = kspiLike.map(b => b.close);
-check("KSPI-Länge: roter MA200 an jedem Kurs, nirgends abgeschnitten", kspiHoles.length === 0, `holes=${kspiHoles.length}`);
-check("KSPI-Länge: MA200 beginnt am ersten Kurs", kspiSeries.points[0].ma200 === kspiCloses[0]);
+const golden = crosses.find(c => c.type === "golden");
+const goldenIdx = golden ? crossSeries.points.findIndex(p => p.date === golden.date) : -1;
+const prev = goldenIdx > 0 ? crossSeries.points[goldenIdx - 1] : undefined;
+check("Golden Cross erst, wenn MA50 die MA200 schneidet", golden != null && goldenIdx >= 200, `idx=${goldenIdx}`);
 check(
-  "KSPI-Länge: ab dem vollen Fenster die echte SMA200",
-  kspiSeries.points[199].ma200 === kspiCloses.slice(0, 200).reduce((a, b) => a + b, 0) / 200,
+  "am GC liegen beide Linien, der Punkt sitzt dazwischen",
+  golden != null && prev?.ma50 != null && prev.ma200 != null && prev.ma50 <= prev.ma200 && golden.ma50 > golden.ma200,
 );
-const paint = maLinePaintOrder([{ key: "ma200" }, { key: "ma50" }, { key: "ma20" }, { key: "ema26" }, { key: "ma100" }]).map(l => l.key);
-check("MA200 wird nach MA50 gezeichnet und nicht von ihr verdeckt", paint.indexOf("ma200") > paint.indexOf("ma50") && paint.indexOf("ma50") > paint.indexOf("ma20"));
-const chartSrc = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
-check("Chart benutzt die Zeichenreihenfolge", chartSrc.includes("maLinePaintOrder(MA_LINES)"));
+check("vor dem ersten vollen MA200-Fenster kein Kreuz", crosses.every(c => crossSeries.points.findIndex(p => p.date === c.date) >= 200));
+check("MA200 der Kreuz-Serie reicht bis zum letzten Bar", crossSeries.points[crossSeries.points.length - 1].ma200 != null);
 
 if (failed) {
   console.error(`\n${failed} checks failed`);
