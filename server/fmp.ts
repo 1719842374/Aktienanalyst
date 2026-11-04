@@ -28,7 +28,7 @@ export const FMP_CONFIG = {
 };
 
 function getApiKey(): string {
-  return process.env.FMP_API_KEY || "";
+  return process.env.FMP_API_KEY || process.env.FMP_API_key || "";
 }
 
 // Simple in-process serialiser: guarantees FMP_MIN_INTERVAL_MS between outbound
@@ -739,7 +739,7 @@ export async function fmpBatchQuote(symbols: string[]) {
 }
 
 export function isFmpAvailable(): boolean {
-  return !!process.env.FMP_API_KEY;
+  return getApiKey().length > 0;
 }
 
 // Unlike fmpBatchQuote/fmpQuote this rejects, so callers can see 429 vs. unreachable.
