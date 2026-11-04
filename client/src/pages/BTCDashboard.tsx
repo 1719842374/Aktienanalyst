@@ -39,7 +39,7 @@ import {
   m2ImpliedPrice,
   m2ImpliedTooltipLines,
 } from "@/lib/m2ImpliedBtc";
-import { BTC_SPOT_SOURCE_LABEL } from "@shared/btc-spot";
+import { BTC_SPOT_SOURCE_LABEL, BTC_VOLUME_SOURCE_LABEL } from "@shared/btc-spot";
 import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
@@ -1110,15 +1110,34 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   // Anzeige verdichtet auf ~500 Punkte. Die Reihe darunter bleibt täglich;
   // das Fenster (10Y/Max) bestimmt den ersten und den letzten Punkt.
+  // Golden Cross, Death Cross, Pi Cycle und 2-Year-MA bleiben immer ein
+  // Zeichenpunkt, sonst verschluckt der Schritt genau diese seltenen Tage.
+  // MACD-Kreuze liegen dicht; sie zeichnen mit, wenn ihr Tag in der Reihe bleibt.
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
-    const result = filteredData.filter((_, i) => i % step === 0);
+    const first = filteredData[0]?.date;
+    const last = filteredData[filteredData.length - 1]?.date;
+    const anchorDates = new Set(
+      (data.technicalSignals ?? [])
+        .filter((signal) =>
+          first != null
+          && last != null
+          && signal.date >= first
+          && signal.date <= last
+          && (signal.reason.startsWith("Golden Cross")
+            || signal.reason.startsWith("Death Cross")
+            || signal.reason === "Pi Cycle Top"
+            || signal.reason === "Unter 2-Year MA"
+            || signal.reason === "Über 2-Year MA"))
+        .map((signal) => signal.date),
+    );
+    const result = filteredData.filter((point, i) => i % step === 0 || anchorDates.has(point.date));
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) {
       result.push(filteredData[filteredData.length - 1]);
     }
     return result;
-  }, [filteredData]);
+  }, [filteredData, data.technicalSignals]);
 
   // Koeffizienten aus den echten Monatswerten der Historie bis zum Fensterende,
   // nicht aus dem sichtbaren Fenster und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
@@ -1216,7 +1235,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     const hasServerRSI = chartData.some(d => d.rsi14 != null);
     const clientRsiArr = hasServerRSI ? [] : calcRSI(prices);
 
-    // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
+    // Volume: absolut in USD auf jedem Kurstag der Spot-Historie, hier auf 0–1 normiert
     const rawVols = chartData.map(d => d.volume ?? 0);
     const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
     const hasServerVol = serverVolNorms.some(v => v > 0);
@@ -1587,6 +1606,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           title={data.spotSourceUrl || undefined}
         >
           Spot-Quelle: {data.spotSource || BTC_SPOT_SOURCE_LABEL}
+          {` · Volumen: ${BTC_VOLUME_SOURCE_LABEL}`}
           {(data.chartData?.allPrices?.length ?? 0) > 0
             ? ` · ${data.chartData.allPrices[0].date} – ${data.chartData.allPrices[data.chartData.allPrices.length - 1].date} · ${data.chartData.allPrices.length} Tage`
             : ""}
