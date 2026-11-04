@@ -1525,8 +1525,10 @@ function ConeBandFill({
   );
 }
 
-/** Größer als die Achsen-Ticks, damit PoS und die Prozentänderung am Horizont lesbar bleiben. */
-const CONE_HORIZON_LABEL_PX = 13;
+/** Größer als die Achsen-Ticks, damit PoS, Kurs und Prozentänderung am Horizont lesbar bleiben. */
+const CONE_HORIZON_LABEL_PX = 16;
+/** Zusätzlicher Luftabstand zwischen zwei Kegel-Zeilen, über das Aneinanderstoßen hinaus. */
+const CONE_LABEL_GAP_PX = 10;
 
 function coneMoveParts(anchor: number, price: number): { text: string; color: string; direction: "up" | "down" | "flat" } | null {
   const pct = conePriceMovePct(anchor, price);
@@ -1659,7 +1661,7 @@ function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>):
       fixed: true,
     });
   });
-  const placed = separateLabelYs(boxes);
+  const placed = separateLabelYs(boxes, CONE_LABEL_GAP_PX);
   const next: Record<string, number> = {};
   let changed = false;
   const pixel = 1 / (typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
@@ -1713,8 +1715,8 @@ function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: C
     );
   };
   return (
-    <>
-      <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[260px] whitespace-normal text-muted-foreground" title={CONE_FORMULA}>
+    <div className="space-y-1.5 text-[13px] leading-5">
+      <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[280px] whitespace-normal text-[11px] leading-4 text-muted-foreground" title={CONE_FORMULA}>
         <div>{CONE_SOURCE}</div>
         <div>{CONE_FORMULA}</div>
         <div>{coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}</div>
@@ -1727,7 +1729,7 @@ function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: C
       {scenarioRow("bull", p.coneBull, p.coneBullLabel)}
       {scenarioRow("base", p.coneBase, p.coneBaseLabel)}
       {scenarioRow("bear", p.coneBear, p.coneBearLabel)}
-    </>
+    </div>
   );
 }
 

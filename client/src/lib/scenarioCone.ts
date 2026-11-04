@@ -958,9 +958,11 @@ function boxesOverlapX(a: LabelBox, b: LabelBox): boolean {
  * Liegen zwei Boxen horizontal übereinander und ist der Pixelabstand ihrer
  * Mitten kleiner als die halbe Summe ihrer Höhen, rückt das untere Label
  * um genau diesen Fehlbetrag nach unten. Ist das untere fest (Dividende),
- * rückt das obere um denselben Fehlbetrag nach oben. Kein zusätzlicher Rand.
+ * rückt das obere um denselben Fehlbetrag nach oben. `gapPx` ist zusätzlicher
+ * Luftabstand nur zwischen zwei beweglichen Labels. Gegen ein festes Label
+ * bleibt der Abstand die halbe Summe der Höhen.
  */
-export function separateLabelYs(items: readonly LabelBox[]): { id: string; yPx: number }[] {
+export function separateLabelYs(items: readonly LabelBox[], gapPx = 0): { id: string; yPx: number }[] {
   const placed = items
     .filter(it => Number.isFinite(it.xPx) && Number.isFinite(it.widthPx) && it.widthPx > 0
       && Number.isFinite(it.yPx) && Number.isFinite(it.heightPx) && it.heightPx > 0)
@@ -973,7 +975,8 @@ export function separateLabelYs(items: readonly LabelBox[]): { id: string; yPx: 
       const a = placed[i];
       const b = placed[i + 1];
       if (!boxesOverlapX(a, b)) continue;
-      const required = (a.heightPx + b.heightPx) / 2;
+      const cushion = a.fixed || b.fixed ? 0 : Math.max(0, gapPx);
+      const required = (a.heightPx + b.heightPx) / 2 + cushion;
       const dist = b.yPx - a.yPx;
       if (dist >= required) continue;
       const deficit = required - dist;
