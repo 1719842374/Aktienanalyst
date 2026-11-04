@@ -2022,7 +2022,7 @@ function PricePane({
           </>
         )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
-          <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={ma.key === "ma200" ? 2.5 : ma.key === "ma50" ? 1.35 : 1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
+          <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
         ))}
         {visibleMAs.has("ma50") && visibleMAs.has("ma200") && maCrossMarkers(points).map(cross => (
           <ReferenceDot
