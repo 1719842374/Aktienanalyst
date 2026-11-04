@@ -46,6 +46,7 @@ import {
 } from "./sector-data";
 import { generateMacroCorrelations } from "./macro-correlations";
 import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
+import { liveBetaForCloses } from "./live-beta";
 
 import {
   calcImpliedGStar,
@@ -622,6 +623,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               console.warn(`[HISTORY-FALLBACK] Disk hit extension failed for ${upperTicker}: ${histErr?.message?.substring(0, 80)}`);
             }
           }
+          served = { ...served, betaLive: await liveBetaForCloses(served.historicalPrices) };
           analysisCache.set(cacheKey, {
             result: served,
             timestamp: Date.now(),
@@ -1966,6 +1968,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
       // schema fields. shared/schema.ts:StockAnalysis is the source of truth
       // for what the frontend actually reads.
+      const betaLive = await liveBetaForCloses(historicalPrices);
       const analysis = {
         // ─── Section 1: Datenaktualität (Section1.tsx) ───
         ticker: upperTicker,
@@ -2016,6 +2019,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         evEbitda,
         beta5Y: beta,
         beta,
+        betaLive,
         fcfTTM,
         fcfMargin,
         fcfAvailable,

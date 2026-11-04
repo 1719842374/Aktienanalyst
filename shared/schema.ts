@@ -492,6 +492,8 @@ export interface StockAnalysis {
   lynchPEGBasis?: string;   // Erklärung welche Methode verwendet wurde
   evEbitda: number;
   beta5Y: number;
+  /** Aktuelles Beta: letzte 252 Handelstage täglich gegen SPY. Nicht das Mehrjahres-Beta des Profils und nicht der DCF-Input. */
+  betaLive?: number | null;
   fcfTTM: number;
   fcfMargin: number;
   /** A3 (WORK_SECTION4_DATA_BUGS.md §4): false wenn weder freeCashFlow noch

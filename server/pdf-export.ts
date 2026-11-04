@@ -251,7 +251,7 @@ KERNDATEN:
 - P/E: ${data.peRatio?.toFixed(1) ?? 'n/a'} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
 - FCF-Marge: ${data.fcfMargin?.toFixed(1)}% | FCF: ${cS}${data.fcfTTM ? (data.fcfTTM/1e9).toFixed(1) + 'B' : '?'}
 - Revenue: ${cS}${data.revenue ? (data.revenue/1e9).toFixed(1) + 'B' : '?'} | Gross Margin: ${data.financialStatements?.incomeStatement?.grossMargin?.toFixed(1)}%
-- Moat: ${data.moatRating} | Beta: ${data.beta5Y?.toFixed(2)} | Gov. Exposure: ${data.governmentExposure}%
+- Moat: ${data.moatRating} | Beta: ${data.betaLive == null ? "n/a" : data.betaLive.toFixed(2)} (1J vs. SPY) | Gov. Exposure: ${data.governmentExposure}%
 - Sektor: ${data.sector} / ${data.industry}
 - Analysten PT: Median ${cL}${data.analystPT?.median} (${fazit.ptUp > 0 ? '+' : ''}${fazit.ptUp?.toFixed(0)}% Upside)
 
@@ -320,7 +320,8 @@ export function generateYahooOnlyHTML(data: any): string {
   const num = (v: any, d = 2) => typeof v === 'number' && isFinite(v) && v !== 0 ? v.toFixed(d) : 'n/a';
   const big = (v: any) => typeof v === 'number' && isFinite(v) && v > 0 ? (v >= 1e12 ? `${(v/1e12).toFixed(2)}T` : v >= 1e9 ? `${(v/1e9).toFixed(2)}B` : `${(v/1e6).toFixed(0)}M`) + ` ${esc(ccy)}` : 'n/a';
   const notice = esc(String(data.valuationNotice || YAHOO_NO_VALUATION_NOTICE));
-  const na = ['Forward P/E', 'PEG', 'EV/EBITDA', 'Beta (5Y)', 'FCF TTM', 'FCF Margin', 'Financial Statements', 'DCF / Fair Value', 'Reverse DCF (g*)', 'CRV', 'Score / Rating', 'Management-Score', 'Fazit'];
+  const na = ['Forward P/E', 'PEG', 'EV/EBITDA', 'FCF TTM', 'FCF Margin', 'Financial Statements', 'DCF / Fair Value', 'Reverse DCF (g*)', 'CRV', 'Score / Rating', 'Management-Score', 'Fazit'];
+  const betaTxt = typeof data.betaLive === "number" && Number.isFinite(data.betaLive) ? data.betaLive.toFixed(2) : "n/a";
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -346,6 +347,7 @@ export function generateYahooOnlyHTML(data: any): string {
 <tr><td class="row-label">Market Cap</td><td class="row-val">${big(data.marketCap)}</td></tr>
 <tr><td class="row-label">P/E (TTM)</td><td class="row-val">${num(data.peRatio, 1)}</td></tr>
 <tr><td class="row-label">EPS TTM</td><td class="row-val">${num(data.epsTTM)}${num(data.epsTTM) === 'n/a' ? '' : ' ' + esc(ccy)}</td></tr>
+<tr><td class="row-label">Beta</td><td class="row-val">${betaTxt} · 1J vs. SPY</td></tr>
 ${na.map(l => `<tr><td class="row-label">${esc(l)}</td><td class="row-val">n/a</td></tr>`).join('\n')}
 </table>
 <div class="footer"><div>Stock Analyst Pro — ${notice}</div><div style="float:right">Generiert: ${new Date().toLocaleString('de-DE')}</div></div>
@@ -471,7 +473,7 @@ ${narrative.execSummary ? `
 <tr><td class="row-label">Kurs</td><td class="row-val">${cL}${data.currentPrice?.toFixed(2)||'—'}</td><td class="row-label">Market Cap</td><td class="row-val">${fB(data.marketCap, cL)}</td></tr>
 <tr><td class="row-label">P/E (TTM)</td><td class="row-val">${f(data.peRatio)}</td><td class="row-label">Forward P/E</td><td class="row-val">${f(data.forwardPE)}</td></tr>
 <tr><td class="row-label">PEG</td><td class="row-val">${f(data.pegRatio,2)}</td><td class="row-label">EV/EBITDA</td><td class="row-val">${f(data.evEbitda)}</td></tr>
-<tr><td class="row-label">Beta (5Y)</td><td class="row-val">${f(data.beta5Y,2)}</td><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM, cS)}</td></tr>
+<tr><td class="row-label">Beta</td><td class="row-val">${data.betaLive == null ? "n/a" : f(data.betaLive,2)}</td><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM, cS)}</td></tr>
 <tr><td class="row-label">FCF Margin</td><td class="row-val">${f(data.fcfMargin)}%</td><td class="row-label">EPS Growth 5Y</td><td class="row-val">${f(data.epsGrowth5Y)}%</td></tr>
 </table>
 <div class="row"><span class="row-label">Analysten-Konsens</span><span class="row-val">Median ${cL}${data.analystPT?.median?.toFixed(2)||'—'} | High ${cL}${data.analystPT?.high?.toFixed(2)||'—'} | Low ${cL}${data.analystPT?.low?.toFixed(2)||'—'} | Upside ${pct(ptUp)}</span></div>
