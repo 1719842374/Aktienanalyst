@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   CONE_EVENT_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_POS_SOURCE, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotScale, conePriceMovePct, fitLogPriceTrend, formatConeMovePct, horizonTradingDays, separateLabelYs,
+  coneBandPrice, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotForward, conePlotScale, conePriceMovePct, fitLogPriceTrend, formatConeMovePct, horizonTradingDays, separateLabelYs, spreadConeLabelYs,
   realizedSigmaDaily, scenarioConeFromAnalysis, scenarioProbability, standardNormalCdf, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 import { chartListingPrice, CHART_PRICE_SCALE_IDENTITY } from "../client/src/lib/chartListingPrice";
@@ -402,6 +402,18 @@ assertSeparated([
   const p25Y = aired.find(p => p.id === "p25")!.yPx;
   assert.ok(Math.abs(p25Y - bullY) >= 16 + 10 - 1e-9, `${bullY} vs ${p25Y}`);
   assert.equal(separateLabelYs(tight).find(p => p.id === "bull")!.yPx, 100);
+}
+{
+  const forward = Array.from({ length: 252 }, (_, i) => i);
+  const drawn = conePlotForward(252, forward);
+  assert.ok(drawn.length <= Math.round(252 * 0.34) + 1, String(drawn.length));
+  assert.equal(drawn[0], 0);
+  assert.equal(drawn[drawn.length - 1], 251);
+  const short = conePlotForward(252, [1, 2, 3]);
+  assert.deepEqual(short, [1, 2, 3]);
+  const spread = spreadConeLabelYs([10, 12, 200], 16, 8);
+  assert.ok(spread[1] - spread[0] >= 24 - 1e-9, spread.join(","));
+  assert.equal(spread[2], 200);
 }
 assertSeparated([
   { id: "div-attractive", xPx: 700, widthPx: 90, yPx: 120, heightPx: 8, fixed: true },

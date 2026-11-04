@@ -877,7 +877,7 @@ export function attachConeSeries<T extends { date: string; close: number }>(
 ): Array<T & ConePlotFields> {
   if (!cone || points.length === 0 || cone.points.length === 0) return points as Array<T & ConePlotFields>;
   const anchor = cone.points[0];
-  const future = cone.points.slice(1);
+  const future = conePlotForward(points.length, cone.points.slice(1));
   const endMarkers = markerPlot(cone);
   const out: Array<T & ConePlotFields> = points.map((p, i) => {
     if (i !== points.length - 1) return p as T & ConePlotFields;
@@ -989,4 +989,53 @@ export function separateLabelYs(items: readonly LabelBox[], gapPx = 0): { id: st
     if (!moved) break;
   }
   return placed.map(p => ({ id: p.id, yPx: p.yPx }));
+}
+
+/**
+ * Zukunftspunkte auf der X-Achse. Der gezeichnete Kegel bleibt höchstens
+ * etwa ein Drittel so breit wie die sichtbare Kurshistorie. Erster und letzter
+ * Vorwärtstag bleiben, die Preise am Ende ändern sich nicht.
+ */
+export function conePlotForward<T>(historyCount: number, forward: readonly T[]): T[] {
+  const maxForward = Math.max(32, Math.round(Math.max(historyCount, 1) * 0.34));
+  if (forward.length <= maxForward) return forward.slice();
+  const last = forward.length - 1;
+  const out: T[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < maxForward; i++) {
+    const idx = i === maxForward - 1 ? last : Math.round((i * last) / (maxForward - 1));
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    out.push(forward[idx]);
+  }
+  return out;
+}
+
+/**
+ * Labels in Kursreihenfolge. Enger als Schrift plus Abstand wird auf diesen
+ * Abstand gesetzt. Die Gruppe bleibt zwischen dem obersten und dem untersten Kurs.
+ * Reicht die Spanne nicht, wird gleichmäßig in diese Spanne gelegt.
+ */
+export function spreadConeLabelYs(anchorYs: readonly number[], fontPx: number, gapPx: number): number[] {
+  const n = anchorYs.length;
+  const out = anchorYs.slice();
+  if (n <= 1) return out;
+  const order = anchorYs.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y || a.i - b.i);
+  const top = order[0].y;
+  const bottom = order[n - 1].y;
+  const span = bottom - top;
+  const minStep = Math.max(1, fontPx + Math.max(0, gapPx));
+  if (!(span > 0) || (n - 1) * minStep > span + 1e-6) {
+    const step = n === 1 ? 0 : span / (n - 1);
+    order.forEach((o, k) => { out[o.i] = top + k * step; });
+    return out;
+  }
+  const ys = order.map(o => o.y);
+  for (let i = 1; i < n; i++) ys[i] = Math.max(ys[i], ys[i - 1] + minStep);
+  const overflow = ys[n - 1] - bottom;
+  if (overflow > 0) {
+    for (let i = 0; i < n; i++) ys[i] -= overflow;
+  }
+  order.forEach((o, k) => { out[o.i] = ys[k]; });
+  return out;
 }

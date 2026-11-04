@@ -26,7 +26,7 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePlotForward, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs, spreadConeLabelYs,
   type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
@@ -1452,9 +1452,9 @@ function WindowDates({
 function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): WindowPoint[] {
   if (!cone || cone.points.length < 2) return points;
   const tail: WindowPoint[] = [];
-  for (let i = 1; i < cone.points.length; i++) {
+  for (const point of conePlotForward(points.length, cone.points.slice(1))) {
     tail.push({
-      date: cone.points[i].date,
+      date: point.date,
       close: Number.NaN,
       volume: 0,
       _volNorm: 0,
@@ -1527,8 +1527,10 @@ function ConeBandFill({
 
 /** Größer als die Achsen-Ticks, damit PoS, Kurs und Prozentänderung am Horizont lesbar bleiben. */
 const CONE_HORIZON_LABEL_PX = 16;
-/** Zusätzlicher Luftabstand zwischen zwei Kegel-Zeilen, über das Aneinanderstoßen hinaus. */
-const CONE_LABEL_GAP_PX = 10;
+/** Luft zwischen zwei Zeilen derselben Spalte, zusätzlich zur Schrifthöhe. */
+const CONE_LABEL_GAP_PX = 8;
+/** Bull/Base/Bear stehen links von den P10–P90-Zeilen, nicht auf derselben Stelle. */
+const CONE_SCENARIO_COLUMN_PX = 196;
 
 function coneMoveParts(anchor: number, price: number): { text: string; color: string; direction: "up" | "down" | "flat" } | null {
   const pct = conePriceMovePct(anchor, price);
@@ -1551,6 +1553,7 @@ function ConeEndLabels({
   formatPx,
   priceSymbol,
   priceFactor,
+  scenarioColumnPx,
 }: {
   xAxisMap?: Record<string, ChartAxis>;
   yAxisMap?: Record<string, ChartAxis>;
@@ -1560,6 +1563,7 @@ function ConeEndLabels({
   formatPx: (value: number, digits?: number) => string;
   priceSymbol: string;
   priceFactor: number;
+  scenarioColumnPx: number;
 }) {
   const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
   const priceAxis = yAxisMap?.price;
@@ -1575,32 +1579,44 @@ function ConeEndLabels({
     { id: "p25", y: end.innerLow, name: CONE_EDGE_LABEL.p25 },
     { id: "p10", y: end.p10, name: CONE_EDGE_LABEL.p10 },
   ];
+  const bandAnchor = bands.map(b => priceAxis.scale!(b.y));
+  const markerAnchor = markers.map(m => priceAxis.scale!(m.price as number));
+  const bandY = spreadConeLabelYs(bandAnchor, CONE_HORIZON_LABEL_PX, CONE_LABEL_GAP_PX);
+  const markerY = spreadConeLabelYs(markerAnchor, CONE_HORIZON_LABEL_PX, CONE_LABEL_GAP_PX);
+  const bandX = dotX - priceFontPx;
+  const markerX = bandX - scenarioColumnPx;
   return (
     <g data-testid="cone-marker-labels">
       <title>{`${CONE_SOURCE}. ${CONE_FORMULA}`}</title>
-      {bands.map(b => {
-        const anchorY = priceAxis.scale!(b.y);
+      {bands.map((b, index) => {
+        const anchorY = bandAnchor[index];
+        const labelY = bandY[index] + (labelShift[b.id] ?? 0);
         const move = coneMoveParts(cone.anchorPrice, b.y);
-        if (!Number.isFinite(anchorY) || !move) return null;
+        if (!Number.isFinite(anchorY) || !Number.isFinite(labelY) || !move) return null;
         return (
-          <text
-            key={b.id}
-            data-testid={`cone-label-${b.id}`}
-            x={dotX - priceFontPx}
-            y={anchorY + (labelShift[b.id] ?? 0)}
-            textAnchor="end"
-            dominantBaseline="middle"
-            fontSize={CONE_HORIZON_LABEL_PX}
-            fontWeight={600}
-          >
-            <tspan fill={CONE_STYLE.band}>{b.name}</tspan>
-            <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(b.y)} ${move.text}`}</tspan>
-          </text>
+          <g key={b.id}>
+            {Math.abs(labelY - anchorY) > 1 && (
+              <line x1={dotX} y1={anchorY} x2={bandX} y2={labelY} stroke={CONE_STYLE.band} strokeWidth={1} strokeOpacity={0.65} />
+            )}
+            <text
+              data-testid={`cone-label-${b.id}`}
+              x={bandX}
+              y={labelY}
+              textAnchor="end"
+              dominantBaseline="middle"
+              fontSize={CONE_HORIZON_LABEL_PX}
+              fontWeight={600}
+            >
+              <tspan fill={CONE_STYLE.band}>{b.name}</tspan>
+              <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(b.y)} ${move.text}`}</tspan>
+            </text>
+          </g>
         );
       })}
-      {markers.map(m => {
+      {markers.map((m, index) => {
         const price = m.price as number;
-        const anchorY = priceAxis.scale!(price);
+        const anchorY = markerAnchor[index];
+        const labelY = markerY[index] + (labelShift[m.id] ?? 0);
         const line = coneHorizonLabel({
           name: CONE_HORIZON_NAME[m.id],
           probability: m.probability,
@@ -1609,22 +1625,24 @@ function ConeEndLabels({
           symbol: priceSymbol,
           factor: priceFactor,
         });
-        if (!Number.isFinite(anchorY) || !line) return null;
+        if (!Number.isFinite(anchorY) || !Number.isFinite(labelY) || !line) return null;
         return (
-          <text
-            key={m.id}
-            data-testid={`cone-label-${m.id}`}
-            x={dotX - priceFontPx}
-            y={anchorY + (labelShift[m.id] ?? 0)}
-            textAnchor="end"
-            dominantBaseline="middle"
-            fontSize={CONE_HORIZON_LABEL_PX}
-            fontWeight={600}
-          >
-            <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
-            <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{line.lead}</tspan>
-            <tspan fill={coneMoveColor(line.direction)} data-direction={line.direction}>{line.move}</tspan>
-          </text>
+          <g key={m.id}>
+            <line x1={dotX} y1={anchorY} x2={markerX} y2={labelY} stroke={markerFill(m.id)} strokeWidth={1} strokeOpacity={0.8} />
+            <text
+              data-testid={`cone-label-${m.id}`}
+              x={markerX}
+              y={labelY}
+              textAnchor="end"
+              dominantBaseline="middle"
+              fontSize={CONE_HORIZON_LABEL_PX}
+              fontWeight={600}
+            >
+              <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
+              <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{line.lead}</tspan>
+              <tspan fill={coneMoveColor(line.direction)} data-direction={line.direction}>{line.move}</tspan>
+            </text>
+          </g>
         );
       })}
     </g>
@@ -1988,6 +2006,7 @@ function PricePane({
                 formatPx={formatPx}
                 priceSymbol={ccy}
                 priceFactor={priceFactor}
+                scenarioColumnPx={narrow ? 88 : CONE_SCENARIO_COLUMN_PX}
               />
             )} />
           </>
