@@ -1481,8 +1481,6 @@ function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): Wi
   return points.concat(tail);
 }
 
-const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneInnerLow", "coneInnerHigh", "coneBull", "coneBase", "coneBear"]);
-
 function markerFill(id: string): string {
   if (id === "bull") return CONE_STYLE.bull;
   if (id === "base") return CONE_STYLE.base;
@@ -1955,12 +1953,23 @@ function PricePane({
               {fund && (dp.close != null && Number.isFinite(dp.close)
                 ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
                 : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx", "_phA", "_phN", "_phV", "_phBase"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
-                <div key={p.dataKey} className="flex justify-between gap-3">
-                  <span style={{ color: p.color }}>{p.name}</span>
-                  <span className="font-mono">{formatPx(Number(p.value))}</span>
+              {MA_LINES.filter(ma => visibleMAs.has(ma.key)).map(ma => {
+                const value = dp[ma.key];
+                return (
+                  <div key={ma.key} className="flex justify-between gap-3" data-testid={`tooltip-${ma.key}`}>
+                    <span style={{ color: ma.color }}>{ma.label}</span>
+                    <span className="font-mono">{value != null && Number.isFinite(value) ? formatPx(value) : "n/a"}</span>
+                  </div>
+                );
+              })}
+              {visibleMAs.has("ma50") && visibleMAs.has("ma200") && dp.ma50 != null && dp.ma200 != null && Number.isFinite(dp.ma50) && Number.isFinite(dp.ma200) && dp.ma200 !== 0 && (
+                <div className="flex justify-between gap-3" data-testid="tooltip-ma-gap">
+                  <span className="text-muted-foreground">MA50 − MA200</span>
+                  <span className={`font-mono ${dp.ma50 >= dp.ma200 ? "text-green-400" : "text-red-400"}`}>
+                    {dp.ma50 - dp.ma200 >= 0 ? "+" : "−"}{formatPx(Math.abs(dp.ma50 - dp.ma200))} ({((dp.ma50 / dp.ma200 - 1) * 100).toFixed(2)} %)
+                  </span>
                 </div>
-              ))}
+              )}
               {sigs.map((s, i) => (
                 <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
                   {s.type === "buy" ? "▲ BUY" : "▼ SELL"}: {s.reason}
