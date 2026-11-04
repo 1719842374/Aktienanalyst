@@ -41,7 +41,9 @@ assert.deepEqual(catalogs.regions[1].slots.map(s => s.name), ["k", "l", "m", "n"
 const ui = readFileSync("client/src/components/recession/RegionGaugeSwitch.tsx", "utf8");
 assert.match(ui, /useState<RegionId>\("US"\)/, "US is default");
 assert.match(ui, /<CurrentAssessment data=\{data\} \/>/, "US keeps the five live gauges");
+assert.match(ui, /region-gauges-/, "Europa/Asien render the five horizon gauges");
 assert.match(ui, /Handlung bleibt auf den US-Büchern/);
 const page = readFileSync("client/src/pages/RecessionDashboard.tsx", "utf8");
-assert.match(page, /<RegionGaugeSwitch data=\{data\} regions=\{regions\} \/>/);
+assert.match(page, /<RegionGaugeSwitch data=\{data\} regions=\{regions\} onSelect=\{setRegionId\} \/>/);
+assert.match(page, /RegionScoreTable/, "sections 5–7 follow the selected region");
 console.log("test-region-gauge-switch: OK");
