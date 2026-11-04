@@ -45,6 +45,28 @@ export const SYMMETRIC = {
   volLookback: 20,
   lowQuantile: 0.3,
   highQuantile: 0.7,
+  /** MA200-Steigung über 20 Handelstage. */
+  ma200SlopeDays: 20,
+  /** MA50-Steigung über dieselbe Spanne. Death Cross braucht eine fallende MA50. */
+  ma50SlopeDays: 20,
+  /** Moat unter 3 ist nicht Wide. Wide ist 4. */
+  moatNotWideBelow: 3,
+  /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.40. */
+  rslLowQuantile: 0.4,
+  /** Quantil der eigenen RSL-Reihe, nicht ein fester Rang 0.60. */
+  rslHighQuantile: 0.6,
+  /** Median der eigenen Volumen-Ratio, nicht ein festes 1.2×. */
+  volMedianQuantile: 0.5,
+  /** Maximale Dämpfung 25 %. Faktor = 1 − Stärke × Spanne, also 0.75–1. */
+  falseBreakoutDampSpan: 0.25,
+  /** Moat-Skala der Dämpfung. Wide 4, Narrow 2, kein Moat 0. */
+  moatScoreMax: 5,
+  moatWideScore: 4,
+  moatNarrowScore: 2,
+  moatNoneScore: 0,
+  /** 0.9 + (Score / 5) × 0.2, also 0.9–1.1. */
+  moatFactorFloor: 0.9,
+  moatFactorSpan: 0.2,
 } as const;
 
 export type SymmetricColor = "GRÜN" | "GELB" | "ROT";
@@ -69,6 +91,9 @@ export interface AmpelFactors {
   bsNote: string;
   betaFactor: number;
   betaNote: string;
+  /** null: Moat unbekannt, die Dämpfung bleibt technisch. */
+  moatScore: number | null;
+  moatNote: string;
 }
 
 export interface SymmetricBar {
@@ -103,6 +128,20 @@ export interface SymmetricSnapshot {
   volumeRatio: number | null;
   volumeFactor: number;
   volumeNote: string;
+  /** 0.75–1 auf den ganzen Score, wenn alle vier Bedingungen gelten, sonst 1. */
+  falseBreakoutFactor: number;
+  falseBreakout: boolean;
+  /** Derselbe Faktor, wenn der Bulle falsch bricht, sonst 1. */
+  falseBreakdownFactor: number;
+  falseBreakdown: boolean;
+  falseBreakoutNote: string;
+  /** Verkauf nach Death Cross ohne Golden Cross, solange der Abstand wächst. */
+  falseBreakoutSell: boolean;
+  /** Golden oder Death Cross, dessen absoluter MA-Abstand nicht größer wird. */
+  weakCross: boolean;
+  /** Death Cross, Kurs über der MA50, Abstand nicht geschrumpft. */
+  reclaimedMa50: boolean;
+  crossType: "golden" | "death" | "none";
   facts: SignalFact[];
   summary: string;
 }
@@ -128,7 +167,7 @@ export function historyPercentile(history: readonly number[], value: number): nu
 }
 
 /** Steigung der letzten `days` Punkte. 0 = flach. Zu kurz → null. */
-export function slopeSignOf(series: readonly (number | null | undefined)[], index: number, days = SYMMETRIC.slopeDays): number | null {
+export function slopeSignOf(series: readonly (number | null | undefined)[], index: number, days: number = SYMMETRIC.slopeDays): number | null {
   if (index < days - 1) return null;
   const start = series[index - (days - 1)];
   const end = series[index];
@@ -152,6 +191,161 @@ export function symmetricSignal(value: number, history: readonly number[], slope
   return signalFromPercentile(pct, slopeSign);
 }
 
+export interface FalseBreakoutInput {
+  price: number | null;
+  ma200: number | null;
+  ma200Slope: number | null;
+  rslValue: number | null;
+  rslPercentile: number | null;
+  rslHistory: readonly number[];
+  volRatio: number | null;
+  volHistory: readonly number[];
+  /** 0–5. null lässt die technische Dämpfung unverändert. */
+  moatScore?: number | null;
+}
+
+function regimeThresholds(rslHistory: readonly number[], volHistory: readonly number[]) {
+  return {
+    rslLow: quantile(rslHistory, SYMMETRIC.rslLowQuantile),
+    rslHigh: quantile(rslHistory, SYMMETRIC.rslHighQuantile),
+    volMed: quantile(volHistory, SYMMETRIC.volMedianQuantile),
+  };
+}
+
+/** False Breakout: Kurs unter fallendem MA200, RSL unter dem eigenen p40, Volumen unter dem eigenen Median. */
+export function isFalseBreakout(input: FalseBreakoutInput): boolean {
+  const { rslLow, volMed } = regimeThresholds(input.rslHistory, input.volHistory);
+  return input.price != null
+    && input.ma200 != null
+    && input.price < input.ma200
+    && input.ma200Slope != null
+    && input.ma200Slope < 0
+    && input.rslValue != null
+    && rslLow != null
+    && input.rslValue < rslLow
+    && input.volRatio != null
+    && volMed != null
+    && input.volRatio < volMed;
+}
+
+/** False Breakdown: Kurs über steigendem MA200, RSL über dem eigenen p60, Volumen unter dem eigenen Median. */
+export function isFalseBreakdown(input: FalseBreakoutInput): boolean {
+  const { rslHigh, volMed } = regimeThresholds(input.rslHistory, input.volHistory);
+  return input.price != null
+    && input.ma200 != null
+    && input.price > input.ma200
+    && input.ma200Slope != null
+    && input.ma200Slope > 0
+    && input.rslValue != null
+    && rslHigh != null
+    && input.rslValue > rslHigh
+    && input.volRatio != null
+    && volMed != null
+    && input.volRatio < volMed;
+}
+
+/** Wide 4, Narrow 2, kein Moat 0. Unbekannte Ratings bleiben leer. */
+export function moatScoreFromRating(rating: string | null | undefined): number | null {
+  const key = String(rating ?? "").trim().toLowerCase();
+  if (!key) return null;
+  if (key.includes("none") || key.includes("kein") || key.includes("no moat")) return SYMMETRIC.moatNoneScore;
+  if (key.includes("wide") || key.includes("strong")) return SYMMETRIC.moatWideScore;
+  if (key.includes("narrow") || key.includes("limited")) return SYMMETRIC.moatNarrowScore;
+  return null;
+}
+
+/** 0.9 bei Score 0, 1.1 bei Score 5. */
+export function moatFalseBreakoutFactor(score: number): number {
+  const clamped = Math.min(SYMMETRIC.moatScoreMax, Math.max(0, score));
+  return SYMMETRIC.moatFactorFloor + (clamped / SYMMETRIC.moatScoreMax) * SYMMETRIC.moatFactorSpan;
+}
+
+/**
+ * 1, wenn eine Bedingung fehlt. Dann bleibt auch ein Moat ohne Wirkung.
+ * Sonst 1 − Stärke × 0.25, mal Moat 0.9–1.1, wenn ein Score vorliegt.
+ * Stärke ist 2 × |RSL-Perzentil − 0.5|, höchstens 1.
+ */
+export function falseBreakoutFactorOf(input: FalseBreakoutInput): number {
+  if (!isFalseBreakout(input) && !isFalseBreakdown(input)) return SYMMETRIC.neutralFactor;
+  if (input.rslPercentile == null) return SYMMETRIC.neutralFactor;
+  const strength = Math.min(Math.abs(input.rslPercentile - 0.5) * 2, 1);
+  const base = 1 - strength * SYMMETRIC.falseBreakoutDampSpan;
+  if (base === SYMMETRIC.neutralFactor) return SYMMETRIC.neutralFactor;
+  if (input.moatScore == null || !Number.isFinite(input.moatScore)) return base;
+  return base * moatFalseBreakoutFactor(input.moatScore);
+}
+
+/** Golden Cross: MA50 über MA200 und steigend. Das Gegenstück zum Death Cross. */
+export function goldenCrossActive(ma50: number | null, ma200: number | null, ma50Slope: number | null): boolean {
+  return ma50 != null && ma200 != null && ma50 > ma200 && ma50Slope != null && ma50Slope > 0;
+}
+
+/**
+ * Verkauf nach Death Cross, solange kein Golden Cross aktiv ist.
+ * Es reicht, dass der Kurs unter einer der beiden MAs liegt.
+ * Wide-Moat, ein Golden Cross oder ein Kurs über beiden MAs lässt den Tag in der normalen Ampel.
+ */
+export function falseBreakoutSell(input: {
+  price: number | null;
+  ma50: number | null;
+  ma200: number | null;
+  ma50Slope: number | null;
+  goldenCrossActive: boolean;
+  rslPercentile: number | null;
+  moatScore: number | null;
+}): boolean {
+  const deathCross = input.ma50 != null
+    && input.ma200 != null
+    && input.ma50 < input.ma200
+    && input.ma50Slope != null
+    && input.ma50Slope < 0;
+  const brokeOrNear = input.price != null
+    && input.ma50 != null
+    && input.ma200 != null
+    && (input.price < input.ma50 || input.price < input.ma200);
+  const weakRsl = input.rslPercentile != null && input.rslPercentile < SYMMETRIC.rslLowQuantile;
+  const notWideMoat = input.moatScore != null && input.moatScore < SYMMETRIC.moatNotWideBelow;
+  return deathCross && !input.goldenCrossActive && brokeOrNear && weakRsl && notWideMoat;
+}
+
+/**
+ * Konvergenz nach einem Cross. Der Abstand ist |MA50 − MA200|.
+ * Er gilt als nicht bestätigt, wenn er gegenüber vor 20 Tagen nicht größer ist.
+ * Golden bleibt dann gelb, ein Death Cross auch. Wächst der Abstand und der Kurs
+ * liegt noch unter der MA50, bleibt der Death Cross rot. Liegt der Kurs wieder
+ * über der MA50, wird er gelb, auch wenn der Abstand nicht geschrumpft ist.
+ */
+export type MaCross = "golden" | "death";
+
+export function weakCross(input: {
+  ma50: number | null;
+  ma200: number | null;
+  previousGap: number | null;
+  crossType: MaCross;
+}): boolean {
+  if (input.ma50 == null || input.ma200 == null || input.previousGap == null) return false;
+  const currentGap = Math.abs(input.ma50 - input.ma200);
+  const converging = currentGap <= input.previousGap;
+  if (input.crossType === "golden") return input.ma50 > input.ma200 && converging;
+  return input.ma50 < input.ma200 && converging;
+}
+
+/**
+ * Death Cross, der Kurs liegt wieder über der eigenen MA50, und der Abstand
+ * zur MA200 ist gegenüber vor 20 Tagen nicht kleiner. Dann bleibt der Tag nicht rot.
+ */
+export function reclaimedMa50DuringDeathCross(input: {
+  price: number | null;
+  ma50: number | null;
+  ma200: number | null;
+  previousGap: number | null;
+}): boolean {
+  if (input.price == null || input.ma50 == null || input.ma200 == null) return false;
+  if (!(input.ma50 < input.ma200) || !(input.price > input.ma50)) return false;
+  if (input.previousGap == null) return false;
+  return Math.abs(input.ma50 - input.ma200) >= input.previousGap;
+}
+
 export function volumeFactor(ratio: number | null): { factor: number; note: string } {
   if (ratio == null || !Number.isFinite(ratio)) {
     return { factor: SYMMETRIC.neutralFactor, note: "n/a — kein Volumenverhältnis, Faktor 1" };
@@ -163,6 +357,26 @@ export function volumeFactor(ratio: number | null): { factor: number; note: stri
     return { factor: SYMMETRIC.volLowFactor, note: `Volumen ${ratio.toFixed(2)}× < ${SYMMETRIC.volLowRatio}×, dämpft ×${SYMMETRIC.volLowFactor}` };
   }
   return { factor: SYMMETRIC.neutralFactor, note: `Volumen ${ratio.toFixed(2)}×, Faktor 1` };
+}
+
+/** Anteile der Thesis-Klassen. Nur Fast Grower und Cyclical verschieben den Faktor. */
+export function thesisFactorFromShares(shares: Record<string, number> | null | undefined): { factor: number; note: string } {
+  if (!shares) return { factor: SYMMETRIC.neutralFactor, note: "n/a — keine Thesis-Anteile, Faktor 1" };
+  let fast = 0;
+  let cyclical = 0;
+  let weight = 0;
+  for (const [name, share] of Object.entries(shares)) {
+    if (!Number.isFinite(share) || share <= 0) continue;
+    weight += share;
+    const key = name.toLowerCase();
+    if (key.includes("fast")) fast += share;
+    else if (key.includes("cycl")) cyclical += share;
+  }
+  if (weight <= 0) return { factor: SYMMETRIC.neutralFactor, note: "n/a — Thesis-Anteile leer, Faktor 1" };
+  const add = (fast / weight) * SYMMETRIC.thesisFastGrowerAdd + (cyclical / weight) * SYMMETRIC.thesisCyclicalAdd;
+  const factor = Math.min(SYMMETRIC.thesisCeil, Math.max(SYMMETRIC.thesisFloor, 1 + add));
+  const note = `Fast Grower ${(fast / weight * 100).toFixed(0)} % ×${(1 + (fast / weight) * SYMMETRIC.thesisFastGrowerAdd).toFixed(2)} · Cyclical ${(cyclical / weight * 100).toFixed(0)} % ×${(1 + (cyclical / weight) * SYMMETRIC.thesisCyclicalAdd).toFixed(2)} · gesamt ×${factor.toFixed(2)}`;
+  return { factor, note };
 }
 
 export function thesisFactorFromClass(lynchClass: string | null | undefined): { factor: number; note: string } {
@@ -185,8 +399,11 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-export function ampelFactorsFromAnalysis(data: StockAnalysis): AmpelFactors {
-  const thesis = thesisFactorFromClass(data.lynchClass);
+export function ampelFactorsFromAnalysis(data: StockAnalysis & { styleConfidences?: Record<string, number> | null }): AmpelFactors {
+  const shares = data.styleConfidences;
+  const thesis = shares && Object.keys(shares).length > 0
+    ? thesisFactorFromShares(shares)
+    : thesisFactorFromClass(data.lynchClass);
   const bs = data.financialStatements?.balanceSheet;
   const ebitda = data.ebitda;
   const netDebt = bs?.netDebt;
@@ -199,6 +416,11 @@ export function ampelFactorsFromAnalysis(data: StockAnalysis): AmpelFactors {
     ndEbitda != null ? `NetDebt/EBITDA ${ndEbitda.toFixed(2)}` : "NetDebt/EBITDA n/a",
     "Zinsdeckung n/a",
   ];
+  const rating = data.moatAssessment?.overallRating ?? data.moatRating ?? null;
+  const moatScore = moatScoreFromRating(rating);
+  const moatNote = moatScore == null
+    ? "Moat n/a — Dämpfung bleibt technisch"
+    : `Moat ${rating} ${moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(moatScore).toFixed(2)}`;
   return {
     thesisFactor: thesis.factor,
     thesisNote: thesis.note,
@@ -208,6 +430,8 @@ export function ampelFactorsFromAnalysis(data: StockAnalysis): AmpelFactors {
     betaNote: finite(data.beta5Y)
       ? `Beta ${data.beta5Y.toFixed(2)} — keine Beta-Historie, kein Vergleich mit einem festen Pegel, Faktor 1`
       : "Beta n/a — Faktor 1",
+    moatScore,
+    moatNote,
   };
 }
 
@@ -312,7 +536,9 @@ export function describeSnapshot(snap: Omit<SymmetricSnapshot, "summary">): stri
   return [
     ...signals,
     snap.volumeNote,
+    snap.falseBreakoutNote,
     `Thesis ${snap.factors.thesisNote} ×${snap.factors.thesisFactor.toFixed(2)}`,
+    snap.factors.moatNote,
     `Bilanz ${snap.factors.bsNote}`,
     snap.factors.betaNote,
     band,
@@ -327,6 +553,8 @@ const EMPTY_FACTORS: AmpelFactors = {
   bsNote: "n/a",
   betaFactor: 1,
   betaNote: "n/a",
+  moatScore: null,
+  moatNote: "Moat n/a",
 };
 
 /**
@@ -342,6 +570,8 @@ export function symmetricAmpelSeries(
   const rsl: (number | null)[] = [];
   const ma50Ratio: (number | null)[] = [];
   const maGap: (number | null)[] = [];
+  const ma200Series: (number | null)[] = [];
+  const ma50Series: (number | null)[] = [];
   const rsi: (number | null)[] = [];
   const macd: (number | null)[] = [];
   const volRatio: (number | null)[] = [];
@@ -351,6 +581,8 @@ export function symmetricAmpelSeries(
     rsl.push(ma52 != null && ma52 !== 0 ? closes[i] / ma52 : null);
     const ma50 = finite(bars[i].ma50) ? bars[i].ma50 as number : smaAt(closes, i, SYMMETRIC.ma50Days);
     const ma200 = finite(bars[i].ma200) ? bars[i].ma200 as number : smaAt(closes, i, SYMMETRIC.ma200Days);
+    ma200Series.push(ma200);
+    ma50Series.push(ma50);
     ma50Ratio.push(ma50 != null && ma50 !== 0 ? closes[i] / ma50 : null);
     maGap.push(ma50 != null && ma200 != null && ma200 !== 0 ? ma50 / ma200 : null);
     rsi.push(finite(bars[i].rsi) ? bars[i].rsi as number : null);
@@ -371,6 +603,10 @@ export function symmetricAmpelSeries(
   const techAt: (number | null)[] = [];
   const factsAt: SignalFact[][] = [];
   const volAt: { ratio: number | null; factor: number; note: string }[] = [];
+  const breakoutAt: { factor: number; breakdownFactor: number; active: boolean; breakdown: boolean; sell: boolean; weakCross: boolean; reclaimedMa50: boolean; crossType: "golden" | "death" | "none"; note: string }[] = [];
+
+  const rslHist: number[] = [];
+  const volHist: number[] = [];
 
   const pushSignal = (
     name: string,
@@ -400,15 +636,80 @@ export function symmetricAmpelSeries(
     pushSignal("MACD-Hist", macd, i, ranks.macd, bucket, signals);
     pushSignal("MA50", ma50Ratio, i, ranks.ma50, bucket, signals);
     pushSignal("MA-Lage", maGap, i, ranks.gap, bucket, signals);
+    const ma200Slope = slopeSignOf(ma200Series, i, SYMMETRIC.ma200SlopeDays);
+    const rslFact = bucket.find(item => item.name === "Kurs/MA52");
+    const rslNow = rsl[i];
+    const volNow = volRatio[i];
+    if (rslNow != null) rslHist.push(rslNow);
+    if (volNow != null) volHist.push(volNow);
+    const regime: FalseBreakoutInput = {
+      price: closes[i],
+      ma200: ma200Series[i],
+      ma200Slope,
+      rslValue: rsl[i],
+      rslPercentile: rslFact?.percentile ?? null,
+      rslHistory: rslHist,
+      volRatio: volRatio[i],
+      volHistory: volHist,
+      moatScore: factors.moatScore,
+    };
+    const bearFlag = isFalseBreakout(regime);
+    const bullFlag = isFalseBreakdown(regime);
+    const damp = falseBreakoutFactorOf(regime);
     const tech = signals.length ? signals.reduce((a, b) => a + b, 0) / signals.length : null;
     const vol = volumeFactor(volRatio[i]);
+    const moatBit = factors.moatScore == null
+      ? ""
+      : ` · Moat ${factors.moatScore.toFixed(1)} ×${moatFalseBreakoutFactor(factors.moatScore).toFixed(2)}`;
+    const ma50Slope = slopeSignOf(ma50Series, i, SYMMETRIC.ma50SlopeDays);
+    const ma50Now = ma50Series[i];
+    const ma200Now = ma200Series[i];
+    const crossType: "golden" | "death" | "none" = ma50Now == null || ma200Now == null || ma50Now === ma200Now
+      ? "none"
+      : ma50Now > ma200Now ? "golden" : "death";
+    const lookback = i - SYMMETRIC.ma50SlopeDays;
+    const prevMa50 = lookback >= 0 ? ma50Series[lookback] : null;
+    const prevMa200 = lookback >= 0 ? ma200Series[lookback] : null;
+    const previousGap = prevMa50 != null && prevMa200 != null ? Math.abs(prevMa50 - prevMa200) : null;
+    const converging = crossType !== "none" && weakCross({ ma50: ma50Now, ma200: ma200Now, previousGap, crossType });
+    const reclaimed = reclaimedMa50DuringDeathCross({
+      price: closes[i],
+      ma50: ma50Now,
+      ma200: ma200Now,
+      previousGap,
+    });
+    const sell = falseBreakoutSell({
+      price: closes[i],
+      ma50: ma50Now,
+      ma200: ma200Now,
+      ma50Slope,
+      goldenCrossActive: goldenCrossActive(ma50Now, ma200Now, ma50Slope),
+      rslPercentile: rslFact?.percentile ?? null,
+      moatScore: factors.moatScore,
+    });
+    const crossNote = converging
+      ? `${crossType === "golden" ? "Golden" : "Death"} Cross konvergiert`
+      : reclaimed
+        ? "Death Cross, Kurs über MA50, Abstand nicht geschrumpft"
+        : crossType === "death"
+          ? "Death Cross, Abstand wächst"
+          : "";
+    const breakoutNote = [
+      sell && !converging && !reclaimed
+        ? `False-Breakout-Verkauf ROT · Death Cross ohne Golden Cross · Bruch unter MA50 oder MA200${moatBit}`
+        : bearFlag || bullFlag
+          ? `${bearFlag ? "False Breakout" : "False Breakdown"} ×${damp.toFixed(2)}${moatBit}`
+          : "False-Breakout-Faktor 1",
+      crossNote,
+    ].filter(part => part.length > 0).join(" · ");
     const product = tech == null
       ? null
-      : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor;
+      : tech * factors.thesisFactor * factors.bsFactor * vol.factor * factors.betaFactor * damp;
     techAt.push(tech);
     adjusted.push(product);
     factsAt.push(bucket);
     volAt.push({ ratio: volRatio[i], factor: vol.factor, note: vol.note });
+    breakoutAt.push({ factor: damp, breakdownFactor: bullFlag ? damp : SYMMETRIC.neutralFactor, active: bearFlag, breakdown: bullFlag, sell, weakCross: converging, reclaimedMa50: reclaimed, crossType, note: breakoutNote });
   }
 
   const stdevs: number[] = [];
@@ -438,11 +739,16 @@ export function symmetricAmpelSeries(
       p30 = quantile(recent, SYMMETRIC.lowQuantile);
       p70 = quantile(recent, SYMMETRIC.highQuantile);
       if (p30 != null && p70 != null) {
+        // Ein Tag genügt. Eine Mehrheit über mehrere Tage würde Wide und Narrow gleich halten.
         if (current > p70) color = "GRÜN";
         else if (current < p30) color = "ROT";
         else color = "GELB";
       }
     }
+    if (breakoutAt[i].weakCross) color = "GELB";
+    else if (breakoutAt[i].reclaimedMa50) color = "GELB";
+    else if (breakoutAt[i].crossType === "death") color = "ROT";
+    else if (breakoutAt[i].sell) color = "ROT";
     phases.set(bars[i].date, symmetricColorPhase(color));
     colors.set(bars[i].date, color);
     const base = {
@@ -459,6 +765,15 @@ export function symmetricAmpelSeries(
       volumeRatio: volAt[i].ratio,
       volumeFactor: volAt[i].factor,
       volumeNote: volAt[i].note,
+      falseBreakoutFactor: breakoutAt[i].factor,
+      falseBreakout: breakoutAt[i].active,
+      falseBreakdownFactor: breakoutAt[i].breakdownFactor,
+      falseBreakdown: breakoutAt[i].breakdown,
+      falseBreakoutNote: breakoutAt[i].note,
+      falseBreakoutSell: breakoutAt[i].sell,
+      weakCross: breakoutAt[i].weakCross,
+      reclaimedMa50: breakoutAt[i].reclaimedMa50,
+      crossType: breakoutAt[i].crossType,
       facts: factsAt[i],
     };
     last = { ...base, summary: describeSnapshot(base) };

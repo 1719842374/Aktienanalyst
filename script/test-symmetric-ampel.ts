@@ -7,10 +7,19 @@ import type { StockAnalysis } from "../shared/schema";
 import {
   SYMMETRIC,
   ampelFactorsFromAnalysis,
+  falseBreakoutFactorOf,
+  falseBreakoutSell,
   historyPercentile,
+  isFalseBreakdown,
+  isFalseBreakout,
+  reclaimedMa50DuringDeathCross,
   symmetricAmpelSeries,
   symmetricSignal,
   thesisFactorFromClass,
+  thesisFactorFromShares,
+  moatFalseBreakoutFactor,
+  moatScoreFromRating,
+  weakCross,
   volumeFactor,
 } from "../shared/symmetric-ampel";
 
@@ -93,6 +102,276 @@ function path(mode: "crash" | "recover") {
   check("Beta ohne Historie bleibt Faktor 1", crash.last?.factors.betaFactor === 1);
   const colored = [...crash.colors.values()].filter(c => c != null);
   check("die Linie wechselt oder hält eine Farbe über viele Tage", colored.length > 30, String(colored.length));
+}
+
+console.log("\n=== False-Breakout-Faktor aus eigener Historie ===");
+const rslHistory = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6];
+const volHistory = [0.6, 0.8, 1.0, 1.2, 1.4];
+const bearAll = {
+  price: 90, ma200: 100, ma200Slope: -1,
+  rslValue: 0.75, rslPercentile: 0.06, rslHistory,
+  volRatio: 0.7, volHistory,
+};
+const bullAll = {
+  price: 110, ma200: 100, ma200Slope: 1,
+  rslValue: 1.55, rslPercentile: 0.94, rslHistory,
+  volRatio: 0.7, volHistory,
+};
+const bearFactor = falseBreakoutFactorOf(bearAll);
+check("Bär, alle vier: Faktor aus der Stärke, zwischen 0.75 und 1", bearFactor < 1 && bearFactor >= 1 - SYMMETRIC.falseBreakoutDampSpan, String(bearFactor));
+check("NVO-Stärke 0.06 ergibt etwa 0.78", Math.abs(bearFactor - (1 - Math.min(Math.abs(0.06 - 0.5) * 2, 1) * SYMMETRIC.falseBreakoutDampSpan)) < 1e-9, String(bearFactor));
+check("Bulle, alle vier: ebenfalls gedämpft", falseBreakoutFactorOf(bullAll) < 1);
+check("eine Bedingung fehlt: RSL nicht mehr unter dem eigenen p40", falseBreakoutFactorOf({ ...bearAll, rslValue: 1.3 }) === 1);
+check("eine Bedingung fehlt: MA200 fällt nicht", falseBreakoutFactorOf({ ...bearAll, ma200Slope: 1 }) === 1);
+check("eine Bedingung fehlt: Kurs über MA200", falseBreakoutFactorOf({ ...bearAll, price: 110 }) === 1);
+check("eine Bedingung fehlt: Volumen über dem eigenen Median", falseBreakoutFactorOf({ ...bearAll, volRatio: 1.3 }) === 1);
+check("Bulle ohne hohes RSL: Faktor 1", falseBreakoutFactorOf({ ...bullAll, rslValue: 1.0 }) === 1);
+check("False Breakout und False Breakdown erkennen dieselben Lagen", isFalseBreakout(bearAll) && isFalseBreakdown(bullAll) && !isFalseBreakdown(bearAll));
+{
+  const nvoShares = { "Fast Grower": 0.45, Cyclical: 0.36, Stalwart: 0.12, Turnaround: 0.04, Value: 0.03 };
+  const thesis = thesisFactorFromShares(nvoShares);
+  const expected = 1 + 0.45 * SYMMETRIC.thesisFastGrowerAdd + 0.36 * SYMMETRIC.thesisCyclicalAdd;
+  check("NVO-Mix ergibt etwa 1.03", Math.abs(thesis.factor - expected) < 1e-9 && Math.abs(expected - 1.0315) < 1e-9, `${thesis.factor} vs ${expected}`);
+  const stacked = 0.4 * bearFactor * thesis.factor * SYMMETRIC.volLowFactor;
+  check("NVO-Stapel Tech × Stärke × Thesis × Volumen liegt bei etwa 0.27", Math.abs(stacked - 0.2736) < 0.005, String(stacked));
+  const narrow = moatFalseBreakoutFactor(SYMMETRIC.moatNarrowScore);
+  const wide = moatFalseBreakoutFactor(SYMMETRIC.moatWideScore);
+  const none = moatFalseBreakoutFactor(SYMMETRIC.moatNoneScore);
+  check("Narrow 2.0 ist ×0.98", Math.abs(narrow - 0.98) < 1e-9, String(narrow));
+  check("Wide 4.0 ist ×1.06", Math.abs(wide - 1.06) < 1e-9, String(wide));
+  check("Kein Moat 0 ist ×0.90", Math.abs(none - 0.9) < 1e-9, String(none));
+  check("Rating Narrow, Wide, None", moatScoreFromRating("Narrow") === 2 && moatScoreFromRating("Wide") === 4 && moatScoreFromRating("None") === 0);
+  const nvoMoat = falseBreakoutFactorOf({ ...bearAll, moatScore: SYMMETRIC.moatNarrowScore });
+  check("NVO Narrow multipliziert die 0.78 mit 0.98", Math.abs(nvoMoat - bearFactor * narrow) < 1e-9, String(nvoMoat));
+  const nvoAdjusted = 0.4 * nvoMoat * thesis.factor * SYMMETRIC.volLowFactor;
+  check("NVO mit Narrow bleibt bei etwa 0.26", Math.abs(nvoAdjusted - stacked * narrow) < 1e-9 && Math.abs(nvoAdjusted - 0.26) < 0.01, String(nvoAdjusted));
+  check("ohne False-Breakout bleibt Wide wirkungslos", falseBreakoutFactorOf({ ...bearAll, price: 110, moatScore: SYMMETRIC.moatWideScore }) === 1);
+  const msftTech = 0.6;
+  check("MSFT ohne Dämpfung bleibt beim technischen Score, nicht bei 0.64", msftTech * falseBreakoutFactorOf({ ...bullAll, rslValue: 1.0, moatScore: SYMMETRIC.moatWideScore }) === msftTech);
+}
+
+function regime(mode: "bounce" | "dip" | "breakdown") {
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const bull = mode !== "bounce";
+    const ma200 = bull ? 80 + i * 0.15 : 160 - i * 0.08;
+    const late = i > 390;
+    let close = bull ? ma200 * 1.06 : ma200 * 0.9;
+    let volume = 1000;
+    let rsi = bull ? 62 : 38;
+    let histogram = bull ? 0.3 : -0.3;
+    if (mode === "bounce" && late) {
+      close = ma200 * (0.9 + (i - 390) * 0.002);
+      rsi = 34 + (i - 390);
+      histogram = -0.2;
+      volume = 900;
+    }
+    if (mode === "dip" && late) {
+      close = ma200 * 1.05;
+      rsi = 61;
+      histogram = 0.3;
+      volume = 950;
+    }
+    if (mode === "breakdown" && i > 370) {
+      close = ma200 * (1.02 - (i - 370) * 0.012);
+      rsi = 55 - (i - 370);
+      histogram = -0.4 - (i - 370) * 0.01;
+      volume = 2200;
+    }
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume,
+      rsi,
+      histogram,
+      ma50: mode === "breakdown" && i > 370 ? close * 1.03 : close * (bull ? 0.98 : 1.03),
+      ma200,
+    });
+  }
+  return bars;
+}
+{
+  const bounce = symmetricAmpelSeries(regime("bounce"));
+  const dip = symmetricAmpelSeries(regime("dip"));
+  const breakdown = symmetricAmpelSeries(regime("breakdown"));
+  console.log(`  ℹ Bären-Bounce ${bounce.last?.color} Faktor ${bounce.last?.falseBreakoutFactor} ${bounce.last?.falseBreakoutNote}`);
+  console.log(`  ℹ Bullen-Dip ${dip.last?.color} Negativ-Faktor ${dip.last?.falseBreakdownFactor} ${dip.last?.falseBreakoutNote}`);
+  console.log(`  ℹ Breakdown ${breakdown.last?.color} Bär ${breakdown.last?.falseBreakoutFactor} Bulle ${breakdown.last?.falseBreakdownFactor}`);
+  check("Bären-Bounce bleibt unter dem Grün", bounce.last?.color !== "GRÜN", bounce.last?.summary);
+  check("Bullen-Dip bleibt unter dem Grün", dip.last?.color !== "GRÜN", dip.last?.summary);
+  check("Echter Einbruch mit Volumen hat Faktor 1", breakdown.last?.falseBreakoutFactor === 1 && breakdown.last?.falseBreakdownFactor === 1, breakdown.last?.falseBreakoutNote);
+  check("Echter Einbruch ist nicht GRÜN", breakdown.last?.color !== "GRÜN", breakdown.last?.summary);
+}
+{
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.04;
+    const late = i >= 390;
+    const rebound = i >= 400;
+    const ratio = late ? (rebound ? 0.84 + Math.min(i - 400, 8) * 0.004 : 0.82) : 0.98;
+    const close = ma200 * ratio;
+    const loud = i >= 395 && i < 419;
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 500 : (loud ? 4000 : 2000),
+      rsi: rebound ? 34 + Math.min(i - 400, 12) : (late ? 31 : 48),
+      histogram: rebound ? -0.3 + Math.min(i - 400, 12) * 0.02 : (late ? -0.45 : 0.1),
+      ma50: close * (late ? 1.03 : 0.99),
+      ma200,
+    });
+  }
+  const nvo = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({
+    styleConfidences: { "Fast Grower": 0.45, Cyclical: 0.36, Stalwart: 0.12, Turnaround: 0.04, Value: 0.03 },
+    moatRating: "Narrow",
+  } as StockAnalysis));
+  console.log(`  ℹ NVO-Lage ${nvo.last?.color} adjusted ${nvo.last?.adjusted?.toFixed(3)} p70 ${nvo.last?.p70?.toFixed(3)} Faktor ${nvo.last?.falseBreakoutFactor?.toFixed(2)} Thesis ${nvo.last?.factors.thesisFactor}`);
+  check("NVO-Lage: alle vier Bedingungen, Faktor unter 1", nvo.last?.falseBreakout === true && (nvo.last?.falseBreakoutFactor ?? 1) < 1 && (nvo.last?.falseBreakoutFactor ?? 0) >= 1 - SYMMETRIC.falseBreakoutDampSpan);
+  check("NVO-Lage: Thesis-Mix etwa 1.03 und Volumen ×0.85", Math.abs((nvo.last?.factors.thesisFactor ?? 0) - 1.0315) < 1e-9 && nvo.last?.volumeFactor === SYMMETRIC.volLowFactor);
+  check("NVO-Lage: Narrow ×0.98 und GELB unter p70", nvo.last?.color === "GELB" && (nvo.last?.adjusted ?? 1) < (nvo.last?.p70 ?? 0) && nvo.last?.factors.moatScore === SYMMETRIC.moatNarrowScore && (nvo.last?.falseBreakoutNote.includes("×0.98") ?? false), nvo.last?.summary);
+}
+
+console.log("\n=== Konvergierender Death Cross bleibt gelb ===");
+{
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("keine Hysterese und keine Mindest-Dauer", !ampelSrc.includes("stabilizeAmpel") && !ampelSrc.includes("minDays"));
+  const delta = 1.6;
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.03;
+    const close = ma200 * (i >= 390 ? 0.88 : 1.02);
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 2000 : (i >= 400 && i < 419 ? 2300 : 2000),
+      rsi: 50 + 15 * Math.sin(i / 3) - (i === 419 ? delta : 0),
+      histogram: 0.2 * Math.sin(i / 5) - (i === 419 ? delta * 0.01 : 0),
+      ma50: close,
+      ma200,
+    });
+  }
+  const wide = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Wide" } as StockAnalysis));
+  const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const none = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "None" } as StockAnalysis));
+  const prev = bars[418].date;
+  console.log(`  ℹ Wide ${wide.colors.get(prev)} → ${wide.last?.color} Faktor ${wide.last?.falseBreakoutFactor?.toFixed(2)}`);
+  console.log(`  ℹ Narrow ${narrow.colors.get(prev)} → ${narrow.last?.color} Faktor ${narrow.last?.falseBreakoutFactor?.toFixed(2)}`);
+  console.log(`  ℹ Kein Moat ${none.colors.get(prev)} → ${none.last?.color} Faktor ${none.last?.falseBreakoutFactor?.toFixed(2)}`);
+  check("konvergierender Death Cross bleibt GELB, auch bei Wide", wide.last?.weakCross === true && wide.last?.crossType === "death" && wide.last?.color === "GELB", wide.last?.summary);
+  check("NVO Narrow: derselbe konvergierende Death Cross bleibt GELB", narrow.last?.weakCross === true && narrow.last?.color === "GELB", narrow.last?.summary);
+  check("kein Moat: derselbe Tag bleibt GELB", none.last?.weakCross === true && none.last?.color === "GELB", none.last?.summary);
+  check("Wide dämpft weniger als Narrow und kein Moat", (wide.last?.falseBreakoutFactor ?? 0) > (narrow.last?.falseBreakoutFactor ?? 1) && (narrow.last?.falseBreakoutFactor ?? 0) > (none.last?.falseBreakoutFactor ?? 1));
+}
+
+console.log("\n=== Verkauf nach Death Cross, ohne Beta ===");
+{
+  const sell = {
+    price: 80, ma50: 90, ma200: 100, ma50Slope: -1, goldenCrossActive: false, rslPercentile: 0.2, moatScore: SYMMETRIC.moatNarrowScore,
+  };
+  check("Death Cross + Bruch + schwaches RSL + Narrow ist Verkauf", falseBreakoutSell(sell));
+  check("Bounce über MA50, noch unter MA200, bleibt Verkauf", falseBreakoutSell({ ...sell, price: 95 }) === true);
+  check("Kurs über beiden MAs ist kein Verkauf", falseBreakoutSell({ ...sell, price: 110 }) === false);
+  check("Golden Cross hebt den Verkauf auf", falseBreakoutSell({ ...sell, goldenCrossActive: true }) === false);
+  check("Wide ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatWideScore }) === false);
+  check("Moat-Score 3 ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: SYMMETRIC.moatNotWideBelow }) === false);
+  check("kein Death Cross ist kein Verkauf", falseBreakoutSell({ ...sell, ma50: 110, ma50Slope: 1, goldenCrossActive: true }) === false);
+  check("steigende MA50 ist kein Verkauf", falseBreakoutSell({ ...sell, ma50Slope: 1 }) === false);
+  check("RSL auf dem p40 ist kein Verkauf", falseBreakoutSell({ ...sell, rslPercentile: SYMMETRIC.rslLowQuantile }) === false);
+  check("unbekannter Moat ist kein Verkauf", falseBreakoutSell({ ...sell, moatScore: null }) === false);
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("Beta verschiebt die RSL-Schwelle nicht", !ampelSrc.includes("betaAdj") && SYMMETRIC.rslLowQuantile === 0.4);
+
+  const delta = 1.6;
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 180 - i * 0.03;
+    const close = ma200 * (i >= 390 ? 0.88 : 1.02);
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close,
+      volume: i === 419 ? 2000 : (i >= 400 && i < 419 ? 2300 : 2000),
+      rsi: 50 + 15 * Math.sin(i / 3) - (i === 419 ? delta : 0),
+      histogram: 0.2 * Math.sin(i / 5) - (i === 419 ? delta * 0.01 : 0),
+      ma50: close * 1.05,
+      ma200,
+    });
+  }
+  const narrow = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const wide = symmetricAmpelSeries(bars, ampelFactorsFromAnalysis({ moatRating: "Wide" } as StockAnalysis));
+  const bounce = bars.map((bar, i) => i < 419 ? bar : { ...bar, close: bar.ma200 * 0.97, ma50: bar.ma200 * 0.9 });
+  const bounced = symmetricAmpelSeries(bounce, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  const golden = bars.map((bar, i) => {
+    if (i < 370) return bar;
+    const k = i - 370;
+    return {
+      ...bar,
+      close: bar.ma200 * (1.01 + k * 0.0004),
+      ma50: bar.ma200 * (1.005 + k * 0.0005),
+      rsi: 55 + k * 0.15,
+      histogram: 0.05 + k * 0.004,
+      volume: 2200,
+    };
+  });
+  const recovered = symmetricAmpelSeries(golden, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Bruch Narrow ${narrow.last?.color} Verkauf ${narrow.last?.falseBreakoutSell} RSL ${narrow.last?.facts.find(f => f.name === "Kurs/MA52")?.percentile?.toFixed(2)}`);
+  console.log(`  ℹ Bruch Wide ${wide.last?.color} Verkauf ${wide.last?.falseBreakoutSell}`);
+  console.log(`  ℹ Bounce über MA50 ${bounced.last?.color} Verkauf ${bounced.last?.falseBreakoutSell}`);
+  console.log(`  ℹ Golden Cross ${recovered.last?.color} Verkauf ${recovered.last?.falseBreakoutSell}`);
+  check("Narrow bei konvergierendem Death Cross bleibt GELB", narrow.last?.weakCross === true && narrow.last?.color === "GELB", narrow.last?.falseBreakoutNote);
+  check("Kurzer Bounce über MA50 ohne geschrumpften Abstand ist nicht ROT", bounced.last?.reclaimedMa50 === true && bounced.last?.color !== "ROT", bounced.last?.falseBreakoutNote);
+  check("Wide nach demselben Bruch ist kein Verkauf und GELB", wide.last?.falseBreakoutSell === false && wide.last?.color === "GELB", wide.last?.falseBreakoutNote);
+  check("Golden Cross über den MAs ist GRÜN", recovered.last?.falseBreakoutSell === false && recovered.last?.color === "GRÜN", recovered.last?.summary);
+}
+
+console.log("\n=== Konvergenz nach Golden und Death Cross ===");
+{
+  check("Golden Cross, Abstand schrumpft, ist schwach", weakCross({ ma50: 104, ma200: 100, previousGap: 6, crossType: "golden" }));
+  check("Golden Cross, Abstand steht, ist schwach", weakCross({ ma50: 104, ma200: 100, previousGap: 4, crossType: "golden" }));
+  check("Golden Cross, Abstand wächst, ist bestätigt", weakCross({ ma50: 108, ma200: 100, previousGap: 4, crossType: "golden" }) === false);
+  check("Death Cross, Abstand schrumpft, ist schwach", weakCross({ ma50: 94, ma200: 100, previousGap: 8, crossType: "death" }));
+  check("Death Cross, Abstand wächst, bleibt bestätigt", weakCross({ ma50: 90, ma200: 100, previousGap: 6, crossType: "death" }) === false);
+  check("Death-Vergleich auf einem Golden Cross ist kein Death-Cross", weakCross({ ma50: 104, ma200: 100, previousGap: 6, crossType: "death" }) === false);
+
+  const bars = [];
+  for (let i = 0; i < 420; i++) {
+    const ma200 = 100 + i * 0.05;
+    const age = i - 300;
+    const golden = i >= 300;
+    const ma50 = golden ? ma200 + 8 - age * 0.02 : ma200 - 4;
+    bars.push({
+      date: `d${String(i).padStart(4, "0")}`,
+      close: ma50 * 1.01,
+      volume: 2000,
+      rsi: 62,
+      histogram: 0.3,
+      ma50,
+      ma200,
+    });
+  }
+  const faded = symmetricAmpelSeries(bars);
+  const deathBars = bars.map((bar, i) => {
+    const ma200 = 140 - i * 0.02;
+    const ma50 = i < 300 ? ma200 + 2 : ma200 - 4 - (i - 300) * 0.08;
+    return { ...bar, ma200, ma50, close: Math.min(ma50, ma200) * 0.98 };
+  });
+  const death = symmetricAmpelSeries(deathBars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Golden konvergiert ${faded.last?.color} schwach ${faded.last?.weakCross}`);
+  console.log(`  ℹ Death divergiert ${death.last?.color} schwach ${death.last?.weakCross} Cross ${death.last?.crossType}`);
+  check("Golden Cross mit schrumpfendem Abstand wird GELB", faded.last?.weakCross === true && faded.last?.crossType === "golden" && faded.last?.color === "GELB", faded.last?.falseBreakoutNote);
+  check("Death Cross mit wachsendem Abstand wird ROT", death.last?.weakCross === false && death.last?.crossType === "death" && death.last?.color === "ROT", death.last?.falseBreakoutNote);
+  check("Kurs unter MA50 im Death Cross ist kein Reclaim", reclaimedMa50DuringDeathCross({ price: 80, ma50: 90, ma200: 100, previousGap: 8 }) === false);
+  check("Kurs über MA50, Abstand nicht geschrumpft", reclaimedMa50DuringDeathCross({ price: 95, ma50: 90, ma200: 100, previousGap: 8 }));
+  check("geschrumpfter Abstand ist kein Reclaim", reclaimedMa50DuringDeathCross({ price: 95, ma50: 90, ma200: 100, previousGap: 12 }) === false);
+
+  const reclaimBars = deathBars.map((bar, i) => {
+    if (i < 400) return bar;
+    return { ...bar, close: bar.ma50 * 1.02 };
+  });
+  const reclaimed = symmetricAmpelSeries(reclaimBars, ampelFactorsFromAnalysis({ moatRating: "Narrow" } as StockAnalysis));
+  console.log(`  ℹ Über MA50 ${reclaimed.last?.color} reclaim ${reclaimed.last?.reclaimedMa50} Abstand ${reclaimed.last?.weakCross}`);
+  check("Kurs über MA50 nach Death Cross ohne geschrumpften Abstand ist GELB", reclaimed.last?.reclaimedMa50 === true && reclaimed.last?.color === "GELB", reclaimed.last?.falseBreakoutNote);
+  const ampelSrc = readFileSync(new URL("../shared/symmetric-ampel.ts", import.meta.url), "utf8");
+  check("keine Ticker-Schwelle in der Ampel", !ampelSrc.includes("TSLA") && !ampelSrc.includes("0.001"));
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
