@@ -99,6 +99,7 @@ console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
 {
   const ui = readFileSync(new URL("../client/src/components/sections/TechnicalChart.tsx", import.meta.url), "utf8");
   check("symmetrische Serie ist angeschlossen", ui.includes("symmetricAmpelSeries"));
+  check("Ampel ist zuschaltbar und der blaue Kurs bleibt", ui.includes('data-testid="button-ampel"') && ui.includes('dataKey="close"') && ui.includes("showAmpel && phases"));
   check("Faktenzeile ist sichtbar", ui.includes('data-testid="symmetric-ampel-facts"'));
   check("kein Starkes Kaufsignal", !ui.includes("Starkes Kaufsignal"));
   check("MA200 MA100 MA50 MA20 bleiben", ["MA200 (SMA)", "MA100 (SMA)", "MA50 (SMA)", "MA20 (SMA)"].every(s => ui.includes(s)));
