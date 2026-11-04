@@ -93,6 +93,15 @@ function path(mode: "crash" | "recover") {
   check("Beta ohne Historie bleibt Faktor 1", crash.last?.factors.betaFactor === 1);
   const colored = [...crash.colors.values()].filter(c => c != null);
   check("die Linie wechselt oder hält eine Farbe über viele Tage", colored.length > 30, String(colored.length));
+  check("Abverkauf ist ab dem ersten Tag gefärbt", [...crash.colors.values()].every(c => c != null));
+  check("Erholung ist ab dem ersten Tag gefärbt", [...recover.colors.values()].every(c => c != null));
+}
+{
+  const bars = Array.from({ length: 40 }, (_, i) => ({ date: `d${i}`, close: 40 + i }));
+  const series = symmetricAmpelSeries(bars);
+  const colors = bars.map(b => series.colors.get(b.date) ?? null);
+  check("Kurs ohne Indikatoren ist ab Tag 0 gefärbt", colors.every(c => c != null), colors.slice(0, 5).join(","));
+  check("Tag 0 ohne Steigung ist GELB", colors[0] === "GELB");
 }
 
 console.log("\n=== Chart bleibt bei den MA-Namen und ohne Kaufsignal-Text ===");
