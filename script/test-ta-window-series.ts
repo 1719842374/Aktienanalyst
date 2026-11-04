@@ -255,6 +255,59 @@ await fetchDailyHistory({
   );
 }
 
+{
+  const { convertVenueBars, venueBackfill, VENUE_MIN_OVERLAP_DAYS } = await import("../server/history-fallback");
+  const dates = weekdayDates("2021-01-04", "2024-03-29");
+  const listingStart = "2024-01-19";
+  const usd = (i: number) => 60 + 40 * Math.sin(i / 40) + i * 0.02;
+  const fxRate = (i: number) => 1.1 + 0.05 * Math.sin(i / 90);
+  const fx = new Map(dates.map((d, i) => [d, fxRate(i)]));
+  const primary = dates.map((date, i) => ({ date, i })).filter(r => r.date >= listingStart)
+    .map(({ date, i }) => ({ date, open: usd(i), high: usd(i) + 1, low: usd(i) - 1, close: usd(i), volume: 1000, source: "yahoo" as const }));
+  const eurBars = dates.map((date, i) => {
+    const eur = usd(i) / fxRate(i);
+    return { date, open: eur, high: eur * 1.01, low: eur * 0.99, close: eur, volume: 50, source: "onvista" as const };
+  });
+  const sparse = eurBars.filter((_, i) => i % 9 === 0);
+  const wrongRatio = eurBars.map(b => ({ ...b, open: b.open * 2, high: b.high * 2, low: b.low * 2, close: b.close * 2 }));
+
+  const daily = convertVenueBars({ venue: "Daily", currency: "EUR", bars: eurBars }, "USD", fx)!;
+  check("Handelsplatz in EUR wird mit dem Tageskurs in USD umgerechnet", Math.abs(daily[100].close - usd(100)) < 1e-9);
+  check("ohne FX-Reihe keine Umrechnung", convertVenueBars({ venue: "X", currency: "EUR", bars: eurBars }, "USD", null) === null);
+
+  const pick = venueBackfill(primary, [
+    { venue: "Sparse", bars: convertVenueBars({ venue: "Sparse", currency: "EUR", bars: sparse }, "USD", fx)! },
+    { venue: "Daily", bars: daily },
+    { venue: "Ratio", bars: convertVenueBars({ venue: "Ratio", currency: "EUR", bars: wrongRatio }, "USD", fx)! },
+  ]);
+  const gapDays = dates.filter(d => d < listingStart).length;
+  check("täglicher Handelsplatz füllt die Lücke vor dem Listing", pick?.venue === "Daily" && pick.bars.length === gapDays, `${pick?.venue} ${pick?.bars.length}/${gapDays}`);
+  check("Lückenfüllung endet vor dem ersten Tag des Listings", pick != null && pick.bars[pick.bars.length - 1].date < listingStart);
+  const saturday = { ...daily[3], date: "2021-01-09" };
+  const withWeekend = venueBackfill(primary, [{ venue: "OTC", bars: [...daily, saturday].sort((a, b) => a.date.localeCompare(b.date)) }]);
+  check("Wochenendkurse eines OTC-Platzes sind keine Handelstage", withWeekend != null && !withWeekend.bars.some(b => b.date === "2021-01-09"));
+  check("Platz mit anderem Kursverhältnis wird nicht genommen",
+    venueBackfill(primary, [{ venue: "Ratio", bars: convertVenueBars({ venue: "Ratio", currency: "EUR", bars: wrongRatio }, "USD", fx)! }]) === null);
+  check("ohne gemeinsame Tage keine Lückenfüllung",
+    venueBackfill(primary.slice(0, VENUE_MIN_OVERLAP_DAYS - 1).map(b => ({ ...b, date: `1999-${b.date.slice(5)}` })), [{ venue: "Daily", bars: daily }]) === null);
+
+  const loaded = await fetchDailyHistory({
+    symbol: "KSPI",
+    timeframe: "10Y",
+    fetchFrom: "2020-11-01",
+    fmpFetch: async () => primary.map(b => ({ ...b, source: "fmp" as const })),
+    altFetch: async () => [...pick!.bars, ...primary],
+  });
+  const closes = loaded.bars.map(b => b.close);
+  const ma200 = smaSeries(closes, 200);
+  const ma50 = smaSeries(closes, 50);
+  const startIdx = loaded.bars.findIndex(b => b.date === listingStart);
+  check("Quelle zeigt den Handelsplatz", loaded.source === "fmp+onvista" && loaded.truncated === false, `${loaded.source} ${loaded.truncated}`);
+  check("Lücke ist täglich gefüllt", loaded.bars.length === dates.length, `${loaded.bars.length}/${dates.length}`);
+  check("MA200 am ersten Listing-Tag kommt aus der aufgefüllten Reihe", ma200[startIdx] != null && Math.abs(ma200[startIdx]! - closes.slice(startIdx - 199, startIdx + 1).reduce((a, b) => a + b, 0) / 200) < 1e-9);
+  check("MA50 läuft schon in der Lücke", ma50[60] != null && loaded.bars[60].date < listingStart);
+}
+
 // Production screenshot: 5Y is the last 1260 sessions and the loaded chart
 // shows 23.09.2021–30.09.2026. That span has more raw weekdays than 1260, so
 // the visible slice keeps the endpoints and drops a few sessions in between.
