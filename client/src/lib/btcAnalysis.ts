@@ -5,7 +5,8 @@
 // nicht durch eine kürzere Reihe ersetzt.
 
 import { apiRequest } from "./queryClient";
-import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL } from "@shared/btc-spot";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL, normalizeBtcVolumeBars } from "@shared/btc-spot";
+import { detectBtcChartSignals } from "@shared/btc-signals";
 import {
   applyBtcLiquidityBlock,
   walclByDate,
@@ -237,13 +238,13 @@ function filterByYears(data: { date: string; price: number }[], years: number) {
 }
 
 async function fetchSpotHistory(): Promise<{
-  points: { date: string; price: number }[];
+  points: { date: string; price: number; volume: number }[];
   source: string;
   sourceUrl: string;
   error: string | null;
 }> {
   const empty = {
-    points: [] as { date: string; price: number }[],
+    points: [] as { date: string; price: number; volume: number }[],
     source: BTC_SPOT_SOURCE_LABEL,
     sourceUrl: BTC_SPOT_SOURCE_URL,
     error: `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`,
@@ -257,9 +258,14 @@ async function fetchSpotHistory(): Promise<{
       const detail = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
       return { points: [], source, sourceUrl, error: detail };
     }
-    const points = (body.points as { date?: unknown; price?: unknown }[])
-      .filter((point): point is { date: string; price: number } =>
+    const points = (body.points as { date?: unknown; price?: unknown; volume?: unknown }[])
+      .filter((point): point is { date: string; price: number; volume?: number } =>
         !!point && typeof point.date === "string" && typeof point.price === "number" && point.price > 0)
+      .map((point) => ({
+        date: point.date,
+        price: point.price,
+        volume: typeof point.volume === "number" && Number.isFinite(point.volume) && point.volume >= 0 ? point.volume : 0,
+      }))
       .sort((a, b) => a.date.localeCompare(b.date));
     return { points, source, sourceUrl, error: null };
   } catch (err: unknown) {
@@ -542,40 +548,9 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     else etfFlowScore = -1;                       // strong outflows
   }
 
-  // === 1b. Fetch Binance OHLCV für Volume-Daten (2 Calls für ~5Y Coverage) ===
-  // Binance: max 1000 Klines pro Call = ~2.7 Jahre. Zwei Calls ergänzen = ~5.4 Jahre.
-  let binanceVolumeMap = new Map<string, number>(); // date → USDT-Volume
-  try {
-    const now = Date.now();
-    const dayMs = 86400000;
-    // Call 1: neueste 1000 Tage
-    // Call 2: 1000 Tage davor (startTime = vor 2000 Tagen, endTime = vor 1000 Tagen)
-    const endTime1 = now;
-    const startTime2 = now - 2000 * dayMs;
-    const endTime2 = now - 1000 * dayMs;
-
-    const [raw1, raw2] = await Promise.allSettled([
-      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime1}`, 20000),
-      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime2}`, 20000),
-    ]);
-
-    for (const result of [raw1, raw2]) {
-      if (result.status !== "fulfilled" || !Array.isArray(result.value)) continue;
-      for (const k of result.value as any[][]) {
-        const date = new Date(k[0]).toISOString().split("T")[0];
-        const closePrice = parseFloat(k[4]);
-        // k[7] = quote asset volume (USDT) — zuverlässigeres Volume als k[5] (BTC)
-        const quoteVol = parseFloat(k.length > 7 ? String(k[7]) : String(k[5]));
-        if (closePrice > 0 && quoteVol > 0) binanceVolumeMap.set(date, quoteVol);
-      }
-    }
-    console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage (~${Math.round(binanceVolumeMap.size/365*10)/10} Jahre)`);
-  } catch {
-    // Binance nicht verfügbar — kein Volume, aber kein Crash
-  }
-
   // === 2. Spot-Historie vom Server. Kein stiller Kurz-Fallback. ===
-  let allPriceData: { date: string; price: number }[] = [];
+  // Volumen hängt an jedem Kurstag (On-Chain-USD, volle Historie).
+  let allPriceData: { date: string; price: number; volume: number }[] = [];
   let spotSource: string | null = BTC_SPOT_SOURCE_LABEL;
   let spotSourceUrl: string | null = BTC_SPOT_SOURCE_URL;
   let spotHistoryError: string | null = `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`;
@@ -620,7 +595,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     const today = new Date().toISOString().split("T")[0];
     const lastDate = allPriceData[allPriceData.length - 1].date;
     if (lastDate < today) {
-      allPriceData.push({ date: today, price: btcPrice });
+      allPriceData.push({ date: today, price: btcPrice, volume: 0 });
     } else if (lastDate === today) {
       allPriceData[allPriceData.length - 1].price = btcPrice;
     }
@@ -992,21 +967,21 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     return m - s;
   });
 
-  // Volume-Normalisierung für Overlay (0–1, aus Binance-Daten)
-  const allVolumes = allPriceData.map(d => binanceVolumeMap.get(d.date) ?? 0);
-  const maxVol = Math.max(...allVolumes.filter(v => v > 0), 1);
+  // Balkenhöhe logarithmisch, sonst verschluckt das Maximum die Jahre vor 2017.
+  const allVolumes = allPriceData.map(d => d.volume ?? 0);
+  const volNorms = normalizeBtcVolumeBars(allVolumes);
 
   // RSI(14) für alle Preise
   const rsi14All = calcRSI14(closePrices);
 
   // Build enhanced technical chart data
   const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => {
-    const vol = binanceVolumeMap.get(d.date) ?? 0;
+    const vol = d.volume ?? 0;
     return {
       date: d.date,
       price: d.price,
       volume: vol,
-      _volNorm: vol > 0 ? vol / maxVol : 0,
+      _volNorm: volNorms[i] ?? 0,
       _volUp: i === 0 ? true : d.price >= allPriceData[i - 1].price,
       ma20: ma20[i],
       ma50: ma50[i],
@@ -1033,60 +1008,8 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     };
   });
 
-  // === 12. Signal Detection ===
-  const signals: TechSignal[] = [];
-
-  for (let i = 1; i < technicalChartData.length; i++) {
-    const prev = technicalChartData[i - 1];
-    const curr = technicalChartData[i];
-
-    // Golden Cross: MA50 crosses above MA200
-    if (prev.ma50 !== null && prev.ma200 !== null && curr.ma50 !== null && curr.ma200 !== null) {
-      if (prev.ma50 <= prev.ma200 && curr.ma50 > curr.ma200) {
-        signals.push({ date: curr.date, type: "BUY", reason: "Golden Cross (MA50 > MA200)", price: curr.price });
-      }
-      if (prev.ma50 >= prev.ma200 && curr.ma50 < curr.ma200) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Death Cross (MA50 < MA200)", price: curr.price });
-      }
-    }
-
-    // MACD Bullish/Bearish Crossover
-    if (prev.macd !== null && prev.signal !== null && curr.macd !== null && curr.signal !== null) {
-      if (prev.macd <= prev.signal && curr.macd > curr.signal) {
-        signals.push({ date: curr.date, type: "BUY", reason: "MACD Bullish Crossover", price: curr.price });
-      }
-      if (prev.macd >= prev.signal && curr.macd < curr.signal) {
-        signals.push({ date: curr.date, type: "SELL", reason: "MACD Bearish Crossover", price: curr.price });
-      }
-    }
-
-    // MACD crosses zero line
-    if (prev.macd !== null && curr.macd !== null) {
-      if (prev.macd <= 0 && curr.macd > 0) {
-        signals.push({ date: curr.date, type: "BUY", reason: "MACD über Nulllinie", price: curr.price });
-      }
-      if (prev.macd >= 0 && curr.macd < 0) {
-        signals.push({ date: curr.date, type: "SELL", reason: "MACD unter Nulllinie", price: curr.price });
-      }
-    }
-
-    // Pi Cycle Top: MA111 crosses above MA350×2
-    if (prev.ma111 !== null && prev.ma350x2 !== null && curr.ma111 !== null && curr.ma350x2 !== null) {
-      if (prev.ma111 <= prev.ma350x2 && curr.ma111 > curr.ma350x2) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Pi Cycle Top", price: curr.price });
-      }
-    }
-
-    // 2-Year MA crossover
-    if (prev.ma730 !== null && curr.ma730 !== null) {
-      if (prev.price >= prev.ma730 && curr.price < curr.ma730) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Unter 2-Year MA", price: curr.price });
-      }
-      if (prev.price <= prev.ma730 && curr.price > curr.ma730) {
-        signals.push({ date: curr.date, type: "BUY", reason: "Über 2-Year MA", price: curr.price });
-      }
-    }
-  }
+  // === 12. Signal Detection über die ganze Kursreihe, ohne Zuschnitt ===
+  const signals: TechSignal[] = detectBtcChartSignals(technicalChartData);
 
   // Current technical status
   const lastTech = technicalChartData.length > 0 ? technicalChartData[technicalChartData.length - 1] : null;
@@ -1237,7 +1160,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     spotSource,
     spotSourceUrl,
     spotHistoryError,
-    technicalSignals: signals.slice(-100),
+    technicalSignals: signals,
     bullConditions,
     isBull,
     currentMA20: lastTech?.ma20 ?? null,

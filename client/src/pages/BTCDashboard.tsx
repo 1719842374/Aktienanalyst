@@ -39,7 +39,8 @@ import {
   m2ImpliedPrice,
   m2ImpliedTooltipLines,
 } from "@/lib/m2ImpliedBtc";
-import { BTC_SPOT_SOURCE_LABEL } from "@shared/btc-spot";
+import { BTC_SPOT_SOURCE_LABEL, BTC_VOLUME_SOURCE_LABEL, formatBtcVolumeUsd, normalizeBtcVolumeBars } from "@shared/btc-spot";
+import { snapBtcSignalsToChart } from "@shared/btc-signals";
 import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
@@ -1216,21 +1217,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     const hasServerRSI = chartData.some(d => d.rsi14 != null);
     const clientRsiArr = hasServerRSI ? [] : calcRSI(prices);
 
-    // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
-    const rawVols = chartData.map(d => d.volume ?? 0);
-    const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
-    const hasServerVol = serverVolNorms.some(v => v > 0);
-    const hasRawVol = rawVols.some(v => v > 0);
-
-    let volNorms: number[];
-    if (hasServerVol) {
-      volNorms = serverVolNorms;
-    } else if (hasRawVol) {
-      const maxRawVol = Math.max(...rawVols);
-      volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
-    } else {
-      volNorms = chartData.map(() => 0);
-    }
+    // Balkenhöhe aus dem USD-Betrag, logarithmisch. Die lineare Norm am
+    // Maximum lässt die Jahre vor 2017 auf der Max-Skala verschwinden.
+    const volNorms = normalizeBtcVolumeBars(chartData.map(d => d.volume ?? 0));
 
     return chartData.map((d, i) => ({
       ...d,
@@ -1241,12 +1230,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }));
   }, [chartData, m2Implied]);
 
-  // Filter signals within the displayed time range
+  // Filter signals within the displayed time range. Gezeichnet wird auf dem
+  // nächsten Punkt der verdichteten Reihe, sonst fehlt die Linie, sobald der
+  // genaue Tag ausgedünnt wurde.
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0 || !data.technicalSignals) return [];
     const startDate = chartData[0].date;
     return data.technicalSignals.filter(s => s.date >= startDate);
   }, [data.technicalSignals, chartData, showSignals]);
+  const plottedSignals = useMemo(
+    () => snapBtcSignalsToChart(visibleSignals, chartData.map(point => point.date)),
+    [visibleSignals, chartData],
+  );
 
   const toggleMA = (key: MAKey) => {
     setVisibleMAs(prev => {
@@ -1587,6 +1582,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           title={data.spotSourceUrl || undefined}
         >
           Spot-Quelle: {data.spotSource || BTC_SPOT_SOURCE_LABEL}
+          {` · Volumen: ${BTC_VOLUME_SOURCE_LABEL}`}
           {(data.chartData?.allPrices?.length ?? 0) > 0
             ? ` · ${data.chartData.allPrices[0].date} – ${data.chartData.allPrices[data.chartData.allPrices.length - 1].date} · ${data.chartData.allPrices.length} Tage`
             : ""}
@@ -1919,7 +1915,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                       </div>
                     ))}
                     {(volPoint?.volume ?? 0) > 0 && (
-                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{((volPoint!.volume ?? 0) / 1e9).toFixed(2)}B</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{formatBtcVolumeUsd(volPoint!.volume ?? 0)}</span></div>
                     )}
                     {showM2AbsoluteLagged && (
                       <div className="mt-1 space-y-0.5 border-t border-border pt-1" data-testid="btc-m2-implied-tooltip">
@@ -1932,7 +1928,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                         ))}
                       </div>
                     )}
-                    {visibleSignals.filter(s => s.date === label).map((s, i) => (
+                    {plottedSignals.filter(s => s.date === label).map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
                       </div>
@@ -2117,7 +2113,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
 
             {/* Buy/Sell signal markers — senkrechte Linien, keine Kreise auf dem Kurs. */}
-            {showSignals && visibleSignals.map((s, i) => (
+            {showSignals && plottedSignals.map((s, i) => (
               <Fragment key={`sig-${i}`}>
                 <ReferenceLine
                   x={s.date}

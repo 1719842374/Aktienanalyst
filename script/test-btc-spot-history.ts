@@ -11,11 +11,18 @@ import { fileURLToPath } from "node:url";
 import {
   BTC_SPOT_MIN_DAYS,
   BTC_SPOT_SOURCE_URL,
+  BTC_VOLUME_SOURCE_URL,
   assessBtcSpotCoverage,
+  assessBtcTradeVolumeCoverage,
+  attachBtcTradeVolume,
+  formatBtcVolumeUsd,
   minerSpotPriceSeries,
+  normalizeBtcVolumeBars,
   normalizeBlockchainMarketPrice,
+  normalizeBlockchainTradeVolume,
   shiftUtcDays,
   type BtcSpotPoint,
+  type BtcTradeVolumePoint,
 } from "../shared/btc-spot";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -90,7 +97,83 @@ check(
     && !BTC_SPOT_SOURCE_URL.includes("coingecko"),
 );
 
+check(
+  "Volumenquelle ist On-Chain-USD, täglich, ab der frühen Kursreihe",
+  BTC_VOLUME_SOURCE_URL.includes("api.blockchain.info/charts/estimated-transaction-volume-usd")
+    && BTC_VOLUME_SOURCE_URL.includes("timespan=all")
+    && BTC_VOLUME_SOURCE_URL.includes("sampled=false"),
+);
+
+const volumeRaw = {
+  values: [
+    { x: Date.parse("2016-01-01T00:00:00Z") / 1000, y: 12_500_000 },
+    { x: Date.parse("2016-01-02T00:00:00Z") / 1000, y: 0 },
+    { x: Date.parse("2024-06-01T00:00:00Z") / 1000, y: 800_000_000 },
+  ],
+};
+const normalizedVolume = normalizeBlockchainTradeVolume(volumeRaw);
+check(
+  "Volumen-Normalisierung behält 2016 und einen echten Nulltag",
+  normalizedVolume[0]?.date === "2016-01-01"
+    && normalizedVolume[0]?.volume === 12_500_000
+    && normalizedVolume.some((point) => point.date === "2016-01-02" && point.volume === 0),
+);
+
+const priceForVolume = [
+  { date: "2016-01-01", price: 430 },
+  { date: "2016-01-02", price: 435 },
+  { date: "2016-01-03", price: 440 },
+];
+const attached = attachBtcTradeVolume(priceForVolume, normalizedVolume);
+check(
+  "Volumen hängt am Kurstag, ein fehlender Tag bleibt 0",
+  attached[0]?.volume === 12_500_000 && attached[1]?.volume === 0 && attached[2]?.volume === 0,
+);
+
+const historyPrices = dailySeries("2016-01-01", 365 * 8);
+const fullVolumes: BtcTradeVolumePoint[] = historyPrices.map((point) => ({ date: point.date, volume: 1_000_000 }));
+const fullVolumeCoverage = assessBtcTradeVolumeCoverage(historyPrices, fullVolumes);
+check(
+  "Volumen über die ganze Reihe vor und nach 2021 ist gültig",
+  fullVolumeCoverage.ok === true && fullVolumeCoverage.matchedBefore2021 === fullVolumeCoverage.before2021 && fullVolumeCoverage.before2021 > 1000,
+  fullVolumeCoverage,
+);
+const lateVolumes = fullVolumes.filter((point) => point.date >= "2021-01-01");
+const lateCoverage = assessBtcTradeVolumeCoverage(historyPrices, lateVolumes);
+check(
+  "Volumen erst ab 2021 fällt durch",
+  lateCoverage.ok === false && lateCoverage.matchedBefore2021 === 0,
+  lateCoverage.reason,
+);
+const zeroEarly = fullVolumes.map((point, index) => (
+  point.date < "2017-01-01" && index > 20 ? { ...point, volume: 0 } : point
+));
+const zeroEarlyCoverage = assessBtcTradeVolumeCoverage(historyPrices, zeroEarly);
+check(
+  "Nullen bis 2016 fallen durch, auch wenn das Datum existiert",
+  zeroEarlyCoverage.ok === false && (zeroEarlyCoverage.reason ?? "").includes("vor 2017"),
+  zeroEarlyCoverage.reason,
+);
+const bars = normalizeBtcVolumeBars([5_000, 1_700_000, 5_000_000_000, 0]);
+check(
+  "2010-Volumen bleibt als Balken sichtbar neben der 2021-Spitze",
+  bars[0] >= 0.12 && bars[0] < bars[1] && bars[1] < bars[2] && bars[2] === 1 && bars[3] === 0,
+  bars,
+);
+check(
+  "kleine Beträge bleiben im Tooltip lesbar",
+  formatBtcVolumeUsd(5_000) === "5.0K" && formatBtcVolumeUsd(1_700_000) === "1.70M" && formatBtcVolumeUsd(5_200_000_000) === "5.20B",
+);
+
 const analysis = readFileSync(join(root, "client/src/lib/btcAnalysis.ts"), "utf8");
+check(
+  "Client schneidet Signale nicht auf die letzten 100 und holt kein 2000-Tage-Binance-Fenster",
+  analysis.includes("technicalSignals: signals")
+    && !analysis.includes("signals.slice(-100)")
+    && !analysis.includes("2000 * dayMs")
+    && !analysis.includes("api.binance.com/api/v3/klines")
+    && analysis.includes("detectBtcChartSignals"),
+);
 const miner = readFileSync(join(root, "client/src/components/sections/Section13Miner.tsx"), "utf8");
 const routes = readFileSync(join(root, "server/btc-routes.ts"), "utf8");
 check(
@@ -126,6 +209,22 @@ check(
     pointsInTenYears: liveCoverage.pointsInTenYears,
     medianGapDays: liveCoverage.medianGapDays,
     reason: liveCoverage.reason,
+  },
+);
+const liveBefore2017 = live.points.filter((point) => point.date < "2017-01-01" && (point.volume ?? 0) > 0);
+const live2011 = live.points.find((point) => point.date === "2011-06-15");
+const live2016 = live.points.find((point) => point.date === "2016-11-04");
+check(
+  "Live-Volumen ist vor 2017 größer als 0, nicht erst ab dem Binance-Fenster",
+  liveBefore2017.length > 1500
+    && live.points[0]?.date < "2011-01-01"
+    && (live2011?.volume ?? 0) > 0
+    && (live2016?.volume ?? 0) > 0,
+  {
+    first: live.points[0]?.date,
+    before2017: liveBefore2017.length,
+    volume2011: live2011?.volume ?? null,
+    volume2016: live2016?.volume ?? null,
   },
 );
 
