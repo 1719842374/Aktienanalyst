@@ -12,6 +12,8 @@
  * A fill is applied when it closes at least one in-scope cell. Other cells stay n/a.
  */
 
+import { percentile, SEGMENT_NAME_STOPWORDS } from "./segment-growth-calc";
+
 export const TAM_NA_SHARE_WARN = 25; // display badge only; mirrors TAM_SHARE_WARN, not a quality input
 
 /** Section7 table header, German labels, in column order. */
@@ -420,4 +422,359 @@ export function retainSourcedTamNaFills(fills: TamNaFill[]): { fills: TamNaFill[
     kept.push(next);
   }
   return { fills: kept, naReasons };
+}
+
+/**
+ * Weitere LLM-Abrufe je offener Zeile, nachdem der erste Lauf die Zeile nicht belegt hat.
+ * Die Gesamtzahl der Abrufe steht in tamEstimateCallCeiling.
+ */
+export const TAM_ESTIMATE_MAX_RETRIES = 1;
+
+/** Cache-Schlüssel wechselt mit der Schätzlogik, nicht mit einem stillen Zahlenfaktor. */
+export const TAM_ESTIMATE_CACHE_VERSION = 2;
+
+/**
+ * Segment-Wachstum unter dieser Schwelle ist die Unternehmensentwicklung
+ * und kein Markt-CAGR. Der Default ist 0.
+ */
+export const MARKET_CAGR_PROXY_MIN_GROWTH = 0;
+
+/** Spanne = kleinstes bis größtes beobachtetes TAM/Umsatz-Verhältnis. Kein fester Faktor. */
+export const TAM_RATIO_SPREAD = { method: "range" } as const;
+
+export const MARKET_SIZE_PUBLISHERS = [
+  "gartner", "idc", "statista", "forrester", "mckinsey",
+  "geschäftsbericht", "geschaeftsbericht", "annual report", "10-k", "20-f",
+  "pressemitteilung", "press release",
+] as const;
+
+export const GROWTH_SOURCE_MARKERS = [
+  "cagr", "yoy", "peer-median", "peer median", "umsatz-yoy", "peer-cagr",
+] as const;
+
+/** Obergrenze = offene Zeilen × (erster Abruf + Retries je Zeile). */
+export function tamEstimateCallCeiling(openRows: number): number {
+  const rows = typeof openRows === "number" && Number.isFinite(openRows) && openRows > 0 ? Math.floor(openRows) : 0;
+  return rows * (TAM_ESTIMATE_MAX_RETRIES + 1);
+}
+
+export const TAM_NA_UNFILLED_REASON = {
+  growth: "n/a — keine belegte Wachstumsschätzung",
+  tam: "n/a — keine belegte TAM-Schätzung",
+  cagr: "n/a — keine belegte CAGR-Schätzung",
+} as const;
+
+/** Offene Zellen, die das Modell selbst setzen darf. Anteil am TAM und vs. TAM bleiben Formeln. */
+export function llmTargetCellCount(seg: TamNaSegmentRef): number {
+  const cells = scopeNaCells(seg, null);
+  return Number(cells.growth) + Number(cells.tam) + Number(cells.cagr);
+}
+
+export function llmClosedCellCount(seg: TamNaSegmentRef, fill: TamNaFill | null | undefined): number {
+  const before = scopeNaCells(seg, null);
+  const after = scopeNaCells(seg, fill ?? null);
+  let closed = 0;
+  if (before.growth && !after.growth) closed += 1;
+  if (before.tam && !after.tam) closed += 1;
+  if (before.cagr && !after.cagr) closed += 1;
+  return closed;
+}
+
+/**
+ * Mindestanteil geschlossener Zielzellen, ab dem kein Retry mehr nötig ist.
+ * Eine vollständig beantwortete Zeile — die mit den wenigsten offenen Zielzellen —
+ * reicht. Der Anteil ist der Quotient aus dieser Zeile und der offenen Matrix.
+ */
+export function adaptiveMinFilledCellRatio(openCellsByRow: readonly number[]): number {
+  const rows = openCellsByRow.filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
+  const total = rows.reduce((sum, n) => sum + n, 0);
+  if (total <= 0) return 1;
+  return Math.min(...rows) / total;
+}
+
+export function filledTargetCellRatio(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): number {
+  const byName = fillByName(fills);
+  let open = 0;
+  let closed = 0;
+  for (const seg of segments) {
+    const target = llmTargetCellCount(seg);
+    if (target === 0) continue;
+    open += target;
+    closed += llmClosedCellCount(seg, byName.get(seg.segmentName) ?? null);
+  }
+  if (open === 0) return 1;
+  return closed / open;
+}
+
+/**
+ * Zellen aus zwei Abrufen. Eine gesetzte Zahl wird nicht durch eine andere ersetzt
+ * und nicht gemittelt. Eine Zeile, die nur im zweiten Abruf belegt ist, kommt dazu.
+ */
+export function unionTamNaFills(segments: TamNaSegmentRef[], first: TamNaFill[], second: TamNaFill[]): TamNaFill[] {
+  const left = fillByName(first);
+  const right = fillByName(second);
+  const out: TamNaFill[] = [];
+  for (const seg of segments) {
+    const a = left.get(seg.segmentName);
+    const b = right.get(seg.segmentName);
+    if (!a && !b) continue;
+    if (a && !b) {
+      out.push(a);
+      continue;
+    }
+    if (!a && b) {
+      out.push(b);
+      continue;
+    }
+    const preferSecond = llmClosedCellCount(seg, b) > llmClosedCellCount(seg, a);
+    out.push(preferSecond ? b! : a!);
+  }
+  return out;
+}
+
+export function mergeTamNaReasons(existing: TamNaReason[], extra: TamNaReason[]): TamNaReason[] {
+  const seen = new Set<string>();
+  const out: TamNaReason[] = [];
+  for (const reason of [...existing, ...extra]) {
+    if (!reason || typeof reason.segmentName !== "string") continue;
+    const key = `${reason.segmentName}\u0000${reason.field}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(reason);
+  }
+  return out;
+}
+
+/** Zielzellen, die nach dem Apply offen bleiben. Ein schon gesetzter Grund gewinnt beim Merge. */
+export function unfilledTamNaReasons(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): TamNaReason[] {
+  const byName = fillByName(fills);
+  const reasons: TamNaReason[] = [];
+  const fields = ["growth", "tam", "cagr"] as const;
+  for (const seg of segments) {
+    const before = scopeNaCells(seg, null);
+    const after = scopeNaCells(seg, byName.get(seg.segmentName) ?? null);
+    for (const field of fields) {
+      if (!before[field] || !after[field]) continue;
+      reasons.push({ segmentName: seg.segmentName, field, reason: TAM_NA_UNFILLED_REASON[field] });
+    }
+  }
+  return reasons;
+}
+
+export interface PeerSegmentEvidence {
+  symbol: string;
+  segmentName: string;
+  /** Umsatz in Mrd. USD. */
+  revenueB: number;
+  /**
+   * Marktanteil in Prozent aus einer belegten Quelle.
+   * Kein Mix-Anteil der Firma und nicht Umsatz geteilt durch den Katalog-TAM.
+   */
+  sharePct: number | null;
+  /** Beleg des Marktanteils. Ohne Text zählt der Anteil nicht. */
+  shareSource?: string | null;
+  /** Datum des Belegs. Ohne Datum zählt der Anteil nicht. */
+  shareAsOf?: string | null;
+}
+
+export interface TamRatioBounds {
+  lo: number;
+  hi: number;
+  mid: number;
+  n: number;
+}
+
+function sorted(values: number[]): number[] {
+  return [...values].sort((a, b) => a - b);
+}
+
+function positiveRatios(ratios: readonly number[]): number[] {
+  return ratios.filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
+}
+
+/** Fact-TAM / Segmentumsatz. Unmatched Zeilen und TAM ohne Zahl zählen nicht. */
+export function factTamRevenueRatios(segments: readonly TamNaSegmentRef[]): number[] {
+  const out: number[] = [];
+  for (const seg of segments) {
+    const tam = factTamSize(seg);
+    if (tam == null || !(seg.segmentRevenue > 0)) continue;
+    out.push(tam / seg.segmentRevenue);
+  }
+  return out;
+}
+
+function documentedShare(peer: PeerSegmentEvidence): peer is PeerSegmentEvidence & { sharePct: number; shareSource: string; shareAsOf: string } {
+  return typeof peer.sharePct === "number"
+    && Number.isFinite(peer.sharePct)
+    && peer.sharePct > 0
+    && typeof peer.shareSource === "string"
+    && peer.shareSource.trim().length > 0
+    && typeof peer.shareAsOf === "string"
+    && peer.shareAsOf.trim().length > 0;
+}
+
+/** Peer-Verhältnis aus belegtem Marktanteil: TAM/Umsatz = 100 / Anteil. Ohne Quelle und Datum zählt er nicht. */
+export function peerTamRevenueRatios(peers: readonly PeerSegmentEvidence[]): number[] {
+  const out: number[] = [];
+  for (const peer of peers) {
+    if (!documentedShare(peer) || !(peer.revenueB > 0)) continue;
+    out.push(100 / peer.sharePct);
+  }
+  return out;
+}
+
+/**
+ * Untere und obere Schranke für TAM/Umsatz.
+ * Die Grenzen sind das Minimum und das Maximum der Stichprobe.
+ * Unter zwei Werten gibt es keine Verteilung.
+ */
+export function adaptiveTamRatioBounds(ratios: readonly number[]): TamRatioBounds | null {
+  const usable = positiveRatios(ratios);
+  if (usable.length < 2) return null;
+  const logs = sorted(usable.map((n) => Math.log(n)));
+  const mid = percentile(logs, 50);
+  if (!Number.isFinite(mid)) return null;
+  return {
+    lo: Math.min(...usable),
+    hi: Math.max(...usable),
+    mid: Math.exp(mid),
+    n: usable.length,
+  };
+}
+
+export function isMarketSizeSource(source: string): boolean {
+  const text = source.toLowerCase();
+  const publisher = MARKET_SIZE_PUBLISHERS.some((marker) => text.includes(marker));
+  const growth = GROWTH_SOURCE_MARKERS.some((marker) => text.includes(marker));
+  return publisher && !growth;
+}
+
+/** Jahr oder ISO-Datum in der Quellenzeile. */
+export function sourceHasDate(source: string): boolean {
+  return /\b(?:19|20)\d{2}(?:-\d{2}(?:-\d{2})?)?\b/.test(source);
+}
+
+/** Markt-CAGR nur mit Verlag und Datum. Eine Wachstumsrate als Quelle zählt nicht. */
+export function isDocumentedMarketCagrSource(source: string): boolean {
+  const text = source.trim();
+  return text.length > 0 && isMarketSizeSource(text) && sourceHasDate(text);
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+export function gateMarketTam(input: {
+  tamSize: number;
+  revenue: number;
+  source: string;
+  ratios: readonly number[];
+  /**
+   * Formel aus Peer-Umsatz und belegtem Anteil. Die Quelle ist der Beleg.
+   * Unter zwei beobachteten Verhältnissen bleibt auch dieser Pfad n/a (nicht gegated).
+   */
+  formulaPath?: boolean;
+}): { ok: true } | { ok: false; reason: string } {
+  if (!(input.tamSize > 0) || !(input.revenue > 0)) {
+    return { ok: false, reason: "n/a — TAM oder Umsatz fehlt" };
+  }
+  if (!input.formulaPath && !isMarketSizeSource(input.source)) {
+    const shown = input.source.trim().slice(0, 80) || "leer";
+    return { ok: false, reason: `n/a — tamSource nennt keine Marktgröße (${shown})` };
+  }
+  const ratio = input.tamSize / input.revenue;
+  const bounds = adaptiveTamRatioBounds(input.ratios);
+  if (!bounds) {
+    const n = positiveRatios(input.ratios).length;
+    return { ok: false, reason: `n/a — nicht gegated (n=${n} beobachtete Verhältnisse, mindestens 2)` };
+  }
+  if (ratio < bounds.lo || ratio > bounds.hi) {
+    return {
+      ok: false,
+      reason: `n/a — TAM/Umsatz ${round1(ratio)}× außerhalb ${round1(bounds.lo)}–${round1(bounds.hi)} (n=${bounds.n}, ${TAM_RATIO_SPREAD.method})`,
+    };
+  }
+  return { ok: true };
+}
+
+function nameTokens(name: string): string[] {
+  const raw = name.toLowerCase().split(/[^a-z0-9äöüß]+/).filter((token) => token.length > 0);
+  const content = raw.filter((token) => !SEGMENT_NAME_STOPWORDS.has(token));
+  return (content.length > 0 ? content : raw).sort();
+}
+
+function sameSegmentName(a: string, b: string): boolean {
+  const left = nameTokens(a).join("|");
+  const right = nameTokens(b).join("|");
+  return left.length > 0 && left === right;
+}
+
+export interface PeerTamFormula {
+  tamSize: number;
+  formula: string;
+  source: string;
+}
+
+/**
+ * Genau ein Peer mit demselben Segmentnamen, Umsatz und belegtem Marktanteil.
+ * Quelle und Datum müssen am Anteil stehen. Mehrere Treffer werden nicht gemittelt.
+ */
+export function peerRevenueShareTam(subjectName: string, peers: readonly PeerSegmentEvidence[]): PeerTamFormula | { reason: string } | null {
+  const named = peers.filter((peer) => sameSegmentName(subjectName, peer.segmentName) && peer.revenueB > 0);
+  if (named.length === 0) return null;
+  const documented = named.filter(documentedShare);
+  if (documented.length > 1) {
+    return { reason: `n/a — ${documented.length} Peers mit Segment „${subjectName}“, kein eindeutiger Umsatz (nicht gemittelt)` };
+  }
+  if (documented.length === 1) {
+    const peer = documented[0];
+    const share = peer.sharePct;
+    const tamSize = round1(peer.revenueB / (share / 100));
+    const source = `${peer.shareSource.trim()} (${peer.shareAsOf.trim()})`;
+    return {
+      tamSize,
+      formula: `TAM ${tamSize} = Peer-Umsatz ${round1(peer.revenueB)} / Marktanteil ${round1(share)}% (${peer.symbol} ${peer.segmentName}, ${source})`,
+      source,
+    };
+  }
+  const bare = named.filter((peer) => peer.sharePct != null && peer.sharePct > 0);
+  if (bare.length > 0) {
+    return { reason: `n/a — Marktanteil ohne Quelle und Datum (${bare.map((peer) => peer.symbol).join(", ")})` };
+  }
+  return { reason: `n/a — kein belegter Marktanteil für „${subjectName}“` };
+}
+
+/** Kurzname im Proxy-Badge. SAP.DE wird SAP, ein leerer Ticker bleibt „Unternehmen“. */
+export function segmentGrowthProxyLabel(ticker: string): string {
+  const stem = ticker.split(".")[0]?.trim().toUpperCase() ?? "";
+  return stem || "Unternehmen";
+}
+
+/**
+ * Proxy nur ab MARKET_CAGR_PROXY_MIN_GROWTH (Default 0).
+ * Darunter ist die Rate die Unternehmensentwicklung, nicht der Markt-CAGR.
+ * Ein angenommener Proxy trägt die Marke „Proxy: Segmentwachstum …“.
+ */
+export function segmentGrowthCagrProxy(
+  growth: number,
+  input?: { minGrowth?: number; companyLabel?: string },
+): { tamCAGR: number; formula: string; source: string; rationale: string } | { reason: string } | null {
+  if (typeof growth !== "number" || !Number.isFinite(growth)) return null;
+  const minGrowth = typeof input?.minGrowth === "number" && Number.isFinite(input.minGrowth)
+    ? input.minGrowth
+    : MARKET_CAGR_PROXY_MIN_GROWTH;
+  if (growth < minGrowth) {
+    return {
+      reason: `n/a — Segment-Wachstum ${round1(growth)}% liegt unter ${minGrowth}% und ist die Unternehmensentwicklung, nicht der Markt-CAGR`,
+    };
+  }
+  const tamCAGR = round1(growth);
+  const label = input?.companyLabel?.trim() || "Unternehmen";
+  const mark = `Proxy: Segmentwachstum ${label}`;
+  return {
+    tamCAGR,
+    formula: `${mark} ${tamCAGR}%`,
+    source: mark,
+    rationale: `${mark}, kein Branchenbericht`,
+  };
 }
