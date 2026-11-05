@@ -1,4 +1,4 @@
-# Offen_WORK_BUFFETT_ASIA_10Y.md — Priorisierte Makro-Erweiterungen (GuruFocus-Vergleich)
+# Fertig_WORK_BUFFETT_ASIA_10Y.md — Priorisierte Makro-Erweiterungen (GuruFocus-Vergleich)
 
 > **Stand: 18.10.2026**  
 > Priorisierte, wirklich relevante Punkte aus dem GuruFocus-Feature-Vergleich.  
@@ -77,6 +77,8 @@
 - Soll: Label „Asien“, Aggregation mind. Japan + China, Score/Treiber aggregiert.
 - Ist: kein Commit dazu gemeldet oder geprüft → **OFFEN**.
 - Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §2 Asien-Aggregation: OFFEN. Vorgabe Philip 17:11 (von Stabschef übermittelt): dritter Markt China über ASHR. Ob §2 damit erfüllt ist, klärt Stabschef. Datei bleibt **Offen_**, bis §2 geklärt ist.
+- Nachtrag 02.11.2026, Basis main `fc933a5e5bee5691a85dac5e2402c2bacc520b70`: Auf diesem Tip fehlte §2. Button `RegionGaugeSwitch.tsx` hieß „Asien (Japan)“, Katalog-Label in `server/recession-regions.ts` war „Japan“, China-Slots und BIP-Gewichte fehlten. §1 und §3 waren auf diesem Tip bereits erfüllt (Buffett nur `RecessionDashboard.tsx` `BuffettRatioPanel`; Real10Y `DFII10` in `TechnicalChart.tsx`). Umsetzung auf Draft #377 (`8429a1f8`), auf main `fc933a5e` neu aufgesetzt. #385 ist nicht auf main und wird nicht mitgezogen. HOLD #372/#383/#299 unberührt. `server/analyze-route.ts` nicht angefasst.
+- Ist §2: Label „Asien“. Katalog-P und Top-3-Treiber mischen Japan (`^TPX` und die Japan-Slots) mit China (ASHR, realisierte Vol 20T und KGV). Gewicht ist der Anteil der Weltbank-BIP-Serien `MKTGDPJPA646NWDB` und `MKTGDPCNA646NWDB`. Fehlt ein Druck, steht `n/a — Grund` und die andere Seite wird auf 100 % normiert. Fehlen beide, bleibt die Katalog-P n/a. Kein festes 1/1. US- und Europa-Kataloge und die Gewichte 0,70 / 0,20 / 0,10 bleiben. Handlung bleibt auf den US-Büchern. Südkorea, Taiwan und Indien stehen in der Spec als „idealerweise“, nicht in den Acceptance Criteria, und sind nicht gebaut (braucht Philip, falls die Mindestmenge nicht reicht). Ampel §2: ✅ Acceptance Criteria. Datei heißt danach `Fertig_`.
 
 **Priorität:** Hoch (konkreter Fix, den Philip angesprochen hat)  
 **Aufwand:** 1–1,5 Tage
@@ -141,6 +143,8 @@
 2. Buffett Indicator als kompakte Karte/Overlay spezifizieren und bauen.
 3. 10Y Overlay in Sektion 12 Technische Analyse ergänzen.
 4. Nach Umsetzung jeweils in `WORK_IMPLEMENTIERUNG_OFFEN.md` / Ampel dokumentieren und auf `fertig_` umbenennen.
+
+Stand 02.11.2026: die vier Schritte sind erledigt. §1 nur im Rezessionsdashboard, §3 Real10Y, §2 Japan+China (ASHR) mit BIP-Anteil. Dateiname `Fertig_WORK_BUFFETT_ASIA_10Y.md`.
 
 ---
 
