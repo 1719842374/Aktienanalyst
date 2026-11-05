@@ -11,6 +11,7 @@
 import type { StockAnalysis } from "./schema";
 import { sumUpsideGb } from "./bias-fixes";
 import type { EarningsCallBrief } from "./chat-earnings";
+import { formatIncomeMio, formatIncomePct, INCOME_LINE_DEFS, type IncomeStatementBrief } from "./chat-income";
 
 export type ChatDashboard = "stock" | "btc" | "gold" | "recession";
 export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold", "recession"];
@@ -82,7 +83,9 @@ export interface ChatRequestBody {
 }
 
 /** Faktart, die das Budget gekürzt oder entfernt hat. */
-export type ChatTrimKind = "notes" | "facts" | "rationale" | "wachstumsthese";
+export type ChatTrimKind = "notes" | "facts" | "rationale" | "wachstumsthese" | "earningsCall" | "guv";
+/** Reihenfolge im Kürzungsbericht. */
+export const CHAT_TRIM_KINDS: readonly ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese", "earningsCall", "guv"];
 
 export interface ChatContextTrimEntry {
   kind: ChatTrimKind;
@@ -101,10 +104,19 @@ export interface ChatResponseBody {
   error: string | null;
   /** Fehlt, wenn nichts gekürzt wurde. Sonst je Faktart die entfernten Zeichen. */
   contextTrimmed?: ChatContextTrimEntry[];
+  /** Nur gesetzt, wenn nicht das erste Modell der Kette antwortete: warum (z. B. "x/y: HTTP 429"). */
+  fallbackReason?: string;
+  /** true, wenn die Antwort am Token-Budget endete und nicht vollständig fortgesetzt werden konnte (Hinweis steht im Text). */
+  truncated?: boolean;
+  /** true, wenn eine abgeschnittene Antwort per Fortsetzungs-Call ergänzt wurde. */
+  continued?: boolean;
 }
 
 /** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */
 export const CHAT_CONTEXT_BUDGET = 36_000;
+
+/** Client-Zeitlimit für POST /api/chat (useDashboardChat). Der Server bricht das LLM vorher ab. */
+export const CHAT_REQUEST_TIMEOUT_MS = 45_000;
 
 /**
  * WORK_KI_CHAT_BIG_PICTURE: so viele Schlagzeilen stehen im Prompt („News: Top 5“).
@@ -133,20 +145,35 @@ export function dominantThesisClass(shares: Record<string, number> | null | unde
 }
 
 /**
- * Relative Priorität beim Behalten von Text: Wachstumsthese > Rationale > Notes.
+ * Relative Priorität beim Behalten von Text:
+ * GuV-Posten > Earnings Call > Wachstumsthese > Rationale > Notes.
  * Das sind Ränge, keine Zeichenzahl. Gewicht = Rang / Summe.
- * allowedChars = floor(CHAT_CONTEXT_BUDGET * Gewicht).
+ * allowedChars = floor(CHAT_CONTEXT_BUDGET * Gewicht). GuV und Earnings Call sind Gruppen
+ * (alle Fakten mit dem Präfix aus CHAT_FACT_GROUP_PREFIX); die Gruppe teilt sich ihr Budget.
  */
 export const CHAT_FACT_PRIORITY = {
+  guv: 5,
+  earningsCall: 4,
   wachstumsthese: 3,
   rationale: 2,
   notes: 1,
 } as const;
 
 export type ChatFactKind = keyof typeof CHAT_FACT_PRIORITY;
+export type ChatFactGroup = "guv" | "earningsCall";
+
+/** Fakt-Schlüssel mit diesem Präfix gehören zur Gruppe (z. B. guv_zinsaufwand, earningsCallZitate). */
+export const CHAT_FACT_GROUP_PREFIX: Record<ChatFactGroup, string> = { guv: "guv", earningsCall: "earningsCall" };
+
+/** Gruppe eines Fakt-Schlüssels, sonst null. */
+export function chatFactGroupOf(key: string): ChatFactGroup | null {
+  if (key.startsWith(CHAT_FACT_GROUP_PREFIX.earningsCall)) return "earningsCall";
+  if (key.startsWith(CHAT_FACT_GROUP_PREFIX.guv)) return "guv";
+  return null;
+}
 
 function chatFactPrioritySum(): number {
-  return CHAT_FACT_PRIORITY.wachstumsthese + CHAT_FACT_PRIORITY.rationale + CHAT_FACT_PRIORITY.notes;
+  return Object.values(CHAT_FACT_PRIORITY).reduce((a, b) => a + b, 0);
 }
 
 export function chatFactWeight(kind: ChatFactKind): number {
@@ -172,6 +199,23 @@ export const CHAT_LIMITS = {
   maxNotes: 10,
   maxContextChars: 40_000,
 } as const;
+
+/**
+ * Aufteilung des Earnings-Call-Budgets (Ränge, Anteil = Rang / Summe): Auszug aus Transkript bzw.
+ * Release > Zusammenfassung = Zitate > Metadaten (Datum, Quartal, Quelle, Link, Hinweis).
+ */
+export const CHAT_EARNINGS_PART_PRIORITY = { auszug: 4, zusammenfassung: 2, zitate: 2, meta: 1 } as const;
+export type ChatEarningsPart = keyof typeof CHAT_EARNINGS_PART_PRIORITY;
+
+export function chatEarningsPartChars(part: ChatEarningsPart): number {
+  const sum = Object.values(CHAT_EARNINGS_PART_PRIORITY).reduce((a, b) => a + b, 0);
+  return Math.floor((chatFactAllowedChars("earningsCall") * CHAT_EARNINGS_PART_PRIORITY[part]) / sum);
+}
+
+/** Einzelner Gruppen-Fakt: höchstens das Gruppenbudget und nie über der allgemeinen Faktdecke. */
+export function chatFactGroupValueCap(group: ChatFactGroup): number {
+  return Math.min(chatFactAllowedChars(group), CHAT_LIMITS.maxFactValueChars);
+}
 
 function num(v: unknown, digits = 2): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
@@ -377,22 +421,110 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
   };
 }
 
-/** Earnings-Call in S3 (Investmentthese). `null` = Abruf läuft noch. Mutiert `ctx` nicht. Null-Felder werden weggelassen; der Grund steht in `earningsCallHinweis`. */
+/** Kürzt die Text-Fakten einer Gruppe anteilig, bis sie zusammen höchstens `allowed` Zeichen haben. */
+function fitFactGroup(facts: Record<string, ChatFactValue>, allowed: number): Record<string, ChatFactValue> {
+  const keys = Object.keys(facts).filter(k => typeof facts[k] === "string");
+  const values = keys.map(k => facts[k] as string);
+  const overflow = values.reduce((a, v) => a + v.length, 0) - allowed;
+  const next = shrinkProportionally(values, overflow);
+  if (!next) return facts;
+  const out = { ...facts };
+  keys.forEach((k, i) => { out[k] = next[i]; });
+  return out;
+}
+
+const EARNINGS_KIND_LABEL: Record<NonNullable<EarningsCallBrief["kind"]>, string> = {
+  transcript: "Call-Transkript (FMP)",
+  "earnings-release": "Earnings Release (SEC Exhibit 99.1), kein Call-Transkript",
+};
+
+/**
+ * Earnings Call in S3 (Investmentthese). `null` = Abruf läuft noch. Mutiert `ctx` nicht. Null-Felder
+ * werden weggelassen; der Grund steht in `earningsCallHinweis`. Budget: Gruppe "earningsCall",
+ * Teile nach CHAT_EARNINGS_PART_PRIORITY.
+ */
 export function withEarningsBriefFacts(ctx: ChatContext, brief: EarningsCallBrief | null): ChatContext {
   const quarter = brief && brief.year != null && brief.quarter != null ? `FY${brief.year} Q${brief.quarter}` : null;
+  const cap = chatFactGroupValueCap("earningsCall");
+  const part = (p: ChatEarningsPart, v: string) => clipTo(v, Math.min(cap, chatEarningsPartChars(p)));
   const facts: Record<string, ChatFactValue> = {};
   if (brief?.date) facts.earningsCallDatum = brief.date;
   if (quarter) facts.earningsCallQuartal = quarter;
-  if (brief?.summary) facts.earningsCallZusammenfassung = brief.summary;
-  if (brief?.excerpt) facts.earningsCallAuszug = brief.excerpt;
-  if (brief?.source) facts.earningsCallQuelle = brief.source;
+  if (brief?.kind) facts.earningsCallArt = EARNINGS_KIND_LABEL[brief.kind];
+  if (brief?.summary) facts.earningsCallZusammenfassung = part("zusammenfassung", brief.summary);
+  if (brief?.quotes?.length) facts.earningsCallZitate = part("zitate", brief.quotes.join(" | "));
+  if (brief?.excerpt) facts.earningsCallAuszug = part("auszug", brief.excerpt);
+  if (brief?.source) facts.earningsCallQuelle = part("meta", brief.source);
+  if (brief?.sourceUrl) facts.earningsCallQuelleUrl = brief.sourceUrl;
   const hinweis = brief?.summary
-    ? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null)
+    ? (brief.reason ?? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null))
     : (brief?.reason ?? "n/a — Earnings-Call noch nicht geladen");
-  if (hinweis) facts.earningsCallHinweis = hinweis;
+  if (hinweis) facts.earningsCallHinweis = part("meta", hinweis);
+  const fitted = fitFactGroup(facts, chatFactAllowedChars("earningsCall"));
   return {
     ...ctx,
-    sections: ctx.sections.map(s => (s.id === 3 ? { ...s, facts: { ...s.facts, ...facts } } : s)),
+    sections: ctx.sections.map(s => (s.id === 3 ? { ...s, facts: { ...s.facts, ...fitted } } : s)),
+  };
+}
+
+/** S4 (Financial Statements) trägt die GuV-Posten. */
+export const CHAT_INCOME_SECTION_ID = 4;
+
+function incomeValue(v: number | null): string {
+  return formatIncomeMio(v, null).replace(/ Mio$/, "");
+}
+
+/**
+ * GuV-Posten samt Unterposten in S4: je Posten aktuelle Periode, Vorjahresperiode, Δ, Konzept und
+ * Summenzeile; dazu Quelle, Filing-Link, Periode, Summenprüfung und Ausreißer mit Filing-Erklärung.
+ * `null` = Abruf läuft noch. Mutiert `ctx` nicht. Budget: Gruppe "guv". Passen nicht alle Posten in
+ * die Sektion (CHAT_LIMITS.maxFactsPerSection), fallen die hinteren Posten weg und der Hinweis sagt es.
+ */
+export function withIncomeStatementFacts(ctx: ChatContext, brief: IncomeStatementBrief | null): ChatContext {
+  const target = ctx.sections.find(s => s.id === CHAT_INCOME_SECTION_ID);
+  if (!target) return ctx;
+  const cap = chatFactGroupValueCap("guv");
+  const head: Record<string, ChatFactValue> = {};
+  const tail: Record<string, ChatFactValue> = {};
+  const hints: string[] = [];
+  if (!brief) {
+    head.guvHinweis = "n/a — GuV-Posten (SEC/FMP) noch nicht geladen";
+  } else if (brief.status !== "ok" || !brief.period) {
+    head.guvHinweis = clipTo(brief.reason ?? "n/a — GuV-Posten nicht verfügbar", cap);
+  } else {
+    const cur = brief.period.label;
+    const pri = brief.priorPeriod?.label ?? "Vorjahr";
+    const src = brief.source === "sec-edgar/companyfacts" ? "SEC EDGAR companyfacts (XBRL)" : brief.source === "fmp/income-statement" ? "FMP Income Statement" : (brief.source ?? "n/a");
+    head.guvQuelle = clipTo([src, brief.form, brief.accession ? `Accession ${brief.accession}` : null, brief.filed ? `eingereicht ${brief.filed}` : null, brief.companyName].filter(Boolean).join(", "), cap);
+    head.guvFilingUrl = brief.filingUrl ?? "n/a — kein Link auf das Filing-Dokument";
+    head.guvPeriode = `${cur}${brief.period.start ? ` (${brief.period.start} bis ${brief.period.end})` : ` (bis ${brief.period.end})`} gegen ${pri}; Werte in Mio ${brief.currency ?? "n/a"}, Aufwand negativ`;
+    const labelOf = (key: string | null) => (key ? INCOME_LINE_DEFS.find(d => d.key === key)?.label ?? key : null);
+    for (const l of brief.lines) {
+      const parent = labelOf(l.parentKey);
+      head[`guv_${l.key}`] = clipTo(`${l.label}: ${cur} ${incomeValue(l.current)} | ${pri} ${incomeValue(l.prior)} | Δ ${incomeValue(l.deltaAbs)} (${formatIncomePct(l.deltaPct)}) | ${l.concept}${parent ? ` | Teil von „${parent}“` : ""}`, cap);
+    }
+    if (brief.checks.length) {
+      tail.guvSummenpruefung = clipTo(brief.checks.map(c => `${labelOf(c.parentKey)}: ausgewiesen ${incomeValue(c.reported)}, Summe ${c.parts} Unterposten ${incomeValue(c.sumOfParts)}, Differenz ${incomeValue(c.diff)}`).join(" | "), cap);
+    }
+    for (const o of brief.outliers) {
+      const parentKey = o.parentKey;
+      tail[`guvAusreisser_${parentKey}`] = clipTo(`${o.label}: ${cur} ${incomeValue(o.current)} gegen ${pri} ${incomeValue(o.prior)}, Δ ${incomeValue(o.deltaAbs)} Mio ${brief.currency ?? ""} (größte Veränderung in „${labelOf(parentKey)}“) | Erklärung laut Filing: ${o.explanation ?? o.explanationReason ?? "n/a"}`.trim(), cap);
+    }
+    hints.push(...brief.notes);
+  }
+  const hintSlot = 1;
+  const room = CHAT_LIMITS.maxFactsPerSection - 1 - Object.keys(target.facts).length - Object.keys(tail).length - hintSlot;
+  const headKeys = Object.keys(head);
+  if (headKeys.length > room) {
+    const dropped = headKeys.slice(Math.max(0, room));
+    for (const k of dropped) delete head[k];
+    hints.push(`${dropped.length} GuV-Posten passen nicht in die Sektion (n/a im Kontext)`);
+  }
+  if (hints.length) tail.guvHinweis = clipTo(hints.join(" | "), cap);
+  const fitted = fitFactGroup({ ...head, ...tail }, chatFactAllowedChars("guv"));
+  return {
+    ...ctx,
+    sections: ctx.sections.map(s => (s.id === CHAT_INCOME_SECTION_ID ? { ...s, facts: { ...s.facts, ...fitted } } : s)),
   };
 }
 
@@ -605,10 +737,11 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
 //
 // Kontext-Budget (geprüft in script/test-chat-context-full.ts und script/test-chat-fact-limit.ts):
 //   Server-Decke CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Ziel CHAT_CONTEXT_BUDGET = 36 000.
-//   allowedChars = floor(Budget * Priorität / Summe). Priorität: wachstumsthese > rationale > notes.
-//   Kein festes 400- oder 1000-Zeichen-Limit. Liegt der Payload darüber, kürzt fitChatContextBudget
-//   proportional: zuerst Notes, dann übrige Fakten (längste zuerst, ab 80 Zeichen halbiert,
-//   Auffälligkeiten ausgenommen), dann Rationale, die Wachstumsthese zuletzt.
+//   allowedChars = floor(Budget * Priorität / Summe). Priorität: guv > earningsCall > wachstumsthese
+//   > rationale > notes. Kein festes 400- oder 1000-Zeichen-Limit. Liegt der Payload darüber, kürzt
+//   fitChatContextBudget proportional: zuerst Notes, dann übrige Fakten (längste zuerst, ab 80 Zeichen
+//   halbiert, Auffälligkeiten ausgenommen), dann Rationale, dann die Wachstumsthese, dann die
+//   Earnings-Call-Gruppe und die GuV-Gruppe zuletzt.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CHAT_WEAKNESS_KEY = "auffaelligkeiten";
@@ -672,16 +805,18 @@ const CHAT_TRIM_LABEL: Record<ChatTrimKind, string> = {
   facts: "Fakten",
   rationale: "Rationale",
   wachstumsthese: "Wachstumsthese",
+  earningsCall: "Earnings Call",
+  guv: "GuV-Posten",
 };
 
 function chatTrimChars(ctx: ChatContext): Record<ChatTrimKind, number> {
-  const out: Record<ChatTrimKind, number> = { notes: 0, facts: 0, rationale: 0, wachstumsthese: 0 };
+  const out: Record<ChatTrimKind, number> = { notes: 0, facts: 0, rationale: 0, wachstumsthese: 0, earningsCall: 0, guv: 0 };
   for (const n of ctx.notes ?? []) if (typeof n === "string") out.notes += n.length;
   for (const g of ctx.gates ?? []) if (typeof g?.rationale === "string") out.rationale += g.rationale.length;
   for (const s of ctx.sections ?? []) for (const [k, v] of Object.entries(s.facts ?? {})) {
     if (typeof v !== "string") continue;
     if (k === "wachstumsthese") out.wachstumsthese += v.length;
-    else out.facts += v.length;
+    else out[chatFactGroupOf(k) ?? "facts"] += v.length;
   }
   return out;
 }
@@ -690,8 +825,7 @@ function chatTrimChars(ctx: ChatContext): Record<ChatTrimKind, number> {
 export function chatContextTrimReport(before: ChatContext, after: ChatContext): ChatContextTrimEntry[] | undefined {
   const a = chatTrimChars(before);
   const b = chatTrimChars(after);
-  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
-  const entries = kinds.flatMap(kind => {
+  const entries = CHAT_TRIM_KINDS.flatMap(kind => {
     const removedChars = a[kind] - b[kind];
     return removedChars > 0 ? [{ kind, removedChars }] : [];
   });
@@ -713,8 +847,7 @@ export function mergeChatContextTrim(
 ): ChatContextTrimEntry[] | undefined {
   const sums = new Map<ChatTrimKind, number>();
   for (const e of [...(a ?? []), ...(b ?? [])]) sums.set(e.kind, (sums.get(e.kind) ?? 0) + e.removedChars);
-  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
-  const entries = kinds.flatMap(kind => {
+  const entries = CHAT_TRIM_KINDS.flatMap(kind => {
     const removedChars = sums.get(kind) ?? 0;
     return removedChars > 0 ? [{ kind, removedChars }] : [];
   });
@@ -783,6 +916,22 @@ function shrinkProportionally(values: string[], overflow: number): string[] | nu
   return changed ? next : null;
 }
 
+/** Niedrigere Priorität zuerst: Earnings Call vor den GuV-Posten. */
+const CHAT_FACT_GROUPS_BY_TRIM_ORDER: readonly ChatFactGroup[] = (Object.keys(CHAT_FACT_GROUP_PREFIX) as ChatFactGroup[])
+  .sort((a, b) => CHAT_FACT_PRIORITY[a] - CHAT_FACT_PRIORITY[b]);
+
+function shrinkFactGroup(ctx: ChatContext, group: ChatFactGroup, overflow: number): boolean {
+  const loc: Array<{ s: ChatSection; k: string }> = [];
+  const values: string[] = [];
+  for (const s of ctx.sections) for (const [k, v] of Object.entries(s.facts)) {
+    if (chatFactGroupOf(k) === group && typeof v === "string" && v.length > 1) { loc.push({ s, k }); values.push(v); }
+  }
+  const next = shrinkProportionally(values, overflow);
+  if (!next) return false;
+  loc.forEach((l, i) => { l.s.facts[l.k] = next[i]; });
+  return true;
+}
+
 /** Hält den Kontext unter `budget` Zeichen (JSON). Kürzt weich, lehnt nicht ab. Reine Funktion. */
 export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CONTEXT_BUDGET): ChatContext {
   const size = (c: ChatContext) => JSON.stringify(c).length;
@@ -796,7 +945,7 @@ export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CON
     }
     let best: { s: ChatSection; k: string; len: number } | null = null;
     for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
-      if (k === CHAT_WEAKNESS_KEY || k === "wachstumsthese" || typeof v !== "string" || v.length <= 80) continue;
+      if (k === CHAT_WEAKNESS_KEY || k === "wachstumsthese" || chatFactGroupOf(k) || typeof v !== "string" || v.length <= 80) continue;
       if (!best || v.length > best.len) best = { s, k, len: v.length };
     }
     if (best) { const v = best.s.facts[best.k] as string; best.s.facts[best.k] = `${v.slice(0, Math.max(80, Math.floor(v.length / 2)) - 1)}…`; continue; }
@@ -811,9 +960,10 @@ export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CON
     }
     const thesisNext = shrinkProportionally(theses, overflow);
     if (thesisNext) { thesisLoc.forEach((loc, i) => { loc.s.facts[loc.k] = thesisNext[i]; }); continue; }
+    if (CHAT_FACT_GROUPS_BY_TRIM_ORDER.some(group => shrinkFactGroup(out, group, overflow))) continue;
     if (!out.sections.length) break;
     const big = out.sections.reduce((a, b) => (Object.keys(b.facts).length > Object.keys(a.facts).length ? b : a));
-    const plain = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY && k !== "wachstumsthese");
+    const plain = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY && k !== "wachstumsthese" && !chatFactGroupOf(k));
     const keys = plain.length ? plain : Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
     if (!keys.length) break;
     delete big.facts[keys[keys.length - 1]];

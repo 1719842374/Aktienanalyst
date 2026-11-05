@@ -23,6 +23,71 @@ export interface EarningsCallBrief {
   /** true, wenn der Auszug am Budget abgeschnitten wurde. */
   excerptTruncated: boolean;
   source: string | null;
+  /** Link auf das Dokument (SEC-Exhibit); beim FMP-Transkript null. */
+  sourceUrl?: string | null;
+  /** "transcript" = FMP-Call-Transkript, "earnings-release" = SEC 8-K/6-K Exhibit 99.1. */
+  kind?: EarningsBriefKind | null;
+  /** Wörtliche Management-Zitate aus der Quelle. */
+  quotes?: string[];
+}
+
+export type EarningsBriefKind = "transcript" | "earnings-release";
+
+/** So viele Zitate gehen in den Chat-Kontext. */
+export const EARNINGS_QUOTE_COUNT = 3;
+/** Zitate kürzer als das sind Floskeln ("we are pleased"). */
+export const EARNINGS_QUOTE_MIN_CHARS = 60;
+
+const QUOTE_SAID = /[“"]([^”"]{20,900})[”"]\s*,?\s*(?:said|says|stated|commented|added)\s+([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){0,3})/g;
+const QUOTE_ROLE = /\b([A-Z][a-zà-ž'’-]+(?:\s+[A-Z][a-zà-ž'’-]+){1,2}),\s*(CEO|CFO|COO|Chief [A-Z][a-z]+ Officer|President)\s*:\s*(.{40,700}?[.!?])(?=\s+[A-Z][a-zà-ž'’-]+(?:\s+[A-Z][a-zà-ž'’-]+){1,2},\s*(?:CEO|CFO|COO|Chief|President)\b|\s+\d+\s*\/|\s*$)/g;
+
+/**
+ * Management-Zitate aus einem Earnings Release: “…,” said Name bzw. „Name, CEO: …“.
+ * Nur wörtlicher Text aus der Quelle, kein Umformulieren.
+ */
+export function extractReleaseQuotes(text: string, max = EARNINGS_QUOTE_COUNT): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (who: string, quote: string) => {
+    const q = quote.replace(/\s+/g, " ").replace(/[,\s]+$/, "").trim();
+    if (q.length < EARNINGS_QUOTE_MIN_CHARS || seen.has(q)) return;
+    seen.add(q);
+    out.push(`${who.trim()}: „${q}“`);
+  };
+  for (const m of Array.from(text.matchAll(QUOTE_SAID))) push(m[2], m[1]);
+  for (const m of Array.from(text.matchAll(QUOTE_ROLE))) push(`${m[1]} (${m[2]})`, m[3]);
+  return out.slice(0, max);
+}
+
+/** Höchstlänge eines Transkript-Zitats (ganze Sätze bis zu dieser Länge). */
+export const EARNINGS_TRANSCRIPT_QUOTE_MAX_CHARS = 400;
+
+const TRANSCRIPT_TURN = /^([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){0,3}):\s+(.+)$/;
+const TRANSCRIPT_SKIP_SPEAKER = /^(operator|moderator|unknown|unidentified)/i;
+const TRANSCRIPT_COURTESY = /^(thank you|thanks|good (morning|afternoon|evening)|hello|hi|great|okay|sure|yes)\b/i;
+
+/**
+ * Management-Zitate aus einem FMP-Transkript ("Name: Text" je Wortmeldung): je Sprecher die
+ * ersten inhaltlichen Sätze, Moderator und Begrüßungen ausgenommen. Wörtlich, nicht umformuliert.
+ */
+export function extractTranscriptQuotes(content: string, max = EARNINGS_QUOTE_COUNT): string[] {
+  const out: string[] = [];
+  const speakers = new Set<string>();
+  for (const line of content.split(/\n+/)) {
+    const m = TRANSCRIPT_TURN.exec(line.trim());
+    if (!m || TRANSCRIPT_SKIP_SPEAKER.test(m[1]) || speakers.has(m[1])) continue;
+    const sentences = (m[2].match(/[^.!?]+[.!?]+/g) ?? []).map(s => s.trim()).filter(s => !TRANSCRIPT_COURTESY.test(s));
+    let quote = "";
+    for (const s of sentences) {
+      if ((quote ? quote.length + 1 : 0) + s.length > EARNINGS_TRANSCRIPT_QUOTE_MAX_CHARS) break;
+      quote = quote ? `${quote} ${s}` : s;
+    }
+    if (quote.length < EARNINGS_QUOTE_MIN_CHARS) continue;
+    speakers.add(m[1]);
+    out.push(`${m[1]}: „${quote}“`);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function earningsBriefNa(symbol: string, reason: string): EarningsCallBrief {
@@ -61,6 +126,27 @@ export function clipTranscriptExcerpt(content: string, maxChars: number): { exce
   if (maxChars <= 1) return { excerpt: "…", truncated: true };
   const slice = text.slice(0, maxChars - 1);
   const cut = slice.lastIndexOf(" ");
+  const body = (cut > 0 ? slice.slice(0, cut) : slice).trimEnd();
+  return { excerpt: `${body}…`, truncated: true };
+}
+
+/**
+ * KI-Zusammenfassung (Markdown) auf `maxChars`: Zeilenumbrüche bleiben, damit Listen und Fettdruck in der
+ * Earnings-Box rendern. Doppelt escapte Umbrüche ("\\n" → wörtliches \n) werden zu echten Umbrüchen.
+ */
+export function clipEarningsSummary(content: string, maxChars: number): { excerpt: string; truncated: boolean } {
+  const text = content
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) return { excerpt: "", truncated: false };
+  if (text.length <= maxChars) return { excerpt: text, truncated: false };
+  if (maxChars <= 1) return { excerpt: "…", truncated: true };
+  const slice = text.slice(0, maxChars - 1);
+  const cut = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"));
   const body = (cut > 0 ? slice.slice(0, cut) : slice).trimEnd();
   return { excerpt: `${body}…`, truncated: true };
 }

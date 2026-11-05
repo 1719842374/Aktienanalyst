@@ -55,13 +55,24 @@ const MODEL_FALLBACK_CHAIN = [
   "google/gemma-3-27b-it",
 ];
 
+/** Ein Versuch in der Modellkette. Der Aufrufer bekommt damit den Grund, warum ein Fallback antwortete. */
+export interface LlmAttempt {
+  model: string;
+  outcome: "ok" | "empty" | "http-error";
+  status?: number;
+  /** OpenRouter finish_reason ("stop", "length", …), falls geliefert. */
+  finishReason?: string | null;
+}
+
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean; signal?: AbortSignal },
-): Promise<{ text: string; modelUsed: string; usage?: any }> {
+  opts?: { online?: boolean; signal?: AbortSignal; models?: readonly string[]; attempts?: LlmAttempt[] },
+): Promise<{ text: string; modelUsed: string; usage?: any; finishReason?: string | null }> {
   const override = process.env.OPENROUTER_MODEL;
-  const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
+  // Eine vom Aufrufer übergebene Kette hat Vorrang vor OPENROUTER_MODEL. Der KI-Chat übergibt
+  // seine aus OPENROUTER_CHAT_MODEL (server/chat-route.ts chatLlmModels).
+  const chain = opts?.models?.length ? opts.models : override ? [override] : MODEL_FALLBACK_CHAIN;
   let lastErr: any;
   for (const model of chain) {
     const variants = opts?.online && !model.endsWith(":online") ? [`${model}:online`, model] : [model];
@@ -72,10 +83,18 @@ async function callWithFallback(
           model: modelId,
         }, opts?.signal ? { signal: opts.signal } : undefined);
         const text = completion.choices?.[0]?.message?.content?.trim() || '';
-        if (!text) { lastErr = new Error('Empty response'); continue; }
-        return { text, modelUsed: modelId, usage: completion.usage };
+        const finishReason = completion.choices?.[0]?.finish_reason ?? null;
+        if (!text) {
+          console.warn(`[LLM] ${modelId} leere Antwort (finish_reason=${finishReason ?? "n/a"}) — trying next model`);
+          opts?.attempts?.push({ model: modelId, outcome: "empty", finishReason });
+          lastErr = new Error('Empty response');
+          continue;
+        }
+        opts?.attempts?.push({ model: modelId, outcome: "ok", finishReason });
+        return { text, modelUsed: modelId, usage: completion.usage, finishReason };
       } catch (err: any) {
         const status = err?.status || err?.response?.status;
+        opts?.attempts?.push({ model: modelId, outcome: "http-error", ...(typeof status === "number" ? { status } : {}) });
         const onlineMiss = modelId.endsWith(":online") && (status === 400 || status === 404 || status === 422);
         // 404 = Modell von OpenRouter entfernt/umbenannt (z.B. claude-3.5-haiku
         // am 03.08.2026) — muss wie 429/402 zur nächsten Kettenstufe durchfallen,
@@ -800,6 +819,9 @@ function salvageByClosingBrackets(s: string): string {
   return out;
 }
 
+/** Obergrenze für max_tokens in callLLMJson (gilt für jeden Aufrufer). */
+export const LLM_JSON_MAX_TOKENS = 4_000;
+
 export async function callLLMJson(opts: {
   prompt: string;
   maxTokens?: number;
@@ -809,19 +831,23 @@ export async function callLLMJson(opts: {
   online?: boolean;
   /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
   signal?: AbortSignal;
-}): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
+  /** Eigene Modellkette (erstes Modell zuerst). Ohne Angabe: OPENROUTER_MODEL bzw. MODEL_FALLBACK_CHAIN. */
+  models?: readonly string[];
+  /** Sammelt jeden Versuch der Kette (auch bei Fehler), z. B. für den Fallback-Grund im Chat. */
+  attempts?: LlmAttempt[];
+}): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number; finishReason?: string | null; salvaged?: boolean } | null> {
   const client = getClient();
   if (!client) return null;
   try {
     const messages: any[] = [];
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: opts.prompt });
-    const { text, modelUsed, usage } = await callWithFallback(client, {
-      max_tokens: Math.min(opts.maxTokens ?? 900, 4000),
+    const { text, modelUsed, usage, finishReason } = await callWithFallback(client, {
+      max_tokens: Math.min(opts.maxTokens ?? 900, LLM_JSON_MAX_TOKENS),
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online, signal: opts.signal });
+    }, { online: opts.online, signal: opts.signal, models: opts.models, attempts: opts.attempts });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
@@ -842,6 +868,8 @@ export async function callLLMJson(opts: {
       modelUsed,
       promptTokens: usage?.prompt_tokens,
       completionTokens: usage?.completion_tokens,
+      finishReason,
+      salvaged: salvaged !== jsonStr,
     };
   } catch (err: any) {
     console.error(`[LLM-JSON] failed: ${(err?.message || String(err)).substring(0, 300)}`);
