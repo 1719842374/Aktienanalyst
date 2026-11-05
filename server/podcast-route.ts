@@ -1,10 +1,12 @@
 /**
  * POST /api/podcast/brief — ein Klick, Key Driver und Skript.
- * Audio nur über den Adapter. Die Bewertungsroute wird nicht gelesen.
+ * Audio nur über den Adapter (Server-Stimme über /api/tts, sonst Browser-Stimme). Die Bewertungsroute wird nicht gelesen.
  */
 import type { Express, Request, Response } from "express";
 import { CHAT_LLM_TIMEOUT_MS } from "./chat-route";
-import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "./podcast-audio";
+import { TtsPlayerAudioAdapter } from "./podcast-audio";
+import { sharedTtsService } from "./tts-route";
+import { BROWSER_PROVIDER_LABEL } from "../shared/podcast-player";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { PODCAST_NO_KEY_MESSAGE, runPodcastProbe } from "./podcast-pipeline";
 import { collectPodcastInputs, collectPodcastSymbols, defaultPodcastDeps } from "./podcast-sources";
@@ -95,7 +97,7 @@ export function registerPodcastRoute(app: Express): void {
           available: isLLMAvailable,
           invoke: (opts) => callLLMJson(opts),
         }),
-        audio: new CursorVoiceAudioAdapter(),
+        audio: new TtsPlayerAudioAdapter(() => sharedTtsService().providerStatus(), BROWSER_PROVIDER_LABEL),
         today: new Date().toISOString().slice(0, 10),
         remember: (text) => {
           const saved = writePodcastTranscript(PODCAST_MARKET_SYMBOL, text);
@@ -112,7 +114,7 @@ export function registerPodcastRoute(app: Express): void {
         notes: [],
         script: null,
         scriptStatus: `n/a — ${message}`,
-        audio: { status: "n/a", reason: CURSOR_VOICE_AUDIO_REASON, audioUrl: null },
+        audio: { status: "n/a", reason: "n/a — kein Skript zum Vorlesen", audioUrl: null },
         progress: [{ step: "pipeline", status: "n/a", detail: message }],
         modelUsed: null,
       });

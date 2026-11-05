@@ -1,6 +1,7 @@
 node_modules
 dist
 .cache
+vendor/piper
 *.log
 .git
 data.db
