@@ -238,7 +238,7 @@ VSTOXX-Pfad bleibt FMP, dann STOXX `h_v2tx.txt`. Keine Quellenumstellung. Öffen
 
 EZ-Serien `IRLTLT01EZM156N` und `IR3TIB01EZM156N`: der öffentliche `fredgraph.csv`-Abruf endete in Timeout und HTTP/2-Fehler, 0 Bytes, kein 404 und kein leerer CSV-Körper. Das ist keine belegte Lücke. ECB-Yield wird nicht gebaut.
 
-Der Wächter in `script/test-vix-fred-retry-source.ts` lässt für `server/recession.ts` nur den Hunk von `da608133` gegen die Basis `01bf608981b842f5457695c92b5800a59cfec94f` durch (`script/guard-approved-461.ts`). Das ist keine #326-Freigabe und keine Dateifreigabe. Sobald die Vergleichsbasis nicht mehr dieser Pin ist, gilt die Ausnahme nicht mehr. Jede weitere Zeile in `recession.ts` bleibt gesperrt. Der S10-VIX-Fehler wird davon nicht ausgenommen.
+Der Wächter in `script/test-vix-fred-retry-source.ts` lässt für `server/recession.ts` nur den vollständigen Diff von `da608133d2ae16cadc6c0c7d6b464dff4bddd8df` gegen `01bf608981b842f5457695c92b5800a59cfec94f` durch (`script/guard-approved-461.ts`, `git diff --full-index -U3`, Hunklage und Kontext). `reviewedHead` ist die Quelle dieses Diffs. Reihenfolge, Häufigkeit, derselbe Text an anderer Stelle und jeder weitere Hunk bleiben gesperrt. Das ist keine #326-Freigabe und keine Dateifreigabe. Sobald die Vergleichsbasis nicht mehr dieser Pin ist, gilt die Ausnahme nicht mehr. Der S10-VIX-Fehler wird davon nicht ausgenommen.
 
 ---
 
