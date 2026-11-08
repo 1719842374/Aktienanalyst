@@ -131,7 +131,7 @@ function detectMACross(prices: number[]): {
 ## 5. Angebotsseite (Miner) – AISC-Linie
 
 ### Unterschied zu T10YIE
-Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T10YIE), **nicht** die Produktionskosten der Minen. Der Chip wird umbenannt in „Inflations-BE (T10YIE)“.
+Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T10YIE), **nicht** die Produktionskosten der Minen. Der Chip wird umbenannt in „Inflations-BE (T10YIE)“. (✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e`: `GoldPriceChart.tsx:50`.)
 
 ### AISC-Linie (neu)
 | Element | Beschreibung |
@@ -148,8 +148,8 @@ Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T
 | Signal | Beschreibung | Status |
 |--------|--------------|--------|
 | AISC-Margin | (Preis - AISC) / AISC | Gate vorhanden, als Signal erweitern |
-| AISC-Linie | Gestufter Plot auf Preisachse | **Offen** |
-| Kapitulationszone | Preis nahe oder unter AISC | **Offen** |
+| AISC-Linie | Gestufter Plot auf Preisachse | **Offen** → ✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e`: `client/src/components/gold/GoldPriceChart.tsx:63–65, 157–169`, Daten `server/data/gold-aisc.json` über `server/gold-routes.ts:954` |
+| Kapitulationszone | Preis nahe oder unter AISC | **Offen** → ✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e`: Stresszone < AISC × 1,10 / Vorwarnung < × 1,15 / Kapitulationszone unter AISC – `shared/gold-aisc.ts:24–25, 155, 197`, Texte `GoldPriceChart.tsx:66–70` |
 | Angebotsreaktion | Veränderung Minenproduktion | Fehlt |
 
 ---
@@ -266,9 +266,9 @@ Antworte nur als JSON:
 
 ## 11. Offene Punkte
 
-- **AISC-Linie implementieren** (Quartalsdaten Newmont/Barrick/Agnico Eagle als gestufter Preis-Overlay + Stresszone)
-- Chip „Breakeven“ umbenennen in „Inflations-BE (T10YIE)“
-- Kapitulationszone definieren
+- **AISC-Linie implementieren** (Quartalsdaten Newmont/Barrick/Agnico Eagle als gestufter Preis-Overlay + Stresszone) — ✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e` (`GoldPriceChart.tsx:63–65`, `shared/gold-aisc.ts`)
+- Chip „Breakeven“ umbenennen in „Inflations-BE (T10YIE)“ — ✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e` (`GoldPriceChart.tsx:50`)
+- Kapitulationszone definieren — ✅ erledigt in #254 (`dedfb998`), Stand main `73eff97e` (`shared/gold-aisc.ts:24–25, 155`)
 - Volumen-Daten zuverlässig anbinden
 - Gold-News-Quellen anbinden (RSS/API)
 - Backtest der MA-Cross-Signale auf Gold
@@ -276,4 +276,4 @@ Antworte nur als JSON:
 
 ---
 
-**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale, Gold-News-Sektion und klarer Trennung zwischen Inflations-BE (T10YIE) und Miner-AISC.
+**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale, Gold-News-Sektion und klarer Trennung zwischen Inflations-BE (T10YIE) und Miner-AISC. **Nachtrag 25.10.2026:** AISC-Linie, Stresszone/Kapitulationszone und Chip „Inflations-BE (T10YIE)“ sind mit #254 (`dedfb998`) umgesetzt (Stand main `73eff97e`), ohne Einfluss auf den GIS.
