@@ -40,6 +40,10 @@ export interface StatementYear {
   fcfMarginPct: number | null;
   fcfMarginReason: string | null;
   fcfMarginYoyPp: Delta;
+  /** Währung der vorhandenen Abschlusszeile. null, wenn die Zeile fehlt oder keine reportedCurrency trägt. */
+  incomeCurrency: string | null;
+  balanceCurrency: string | null;
+  cashflowCurrency: string | null;
   totalAssets: number | null;
   totalAssetsYoy: Delta;
   totalEquity: number | null;
@@ -141,14 +145,14 @@ export function marginPct(part: number | null, revenue: number | null): { pct: n
 }
 
 /**
- * Eine Periode. freeCashFlow !== 0 hat Vorrang, auch wenn negativ.
- * 0 oder fehlend: OCF − |CapEx|, und nur wenn das Ergebnis selbst !== 0 ist.
- * Sonst null. Dieselbe Regel wie computeFcfTTM, aber nicht über Jahre hinweg.
+ * Eine Periode. Ein berichtetes freeCashFlow bleibt stehen, auch wenn es 0 oder negativ ist.
+ * Fehlt das Feld oder ist es nicht endlich: OCF − |CapEx|. Eine abgeleitete 0 bleibt null.
+ * Keine zweite Formel und kein ersetzter Betrag.
  */
 export function fcfOf(row: Record<string, unknown> | undefined): { fcf: number | null; reason: string | null } {
   if (!row) return { fcf: null, reason: "n/a — kein Cashflow-Jahr" };
   const reported = pick(row, ["freeCashFlow"]);
-  if (reported != null && reported !== 0) return { fcf: reported, reason: null };
+  if (reported != null) return { fcf: reported, reason: null };
   const ocf = pick(row, ["operatingCashFlow", "netCashProvidedByOperatingActivities"]);
   const capex = pick(row, ["capitalExpenditure", "capitalExpenditures"]);
   if (ocf == null || capex == null) {
@@ -157,6 +161,42 @@ export function fcfOf(row: Record<string, unknown> | undefined): { fcf: number |
   const derived = ocf - Math.abs(capex);
   if (derived === 0) return { fcf: null, reason: "n/a — Free Cash Flow nicht berichtet" };
   return { fcf: derived, reason: null };
+}
+
+function currencyGap(unit: Delta["unit"], left: string | null, right: string | null): Delta {
+  return gap(unit, `n/a — Berichtswährungen ${left ?? "fehlt"} und ${right ?? "fehlt"} nicht vergleichbar, keine Umrechnung`);
+}
+
+function comparableRate(
+  curr: number | null,
+  prev: number | null,
+  adjacent: boolean,
+  first: boolean,
+  currCurrency: string | null,
+  prevCurrency: string | null,
+): Delta {
+  const base = rate(curr, prev, adjacent, first);
+  if (base.value == null) return base;
+  if (currCurrency == null || prevCurrency == null || currCurrency !== prevCurrency) {
+    return currencyGap("pct", prevCurrency, currCurrency);
+  }
+  return base;
+}
+
+function comparablePoints(
+  curr: number | null,
+  prev: number | null,
+  adjacent: boolean,
+  first: boolean,
+  currCurrency: string | null,
+  prevCurrency: string | null,
+): Delta {
+  const base = points(curr, prev, adjacent, first);
+  if (base.value == null) return base;
+  if (currCurrency == null || prevCurrency == null || currCurrency !== prevCurrency) {
+    return currencyGap("pp", prevCurrency, currCurrency);
+  }
+  return base;
 }
 
 export function buildFinancialHistory(input: {
@@ -175,20 +215,23 @@ export function buildFinancialHistory(input: {
   const window = keys.slice(-FINANCIAL_HISTORY_YEAR_LIMIT);
 
   const currencies = new Set<string>();
+  let currencyMissingOnRow = false;
   for (const key of window) {
     for (const row of [income.get(key), balance.get(key), cashflow.get(key)]) {
+      if (!row) continue;
       const code = currencyOf(row);
-      if (code) currencies.add(code);
+      if (!code) currencyMissingOnRow = true;
+      else currencies.add(code);
     }
   }
   let currency: string | null = null;
   let currencyNote: string | null = null;
   if (window.length === 0) {
     currencyNote = null;
-  } else if (currencies.size === 0) {
-    currencyNote = "n/a — Berichtswährung fehlt, keine Umrechnung und kein $-Ersatz";
   } else if (currencies.size > 1) {
     currencyNote = `n/a — mehrere Berichtswährungen (${Array.from(currencies).sort().join(", ")}), keine Umrechnung`;
+  } else if (currencyMissingOnRow || currencies.size === 0) {
+    currencyNote = "n/a — Berichtswährung fehlt in mindestens einem Abschluss, keine globale Zuordnung und kein $-Ersatz";
   } else {
     currency = Array.from(currencies)[0];
   }
@@ -203,6 +246,12 @@ export function buildFinancialHistory(input: {
     const prevCf = prevKey ? cashflow.get(prevKey) : undefined;
     const adjacent = prevKey != null && adjacentYears(prevKey, key);
     const first = index === 0;
+    const incomeCurrency = inc ? currencyOf(inc) : null;
+    const balanceCurrency = bs ? currencyOf(bs) : null;
+    const cashflowCurrency = cf ? currencyOf(cf) : null;
+    const prevIncomeCurrency = prevInc ? currencyOf(prevInc) : null;
+    const prevBalanceCurrency = prevBs ? currencyOf(prevBs) : null;
+    const prevCashflowCurrency = prevCf ? currencyOf(prevCf) : null;
     const revenue = pick(inc, ["revenue", "totalRevenue"]);
     const prevRevenue = pick(prevInc, ["revenue", "totalRevenue"]);
     const grossProfit = pick(inc, ["grossProfit"]);
@@ -216,11 +265,17 @@ export function buildFinancialHistory(input: {
     const gross = marginPct(grossProfit, revenue);
     const operating = marginPct(operatingIncome, revenue);
     const net = marginPct(netIncome, revenue);
-    const fcfMargin = marginPct(fcf.fcf, revenue);
+    const fcfMarginBase = marginPct(fcf.fcf, revenue);
+    const fcfMargin = fcfMarginBase.pct == null || (incomeCurrency != null && cashflowCurrency != null && incomeCurrency === cashflowCurrency)
+      ? fcfMarginBase
+      : { pct: null, reason: `n/a — Free Cash Flow (${cashflowCurrency ?? "fehlt"}) und Umsatz (${incomeCurrency ?? "fehlt"}) nicht in derselben Berichtswährung, keine Umrechnung` };
     const prevGrossMargin = marginPct(prevGross, prevRevenue).pct;
     const prevOperatingMargin = marginPct(prevOperating, prevRevenue).pct;
     const prevNetMargin = marginPct(prevNet, prevRevenue).pct;
-    const prevFcfMargin = marginPct(prevFcf.fcf, prevRevenue).pct;
+    const prevFcfMarginBase = marginPct(prevFcf.fcf, prevRevenue);
+    const prevFcfMargin = prevFcfMarginBase.pct == null || (prevIncomeCurrency != null && prevCashflowCurrency != null && prevIncomeCurrency === prevCashflowCurrency)
+      ? prevFcfMarginBase.pct
+      : null;
     const totalAssets = pick(bs, ["totalAssets"]);
     const totalEquity = pick(bs, ["totalStockholdersEquity", "totalEquity"]);
     const totalDebt = pick(bs, ["totalDebt"]);
@@ -229,36 +284,39 @@ export function buildFinancialHistory(input: {
       fiscalYear: key,
       date: dateOf(inc ?? bs ?? cf),
       revenue,
-      revenueYoy: rate(revenue, prevRevenue, adjacent, first),
+      revenueYoy: comparableRate(revenue, prevRevenue, adjacent, first, incomeCurrency, prevIncomeCurrency),
       grossProfit,
-      grossProfitYoy: rate(grossProfit, prevGross, adjacent, first),
+      grossProfitYoy: comparableRate(grossProfit, prevGross, adjacent, first, incomeCurrency, prevIncomeCurrency),
       grossMarginPct: gross.pct,
       grossMarginReason: gross.reason,
-      grossMarginYoyPp: points(gross.pct, prevGrossMargin, adjacent, first),
+      grossMarginYoyPp: comparablePoints(gross.pct, prevGrossMargin, adjacent, first, incomeCurrency, prevIncomeCurrency),
       operatingIncome,
-      operatingIncomeYoy: rate(operatingIncome, prevOperating, adjacent, first),
+      operatingIncomeYoy: comparableRate(operatingIncome, prevOperating, adjacent, first, incomeCurrency, prevIncomeCurrency),
       operatingMarginPct: operating.pct,
       operatingMarginReason: operating.reason,
-      operatingMarginYoyPp: points(operating.pct, prevOperatingMargin, adjacent, first),
+      operatingMarginYoyPp: comparablePoints(operating.pct, prevOperatingMargin, adjacent, first, incomeCurrency, prevIncomeCurrency),
       netIncome,
-      netIncomeYoy: rate(netIncome, prevNet, adjacent, first),
+      netIncomeYoy: comparableRate(netIncome, prevNet, adjacent, first, incomeCurrency, prevIncomeCurrency),
       netMarginPct: net.pct,
       netMarginReason: net.reason,
-      netMarginYoyPp: points(net.pct, prevNetMargin, adjacent, first),
+      netMarginYoyPp: comparablePoints(net.pct, prevNetMargin, adjacent, first, incomeCurrency, prevIncomeCurrency),
       fcf: fcf.fcf,
       fcfReason: fcf.reason,
-      fcfYoy: rate(fcf.fcf, prevFcf.fcf, adjacent, first),
+      fcfYoy: comparableRate(fcf.fcf, prevFcf.fcf, adjacent, first, cashflowCurrency, prevCashflowCurrency),
       fcfMarginPct: fcfMargin.pct,
       fcfMarginReason: fcfMargin.reason,
-      fcfMarginYoyPp: points(fcfMargin.pct, prevFcfMargin, adjacent, first),
+      fcfMarginYoyPp: comparablePoints(fcfMargin.pct, prevFcfMargin, adjacent, first, cashflowCurrency, prevCashflowCurrency),
       totalAssets,
-      totalAssetsYoy: rate(totalAssets, pick(prevBs, ["totalAssets"]), adjacent, first),
+      totalAssetsYoy: comparableRate(totalAssets, pick(prevBs, ["totalAssets"]), adjacent, first, balanceCurrency, prevBalanceCurrency),
       totalEquity,
-      totalEquityYoy: rate(totalEquity, pick(prevBs, ["totalStockholdersEquity", "totalEquity"]), adjacent, first),
+      totalEquityYoy: comparableRate(totalEquity, pick(prevBs, ["totalStockholdersEquity", "totalEquity"]), adjacent, first, balanceCurrency, prevBalanceCurrency),
       totalDebt,
-      totalDebtYoy: rate(totalDebt, pick(prevBs, ["totalDebt"]), adjacent, first),
+      totalDebtYoy: comparableRate(totalDebt, pick(prevBs, ["totalDebt"]), adjacent, first, balanceCurrency, prevBalanceCurrency),
       cash,
-      cashYoy: rate(cash, pick(prevBs, ["cashAndCashEquivalents", "cashAndShortTermInvestments"]), adjacent, first),
+      cashYoy: comparableRate(cash, pick(prevBs, ["cashAndCashEquivalents", "cashAndShortTermInvestments"]), adjacent, first, balanceCurrency, prevBalanceCurrency),
+      incomeCurrency,
+      balanceCurrency,
+      cashflowCurrency,
     };
   });
 

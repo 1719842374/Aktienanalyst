@@ -46,10 +46,25 @@ function deltaClass(delta: Delta): string {
   return delta.value > 0 ? "text-emerald-500" : "text-red-500";
 }
 
-function cellText(row: RowSpec, year: StatementYear, currency: string | null): { text: string; title?: string } {
+function amountCurrency(row: RowSpec, year: StatementYear): string | null {
+  switch (row.kind) {
+    case "margin":
+      return null;
+    case "money":
+      if (row.id === "fcf") return year.cashflowCurrency;
+      if (row.id === "assets" || row.id === "equity" || row.id === "debt" || row.id === "cash") return year.balanceCurrency;
+      return year.incomeCurrency;
+    default: {
+      const exhaustive: never = row;
+      return exhaustive;
+    }
+  }
+}
+
+function cellText(row: RowSpec, year: StatementYear): { text: string; title?: string } {
   switch (row.kind) {
     case "money":
-      return { text: formatStatementAmount(row.value(year), currency) };
+      return { text: formatStatementAmount(row.value(year), amountCurrency(row, year)) };
     case "margin": {
       const value = row.value(year);
       return { text: formatMarginLevel(value), title: value == null ? row.reason(year) ?? undefined : undefined };
@@ -83,6 +98,8 @@ export function AnnualFinancialsView({
       grossProfit: latest.grossProfit,
       operatingIncome: latest.operatingIncome,
       netIncome: latest.netIncome,
+      statementYear: latest.fiscalYear,
+      statementCurrency: latest.incomeCurrency,
     })
     : null;
   const balance = latest
@@ -116,13 +133,13 @@ export function AnnualFinancialsView({
           {!latest && <p className="text-[10px] text-muted-foreground">n/a — keine Jahreszeilen</p>}
         </div>
       ) : (
-        <YearTable years={years} currency={history?.currency ?? null} />
+        <YearTable years={years} />
       )}
     </div>
   );
 }
 
-function YearTable({ years, currency }: { years: StatementYear[]; currency: string | null }) {
+function YearTable({ years }: { years: StatementYear[] }) {
   if (years.length === 0) return <p className="text-[10px] text-muted-foreground" data-testid="annual-empty">n/a — keine Jahreszeilen</p>;
   return (
     <div className="overflow-x-auto min-w-0" data-testid="annual-table">
@@ -138,7 +155,7 @@ function YearTable({ years, currency }: { years: StatementYear[]; currency: stri
             <tr key={row.id} className="border-b border-border/40">
               <td className="py-1 pr-2 text-muted-foreground whitespace-nowrap">{row.label}</td>
               {years.map((year) => {
-                const shown = cellText(row, year, currency);
+                const shown = cellText(row, year);
                 const delta = row.delta(year);
                 return (
                   <td key={year.fiscalYear} className="py-1 px-1 text-right font-mono tabular-nums align-top" data-testid={`cell-${row.id}-${year.fiscalYear}`} title={shown.title}>

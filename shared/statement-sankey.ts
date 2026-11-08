@@ -7,6 +7,10 @@
 export interface SankeySegment {
   name: string;
   revenue: number | null;
+  /** Vorhandenes Periodenlabel aus dem Payload. Nicht aus dem Tagesdatum ergänzt. */
+  fiscalYear?: string | null;
+  /** Vorhandene Berichtswährung. Nicht aus der Kurswährung ergänzt. */
+  currency?: string | null;
 }
 
 export interface SankeyLink {
@@ -55,12 +59,26 @@ function pushValue(links: SankeyLink[], source: string, target: string, flow: Fl
   if (flow.kind === "value") links.push({ source, target, value: flow.value });
 }
 
+function yearToken(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/\d{4}/);
+  return match ? match[0] : null;
+}
+
+function segmentCurrency(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const code = value.trim().toUpperCase();
+  return code.length > 0 ? code : null;
+}
+
 export function incomeSankey(input: {
   segments: readonly SankeySegment[];
   revenue: number | null;
   grossProfit: number | null;
   operatingIncome: number | null;
   netIncome: number | null;
+  statementYear: string | null;
+  statementCurrency: string | null;
 }): SankeyModel {
   const notes: string[] = [];
   const links: SankeyLink[] = [];
@@ -75,12 +93,37 @@ export function incomeSankey(input: {
   });
   const dropped = input.segments.length - positiveSegments.length;
   if (dropped > 0) notes.push("n/a — Segment ohne positiven Umsatz nicht gezeichnet");
-  const segmentSum = positiveSegments.reduce((sum, segment) => sum + (segment.revenue as number), 0);
-  if (positiveSegments.length === 0) notes.push("n/a — keine Segmente, Sankey startet beim Umsatz");
-  else if (segmentSum > revenue.value * 1.05) {
+  const statementYear = yearToken(input.statementYear);
+  const statementCurrency = segmentCurrency(input.statementCurrency);
+  const matchedSegments: typeof positiveSegments = [];
+  let missingYear = false;
+  let yearMismatch = false;
+  let missingCurrency = false;
+  let currencyMismatch = false;
+  if (!statementYear) notes.push("n/a — Abschlussjahr fehlt, Segmente nicht als Zufluss gezeichnet");
+  else if (!statementCurrency) notes.push("n/a — Berichtswährung des Abschlusses fehlt, Segmente nicht als Zufluss gezeichnet");
+  else {
+    for (const segment of positiveSegments) {
+      const segmentYear = yearToken(segment.fiscalYear);
+      const currency = segmentCurrency(segment.currency);
+      if (!segmentYear) missingYear = true;
+      else if (segmentYear !== statementYear) yearMismatch = true;
+      if (!currency) missingCurrency = true;
+      else if (currency !== statementCurrency) currencyMismatch = true;
+      if (segmentYear === statementYear && currency === statementCurrency) matchedSegments.push(segment);
+    }
+  }
+  if (missingYear) notes.push("n/a — Segmentjahr fehlt im vorhandenen Payload, nicht aus dem Datum erraten");
+  if (yearMismatch) notes.push("n/a — Segmentjahr passt nicht zum Abschlussjahr, Segmente nicht als Zufluss gezeichnet");
+  if (missingCurrency) notes.push("n/a — Segmentwährung fehlt im vorhandenen Payload, nicht aus der Kurswährung erraten");
+  if (currencyMismatch) notes.push("n/a — Segmentwährung und Abschlusswährung sind nicht gleich, keine Umrechnung");
+  const segmentSum = matchedSegments.reduce((sum, segment) => sum + (segment.revenue as number), 0);
+  const rejected = missingYear || yearMismatch || missingCurrency || currencyMismatch || !statementYear || !statementCurrency;
+  if (matchedSegments.length === 0 && !rejected) notes.push("n/a — keine Segmente, Sankey startet beim Umsatz");
+  else if (segmentSum > revenue.value * 1.05 && matchedSegments.length > 0) {
     notes.push("n/a — Segmentumsätze übersteigen den Umsatz, Segmente nicht als Zufluss gezeichnet");
   } else {
-    for (const segment of positiveSegments) {
+    for (const segment of matchedSegments) {
       links.push({ source: segment.name.trim(), target: "Umsatz", value: segment.revenue as number });
     }
   }

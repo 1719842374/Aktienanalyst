@@ -191,10 +191,12 @@ function YahooFinancialStatements({ data, eps, divKpi }: { data: StockAnalysis; 
   );
 }
 
-function annualSegments(data: StockAnalysis): { name: string; revenue: number | null }[] {
+function annualSegments(data: StockAnalysis): { name: string; revenue: number | null; fiscalYear: string | null; currency: null }[] {
   return (data.revenueSegments ?? []).map((segment) => ({
     name: segment.name,
     revenue: segment.revenue > 0 ? segment.revenue : null,
+    fiscalYear: segment.fiscalYear ?? null,
+    currency: null,
   }));
 }
 

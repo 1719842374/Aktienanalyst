@@ -179,14 +179,97 @@ const blankCurrency = buildFinancialHistory({
   cashflow: [],
 });
 assert.equal(blankCurrency.currency, null);
-assert.match(blankCurrency.currencyNote ?? "", /kein \$-Ersatz/);
+assert.match(blankCurrency.currencyNote ?? "", /keine globale Zuordnung/);
+
+const reportedZero = fcfOf({ freeCashFlow: 0, operatingCashFlow: 40, capitalExpenditure: -10 });
+assert.equal(reportedZero.fcf, 0);
+assert.equal(reportedZero.reason, null);
+const missingFcf = fcfOf({ operatingCashFlow: 5, capitalExpenditure: -5 });
+assert.equal(missingFcf.fcf, null);
+const nonFiniteFcf = fcfOf({ freeCashFlow: Number.NaN, operatingCashFlow: 8, capitalExpenditure: -3 });
+assert.equal(nonFiniteFcf.fcf, 5);
+
+const mixedCurrency = buildFinancialHistory({
+  income: [
+    { fiscalYear: 2023, reportedCurrency: "EUR", revenue: 100, netIncome: 10 },
+    { fiscalYear: 2024, reportedCurrency: "USD", revenue: 110, netIncome: 12 },
+  ],
+  balance: [],
+  cashflow: [
+    { fiscalYear: 2024, reportedCurrency: "USD", freeCashFlow: 0, operatingCashFlow: 40, capitalExpenditure: -10 },
+  ],
+});
+assert.equal(mixedCurrency.currency, null);
+assert.match(mixedCurrency.currencyNote ?? "", /keine Umrechnung/);
+assert.equal(mixedCurrency.years[1].revenueYoy.value, null);
+assert.match(mixedCurrency.years[1].revenueYoy.reason ?? "", /EUR und USD/);
+assert.equal(mixedCurrency.years[1].fcf, 0);
+assert.equal(mixedCurrency.years[1].incomeCurrency, "USD");
+assert.equal(mixedCurrency.years[0].incomeCurrency, "EUR");
+
+const partialCurrency = buildFinancialHistory({
+  income: [
+    { fiscalYear: 2023, reportedCurrency: "EUR", revenue: 100 },
+    { fiscalYear: 2024, revenue: 110 },
+  ],
+  balance: [],
+  cashflow: [],
+});
+assert.equal(partialCurrency.currency, null);
+assert.match(partialCurrency.currencyNote ?? "", /keine globale Zuordnung/);
+assert.equal(partialCurrency.years[1].revenueYoy.value, null);
+assert.match(partialCurrency.years[1].revenueYoy.reason ?? "", /fehlt/);
+assert.equal(partialCurrency.years[0].incomeCurrency, "EUR");
+assert.equal(partialCurrency.years[1].incomeCurrency, null);
+
+const sameCurrency = buildFinancialHistory({
+  income: [
+    { fiscalYear: 2023, reportedCurrency: "EUR", revenue: 100 },
+    { fiscalYear: 2024, reportedCurrency: "EUR", revenue: 110 },
+  ],
+  balance: [],
+  cashflow: [],
+});
+assert.equal(sameCurrency.currency, "EUR");
+assert.equal(sameCurrency.years[1].revenueYoy.value, 10);
+
+const mismatchedSankey = incomeSankey({
+  segments: [{ name: "Alt", revenue: 40, fiscalYear: "2020", currency: "USD" }],
+  revenue: 100,
+  grossProfit: 40,
+  operatingIncome: 10,
+  netIncome: 5,
+  statementYear: "2024",
+  statementCurrency: "EUR",
+});
+assert.equal(mismatchedSankey.links.some((link) => link.source === "Alt"), false);
+assert.match(mismatchedSankey.notes.join(" "), /Segmentjahr passt nicht/);
+assert.match(mismatchedSankey.notes.join(" "), /nicht gleich/);
+const missingMetaSankey = incomeSankey({
+  segments: [{ name: "Alt", revenue: 40 }],
+  revenue: 100,
+  grossProfit: 40,
+  operatingIncome: 10,
+  netIncome: 5,
+  statementYear: "2024",
+  statementCurrency: "EUR",
+});
+assert.equal(missingMetaSankey.links.some((link) => link.source === "Alt"), false);
+assert.match(missingMetaSankey.notes.join(" "), /Segmentjahr fehlt/);
+assert.match(missingMetaSankey.notes.join(" "), /Segmentwährung fehlt/);
 
 const incomeModel = incomeSankey({
-  segments: [{ name: "Alpha", revenue: 80 }, { name: "Beta", revenue: 80 }, { name: "Leer", revenue: 0 }],
+  segments: [
+    { name: "Alpha", revenue: 80, fiscalYear: "2024", currency: "EUR" },
+    { name: "Beta", revenue: 80, fiscalYear: "2024", currency: "EUR" },
+    { name: "Leer", revenue: 0, fiscalYear: "2024", currency: "EUR" },
+  ],
   revenue: 100,
   grossProfit: 40,
   operatingIncome: 10,
   netIncome: -5,
+  statementYear: "2024",
+  statementCurrency: "EUR",
 });
 assert.ok(incomeModel.links.every((link) => link.value > 0));
 assert.equal(incomeModel.links.some((link) => link.source === "Alpha"), false);
@@ -267,6 +350,24 @@ try {
   assert.match(table, /-€150\.0M/);
   assert.match(table, /-€2\.0B/);
   assert.doesNotMatch(table, /\$/);
+  const mixedHtml = renderToStaticMarkup(React.createElement(AnnualFinancialsView, {
+    history: { ticker: "MIX", source: "fmp", ...mixedCurrency },
+    segments: [{ name: "Alt", revenue: 40, fiscalYear: "2020", currency: "USD" }],
+    view: "table",
+  }));
+  assert.match(mixedHtml, /EUR und USD/);
+  assert.match(mixedHtml, /data-testid="annual-currency-note"/);
+  assert.match(mixedHtml, /€100/);
+  assert.match(mixedHtml, /\$110/);
+  assert.match(mixedHtml, /\$0/);
+  const sankeyMismatchHtml = renderToStaticMarkup(React.createElement(AnnualFinancialsView, {
+    history: { ticker: "MIX", source: "fmp", ...mixedCurrency },
+    segments: [{ name: "Alt", revenue: 40, fiscalYear: "2020", currency: "EUR" }],
+    view: "sankey",
+  }));
+  assert.match(sankeyMismatchHtml, /Segmentjahr passt nicht/);
+  assert.match(sankeyMismatchHtml, /nicht gleich/);
+  assert.doesNotMatch(sankeyMismatchHtml, /title="Alt"/);
   const sankeyHtml = renderToStaticMarkup(React.createElement(AnnualFinancialsView, {
     history: historyRes,
     segments: [{ name: "Alpha", revenue: 60 }, { name: "Beta", revenue: 80 }],
