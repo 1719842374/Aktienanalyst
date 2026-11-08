@@ -146,8 +146,8 @@ export function marginPct(part: number | null, revenue: number | null): { pct: n
 
 /**
  * Eine Periode. Ein berichtetes freeCashFlow bleibt stehen, auch wenn es 0 oder negativ ist.
- * Fehlt das Feld oder ist es nicht endlich: OCF − |CapEx|. Eine abgeleitete 0 bleibt null.
- * Keine zweite Formel und kein ersetzter Betrag.
+ * Fehlt das Feld oder ist es nicht endlich: OCF − |CapEx|, auch wenn das Ergebnis 0 ist.
+ * Fehlende oder nicht endliche Eingaben bleiben n/a. Keine zweite Formel und kein ersetzter Betrag.
  */
 export function fcfOf(row: Record<string, unknown> | undefined): { fcf: number | null; reason: string | null } {
   if (!row) return { fcf: null, reason: "n/a — kein Cashflow-Jahr" };
@@ -158,9 +158,7 @@ export function fcfOf(row: Record<string, unknown> | undefined): { fcf: number |
   if (ocf == null || capex == null) {
     return { fcf: null, reason: "n/a — Free Cash Flow nicht berichtet und nicht aus OCF − CapEx ableitbar" };
   }
-  const derived = ocf - Math.abs(capex);
-  if (derived === 0) return { fcf: null, reason: "n/a — Free Cash Flow nicht berichtet" };
-  return { fcf: derived, reason: null };
+  return { fcf: ocf - Math.abs(capex), reason: null };
 }
 
 function currencyGap(unit: Delta["unit"], left: string | null, right: string | null): Delta {

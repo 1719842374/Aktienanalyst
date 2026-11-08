@@ -184,8 +184,33 @@ assert.match(blankCurrency.currencyNote ?? "", /keine globale Zuordnung/);
 const reportedZero = fcfOf({ freeCashFlow: 0, operatingCashFlow: 40, capitalExpenditure: -10 });
 assert.equal(reportedZero.fcf, 0);
 assert.equal(reportedZero.reason, null);
-const missingFcf = fcfOf({ operatingCashFlow: 5, capitalExpenditure: -5 });
-assert.equal(missingFcf.fcf, null);
+const derivedZero = fcfOf({ operatingCashFlow: 5, capitalExpenditure: -5 });
+assert.equal(derivedZero.fcf, 0);
+assert.equal(derivedZero.reason, null);
+const zeroFlow = buildFinancialHistory({
+  income: [
+    { fiscalYear: 2023, reportedCurrency: "EUR", revenue: 20 },
+    { fiscalYear: 2024, reportedCurrency: "EUR", revenue: 10 },
+  ],
+  balance: [],
+  cashflow: [
+    { fiscalYear: 2023, reportedCurrency: "EUR", operatingCashFlow: 5, capitalExpenditure: -5 },
+    { fiscalYear: 2024, reportedCurrency: "EUR", freeCashFlow: 4 },
+  ],
+});
+assert.equal(zeroFlow.years[0].fcf, 0);
+assert.equal(zeroFlow.years[0].fcfMarginPct, 0);
+assert.equal(zeroFlow.years[0].fcfMarginReason, null);
+assert.equal(zeroFlow.years[1].fcfYoy.value, null);
+assert.match(zeroFlow.years[1].fcfYoy.reason ?? "", /Vorperiode ist 0, keine Rate/);
+const zeroHtml = renderToStaticMarkup(React.createElement(AnnualFinancialsView, {
+  history: { ticker: "Z", source: "fmp", ...zeroFlow },
+  segments: [],
+  view: "table",
+}));
+assert.match(zeroHtml, /data-testid="cell-fcf-2023"/);
+assert.match(zeroHtml, /€0/);
+assert.match(zeroHtml, /0\.0%/);
 const nonFiniteFcf = fcfOf({ freeCashFlow: Number.NaN, operatingCashFlow: 8, capitalExpenditure: -3 });
 assert.equal(nonFiniteFcf.fcf, 5);
 
