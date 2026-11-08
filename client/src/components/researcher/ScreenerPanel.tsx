@@ -124,7 +124,7 @@ export function ScreenerPanel({ data, region }: { data: any; region?: PortfolioR
               <TickerAddButtons ticker={c.ticker} name={c.companyName} source="researcher" score={c.moatScore ?? null} region={region} />
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-right text-[10px]">
               <div className="text-foreground/40">MCap</div>
-              <div className="font-mono tabular-nums text-foreground/85" title={c.marketCap > 0 ? undefined : MISSING_MARKET_CAP}>{c.marketCap > 0 ? `$${(c.marketCap / 1e9).toFixed(1)}B` : "n/a"}</div>
+              <div className="font-mono tabular-nums text-foreground/85" title={Number.isFinite(c.marketCap) && c.marketCap !== 0 ? undefined : MISSING_MARKET_CAP}>{Number.isFinite(c.marketCap) && c.marketCap !== 0 ? `$${(c.marketCap / 1e9).toFixed(1)}B` : "n/a"}</div>
               <div className="text-foreground/40">P/E</div>
               <div className="font-mono tabular-nums text-foreground/85">{c.pe?.toFixed(1) || "—"}</div>
               <div className="text-foreground/40">RevGrth</div>

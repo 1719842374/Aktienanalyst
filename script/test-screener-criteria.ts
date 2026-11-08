@@ -7,6 +7,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  CAP_NEGATIVE_NOTE,
+  CAP_RANGE_NOTE,
+  CAP_SCALE_NOTE,
   LOADED_UNIVERSE_NOTE,
   MISSING_COUNTRY,
   MISSING_FORWARD_PE,
@@ -151,6 +154,61 @@ const forward = projectLoadedScreen(
 assert.deepEqual(forward.visible.map((row) => row.ticker), ["CHEAP"]);
 assert.deepEqual(forward.skipped, [MISSING_FORWARD_PE]);
 assert.equal(rowFromLoadedCandidate({ pe: 9, forwardPE: 0 }).forwardPe, null);
+assert.equal(rowFromLoadedCandidate({ forwardPE: -5 }).forwardPe, -5);
+assert.equal(rowFromLoadedCandidate({ marketCap: -5 }).marketCap, -5);
+const negativeForward = projectLoadedScreen(
+  [
+    { ticker: "LOSS", forwardPE: -5, marketCap: 2e9 },
+    { ticker: "NONE", forwardPE: 0, marketCap: 2e9 },
+  ],
+  rowFromLoadedCandidate,
+  criteriaFromInputs(draft({ forwardPeMax: "20" }), 1).criteria,
+);
+assert.deepEqual(negativeForward.visible.map((row) => row.ticker), ["LOSS"]);
+assert.deepEqual(negativeForward.skipped, [MISSING_FORWARD_PE]);
+const tighter = projectLoadedScreen(
+  [{ ticker: "LOSS", forwardPE: -5 }],
+  rowFromLoadedCandidate,
+  criteriaFromInputs(draft({ forwardPeMax: "-10" }), 1).criteria,
+);
+assert.deepEqual(tighter.visible, []);
+assert.deepEqual(tighter.skipped, []);
+
+const crossed = criteriaFromInputs(draft({ marketCapMin: "2000", marketCapMax: "1000" }), 1);
+assert.equal(crossed.criteria.marketCapMin, null);
+assert.equal(crossed.criteria.marketCapMax, null);
+assert.deepEqual(crossed.notes, [CAP_RANGE_NOTE]);
+const crossedRows = projectLoadedScreen(
+  [{ ticker: "A", marketCap: 1500 }, { ticker: "B", marketCap: 2500 }],
+  rowFromLoadedCandidate,
+  crossed.criteria,
+);
+assert.deepEqual(crossedRows.visible.map((row) => row.ticker), ["A", "B"]);
+
+const negativeCaps = criteriaFromInputs(draft({ marketCapMin: "-5", marketCapMax: "-1" }), 1);
+assert.equal(negativeCaps.criteria.marketCapMin, null);
+assert.equal(negativeCaps.criteria.marketCapMax, null);
+assert.deepEqual(negativeCaps.notes, [CAP_NEGATIVE_NOTE]);
+const negativeCapRows = projectLoadedScreen(
+  [{ ticker: "A", marketCap: 2e9 }],
+  rowFromLoadedCandidate,
+  negativeCaps.criteria,
+);
+assert.deepEqual(negativeCapRows.visible.map((row) => row.ticker), ["A"]);
+
+const overflow = criteriaFromInputs(draft({ marketCapMin: "1e308" }), RESEARCHER_MARKET_CAP_USD_PER_MILLION);
+assert.equal(Number.isFinite(1e308), true);
+assert.equal(Number.isFinite(1e308 * RESEARCHER_MARKET_CAP_USD_PER_MILLION), false);
+assert.equal(overflow.criteria.marketCapMin, null);
+assert.deepEqual(overflow.notes, [CAP_SCALE_NOTE]);
+const overflowRows = projectLoadedScreen(
+  [{ ticker: "A", marketCap: 2e9 }, { ticker: "B", marketCap: 5e8 }],
+  rowFromLoadedCandidate,
+  overflow.criteria,
+);
+assert.deepEqual(overflowRows.visible.map((row) => row.ticker), ["A", "B"]);
+const cleared = criteriaFromInputs(emptyDraft(), RESEARCHER_MARKET_CAP_USD_PER_MILLION);
+assert.deepEqual(cleared.criteria, emptyCriteria());
 
 const loaded13F = {
   screenedStocks: [

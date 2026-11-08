@@ -29,6 +29,12 @@ export const MISSING_FORWARD_PE =
   "n/a — Forward P/E fehlt im geladenen Response, nicht als 0 gewertet";
 export const NON_NUMERIC_NOTE =
   "n/a — Kriterium ist nicht numerisch und wird nicht als 0 gefiltert";
+export const CAP_RANGE_NOTE =
+  "MCap min liegt über MCap max. Beide Grenzen bleiben unangewendet.";
+export const CAP_NEGATIVE_NOTE =
+  "Negative MCap-Grenze bleibt unangewendet.";
+export const CAP_SCALE_NOTE =
+  "MCap ist nach der Einheitenumrechnung nicht endlich und bleibt unangewendet.";
 
 export interface CustomScreenCriteria {
   marketCapMin: number | null;
@@ -88,8 +94,9 @@ export function emptyDraft(): CriterionDraft {
   };
 }
 
-function positiveOrMissing(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+/** 0 ist der geladene Sentinel. Jede andere endliche Zahl, auch negativ, bleibt Messwert. */
+function zeroSentinelOrMissing(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value === 0) return null;
   return value;
 }
 
@@ -109,11 +116,11 @@ export function rowFromLoadedCandidate(stock: object): LoadedScreenRow {
   const row = stock as Record<string, unknown>;
   const forwardPe = row.forwardPE ?? row.forwardPe;
   return {
-    marketCap: positiveOrMissing(row.marketCap),
+    marketCap: zeroSentinelOrMissing(row.marketCap),
     industry: textOrMissing(row.industry),
     country: textOrMissing(row.country),
     roic: finiteOrMissing(row.roic),
-    forwardPe: positiveOrMissing(forwardPe),
+    forwardPe: zeroSentinelOrMissing(forwardPe),
   };
 }
 
@@ -129,21 +136,28 @@ export function criteriaFromInputs(
   draft: CriterionDraft,
   marketCapUsdPerUnit: number,
 ): { criteria: CustomScreenCriteria; notes: string[] } {
-  const marketCapMin = parseNumber(draft.marketCapMin);
-  const marketCapMax = parseNumber(draft.marketCapMax);
+  const parsedMin = parseNumber(draft.marketCapMin);
+  const parsedMax = parseNumber(draft.marketCapMax);
   const roicMin = parseNumber(draft.roicMin);
   const forwardPeMax = parseNumber(draft.forwardPeMax);
+  const scale = Number.isFinite(marketCapUsdPerUnit) && marketCapUsdPerUnit > 0
+    ? marketCapUsdPerUnit
+    : 1;
+  let marketCapMin = scaleMarketCap(parsedMin, scale);
+  let marketCapMax = scaleMarketCap(parsedMax, scale);
   const notes: string[] = [];
   for (const note of [marketCapMin.note, marketCapMax.note, roicMin.note, forwardPeMax.note]) {
     if (note && !notes.includes(note)) notes.push(note);
   }
-  const scale = Number.isFinite(marketCapUsdPerUnit) && marketCapUsdPerUnit > 0
-    ? marketCapUsdPerUnit
-    : 1;
+  if (marketCapMin.value != null && marketCapMax.value != null && marketCapMin.value > marketCapMax.value) {
+    notes.push(CAP_RANGE_NOTE);
+    marketCapMin = { value: null, note: CAP_RANGE_NOTE };
+    marketCapMax = { value: null, note: CAP_RANGE_NOTE };
+  }
   return {
     criteria: {
-      marketCapMin: marketCapMin.value == null ? null : marketCapMin.value * scale,
-      marketCapMax: marketCapMax.value == null ? null : marketCapMax.value * scale,
+      marketCapMin: marketCapMin.value,
+      marketCapMax: marketCapMax.value,
       industryIncludes: draft.industry.trim() || null,
       countryIncludes: draft.country.trim() || null,
       roicMin: roicMin.value,
@@ -151,6 +165,17 @@ export function criteriaFromInputs(
     },
     notes,
   };
+}
+
+function scaleMarketCap(
+  parsed: { value: number | null; note: string | null },
+  scale: number,
+): { value: number | null; note: string | null } {
+  if (parsed.note || parsed.value == null) return parsed;
+  if (parsed.value < 0) return { value: null, note: CAP_NEGATIVE_NOTE };
+  const scaled = parsed.value * scale;
+  if (!Number.isFinite(scaled)) return { value: null, note: CAP_SCALE_NOTE };
+  return { value: scaled, note: null };
 }
 
 function pushSkip(skipped: ScreenSkip[], field: string, reason: string): void {

@@ -1,0 +1,13 @@
+--- /tmp/tsc-main-set.txt	2026-11-08 22:23:13.731313083 +0000
++++ /tmp/tsc-head-set.txt	2026-11-08 22:23:13.727313087 +0000
+@@ -21,8 +21,8 @@
+ client/src/components/sections/SummarySection.tsx(212,112): error TS18047: 'dcfUpside' is possibly 'null'.
+ client/src/components/sections/SummarySection.tsx(212,30): error TS18047: 'dcfUpside' is possibly 'null'.
+ client/src/components/sections/SummarySection.tsx(212,85): error TS18047: 'dcfUpside' is possibly 'null'.
+-client/src/pages/BTCDashboard.tsx(1059,52): error TS2345: Argument of type 'BTCAnalysis' is not assignable to parameter of type 'import("/tmp/aa-main-01bf608/client/src/lib/btcAnalysis").BTCAnalysis'.
+-client/src/pages/BTCDashboard.tsx(3044,33): error TS2322: Type 'BTCAnalysis' is not assignable to type 'import("/tmp/aa-main-01bf608/client/src/lib/btcAnalysis").BTCAnalysis'.
++client/src/pages/BTCDashboard.tsx(1059,52): error TS2345: Argument of type 'BTCAnalysis' is not assignable to parameter of type 'import("/agent/repos/Aktienanalyst/client/src/lib/btcAnalysis").BTCAnalysis'.
++client/src/pages/BTCDashboard.tsx(3044,33): error TS2322: Type 'BTCAnalysis' is not assignable to type 'import("/agent/repos/Aktienanalyst/client/src/lib/btcAnalysis").BTCAnalysis'.
+ client/src/pages/Compare.tsx(147,64): error TS2339: Property 'revenueGrowth' does not exist on type 'StockAnalysis'.
+ client/src/pages/Compare.tsx(147,89): error TS2339: Property 'revenueGrowth' does not exist on type 'StockAnalysis'.
+ client/src/pages/Compare.tsx(159,53): error TS2339: Property 'rsl' does not exist on type 'StockAnalysis'.

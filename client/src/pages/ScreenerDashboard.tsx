@@ -338,7 +338,7 @@ function StockRow({ stock: s, rank, expanded, onToggle, formatMC, formatVal, nav
           </span>
         </td>
         <td className="py-2 px-3 text-right font-mono tabular-nums">${s.price.toFixed(2)}</td>
-        <td className="py-2 px-3 text-right font-mono tabular-nums text-muted-foreground" title={s.marketCap > 0 ? undefined : MISSING_MARKET_CAP}>{s.marketCap > 0 ? formatMC(s.marketCap) : "n/a"}</td>
+        <td className="py-2 px-3 text-right font-mono tabular-nums text-muted-foreground" title={Number.isFinite(s.marketCap) && s.marketCap !== 0 ? undefined : MISSING_MARKET_CAP}>{Number.isFinite(s.marketCap) && s.marketCap !== 0 ? formatMC(s.marketCap) : "n/a"}</td>
         <td className="py-2 px-3 text-right font-mono tabular-nums">{s.pe > 0 ? s.pe.toFixed(1) : 'N/A'}</td>
         <td className={`py-2 px-3 text-right font-mono tabular-nums font-semibold ${s.upside > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
           {s.upside > 0 ? '+' : ''}{s.upside.toFixed(1)}%
@@ -380,7 +380,7 @@ function StockRow({ stock: s, rank, expanded, onToggle, formatMC, formatVal, nav
               </div>
               <div>
                 <span className="text-muted-foreground">Fwd P/E:</span>
-                <span className="ml-1 font-mono" title={s.forwardPE > 0 ? undefined : MISSING_FORWARD_PE}>{s.forwardPE > 0 ? s.forwardPE.toFixed(1) : "n/a"}</span>
+                <span className="ml-1 font-mono" title={Number.isFinite(s.forwardPE) && s.forwardPE !== 0 ? undefined : MISSING_FORWARD_PE}>{Number.isFinite(s.forwardPE) && s.forwardPE !== 0 ? s.forwardPE.toFixed(1) : "n/a"}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">Downside-Risiko:</span>
