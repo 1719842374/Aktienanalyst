@@ -4,10 +4,14 @@
  */
 import { fmpRatiosTtm } from "./fmp";
 import { parseBojSeries, parseEcbCsv } from "./liquidity-briefing-math";
-import { fetchVstoxxVol } from "./recession-markets";
+import { fetchVstoxxVol, fetchYahooDailySeries } from "./recession-markets";
+import { fetchYahooTimeseriesFundamentals } from "./yahoo-fetcher";
+import { realizedVol20 } from "../shared/recession-market-charts";
 import {
+  ASIA_GDP_USD,
   REGION_WEIGHT,
   alignSpread,
+  asiaGdpWeights,
   catalogProbability,
   blendWeighted,
   closedSlot,
@@ -17,6 +21,7 @@ import {
   parseEurostatSeries,
   sahmGapPp,
   yoyByMonth,
+  type AsiaGdpWeights,
   type DatedPoint,
   type RegionCatalog,
   type RegionalCatalogs,
@@ -47,6 +52,16 @@ export interface RegionalPrints {
   jpPe: number | null;
   jpPeSource: string;
   jpVol: number | null;
+  /** Month-end 20-session realized vol of ASHR. Empty when Yahoo has no closes. */
+  cnVolPoints: DatedPoint[];
+  cnVolSource: string;
+  cnPe: number | null;
+  cnPeSource: string;
+  /** Latest World Bank GDP, current US$. null when the FRED print is missing. */
+  jpGdpUsd: number | null;
+  cnGdpUsd: number | null;
+  jpGdpSource: string;
+  cnGdpSource: string;
 }
 
 export interface RegionScorers {
@@ -276,6 +291,90 @@ async function topixPe(): Promise<{ value: number | null; source: string }> {
   return { value: null, source: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)" };
 }
 
+export interface AshrPeProbe {
+  pe: number | null;
+  status: string;
+  httpStatus: number | null;
+  epsAsOf: string | null;
+}
+
+/**
+ * ASHR KGV only. TOPIX stays on indexPe.
+ * A positive FMP print wins. Yahoo is used only when FMP has none.
+ * A dated Yahoo print older than the existing 18-month PE window (isStale, same rule as iShares EXSA) stays null.
+ */
+export function ashrPeFromProbes(input: {
+  fmp: { value: number; source: string } | null;
+  yahoo: AshrPeProbe | null;
+  today: string;
+}): { value: number | null; source: string } {
+  if (input.fmp && Number.isFinite(input.fmp.value) && input.fmp.value > 0) {
+    return { value: input.fmp.value, source: input.fmp.source };
+  }
+  const yahoo = input.yahoo;
+  if (yahoo && yahoo.pe != null && Number.isFinite(yahoo.pe) && yahoo.pe > 0) {
+    if (yahoo.epsAsOf && isStale(yahoo.epsAsOf, input.today)) {
+      return { value: null, source: `n/a — Yahoo ASHR KGV ${yahoo.epsAsOf.slice(0, 7)} außerhalb des 18-Monats-Fensters` };
+    }
+    const asOf = yahoo.epsAsOf ?? "ohne Stichtag";
+    return { value: yahoo.pe, source: `Yahoo ASHR KGV (Kurs/trailingDilutedEPS, Stand ${asOf})` };
+  }
+  const fmpWhy = input.fmp ? `FMP ${input.fmp.value} kein KGV` : "FMP leer";
+  const yahooWhy = !yahoo
+    ? "Yahoo nicht abgefragt"
+    : yahoo.status === "http_error" && yahoo.httpStatus != null
+      ? `Yahoo ASHR HTTP ${yahoo.httpStatus}`
+      : `Yahoo ASHR ${yahoo.status}`;
+  return { value: null, source: `n/a — ASHR KGV (${fmpWhy}; ${yahooWhy})` };
+}
+
+async function ashrPe(today: string): Promise<{ value: number | null; source: string }> {
+  const fmp = await indexPe(["ASHR"]);
+  if (fmp) return ashrPeFromProbes({ fmp, yahoo: null, today });
+  try {
+    const yahoo = await fetchYahooTimeseriesFundamentals("ASHR");
+    return ashrPeFromProbes({
+      fmp: null,
+      yahoo: { pe: yahoo.pe, status: yahoo.status, httpStatus: yahoo.httpStatus, epsAsOf: yahoo.asOf.eps },
+      today,
+    });
+  } catch (err) {
+    return ashrPeFromProbes({
+      fmp: null,
+      yahoo: { pe: null, status: String((err as Error)?.message ?? err).slice(0, 160), httpStatus: null, epsAsOf: null },
+      today,
+    });
+  }
+}
+
+/** Last print of each calendar month, same rule as monthEndPoints in server/recession.ts. */
+function monthEndPoints(points: DatedPoint[]): DatedPoint[] {
+  const sorted = points
+    .filter(point => point.date.length >= 7 && Number.isFinite(point.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const byMonth = new Map<string, DatedPoint>();
+  for (const point of sorted) byMonth.set(point.date.slice(0, 7), point);
+  return Array.from(byMonth.values());
+}
+
+async function chinaVolPrint(cosd: string): Promise<{ points: DatedPoint[]; source: string }> {
+  let bars: { date: string; value: number }[] = [];
+  try {
+    bars = await fetchYahooDailySeries("ASHR", cosd);
+  } catch {
+    bars = [];
+  }
+  const closes = bars
+    .filter(bar => bar.date && Number.isFinite(bar.value) && bar.value > 0)
+    .map(bar => ({ date: bar.date, close: bar.value }))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const points = monthEndPoints(realizedVol20(closes));
+  if (points.length === 0) {
+    return { points: [], source: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T" };
+  }
+  return { points, source: "Yahoo ASHR, realisierte Vol 20T annualisiert" };
+}
+
 function yearsAgo(today: string, years: number): string {
   const date = new Date(`${today}T00:00:00Z`);
   date.setUTCFullYear(date.getUTCFullYear() - years);
@@ -312,13 +411,30 @@ export function emptyRegionalPrints(): RegionalPrints {
     jpPe: null,
     jpPeSource: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)",
     jpVol: null,
+    cnVolPoints: [],
+    cnVolSource: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T",
+    cnPe: null,
+    cnPeSource: "n/a — ASHR KGV (FMP leer)",
+    jpGdpUsd: null,
+    cnGdpUsd: null,
+    jpGdpSource: `n/a — FRED ${ASIA_GDP_USD.JP} leer`,
+    cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} leer`,
   };
+}
+
+async function gdpUsd(id: string): Promise<{ value: number | null; source: string }> {
+  const points = await fred(id, "1990-01-01");
+  const value = latestFinite(points);
+  if (value == null || !(value > 0)) return { value: null, source: `n/a — FRED ${id} leer` };
+  const dated = [...points].reverse().find(point => point.value > 0);
+  const year = dated?.date.slice(0, 4) ?? "";
+  return { value, source: `FRED ${id} ${year}`.trim() };
 }
 
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, cnPe, cnVol, jpGdp, cnGdp, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -332,6 +448,10 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
     stoxxPe(today),
     topixPe(),
+    ashrPe(today),
+    chinaVolPrint(cosd),
+    gdpUsd(ASIA_GDP_USD.JP),
+    gdpUsd(ASIA_GDP_USD.CN),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
   let oecdIp: DatedPoint[] = [];
@@ -363,6 +483,14 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
     jpVol: null,
+    cnVolPoints: cnVol.points,
+    cnVolSource: cnVol.source,
+    cnPe: cnPe.value,
+    cnPeSource: cnPe.source,
+    jpGdpUsd: jpGdp.value,
+    cnGdpUsd: cnGdp.value,
+    jpGdpSource: jpGdp.source,
+    cnGdpSource: cnGdp.source,
   };
 }
 
@@ -436,6 +564,93 @@ function curveSlot(
   };
 }
 
+function naValue(source: string): string {
+  return source.startsWith("n/a —") ? source : "N/A";
+}
+
+function chinaVolSlot(prints: RegionalPrints, scorers: RegionScorers): RegionSlot {
+  const source = prints.cnVolSource || "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T";
+  const points = monthEndPoints(prints.cnVolPoints);
+  const latest = points.at(-1);
+  if (!latest) return closedSlot("vol", "Vol China (ASHR)", "correction", source, naValue(source));
+  const scored = scorers.curve(points.map(point => point.value), false);
+  if (!scored.available) {
+    return closedSlot(
+      "vol",
+      "Vol China (ASHR)",
+      "correction",
+      source,
+      `n/a — ASHR-Vol: ${points.length} Monate, Historie für s(z) reicht nicht`,
+    );
+  }
+  return {
+    id: "vol",
+    name: "Vol China (ASHR)",
+    book: "correction",
+    value: `${latest.value.toFixed(1)}% · 20T · ${latest.date.slice(0, 7)}`,
+    rawScore: scored.raw,
+    weight: 1,
+    weightedScore: scored.raw,
+    maxWeighted: 4,
+    zone: "Niveau s(z)",
+    source,
+    available: true,
+  };
+}
+
+function chinaPeSlot(prints: RegionalPrints, scorers: RegionScorers): RegionSlot {
+  const source = prints.cnPeSource || "n/a — ASHR KGV (FMP leer)";
+  if (prints.cnPe == null || !(Number.isFinite(prints.cnPe) && prints.cnPe > 0)) {
+    return closedSlot("valuation", "KGV China (ASHR)", "correction", source, naValue(source));
+  }
+  return fromReading("valuation", "KGV China (ASHR)", "correction", source, scorers.valuation(prints.cnPe), prints.cnPe.toFixed(1));
+}
+
+function bookLive(weight: number | null, slots: RegionSlot[], book: RegionSlot["book"]): boolean {
+  return weight != null && weight > 0 && catalogProbability(slots, book) != null;
+}
+
+/** A scored print whose side does not enter this book stays visible, but not as a driver of the headline P. */
+function slotsInMix(slots: RegionSlot[], weight: number | null): RegionSlot[] {
+  const recession = bookLive(weight, slots, "recession");
+  const correction = bookLive(weight, slots, "correction");
+  return slots.map(slot => {
+    const live = slot.book === "recession" ? recession : correction;
+    if (live || !slot.available) return slot;
+    return {
+      ...slot,
+      available: false,
+      weight: 0,
+      weightedScore: 0,
+      maxWeighted: 0,
+      zone: "nicht in der Katalog-P",
+    };
+  });
+}
+
+function asiaNote(gdp: AsiaGdpWeights, jp: RegionSlot[], cn: RegionSlot[]): string {
+  const parts = [
+    "Japan + China (ASHR). Japan-KGV bleibt TOPIX, China-Vol und China-KGV sind ASHR.",
+    gdp.text,
+  ];
+  const books: Array<RegionSlot["book"]> = ["recession", "correction"];
+  for (const book of books) {
+    const label = book === "recession" ? "Rezession" : "Korrektur";
+    const jpLive = bookLive(gdp.jp.weight, jp, book);
+    const cnLive = bookLive(gdp.cn.weight, cn, book);
+    if (jpLive && cnLive) {
+      parts.push(`${label}: Japan und China in der Katalog-P.`);
+      continue;
+    }
+    if (!jpLive && !cnLive) {
+      parts.push(`${label}: keine Seite in der Katalog-P.`);
+      continue;
+    }
+    parts.push(`${label}: ${jpLive ? "China" : "Japan"} nicht in der Katalog-P.`);
+  }
+  return parts.join(" ");
+}
+
 function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): RegionCatalog {
   return {
     id,
@@ -489,21 +704,41 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
       ? closedSlot("vol", "JNVI", "correction", "JNVI (keine freie Serie)")
       : fromReading("vol", "JNVI", "correction", "JNVI", scorers.vol(prints.jpVol), prints.jpVol.toFixed(1)),
   ];
+  const cn: RegionSlot[] = [
+    chinaVolSlot(prints, scorers),
+    chinaPeSlot(prints, scorers),
+  ];
+  const gdp = asiaGdpWeights({
+    jp: { gdpUsd: prints.jpGdpUsd, source: prints.jpGdpSource },
+    cn: { gdpUsd: prints.cnGdpUsd, source: prints.cnGdpSource },
+  });
+  const peerWeight = (weight: number | null) => weight != null && weight > 0 ? weight : Number.NaN;
+  const recessionProbability = blendWeighted([
+    { weight: peerWeight(gdp.jp.weight), probability: catalogProbability(jp, "recession") },
+    { weight: peerWeight(gdp.cn.weight), probability: catalogProbability(cn, "recession") },
+  ]);
+  const correctionProbability = blendWeighted([
+    { weight: peerWeight(gdp.jp.weight), probability: catalogProbability(jp, "correction") },
+    { weight: peerWeight(gdp.cn.weight), probability: catalogProbability(cn, "correction") },
+  ]);
   const us = region("US", "USA", input.usSlots);
   const euro = region("EZ", "Eurozone", ez);
-  const japan = region("JP", "Japan", jp);
+  const asia = region("JP", "Asien", [...slotsInMix(jp, gdp.jp.weight), ...slotsInMix(cn, gdp.cn.weight)]);
+  asia.recessionProbability = recessionProbability;
+  asia.correctionProbability = correctionProbability;
+  asia.note = asiaNote(gdp, jp, cn);
   return {
     weights: { ...REGION_WEIGHT },
-    regions: [us, euro, japan],
+    regions: [us, euro, asia],
     blendedRecession12m: blendWeighted([
       { weight: REGION_WEIGHT.US, probability: input.usRecession12m },
       { weight: REGION_WEIGHT.EZ, probability: euro.recessionProbability },
-      { weight: REGION_WEIGHT.JP, probability: japan.recessionProbability },
+      { weight: REGION_WEIGHT.JP, probability: asia.recessionProbability },
     ]),
     blendedCorrection12m: blendWeighted([
       { weight: REGION_WEIGHT.US, probability: input.usCorrection12m },
       { weight: REGION_WEIGHT.EZ, probability: euro.correctionProbability },
-      { weight: REGION_WEIGHT.JP, probability: japan.correctionProbability },
+      { weight: REGION_WEIGHT.JP, probability: asia.correctionProbability },
     ]),
     actionUsesUsBooks: true,
   };
