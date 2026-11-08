@@ -10,6 +10,7 @@ import { annotationByName } from "../../../../shared/segment-growth-calc";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
+import { SegmentSupplementView } from "./SegmentSupplementView";
 
 interface Props { data: StockAnalysis }
 
@@ -253,6 +254,16 @@ export function Section2({ data }: Props) {
                 ))}
               </div>
             )}
+            <SegmentSupplementView
+              ticker={data.ticker}
+              segments={data.revenueSegments.map((seg: RevenueSegment) => ({
+                name: seg.name,
+                percentage: Number.isFinite(seg.percentage) ? seg.percentage : null,
+                reportedGrowthPct: typeof (seg.growth ?? seg.yoyChangePercent) === "number"
+                  ? (seg.growth ?? seg.yoyChangePercent) as number
+                  : null,
+              }))}
+            />
           </div>
         ) : (
           // Anforderung #1/#6: klare Meldung statt generischem/leerem Block, wenn
