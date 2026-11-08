@@ -238,6 +238,30 @@ function catalystKiText(catalysts: unknown[]): string | null {
 }
 
 /**
+ * Vorhandenes `porterForces[].reasoning`, je Kraft in der Payload-Reihenfolge.
+ * Leer oder nur Whitespace bleibt n/a. `summary` und andere Felder werden nicht übernommen.
+ * Der Text wird nicht umgeschrieben; nur die bestehende Fakt-Obergrenze kürzt.
+ */
+function porterForceReasoning(forces: unknown): string | null {
+  if (!Array.isArray(forces)) return null;
+  const parts: string[] = [];
+  for (const force of forces) {
+    if (!force || typeof force !== "object") continue;
+    const rec = force as { name?: unknown; reasoning?: unknown };
+    const rawName = typeof rec.name === "string" ? rec.name : "";
+    const name = rawName.trim() ? rawName : "n/a";
+    const rawReason = typeof rec.reasoning === "string" ? rec.reasoning : "";
+    const reasoning = rawReason.trim() ? rawReason : "n/a";
+    parts.push(`${name}: ${reasoning}`);
+  }
+  if (!parts.length) return null;
+  const joined = parts.join("; ");
+  const max = CHAT_LIMITS.maxFactValueChars;
+  if (joined.length <= max) return joined;
+  return max <= 1 ? "…" : `${joined.slice(0, max - 1)}…`;
+}
+
+/**
  * Aktien-Provider: baut aus der geladenen Analyse (Antwort von POST /api/analyze) den Chat-Kontext
  * für alle 20 Sektionen + Scoring-Gates. Reine Funktion, mutiert `data` nicht.
  */
@@ -328,6 +352,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     s(13, {
       moatGesamt: str(d.moatAssessment?.overallRating), moatQuellen: list(d.moatAssessment?.moatSources),
       porter: list((d.moatAssessment?.porterForces ?? []).map((f: any) => `${f.name}: ${f.rating} (${f.score})`)),
+      porterBegruendung: porterForceReasoning(d.moatAssessment?.porterForces),
       geschaeftsmodell: str(d.moatAssessment?.businessModelStrength), nachhaltigkeit: str(d.moatAssessment?.sustainabilityRating),
     }),
     s(14, {
