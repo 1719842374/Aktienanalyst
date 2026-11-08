@@ -2,6 +2,8 @@
  * Chat-Verlauf pro Browser-Session.
  * Kette: sessionStorage (lokal) und apiRequest → GET/PUT/DELETE /api/chat/history
  * → server/routes.ts → chat-history-route. Kein Supabase.
+ * Eine Antwort, deren Auftrag vor dem Löschen begann, schreibt den Chat nicht zurück.
+ * Ein späteres Lesen zeigt den Serverstand, auch wenn der Server den Chat danach neu anlegt.
  */
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -12,6 +14,19 @@ import {
 
 const SESSION_KEY = "chatSession:v1";
 let memorySession = "";
+
+/**
+ * Schreibfolge nur in diesem Fenster. Andere Tabs und andere Clients sehen sie nicht.
+ * `deletedAtRevision` merkt, ab welchem Stand ein Chat gelöscht wurde.
+ * Aufträge mit kleinerem Stand dürfen ihn nicht wieder einsetzen.
+ */
+let historyRevision = 0;
+const deletedAtRevision = new Map<string, number>();
+
+function responseMayApply(id: string, issuedAt: number): boolean {
+  const deletedAt = deletedAtRevision.get(id);
+  return deletedAt == null || issuedAt >= deletedAt;
+}
 
 function storage(): Storage | null {
   try {
@@ -56,8 +71,9 @@ export function useChatHistory(dashboard: string, entity: string | null) {
   const sessionId = chatSessionId();
   const [threads, setThreads] = useState<ChatThread[]>(() => readThreads(sessionId));
 
-  const remember = useCallback((next: ChatThread[]) => {
-    const merged = mergeChatThreads(readThreads(sessionId), next);
+  const remember = useCallback((next: ChatThread[], issuedAt: number) => {
+    const applicable = next.filter(thread => responseMayApply(thread.id, issuedAt));
+    const merged = mergeChatThreads(readThreads(sessionId), applicable);
     writeThreads(sessionId, merged);
     setThreads(merged);
   }, [sessionId]);
@@ -65,19 +81,21 @@ export function useChatHistory(dashboard: string, entity: string | null) {
   useEffect(() => {
     const params = new URLSearchParams({ dashboard });
     if (entity) params.set("entity", entity);
+    const issuedAt = historyRevision;
     let cancel = false;
     apiRequest("GET", `/api/chat/history?${params.toString()}`, undefined, 15000, { [CHAT_SESSION_HEADER]: sessionId })
       .then(async (res) => {
         if (!res.ok || cancel) return;
         const body = await res.json().catch(() => null) as { threads?: ChatThread[] } | null;
-        if (!cancel && Array.isArray(body?.threads)) remember(body.threads);
+        if (!cancel && Array.isArray(body?.threads)) remember(body.threads, issuedAt);
       })
       .catch(() => { /* lokaler Cache bleibt */ });
     return () => { cancel = true; };
   }, [dashboard, entity, sessionId, remember]);
 
   const save = useCallback(async (thread: ChatThread) => {
-    remember([thread]);
+    const issuedAt = ++historyRevision;
+    remember([thread], issuedAt);
     try {
       const res = await apiRequest("PUT", `/api/chat/history/${encodeURIComponent(thread.id)}`, {
         dashboard: thread.dashboard,
@@ -86,11 +104,12 @@ export function useChatHistory(dashboard: string, entity: string | null) {
       }, 15000, { [CHAT_SESSION_HEADER]: sessionId });
       if (!res.ok) return;
       const body = await res.json().catch(() => null) as { thread?: ChatThread } | null;
-      if (body?.thread) remember([body.thread]);
+      if (body?.thread) remember([body.thread], issuedAt);
     } catch { /* lokaler Cache bleibt */ }
   }, [remember, sessionId]);
 
   const remove = useCallback(async (id: string) => {
+    deletedAtRevision.set(id, ++historyRevision);
     const next = readThreads(sessionId).filter(t => t.id !== id);
     writeThreads(sessionId, next);
     setThreads(next);
