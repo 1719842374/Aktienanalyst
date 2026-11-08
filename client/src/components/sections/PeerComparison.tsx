@@ -158,7 +158,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     />
   ) : null;
 
-  if (!pc || !pc.peers) {
+  if (!pc?.subject) {
     return (
       <div className="space-y-3" data-testid="peer-empty">
         {overrideControls && (
@@ -167,11 +167,13 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           </div>
         )}
         {overrideControls}
+        <KiSameTable peers={kiPeers} trailingCell={!!onOverridesChange} />
       </div>
     );
   }
 
-  const { subject, peers, peerAvg, sectorMedian } = pc;
+  const { subject, peerAvg, sectorMedian } = pc;
+  const peers = Array.isArray(pc.peers) ? pc.peers : [];
   const scoredTickers = new Set(peers.map((p) => p.ticker.toUpperCase()));
   const sideKi = kiPeers.filter((row) => !scoredTickers.has(row.ticker.toUpperCase()));
 
@@ -448,7 +450,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               <td className="py-1.5 px-1.5 text-muted-foreground">Ø Peers</td>
               <td className="py-1.5 px-1 text-right text-muted-foreground text-[11px]">—</td>
               {cols.map(c => {
-                const avgVal = (peerAvg as any)[c.key] as number | null;
+                const avgVal = peerAvg ? (peerAvg as any)[c.key] as number | null : null;
                 return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground">{fmtMetric(c.key, avgVal, c.decimals, c.suffix)}</td>;
               })}
               {onOverridesChange && <td></td>}
@@ -499,7 +501,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
         {cols.map(c => {
           const sVal = sanitizedMetricValue(c.key, (subject as any)[c.key] as number | null);
-          const aVal = sanitizedMetricValue(c.key, (peerAvg as any)[c.key] as number | null);
+          const aVal = sanitizedMetricValue(c.key, peerAvg ? (peerAvg as any)[c.key] as number | null : null);
           const prem = premiumPct(sVal, aVal);
           const color = premColor(sVal, aVal, c.lowerIsBetter);
           const bgColor = color.includes("emerald") ? "bg-emerald-500/8 border-emerald-500/20" :
@@ -675,5 +677,48 @@ function KiPeerRow({ peer, cols, trailingCell }: { peer: PeerNaFill; cols: PeerC
       })}
       {trailingCell ? <td></td> : null}
     </tr>
+  );
+}
+
+const KI_TABLE_COLS: PeerCol[] = [
+  { key: "pe", label: "P/E", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "peg", label: "PEG", lowerIsBetter: true, decimals: 2, suffix: "" },
+  { key: "ps", label: "P/S", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "pb", label: "P/B", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "epsGrowth1Y", label: "EPS 1Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "epsGrowth5Y", label: "EPS 5Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "roic", label: "ROIC (FY)", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
+];
+
+/** Kein Peer-Set und kein Subjekt: dieselben Spalten, ohne erfundene Ø- oder Subjektzahlen. */
+function KiSameTable({ peers, trailingCell }: { peers: PeerNaFill[]; trailingCell: boolean }) {
+  if (peers.length === 0) return null;
+  const span = KI_TABLE_COLS.length + 2 + (trailingCell ? 1 : 0);
+  return (
+    <div className="overflow-x-auto -mx-1">
+      <table className="w-full text-[11px]" data-testid="peer-scored-table">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left py-1.5 px-1.5 text-muted-foreground font-medium">Ticker</th>
+            <th className="text-right py-1.5 px-1 text-muted-foreground font-medium">Mkt Cap</th>
+            {KI_TABLE_COLS.map(c => (
+              <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium">{c.label}</th>
+            ))}
+            {trailingCell ? <th className="w-6"></th> : null}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/40">
+          <tr data-testid="peer-ki-in-table">
+            <td colSpan={span} className="py-1.5 px-1.5 text-[10px] text-violet-700 dark:text-violet-300">
+              KI-Vorschlag in derselben Tabelle · nicht in Ø Peers · Relativ-Score unverändert
+            </td>
+          </tr>
+          {peers.map(peer => (
+            <KiPeerRow key={peer.ticker} peer={peer} cols={KI_TABLE_COLS} trailingCell={trailingCell} />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

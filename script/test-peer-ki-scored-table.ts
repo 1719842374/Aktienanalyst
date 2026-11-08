@@ -187,6 +187,43 @@ try {
     check("ohne FMP-Peers bleibt die Ø-Zeile die Fixture", rowHtml(onlyTable, ">Ø Peers<").includes("20.0") && !rowHtml(onlyTable, ">Ø Peers<").includes("22.4"));
   }
 
+  console.log("\n=== fehlendes Peer-Set: KI bleibt in derselben Tabelle ===");
+  {
+    const bareKi = [{ ...kiRow("GM"), pe: null, marketCap: null, roic: null }];
+    const nullData = { ticker: "NVO", peerComparison: null } as StockAnalysis;
+    const nullHtml = renderPeer(nullData, bareKi);
+    const nullTables = nullHtml.match(/<table\b[\s\S]*?<\/table>/g) ?? [];
+    const nullTable = nullTables.find((table) => table.includes('data-testid="peer-scored-table"')) ?? "";
+    const nullHeader = nullTable.slice(nullTable.indexOf("<thead"), nullTable.indexOf("</thead>"));
+    const nullKi = rowHtml(nullTable, 'data-testid="row-peer-ki-GM"');
+    check("null: genau eine Tabelle", nullTables.length === 1 && nullTable.length > 0);
+    check("null: KI-Zeile in peer-scored-table", nullTable.includes('data-testid="row-peer-ki-GM"'));
+    check("null: keine Seitenliste", !nullHtml.includes('data-testid="peer-ki-side-list"'));
+    check("null: fehlende Kennzahl nennt den Grund", nullKi.includes("n/a — keine FMP-Kennzahl"));
+    check("null: keine Ø-Zeile und keine erfundene 20.0", !nullHtml.includes(">Ø Peers<") && !nullHtml.includes(">20.0<"));
+    check("null: fehlende Kennzahl ist nicht 0", !nullKi.includes(">0<") && !nullKi.includes(">0.0<"));
+    check("null: dieselbe Spaltenzahl", openTags(nullHeader, "th") > 0 && openTags(nullHeader, "th") === openTags(nullKi, "td"), `th=${openTags(nullHeader, "th")} td=${openTags(nullKi, "td")}`);
+
+    const partial = {
+      ticker: "NVO",
+      peerComparison: {
+        subject: company("NVO", 28),
+        peerAvg: { pe: 20, peg: 1.1, ps: 5, pb: 4, epsGrowth1Y: 10, epsGrowth5Y: 8, roic: 15, roic5Y: 14 },
+        sectorMedian: { pe: 18, peg: 1.2, ps: 4, pb: 3, epsGrowth: 8, sectorName: "Healthcare" },
+      },
+    } as StockAnalysis;
+    const avgBefore = JSON.stringify(partial.peerComparison?.peerAvg);
+    const partialHtml = renderPeer(partial, [kiRow("LLY")]);
+    const partialTable = scoredTable(partialHtml);
+    const partialAvg = rowHtml(partialTable, ">Ø Peers<");
+    check("ohne peers-Feld: KI-Zeile in der vorhandenen Tabelle", partialTable.includes('data-testid="row-peer-ki-LLY"'));
+    check("ohne peers-Feld: keine Seitenliste", !partialHtml.includes('data-testid="peer-ki-side-list"'));
+    check("ohne peers-Feld: Subjekt bleibt", partialTable.includes(">NVO<"));
+    check("ohne peers-Feld: kein erfundener FMP-Peer", !partialTable.includes(">SNY<"));
+    check("ohne peers-Feld: mitgeliefertes Ø bleibt, KI-KGV nicht darin", partialAvg.includes("20.0") && !partialAvg.includes("22.4"));
+    check("ohne peers-Feld: Render schreibt peerAvg nicht um", JSON.stringify(partial.peerComparison?.peerAvg) === avgBefore);
+  }
+
   console.log("\n=== Datenkette und keine Score-Berechnung in der Tabelle ===");
   {
     const section7 = readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8");
