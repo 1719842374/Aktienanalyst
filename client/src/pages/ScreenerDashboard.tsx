@@ -272,12 +272,12 @@ export default function ScreenerDashboard() {
                         navigate={navigate}
                       />
                     ))}
-                    {stocks.length === 0 && (
-                      <tr><td colSpan={10} className="py-8 text-center text-muted-foreground">Keine Ergebnisse</td></tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+              {stocks.length === 0 && (
+                <p className="px-3 py-8 text-center text-xs text-muted-foreground" data-testid="screener-empty">Keine Ergebnisse</p>
+              )}
             </div>
 
             <div className="text-[9px] text-muted-foreground/50 text-center">
