@@ -149,13 +149,25 @@ async function main() {
   check("Tabellen-Zweig gerendert (Peers)", tableSeen === 2, `tableSeen=${tableSeen}`);
   check("nach letztem Wechsel (null): Eingabe + Reset im leeren Zweig", thrown.length === 0 && !!findByTestId(container, "input-peer-add") && !!findByTestId(container, "button-peer-reset"));
 
+  const kiOnly = { ...zeroPeers, peerComparison: { ...fullPc, peers: [] } };
+  const kiErr = await act(async () => {
+    root.render(React.createElement(PeerComparison, {
+      data: kiOnly,
+      kiPeers: [{ ticker: "GM", name: "GM", suggestedBy: "ki", marketCap: null, pe: null, peg: null, ps: null, pb: null, epsGrowth1Y: null, epsGrowth5Y: null, revenueGrowth: null, roic: null, roic5Y: null, roicFiscalYear: null }],
+      onOverridesChange: noop,
+    }));
+  }).then(() => null, (e: any) => String(e?.message ?? e).split("\n")[0]);
+  check("0 FMP-Peers plus KI-Zeile bleibt die Vergleichstabelle", kiErr == null && !!findByTestId(container, "peer-scored-table") && !!findByTestId(container, "row-peer-ki-GM"), kiErr ?? "");
+  check("KI-Zweig wirft keine Hook-Warnung", hookErrors.length === 0, hookErrors.join(" | "));
+
   await act(async () => { root.unmount(); });
   console.error = origError;
 
-  // Statisch: kein Hook mehr hinter dem Early-Return
+  // Statisch: kein Hook mehr hinter dem Early-Return. Leere Peer-Liste ohne KI
+  // fällt danach in denselben Empty-State; mit KI-Zeilen geht es in die Tabelle.
   const src = readFileSync(new URL("../client/src/components/sections/PeerComparison.tsx", import.meta.url), "utf8");
   const fnStart = src.indexOf("export default function PeerComparison");
-  const early = src.indexOf("if (!pc || !pc.peers || pc.peers.length === 0)", fnStart);
+  const early = src.indexOf("if (!pc || !pc.peers)", fnStart);
   const fnEnd = src.indexOf("\nexport function PeerOverrideControls", fnStart);
   const afterEarly = src.slice(early, fnEnd);
   check("Quelltext: keine use*-Hooks nach dem Early-Return", !/\buse[A-Z]\w*\(/.test(afterEarly), (afterEarly.match(/\buse[A-Z]\w*\(/g) || []).join(","));
