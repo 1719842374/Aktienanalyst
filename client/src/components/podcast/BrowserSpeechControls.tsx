@@ -11,6 +11,7 @@ function canAbort(phase: BrowserSpeechPhase): boolean {
   switch (phase) {
     case "loading":
     case "playing":
+    case "paused":
       return true;
     case "idle":
     case "aborted":
@@ -33,6 +34,7 @@ function canStart(phase: BrowserSpeechPhase, sentenceCount: number): boolean {
       return true;
     case "loading":
     case "playing":
+    case "paused":
     case "n/a":
       return false;
     default: {
@@ -47,6 +49,7 @@ function canReplay(phase: BrowserSpeechPhase, sentenceCount: number): boolean {
   switch (phase) {
     case "idle":
     case "playing":
+    case "paused":
     case "aborted":
     case "error":
       return true;
@@ -95,6 +98,8 @@ export function BrowserSpeechControls({
   const startEnabled = canStart(state.phase, state.sentenceCount);
   const replayEnabled = canReplay(state.phase, state.sentenceCount);
   const abortEnabled = canAbort(state.phase);
+  const pauseEnabled = state.phase === "playing";
+  const resumeEnabled = state.phase === "paused";
 
   return (
     <div data-testid="podcast-browser-speech" className="space-y-1 min-w-0">
@@ -115,6 +120,24 @@ export function BrowserSpeechControls({
           className="h-8 px-2 rounded-md border border-border text-[11px] text-foreground hover:bg-foreground/10 disabled:opacity-40"
         >
           Vorlesen
+        </button>
+        <button
+          type="button"
+          data-testid="podcast-browser-pause"
+          disabled={!pauseEnabled}
+          onClick={() => sessionRef.current?.pause()}
+          className="h-8 px-2 rounded-md border border-border text-[11px] text-foreground hover:bg-foreground/10 disabled:opacity-40"
+        >
+          Pause
+        </button>
+        <button
+          type="button"
+          data-testid="podcast-browser-resume"
+          disabled={!resumeEnabled}
+          onClick={() => sessionRef.current?.resume()}
+          className="h-8 px-2 rounded-md border border-border text-[11px] text-foreground hover:bg-foreground/10 disabled:opacity-40"
+        >
+          Weiter
         </button>
         <button
           type="button"

@@ -4,7 +4,7 @@
  * des Browsers liest den Text, der schon aus der Pipeline oder dem Cache kommt.
  */
 
-export type BrowserSpeechPhase = "idle" | "loading" | "playing" | "aborted" | "error" | "n/a";
+export type BrowserSpeechPhase = "idle" | "loading" | "playing" | "paused" | "aborted" | "error" | "n/a";
 
 export interface BrowserSpeechState {
   phase: BrowserSpeechPhase;
@@ -24,7 +24,13 @@ export interface BrowserSpeechEngine {
   supported: boolean;
   speak(text: string, handlers: BrowserSpeechHandlers): void;
   cancel(): void;
+  pause?(): void;
+  resume?(): void;
 }
+
+/** Eine Stimme im Browser. Nur die Instanz, die sie besitzt, darf sie stoppen. */
+let speaker: { id: number; preempt: () => void } | null = null;
+let nextSessionId = 0;
 
 export interface PodcastSpeechSource {
   sourceId: string;
@@ -112,13 +118,18 @@ export function browserSpeechEngine(): BrowserSpeechEngine {
       utterance.onstart = () => handlers.onstart();
       utterance.onend = () => handlers.onend();
       utterance.onerror = (event) => {
-        if (event.error === "interrupted" || event.error === "canceled") return;
         handlers.onerror(event.error || "Wiedergabe fehlgeschlagen");
       };
       window.speechSynthesis.speak(utterance);
     },
     cancel() {
       if (supported) window.speechSynthesis.cancel();
+    },
+    pause() {
+      if (supported) window.speechSynthesis.pause();
+    },
+    resume() {
+      if (supported) window.speechSynthesis.resume();
     },
   };
 }
@@ -128,12 +139,15 @@ export interface BrowserSpeechSession {
   subscribe(listener: (state: BrowserSpeechState) => void): () => void;
   setSource(id: string, text: string | null, pending?: boolean): void;
   play(): void;
+  pause(): void;
+  resume(): void;
   abort(): void;
   replay(): void;
   release(): void;
 }
 
 export function createBrowserSpeechSession(engine: BrowserSpeechEngine): BrowserSpeechSession {
+  const sessionId = ++nextSessionId;
   let generation = 0;
   let state = EMPTY;
   let sentences: string[] = [];
@@ -146,10 +160,41 @@ export function createBrowserSpeechSession(engine: BrowserSpeechEngine): Browser
     listeners.forEach(listener => listener(state));
   }
 
+  function isSpeaker(): boolean {
+    return speaker?.id === sessionId;
+  }
+
+  function dropSpeaker(): void {
+    if (speaker?.id === sessionId) speaker = null;
+  }
+
+  function stopped(): void {
+    state = { ...state, phase: "aborted", detail: "Wiedergabe abgebrochen", sentenceIndex: 0 };
+    emit();
+  }
+
+  function preempt(): void {
+    dropSpeaker();
+    generation += 1;
+    if (state.phase === "playing" || state.phase === "loading" || state.phase === "paused") stopped();
+  }
+
+  function claim(): void {
+    if (speaker && speaker.id !== sessionId) speaker.preempt();
+    speaker = { id: sessionId, preempt };
+  }
+
+  function stopIfSpeaker(): void {
+    if (!isSpeaker()) return;
+    dropSpeaker();
+    engine.cancel();
+  }
+
   function speakAt(index: number, gen: number): void {
     if (gen !== generation) return;
     const line = sentences[index];
     if (!line) {
+      dropSpeaker();
       state = { ...state, phase: "idle", detail: "Wiedergabe beendet", sentenceIndex: 0 };
       emit();
       return;
@@ -167,6 +212,11 @@ export function createBrowserSpeechSession(engine: BrowserSpeechEngine): Browser
       onerror: (message) => {
         if (gen !== generation) return;
         generation += 1;
+        dropSpeaker();
+        if (message === "interrupted" || message === "canceled") {
+          stopped();
+          return;
+        }
         engine.cancel();
         state = { ...state, phase: "error", detail: `n/a — ${message}`, sentenceIndex: index };
         emit();
@@ -187,7 +237,7 @@ export function createBrowserSpeechSession(engine: BrowserSpeechEngine): Browser
       currentText = speakable;
       currentPending = pending;
       generation += 1;
-      engine.cancel();
+      stopIfSpeaker();
       if (pending) {
         sentences = [];
         state = { phase: "loading", detail: "Text wird gelesen …", activeId: id, sentenceIndex: 0, sentenceCount: 0 };
@@ -220,30 +270,40 @@ export function createBrowserSpeechSession(engine: BrowserSpeechEngine): Browser
         return;
       }
       const gen = ++generation;
+      claim();
       engine.cancel();
       state = { ...state, phase: "loading", detail: "Browser-Stimme startet …", sentenceIndex: 0 };
       emit();
       speakAt(0, gen);
     },
+    pause() {
+      if (!isSpeaker() || state.phase !== "playing") return;
+      engine.pause?.();
+      state = { ...state, phase: "paused", detail: "Browser-Stimme pausiert" };
+      emit();
+    },
+    resume() {
+      if (!isSpeaker() || state.phase !== "paused") return;
+      engine.resume?.();
+      state = { ...state, phase: "playing", detail: "Browser-Stimme läuft" };
+      emit();
+    },
     abort() {
       generation += 1;
-      engine.cancel();
-      if (sentences.length === 0) {
-        state = state.phase === "loading"
-          ? { ...state, phase: "aborted", detail: "Wiedergabe abgebrochen" }
-          : state;
+      stopIfSpeaker();
+      if (sentences.length === 0 && state.phase !== "loading") {
         emit();
         return;
       }
-      state = { ...state, phase: "aborted", detail: "Wiedergabe abgebrochen", sentenceIndex: 0 };
-      emit();
+      stopped();
     },
     replay() {
       this.play();
     },
     release() {
       generation += 1;
-      engine.cancel();
+      stopIfSpeaker();
+      if (state.phase === "playing" || state.phase === "loading" || state.phase === "paused") stopped();
     },
   };
 }

@@ -1,7 +1,7 @@
 /**
- * Browser-Stimme der bestehenden Podcast-Texte.
- * Produktiver Pfad: API-Antwort → Session → gemockte Web Speech.
- * Helfer: Satzgrenzen. Kein Netz, kein Server-TTS, kein Piper.
+ * Session, Mapper und Satzgrenzen mit einer privaten Engine.
+ * Das ist kein Web-Speech-Adapter und kein React-Effekt.
+ * Die gemeinsame Stimme und der Researcher-Lauf stehen in test-podcast-lifecycle.ts.
  *   npx tsx --tsconfig script/tsconfig.jsx.json script/test-podcast-browser-speech.ts
  */
 import assert from "node:assert/strict";
@@ -165,7 +165,7 @@ function productivePath() {
   assert.equal(playbackIdForSymbols([]), "researcher");
   assert.equal(podcastRunStillCurrent(2, 2), true);
   assert.equal(podcastRunStillCurrent(2, 3), false);
-  ok("später Antwortlauf nach Symbolwechsel gilt nicht mehr");
+  ok("Gleichheitshelfer für Laufnummern, kein später Fetch");
 
   const html = renderToStaticMarkup(React.createElement(PodcastProbePanel, {
     playbackId: "MSFT",
@@ -205,7 +205,7 @@ function helperChecks() {
   ].map(file => readFileSync(file, "utf8")).join("\n");
   assert.doesNotMatch(sources, /\/api\/tts|piper|TTS_PROVIDER|de_DE-thorsten/);
   const page = readFileSync("client/src/pages/Researcher.tsx", "utf8");
-  assert.match(page, /playbackId=\{podcastPlaybackId\}/);
+  assert.match(page, /playbackId=\{podcastViewId\}/);
   assert.match(page, /podcastRunStillCurrent/);
   assert.match(page, /symbols: symbolsInResearcherView/);
   assert.doesNotMatch(page.slice(page.indexOf("async function runPodcast"), page.indexOf("async function runBriefing")), /ScreenerPanel|BriefingModal/);
@@ -213,7 +213,7 @@ function helperChecks() {
 }
 
 function main() {
-  console.log("produktiver Pfad");
+  console.log("private Engine");
   productivePath();
   console.log("Helfer");
   helperChecks();

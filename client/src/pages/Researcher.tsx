@@ -11,7 +11,7 @@ import {
   Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus, Mic
 } from "lucide-react";
 import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
-import { playbackIdForSymbols, podcastRunStillCurrent } from "@/lib/podcast-browser-speech";
+import { podcastRunStillCurrent } from "@/lib/podcast-browser-speech";
 import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { MacroPanel } from "@/components/researcher/MacroPanel";
@@ -110,14 +110,16 @@ export default function Researcher() {
   const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
   const [podcastError, setPodcastError] = useState<string | null>(null);
-  const podcastPlaybackId = playbackIdForSymbols(symbolsInResearcherView(data, briefingData));
+  // Sichtbare Tab/Region-Ansicht. Nicht die Symbolmenge aus data und briefingData:
+  // der Walk ist auf 12 begrenzt und bleibt beim Umschalten zweier geladener Ansichten gleich.
+  const podcastViewId = `${activeTab}:${region}`;
   const podcastRun = useRef(0);
   useEffect(() => {
     podcastRun.current += 1;
     setPodcastPhase("idle");
     setPodcastResult(null);
     setPodcastError(null);
-  }, [podcastPlaybackId]);
+  }, [podcastViewId]);
 
   async function runPodcast() {
     const run = ++podcastRun.current;
@@ -389,7 +391,7 @@ export default function Researcher() {
       <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
         {podcastPhase !== "idle" && (
           <div className="mb-4 min-w-0">
-            <PodcastProbePanel playbackId={podcastPlaybackId} state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+            <PodcastProbePanel playbackId={podcastViewId} state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
           </div>
         )}
         {activeTab === "macro" && (
