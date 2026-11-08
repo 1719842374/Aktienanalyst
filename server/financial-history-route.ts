@@ -2,10 +2,8 @@
  * GET /api/financial-history/:ticker — Jahresabschlüsse für Sektion 4.
  * Nur Anzeige. Kein Score, keine Umrechnung, kein neuer Provider.
  *
- * Nicht in server/routes-register.ts eingehängt (Schreibrecht Hype390).
- * Hunk, erst nach dessen Commit, erneutem Lesen und Folgeauftrag, vor der schließenden Klammer:
- *   const { registerFinancialHistoryRoute } = await import("./financial-history-route");
- *   registerFinancialHistoryRoute(app);
+ * Registriert am Ende von registerRoutes in server/routes-register.ts.
+ * Der Hype-Hunk von #466 (nach registerValueChainRoutes) bleibt außerhalb dieses Aufrufs.
  */
 import type { Express, Request, Response } from "express";
 import { fmpBalanceSheet, fmpCashFlow, fmpIncomeStatement, isFmpAvailable } from "./fmp";

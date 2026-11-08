@@ -3,6 +3,7 @@
  *   npx tsx --tsconfig script/tsconfig.jsx.json script/test-segment-statements-rest.ts
  */
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import React from "react";
@@ -19,6 +20,8 @@ import {
 } from "../shared/segment-supplement";
 import { registerFinancialHistoryRoute } from "../server/financial-history-route";
 import { registerSegmentSupplementRoute } from "../server/segment-supplement-route";
+import { registerRoutes } from "../server/routes-register";
+import { registerApiNotFound } from "../server/api-not-found";
 import { AnnualFinancials, AnnualFinancialsView, fetchFinancialHistory } from "../client/src/components/sections/AnnualFinancials";
 import { StatementSankey } from "../client/src/components/sections/StatementSankey";
 import {
@@ -345,7 +348,14 @@ assert.doesNotMatch(section2, /BrowserSpeech|speechSynthesis|PodcastTranscript/)
 assert.match(statements, /AnnualFinancials/);
 assert.match(statements, /Income Statement \(TTM\)/);
 assert.match(statements, /Margen-Wasserfall/);
-assert.doesNotMatch(register, /financial-history-route|segment-supplement-route/);
+assert.match(register, /registerFinancialHistoryRoute\(app\)/);
+assert.match(register, /registerSegmentSupplementRoute\(app\)/);
+assert.doesNotMatch(register, /registerHypeCycleRoute|hype-cycle-route/);
+const valueChainAt = register.indexOf("registerValueChainRoutes(app)");
+const recessionAt = register.indexOf("registerRecessionMarketRoutes(app)");
+const historyAt = register.indexOf("registerFinancialHistoryRoute(app)");
+assert.ok(valueChainAt >= 0 && recessionAt > valueChainAt && historyAt > recessionAt);
+assert.equal(register.slice(valueChainAt, recessionAt).includes("registerHypeCycleRoute"), false);
 assert.doesNotMatch(routes, /financial-history-route|segment-supplement-route/);
 assert.doesNotMatch(fmp, /fmpProductSegmentationRaw/);
 assert.equal(existsSync("shared/distribution.ts"), false);
@@ -360,5 +370,120 @@ for (const file of [
 ]) {
   const source = readFileSync(file, "utf8");
   assert.doesNotMatch(source, /function piotroski|waccRoicSignal|callLLMJson|OPENROUTER_API_KEY|FSD \/ Software|73\.3/);
+}
+
+const indexSource = readFileSync("server/index.ts", "utf8");
+assert.match(indexSource, /import \{ registerRoutes \} from "\.\/routes-register"/);
+assert.match(indexSource, /await registerRoutes\(httpServer, app\)/);
+assert.match(indexSource, /registerApiNotFound\(app\)/);
+
+const savedFmpKey = process.env.FMP_API_KEY;
+const savedFmpKeyAlt = process.env.FMP_API_key;
+delete process.env.FMP_API_KEY;
+delete process.env.FMP_API_key;
+const hub = express();
+hub.use(express.json());
+const hubHttp = createServer(hub);
+await registerRoutes(hubHttp, hub);
+registerApiNotFound(hub);
+const hubServer = await listen(hub);
+try {
+  delete process.env.FMP_API_KEY;
+  delete process.env.FMP_API_key;
+  const historyResponse = await fetch(`${hubServer.base}/api/financial-history/MSFT`);
+  assert.equal(historyResponse.status, 200);
+  assert.match(historyResponse.headers.get("content-type") || "", /json/);
+  const historyBody = await historyResponse.json() as {
+    ticker: string;
+    years: unknown[];
+    currency: string | null;
+    note: string | null;
+    source: string;
+  };
+  assert.equal(historyBody.ticker, "MSFT");
+  assert.deepEqual(historyBody.years, []);
+  assert.equal(historyBody.currency, null);
+  assert.match(historyBody.note ?? "", /FMP_API_KEY fehlt/);
+  assert.equal(historyBody.source, "fmp");
+  console.log("hub GET /api/financial-history/MSFT", historyResponse.status, JSON.stringify(historyBody));
+  const viaUi = await fetchFinancialHistory("msft", (method, url) => fetch(`${hubServer.base}${url}`, { method }));
+  assert.equal(viaUi.ticker, "MSFT");
+  assert.equal(viaUi.years.length, 0);
+
+  const badHistory = await fetch(`${hubServer.base}/api/financial-history/nicht%20gut`);
+  assert.equal(badHistory.status, 400);
+  assert.match(badHistory.headers.get("content-type") || "", /json/);
+
+  const segmentResponse = await fetch(`${hubServer.base}/api/segment-supplement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ticker: "MSFT",
+      segments: [{ name: "Alpha", percentage: 100, reportedGrowthPct: null }],
+      hints: [{ parent: "Alpha", name: "Erfunden", shareOfParentPct: 12, source: "Client" }],
+    }),
+  });
+  assert.equal(segmentResponse.status, 200);
+  const segmentBody = await segmentResponse.json() as {
+    ticker: string;
+    parents: { name: string; percentage: number | null }[];
+    subItems: unknown[];
+    reportedSharePct: number | null;
+    growth: { label: string; nextYearGrowthPct: number | null }[];
+    source: string;
+  };
+  assert.equal(segmentBody.ticker, "MSFT");
+  assert.equal(segmentBody.reportedSharePct, 100);
+  assert.equal(segmentBody.parents[0].percentage, 100);
+  assert.deepEqual(segmentBody.subItems, []);
+  assert.equal(segmentBody.growth[0].nextYearGrowthPct, null);
+  assert.match(segmentBody.growth[0].label, /FMP_API_KEY fehlt/);
+  assert.match(segmentBody.growth[0].label, /nicht schätzbar/);
+  assert.equal(segmentBody.source, "fmp");
+  console.log("hub POST /api/segment-supplement", segmentResponse.status, JSON.stringify({
+    ticker: segmentBody.ticker,
+    reportedSharePct: segmentBody.reportedSharePct,
+    subItems: segmentBody.subItems,
+    growth: segmentBody.growth,
+    source: segmentBody.source,
+  }));
+  const viaSegmentUi = await fetchSegmentSupplement(
+    { ticker: "MSFT", segments: [] },
+    (method, url, data) => fetch(`${hubServer.base}${url}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  );
+  assert.equal(viaSegmentUi.reportedSharePct, null);
+  assert.match(viaSegmentUi.reportedShareReason ?? "", /keine gemeldeten Segmente/);
+  assert.deepEqual(viaSegmentUi.subItems, []);
+
+  const badSegment = await fetch(`${hubServer.base}/api/segment-supplement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticker: "MSFT", segments: [{ name: "Alpha", percentage: "100" }] }),
+  });
+  assert.equal(badSegment.status, 400);
+
+  const unknown = await fetch(`${hubServer.base}/api/this-route-does-not-exist-465`);
+  assert.equal(unknown.status, 404);
+  const unknownBody = await unknown.json() as { error?: string };
+  assert.equal(unknownBody.error, "not_found");
+  console.log("hub GET unknown", unknown.status, JSON.stringify(unknownBody));
+
+  const oldSegmentGrowth = await fetch(`${hubServer.base}/api/segment-growth/!!!`);
+  assert.equal(oldSegmentGrowth.status, 400);
+  assert.notEqual(oldSegmentGrowth.status, 404);
+  const oldBody = await oldSegmentGrowth.json() as { error?: string };
+  assert.notEqual(oldBody.error, "not_found");
+  console.log("hub GET /api/segment-growth/!!!", oldSegmentGrowth.status, JSON.stringify(oldBody));
+} finally {
+  await hubServer.close();
+  hubHttp.close();
+  if (savedFmpKey === undefined) delete process.env.FMP_API_KEY;
+  else process.env.FMP_API_KEY = savedFmpKey;
+  if (savedFmpKeyAlt === undefined) delete process.env.FMP_API_key;
+  else process.env.FMP_API_key = savedFmpKeyAlt;
 }
 console.log("segment statements rest: OK");

@@ -3,10 +3,8 @@
  * Körper-Hinweise werden ignoriert. Unterposten kommen nur aus dem Server-Provider,
  * der in der Produktfassung leer ist. Kein LLM, kein neuer Key.
  *
- * Nicht in server/routes-register.ts eingehängt (Schreibrecht Hype390).
- * Hunk, erst nach dessen Commit, erneutem Lesen und Folgeauftrag, vor der schließenden Klammer:
- *   const { registerSegmentSupplementRoute } = await import("./segment-supplement-route");
- *   registerSegmentSupplementRoute(app);
+ * Registriert am Ende von registerRoutes in server/routes-register.ts.
+ * Der Produkt-Provider für Unterposten bleibt leer. Der Hype-Hunk von #466 bleibt unberührt.
  */
 import type { Express, Request, Response } from "express";
 import { fmpSegmentationRows, isFmpAvailable } from "./fmp";
