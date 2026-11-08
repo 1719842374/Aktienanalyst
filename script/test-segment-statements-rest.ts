@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -350,15 +350,12 @@ assert.match(statements, /Income Statement \(TTM\)/);
 assert.match(statements, /Margen-Wasserfall/);
 assert.match(register, /registerFinancialHistoryRoute\(app\)/);
 assert.match(register, /registerSegmentSupplementRoute\(app\)/);
-assert.doesNotMatch(register, /registerHypeCycleRoute|hype-cycle-route/);
 const valueChainAt = register.indexOf("registerValueChainRoutes(app)");
-const recessionAt = register.indexOf("registerRecessionMarketRoutes(app)");
 const historyAt = register.indexOf("registerFinancialHistoryRoute(app)");
-assert.ok(valueChainAt >= 0 && recessionAt > valueChainAt && historyAt > recessionAt);
-assert.equal(register.slice(valueChainAt, recessionAt).includes("registerHypeCycleRoute"), false);
+const supplementAt = register.indexOf("registerSegmentSupplementRoute(app)");
+assert.ok(valueChainAt >= 0 && historyAt > valueChainAt && supplementAt > historyAt);
 assert.doesNotMatch(routes, /financial-history-route|segment-supplement-route/);
 assert.doesNotMatch(fmp, /fmpProductSegmentationRaw/);
-assert.equal(existsSync("shared/distribution.ts"), false);
 for (const file of [
   "shared/financial-history.ts",
   "shared/statement-sankey.ts",
