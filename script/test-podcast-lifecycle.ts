@@ -3,16 +3,47 @@
  * Transport: eine gemeinsame speechSynthesis-Schnittstelle und fetch.
  * Zwei BrowserSpeechControls und zwei Sessions nutzen browserSpeechEngine(),
  * keine privaten Mock-Engines.
+ *
+ * jsdom ist keine Abhängigkeit von `npm ci`. Ohne die Testdependency endet
+ * der Lauf, bevor eine Assertion läuft.
+ *
+ *   npm install --prefix .test-deps --ignore-scripts jsdom@24.1.3
  *   npx tsx --tsconfig script/tsconfig.jsx.json script/test-podcast-lifecycle.ts
+ *
+ * Liegt jsdom schon in der Node-Auflösung oder in NODE_PATH, wird das benutzt.
+ * `.test-deps` liegt relativ zum Repo-Root und ändert package.json nicht.
  */
 import assert from "node:assert/strict";
 import { createRequire, register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import path from "node:path";
 
 register("./empty-css-loader.mjs", pathToFileURL("./script/"));
 
 const require = createRequire(import.meta.url);
-const { JSDOM } = require("/tmp/jsdom-local/node_modules/jsdom");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const testDepsJsdom = path.join(repoRoot, ".test-deps", "node_modules", "jsdom");
+
+function loadJsdom(): { JSDOM: new (html: string, options: { url: string; pretendToBeVisual: boolean }) => { window: any; close: () => void } } {
+  try {
+    return require("jsdom");
+  } catch (error) {
+    try {
+      return require(testDepsJsdom);
+    } catch {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("jsdom fehlt. npm ci allein startet diesen Test nicht.");
+      console.error("Testdependency, ohne package.json oder package-lock.json zu ändern:");
+      console.error("  npm install --prefix .test-deps --ignore-scripts jsdom@24.1.3");
+      console.error("Aufruf aus dem Repo-Root:");
+      console.error("  npx tsx --tsconfig script/tsconfig.jsx.json script/test-podcast-lifecycle.ts");
+      console.error(detail);
+      process.exit(1);
+    }
+  }
+}
+
+const { JSDOM } = loadJsdom();
 
 const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
   url: "http://localhost/researcher",
