@@ -354,10 +354,10 @@ function companyMatchTokens(value: string): string[] {
 }
 
 function companyReferenced(text: string, companyName: string): boolean {
-  const tokens = companyMatchTokens(companyName);
-  if (!text.trim() || tokens.length === 0) return false;
-  const compact = foldCompany(text).replace(/\s+/g, "");
-  return tokens.some((token) => compact.includes(token));
+  const wanted = companyMatchTokens(companyName);
+  if (!text.trim() || wanted.length === 0) return false;
+  const have = new Set(companyMatchTokens(text));
+  return wanted.some((token) => have.has(token));
 }
 
 export function outlineEchoMatches(payload: unknown, companyName: string, industry = "", sector = ""): boolean {

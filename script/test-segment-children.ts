@@ -1319,6 +1319,51 @@ const shortMiss = shortNames.filter((name) => {
 });
 gap("owner-short-names", shortMiss.length === 0, shortMiss.join(" | ") || "ok");
 
+function ownerShareKept(company: string, owner: string, ownerParent = ""): boolean {
+  const reviewed = reviewKiChildren("Seg", {
+    children: [{
+      name: "Produkt",
+      owner,
+      ownerParent,
+      shareOfParentPct: 40,
+      growthPct: 5,
+      basis: "Linie",
+      source: `${company} Annual Report 2024`,
+    }],
+  }, null, { companyName: company });
+  return reviewed.children.length === 1 && reviewed.children[0]?.shareOfParentPct === 40 && reviewed.reason == null;
+}
+const tokenCases: Array<[string, string, string, boolean]> = [
+  ["HP Inc.", "HPE", "", false],
+  ["HP Inc.", "Hewlett Packard Enterprise", "", false],
+  ["HP Inc.", "Shopify", "", false],
+  ["HP Inc.", "HP Inc.", "", true],
+  ["BP p.l.c.", "BPost", "", false],
+  ["BP p.l.c.", "Shopify", "", false],
+  ["BP p.l.c.", "BP p.l.c.", "", true],
+  ["3M Company", "M3M India", "", false],
+  ["3M Company", "3M Company", "", true],
+  ["AT&T Inc.", "Atticus Capital", "", false],
+  ["AT&T Inc.", "AT&T Inc.", "", true],
+  ["L'Oréal S.A.", "L'Oréal S.A.", "", true],
+  ["Xiaomi Corporation", "Xiaomi Corporation", "", true],
+];
+const tokenMiss = tokenCases.filter(([company, owner, parent, want]) => ownerShareKept(company, owner, parent) !== want)
+  .map(([company, owner, , want]) => `${company}/${owner} soll=${want}`);
+const youtubeKept = reviewKiChildren("Google Services", {
+  children: [{ name: "YouTube", owner: "Google LLC", ownerParent: "Alphabet Inc.", shareOfParentPct: 40, growthPct: 5, basis: "Video", source: "Alphabet Inc. Annual Report 2024" }],
+}, null, { companyName: "Alphabet Inc." });
+const youtubeOnlyGoogle = reviewKiChildren("Google Services", {
+  children: [{ name: "YouTube", owner: "Google LLC", shareOfParentPct: 40, growthPct: 5, basis: "Video", source: "Alphabet Inc. Annual Report 2024" }],
+}, null, { companyName: "Alphabet Inc." });
+gap(
+  "owner-whole-token",
+  tokenMiss.length === 0
+    && youtubeKept.children[0]?.shareOfParentPct === 40
+    && youtubeOnlyGoogle.children.length === 0,
+  tokenMiss.join(" | ") || `youtube=${youtubeKept.children.length}/${youtubeOnlyGoogle.children.length}`,
+);
+
 const subsidiary = reviewKiChildren("Google Services", {
   children: [{ name: "YouTube", owner: "Google LLC", ownerParent: "Alphabet Inc.", basis: "Video", source: "Alphabet Annual Report 2024" }],
 }, null, { companyName: "Alphabet Inc." });
