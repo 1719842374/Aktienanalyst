@@ -26,6 +26,9 @@ export const NO_SEGMENT_CHILDREN = "n/a — weder FMP noch KI liefern Untersegme
 export const KI_WITHOUT_BASIS = "n/a — KI-Schätzung ohne Beleg";
 export const KI_SUM_EXCEEDS_PARENT = "n/a — KI-Summe überschreitet das Elternsegment";
 export const KI_NEGATIVE = "n/a — negativer KI-Wert verworfen";
+export const KI_UNAVAILABLE = "n/a — KI nicht erreichbar";
+export const SEGMENT_UNKNOWN = "n/a — Segment ist in der serverseitigen Liste nicht enthalten";
+export const BASIS_TEXT_MAX = 80;
 
 const SKIP_KEYS = new Set([
   "symbol", "date", "reportedCurrency", "cik", "fillingDate",
@@ -180,7 +183,7 @@ export function reviewKiChildren(
     const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; basis?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
-    const basis = typeof rec.basis === "string" ? rec.basis.trim() : "";
+    const basis = typeof rec.basis === "string" ? rec.basis.trim().slice(0, BASIS_TEXT_MAX) : "";
     if (!basis) {
       notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
       continue;

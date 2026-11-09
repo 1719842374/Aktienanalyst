@@ -18,7 +18,13 @@ export async function fetchSegmentChildren(
   request: RequestFn = (method, url) => apiRequest(method, url),
 ): Promise<SegmentChildrenResult> {
   const response = await request("GET", segmentChildrenUrl(input.ticker, input.parent, input.kind));
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    const reason = body && typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : `n/a — Untersegmente nicht erreichbar`;
+    throw new Error(reason);
+  }
   return await response.json() as SegmentChildrenResult;
 }
 
@@ -100,6 +106,11 @@ export function SegmentChildrenPanel({
     queryFn: () => fetchSegmentChildren({ ticker, parent, kind }, request),
   });
   if (query.isLoading) return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-loading">Untersegmente …</p>;
-  if (query.isError || !query.data) return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">n/a — Untersegmente nicht erreichbar</p>;
+  if (query.isError || !query.data) {
+    const message = query.error instanceof Error && query.error.message.trim()
+      ? query.error.message.trim()
+      : "n/a — Untersegmente nicht erreichbar";
+    return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">{message}</p>;
+  }
   return <SegmentChildrenList data={query.data} />;
 }

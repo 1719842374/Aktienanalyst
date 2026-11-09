@@ -19,15 +19,20 @@ import {
   fmpIncomeStatement,
   fmpSegmentationRows,
   isFmpAvailable,
+  promoteNonGeoRowsToBusiness,
 } from "./fmp";
-import { callLLMJson } from "./llm-openrouter";
+import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { fetchSecBusinessSegments } from "./sec-segments";
+import { curatedSegmentNames } from "./curated-product-segments";
 import {
+  KI_UNAVAILABLE,
   SEGMENT_CHILDREN_ROUTE,
-  canonicalSegmentName,
+  SEGMENT_UNKNOWN,
   childrenFromFmpRows,
   reportedParentRevenue,
   resolveSegmentChildren,
   reviewKiChildren,
+  segmentNamesFromFmpRows,
   type SegmentChildrenResult,
 } from "../shared/segment-children";
 
@@ -48,9 +53,12 @@ export function resetSegmentGrowthCacheForTests(): void {
 }
 
 const CHILDREN_CACHE_MS = 24 * 60 * 60 * 1000;
+const CHILDREN_ERROR_CACHE_MS = 60 * 1000;
+const CHILDREN_CACHE_MAX = 400;
+export const SEGMENT_CHILDREN_KI_TIMEOUT_MS = 15_000;
 const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
-const childCache = new Map<string, { at: number; body: SegmentChildrenResult }>();
+const childCache = new Map<string, { at: number; ttl: number; body: SegmentChildrenResult }>();
 const rateBuckets = new Map<string, number[]>();
 
 export function resetSegmentChildrenGuardsForTests(): void {
@@ -139,24 +147,54 @@ export interface SegmentChildrenDeps {
   fmpAvailable: () => boolean;
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
   ki: (ticker: string, parent: string) => Promise<unknown>;
+  names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
 }
 
+async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
+  const ownRows = await fmpSegmentationRows(kind, ticker, "annual");
+  const names = segmentNamesFromFmpRows(ownRows);
+  if (kind === "geographic") return names;
+  if (names.length === 0) {
+    for (const name of curatedSegmentNames(ticker)) names.push(name);
+  }
+  if (names.length === 0) {
+    const sec = await fetchSecBusinessSegments(ticker, ticker).catch(() => null);
+    for (const segment of sec?.segments ?? []) {
+      if (typeof segment.name === "string" && segment.name.trim()) names.push(segment.name.trim());
+    }
+  }
+  const geoRows = await fmpSegmentationRows("geographic", ticker, "annual");
+  const geo = segmentNamesFromFmpRows(geoRows).map((name) => ({ name, revenue: 1 }));
+  const business = names.map((name) => ({ name, revenue: 1 }));
+  for (const row of promoteNonGeoRowsToBusiness(business, geo)) {
+    if (!names.some((name) => name.toLowerCase() === row.name.toLowerCase())) names.push(row.name);
+  }
+  return names;
+}
+
 async function defaultKiChildren(ticker: string, parent: string): Promise<unknown> {
-  const result = await callLLMJson({
-    systemPrompt: "Antworte nur mit JSON. Erfinde keine Untersegmente und keine Zahlen. Unbekannt heißt leeres children-Array.",
-    prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Nur Untersegmente dieses einen FMP-Segmentnamens. Jeder Wert braucht ein Feld basis mit Quelle oder Begründung. Form: {"children":[{"name":"","shareOfParentPct":null,"basis":""}]}. Ohne Beleg: {"children":[]}.`,
-    maxTokens: 400,
-    temperature: 0,
-  });
-  return result?.data ?? null;
+  if (!isLLMAvailable()) return null;
+  try {
+    const result = await callLLMJson({
+      systemPrompt: "Antworte nur mit JSON. Erfinde keine Untersegmente und keine Zahlen. Unbekannt heißt leeres children-Array.",
+      prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Nur Untersegmente dieses einen serverseitigen Segmentnamens. Jeder Wert braucht ein Feld basis mit Quelle oder Begründung. Form: {"children":[{"name":"","shareOfParentPct":null,"basis":""}]}. Ohne Beleg: {"children":[]}.`,
+      maxTokens: 400,
+      temperature: 0,
+      signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+    });
+    return result?.data ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
   return {
     fmpAvailable: isFmpAvailable,
     raw: (kind, ticker) => fmpSegmentationRows(kind, ticker, "annual"),
+    names: defaultDisplayedNames,
     ki: defaultKiChildren,
   };
 }
@@ -185,6 +223,7 @@ export async function loadSegmentChildren(
   } catch {
     kiPayload = null;
   }
+  if (kiPayload == null) return { parent: label, children: [], reason: KI_UNAVAILABLE };
   return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label));
 }
 
@@ -224,19 +263,49 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     const deps = childrenDeps ?? defaultSegmentChildrenDeps();
     const now = deps.now?.() ?? Date.now();
     const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
+    const cacheKey = `${ticker.toUpperCase()}|${kind}|${parent.toLowerCase().replace(/\s+/g, " ").trim()}`;
+    const expired: string[] = [];
+    childCache.forEach((entry, key) => {
+      if (now - entry.at >= entry.ttl) expired.push(key);
+    });
+    for (let i = 0; i < expired.length; i++) childCache.delete(expired[i]);
+    const hit = childCache.get(cacheKey);
+    if (hit && now - hit.at < hit.ttl) return res.json(hit.body);
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     if (!takeSegmentChildrenSlot(ip, now, limit.max, limit.windowMs)) {
       return res.status(429).json({ error: "Zu viele Abfragen" });
     }
+    if (rateBuckets.size > 2000) {
+      const stale: string[] = [];
+      rateBuckets.forEach((stamps, key) => {
+        const fresh = stamps.filter((at) => now - at < limit.windowMs);
+        if (fresh.length === 0) stale.push(key);
+        else rateBuckets.set(key, fresh);
+      });
+      for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
+    }
     try {
       const rawRows = deps.fmpAvailable() ? await deps.raw(kind, ticker) : [];
-      const canonical = canonicalSegmentName(Array.isArray(rawRows) ? rawRows : [], parent);
-      if (!canonical) return res.status(400).json({ error: "Segment ist nicht in der FMP-Liste" });
-      const cacheKey = `${ticker.toUpperCase()}|${kind}|${canonical}`;
-      const hit = childCache.get(cacheKey);
-      if (hit && now - hit.at < CHILDREN_CACHE_MS) return res.json(hit.body);
+      const listed = deps.names
+        ? await deps.names(ticker, kind)
+        : segmentNamesFromFmpRows(Array.isArray(rawRows) ? rawRows : []);
+      const wanted = parent.toLowerCase().replace(/\s+/g, " ").trim();
+      const canonical = listed.find((name) => name.toLowerCase().replace(/\s+/g, " ").trim() === wanted) ?? null;
+      if (!canonical) return res.status(400).json({ error: SEGMENT_UNKNOWN });
       const body = await loadSegmentChildren(ticker, canonical, kind, deps);
-      childCache.set(cacheKey, { at: now, body });
+      const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
+      if (childCache.size >= CHILDREN_CACHE_MAX) {
+        let oldestKey: string | null = null;
+        let oldestAt = Number.POSITIVE_INFINITY;
+        childCache.forEach((entry, key) => {
+          if (entry.at < oldestAt) {
+            oldestAt = entry.at;
+            oldestKey = key;
+          }
+        });
+        if (oldestKey) childCache.delete(oldestKey);
+      }
+      childCache.set(cacheKey, { at: now, body, ttl });
       return res.json(body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Untersegmente fehlgeschlagen";

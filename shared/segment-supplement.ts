@@ -220,8 +220,8 @@ export function assignProvenHints(
       source,
       override: true,
       label: share == null
-        ? "Override: nicht schätzbar — Quelle ohne bezifferbaren Anteil am Elternsegment"
-        : "Override: Anteil innerhalb des Elternsegments, nicht vom Gesamtumsatz",
+        ? `Hinweis: ${source} — n/a — nicht schätzbar, Anteil am Elternsegment nicht belegt`
+        : `Hinweis: ${source}`,
       note,
     });
   }

@@ -1,9 +1,12 @@
 /**
  * Segmentliste: vorhandene YoY-/BERECHNET-Funktion und Untersegmente.
  * Kein Live-FMP und kein Live-LLM.
+ *
+ * Aufruf: npx tsx --tsconfig script/tsconfig.jsx.json script/test-segment-children.ts
  */
 import React from "react";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import express from "express";
 import {
@@ -214,7 +217,7 @@ let limitKi = 0;
 const limitApp = express();
 registerSegmentGrowthRoute(limitApp, {
   fmpAvailable: () => true,
-  raw: async () => [{ fiscalYear: "2024", data: { Server: 129 } }],
+  raw: async () => [{ fiscalYear: "2024", data: { Server: 129, Azure: 80 } }],
   ki: async () => {
     limitKi += 1;
     return { children: [] };
@@ -225,7 +228,7 @@ const limitServer = limitApp.listen(0);
 const limitPort = (limitServer.address() as { port: number }).port;
 try {
   const first = await fetch(`http://127.0.0.1:${limitPort}/api/segment-children/MSFT?parent=Server&kind=product`);
-  const second = await fetch(`http://127.0.0.1:${limitPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  const second = await fetch(`http://127.0.0.1:${limitPort}/api/segment-children/MSFT?parent=Azure&kind=product`);
   gap("rate-limit", first.status === 200 && second.status === 429 && limitKi === 1, `status=${first.status}/${second.status} ki=${limitKi}`);
 } finally {
   await new Promise<void>((resolve, reject) => limitServer.close((err) => err ? reject(err) : resolve()));
@@ -258,6 +261,130 @@ gap(
   noBasis.children.length === 0 && /ohne Beleg/.test(noBasis.reason ?? "") && noBasis.children.every((row) => row.shareOfParentPct == null),
   noBasis.reason ?? `share=${String(noBasis.children[0]?.shareOfParentPct)}`,
 );
+
+const hinted = buildSegmentSupplement(
+  [{ name: "Server", percentage: 100, reportedGrowthPct: null }],
+  [],
+  [{ parent: "Server", name: "Azure", shareOfParentPct: 20, source: "Fixture-Quelle" }],
+);
+gap(
+  "hint-not-override",
+  hinted.subItems[0]?.label.includes("Hinweis") === true && !/Override/.test(hinted.subItems[0]?.label ?? ""),
+  hinted.subItems[0]?.label ?? "kein Unterposten",
+);
+
+resetSegmentChildrenGuardsForTests();
+let downKi = 0;
+let clock = 0;
+const downApp = express();
+downApp.set("trust proxy", 1);
+registerSegmentGrowthRoute(downApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2024", data: { Server: 100 } }],
+  ki: async () => {
+    downKi += 1;
+    return null;
+  },
+  now: () => clock,
+});
+const downServer = downApp.listen(0);
+const downPort = (downServer.address() as { port: number }).port;
+try {
+  const first = await fetch(`http://127.0.0.1:${downPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  const firstBody = await first.json() as { reason?: string };
+  clock = 61_000;
+  const second = await fetch(`http://127.0.0.1:${downPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  const secondBody = await second.json() as { reason?: string };
+  gap(
+    "ki-down-not-cached-24h",
+    downKi === 2 && /KI nicht erreichbar/.test(firstBody.reason ?? "") && !/weder FMP noch KI/.test(firstBody.reason ?? "") && /KI nicht erreichbar/.test(secondBody.reason ?? ""),
+    `ki=${downKi} ${firstBody.reason}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => downServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const xffApp = express();
+xffApp.set("trust proxy", 1);
+registerSegmentGrowthRoute(xffApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2024", data: { Server: 100, Azure: 40 } }],
+  ki: async () => ({ children: [] }),
+  rateLimit: { max: 1, windowMs: 60_000 },
+});
+const xffServer = xffApp.listen(0);
+const xffPort = (xffServer.address() as { port: number }).port;
+try {
+  const headers = (xff: string) => ({ "x-forwarded-for": xff });
+  const a = await fetch(`http://127.0.0.1:${xffPort}/api/segment-children/MSFT?parent=Server&kind=product`, { headers: headers("9.9.9.9, 1.1.1.1") });
+  const spoof = await fetch(`http://127.0.0.1:${xffPort}/api/segment-children/MSFT?parent=Azure&kind=product`, { headers: headers("8.8.8.8, 1.1.1.1") });
+  const other = await fetch(`http://127.0.0.1:${xffPort}/api/segment-children/MSFT?parent=Azure&kind=product`, { headers: headers("9.9.9.9, 2.2.2.2") });
+  gap("xff-no-bypass", a.status === 200 && spoof.status === 429 && other.status === 200, `${a.status}/${spoof.status}/${other.status}`);
+} finally {
+  await new Promise<void>((resolve, reject) => xffServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let namedKi = "";
+const catalogApp = express();
+registerSegmentGrowthRoute(catalogApp, {
+  fmpAvailable: () => true,
+  raw: async () => [],
+  names: async () => ["Rare Disease"],
+  ki: async (_ticker, parent) => {
+    namedKi = parent;
+    return { children: [{ name: "Insulin", shareOfParentPct: 10, basis: "Geschäftsbericht" }] };
+  },
+});
+const catalogServer = catalogApp.listen(0);
+const catalogPort = (catalogServer.address() as { port: number }).port;
+try {
+  const ok = await fetch(`http://127.0.0.1:${catalogPort}/api/segment-children/NVO?parent=${encodeURIComponent("rare disease")}&kind=product`);
+  const okBody = await ok.json() as { children?: { name: string }[] };
+  const unknown = await fetch(`http://127.0.0.1:${catalogPort}/api/segment-children/NVO?parent=${encodeURIComponent("frei erfunden")}&kind=product`);
+  const unknownBody = await unknown.json() as { error?: string };
+  gap(
+    "server-catalog",
+    ok.status === 200 && namedKi === "Rare Disease" && okBody.children?.[0]?.name === "Insulin" && unknown.status === 400 && /serverseitigen Liste/.test(unknownBody.error ?? ""),
+    `status=${ok.status}/${unknown.status} parent=${namedKi} err=${unknownBody.error}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => catalogServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const longBasis = "Quelle ".repeat(40);
+const clipped = await loadSegmentChildren("MSFT", "Server", "product", {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2024", data: { Server: 100 } }],
+  ki: async () => ({ children: [{ name: "Azure", shareOfParentPct: 10, basis: longBasis }] }),
+});
+gap("basis-length", (clipped.children[0]?.basis?.length ?? 999) <= 80, `len=${clipped.children[0]?.basis?.length}`);
+
+resetSegmentChildrenGuardsForTests();
+let rawCalls = 0;
+const missApp = express();
+registerSegmentGrowthRoute(missApp, {
+  fmpAvailable: () => true,
+  raw: async () => {
+    rawCalls += 1;
+    return [{ fiscalYear: "2024", data: { Server: 100 } }];
+  },
+  ki: async () => ({ children: [{ name: "Azure", shareOfParentPct: 10, basis: "Bericht" }] }),
+});
+const missServer = missApp.listen(0);
+const missPort = (missServer.address() as { port: number }).port;
+try {
+  await fetch(`http://127.0.0.1:${missPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  const afterFirst = rawCalls;
+  await fetch(`http://127.0.0.1:${missPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  gap("fmp-after-cache-miss", rawCalls === afterFirst && afterFirst > 0, `raw=${afterFirst}->${rawCalls}`);
+} finally {
+  await new Promise<void>((resolve, reject) => missServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const indexSource = readFileSync("server/index.ts", "utf8");
+gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");
 
 if (gaps.length > 0) {
   console.log(`RED gaps: ${gaps.length}`);
