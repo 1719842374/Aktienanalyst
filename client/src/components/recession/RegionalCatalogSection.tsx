@@ -31,15 +31,15 @@ function SlotRow({ regionId, slot }: { regionId: string; slot: RegionSlot }) {
 
 function CatalogTile({ region }: { region: RegionCatalog }) {
   return (
-    <div className="rounded-md border border-border bg-muted/10 p-2" data-testid={`catalog-${region.id}`}>
-      <div className="flex items-baseline justify-between gap-2 mb-2">
-        <h3 className="text-xs font-semibold">{region.label}</h3>
-        <span className="text-[10px] font-mono text-muted-foreground" data-testid={`catalog-weight-${region.id}`}>
+    <div className="min-w-0 rounded-md border border-border bg-muted/10 p-2" data-testid={`catalog-${region.id}`}>
+      <div className="flex items-baseline justify-between gap-2 mb-2 min-w-0">
+        <h3 className="min-w-0 text-xs font-semibold">{region.label}</h3>
+        <span className="shrink-0 text-[10px] font-mono text-muted-foreground" data-testid={`catalog-weight-${region.id}`}>
           ×{region.weight.toFixed(2)}
         </span>
       </div>
       {region.note && (
-        <p className="text-[10px] text-muted-foreground mb-2" data-testid={`catalog-note-${region.id}`}>{region.note}</p>
+        <p className="text-[10px] text-muted-foreground mb-2 break-words" data-testid={`catalog-note-${region.id}`}>{region.note}</p>
       )}
       <div className="flex gap-3 text-[11px] mb-2">
         <span>
@@ -84,12 +84,12 @@ export function RegionalCatalogSection({ catalogs }: { catalogs: RegionalCatalog
         Gleiches Raster, andere Ämter. Ein fehlender Druck zählt weder im Netto noch im Max.
         Die Mischung nimmt die US-Dashboard-P, die Kachel zeigt nur die Katalog-Slots.
       </p>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-3 min-w-0">
         {catalogs.regions.map(region => (
           <CatalogTile key={region.id} region={region} />
         ))}
       </div>
-      <div className="text-xs space-y-1">
+      <div className="text-xs space-y-1 break-words">
         <div data-testid="catalog-blend-recession">
           Gewichtete Rezession 12M:{" "}
           <span className={`font-mono font-semibold ${catalogs.blendedRecession12m == null ? "" : getProbColor(catalogs.blendedRecession12m)}`}>

@@ -2,7 +2,7 @@
  * Eurozone and Japan prints for the recession catalogs.
  * Fetch failures become empty series. The scorer does not invent a number.
  */
-import { fmpRatiosTtm } from "./fmp";
+import { fmpHistoricalPrices, fmpRatiosTtm } from "./fmp";
 import { parseBojSeries, parseEcbCsv } from "./liquidity-briefing-math";
 import { fetchVstoxxVol, fetchYahooDailySeries } from "./recession-markets";
 import { fetchYahooTimeseriesFundamentals } from "./yahoo-fetcher";
@@ -328,11 +328,46 @@ export function ashrPeFromProbes(input: {
   return { value: null, source: `n/a — ASHR KGV (${fmpWhy}; ${yahooWhy})` };
 }
 
-async function ashrPe(today: string): Promise<{ value: number | null; source: string }> {
+/** ASHR lists in US-$, same currency as BENCHMARK_REGIONS.CN in server/buffett-route.ts. */
+const ASHR_LISTING_CURRENCY = "USD";
+const ASIA_SUPPLEMENT_TIMEOUT_MS = 12000;
+
+async function bounded<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work.catch(() => fallback),
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Same close fields as parseClose in server/recession-markets.ts. */
+function closesFromPriceRows(raw: unknown): { date: string; close: number }[] {
+  const rows = Array.isArray(raw) ? raw : [];
+  const out: { date: string; close: number }[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { date?: unknown; Date?: unknown; close?: unknown; adjClose?: unknown; price?: unknown };
+    const date = String(rec.date || rec.Date || "").slice(0, 10);
+    const close = Number(rec.close ?? rec.adjClose ?? rec.price);
+    if (!date || !Number.isFinite(close) || !(close > 0)) continue;
+    out.push({ date, close });
+  }
+  return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+async function ashrPe(today: string, lastClose: number | null): Promise<{ value: number | null; source: string }> {
   const fmp = await indexPe(["ASHR"]);
   if (fmp) return ashrPeFromProbes({ fmp, yahoo: null, today });
   try {
-    const yahoo = await fetchYahooTimeseriesFundamentals("ASHR");
+    const yahoo = lastClose != null && lastClose > 0
+      ? await fetchYahooTimeseriesFundamentals("ASHR", { price: lastClose, currency: ASHR_LISTING_CURRENCY })
+      : await fetchYahooTimeseriesFundamentals("ASHR");
     return ashrPeFromProbes({
       fmp: null,
       yahoo: { pe: yahoo.pe, status: yahoo.status, httpStatus: yahoo.httpStatus, epsAsOf: yahoo.asOf.eps },
@@ -357,22 +392,43 @@ function monthEndPoints(points: DatedPoint[]): DatedPoint[] {
   return Array.from(byMonth.values());
 }
 
-async function chinaVolPrint(cosd: string): Promise<{ points: DatedPoint[]; source: string }> {
-  let bars: { date: string; value: number }[] = [];
-  try {
-    bars = await fetchYahooDailySeries("ASHR", cosd);
-  } catch {
-    bars = [];
-  }
-  const closes = bars
-    .filter(bar => bar.date && Number.isFinite(bar.value) && bar.value > 0)
-    .map(bar => ({ date: bar.date, close: bar.value }))
+/** Month-end realized vol. Same shared realizedVol20 the ASHR chart uses after FMP closes. */
+export function ashrRealizedVolPoints(closes: { date: string; close: number }[]): DatedPoint[] {
+  const sorted = closes
+    .filter(bar => bar.date && Number.isFinite(bar.close) && bar.close > 0)
     .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-  const points = monthEndPoints(realizedVol20(closes));
-  if (points.length === 0) {
-    return { points: [], source: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T" };
+  return monthEndPoints(realizedVol20(sorted));
+}
+
+async function ashrCloses(cosd: string): Promise<{ closes: { date: string; close: number }[]; via: "fmp" | "yahoo" | "none" }> {
+  try {
+    const raw = await fmpHistoricalPrices("ASHR", cosd, new Date().toISOString().slice(0, 10));
+    const closes = closesFromPriceRows(raw);
+    if (ashrRealizedVolPoints(closes).length) return { closes, via: "fmp" };
+  } catch {
+    /* no key or HTTP error: the Yahoo chart is the same fallback the markets path can still use */
   }
-  return { points, source: "Yahoo ASHR, realisierte Vol 20T annualisiert" };
+  try {
+    const bars = await fetchYahooDailySeries("ASHR", cosd);
+    const closes = bars
+      .filter(bar => bar.date && Number.isFinite(bar.value) && bar.value > 0)
+      .map(bar => ({ date: bar.date, close: bar.value }));
+    if (closes.length) return { closes, via: "yahoo" };
+  } catch {
+    /* chart empty */
+  }
+  return { closes: [], via: "none" };
+}
+
+function chinaVolFromCloses(via: "fmp" | "yahoo" | "none", closes: { date: string; close: number }[]): { points: DatedPoint[]; source: string } {
+  const points = ashrRealizedVolPoints(closes);
+  if (points.length === 0 || via === "none") {
+    return { points: [], source: "n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)" };
+  }
+  const source = via === "fmp"
+    ? "FMP ASHR, realisierte Vol 20T annualisiert"
+    : "Yahoo ASHR, realisierte Vol 20T annualisiert";
+  return { points, source };
 }
 
 function yearsAgo(today: string, years: number): string {
@@ -431,10 +487,11 @@ async function gdpUsd(id: string): Promise<{ value: number | null; source: strin
   return { value, source: `FRED ${id} ${year}`.trim() };
 }
 
-export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
+/** Eurostat, OECD, FRED, ECB, BoJ, STOXX and TOPIX. Same calls as main, without ASHR or the GDP weights. */
+async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, cnPe, cnVol, jpGdp, cnGdp, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -448,10 +505,6 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
     stoxxPe(today),
     topixPe(),
-    ashrPe(today),
-    chinaVolPrint(cosd),
-    gdpUsd(ASIA_GDP_USD.JP),
-    gdpUsd(ASIA_GDP_USD.CN),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
   let oecdIp: DatedPoint[] = [];
@@ -483,8 +536,50 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
     jpVol: null,
-    cnVolPoints: cnVol.points,
-    cnVolSource: cnVol.source,
+    cnVolPoints: [],
+    cnVolSource: "n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)",
+    cnPe: null,
+    cnPeSource: "n/a — ASHR KGV (FMP leer)",
+    jpGdpUsd: null,
+    cnGdpUsd: null,
+    jpGdpSource: `n/a — FRED ${ASIA_GDP_USD.JP} leer`,
+    cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} leer`,
+  };
+}
+
+type AsiaSupplement = Pick<RegionalPrints, "cnVolPoints" | "cnVolSource" | "cnPe" | "cnPeSource" | "jpGdpUsd" | "cnGdpUsd" | "jpGdpSource" | "cnGdpSource">;
+
+/** A failed ASHR/GDP load leaves the legacy EZ/JP prints untouched. */
+export function applyAsiaSupplement(legacy: RegionalPrints, asia: AsiaSupplement | null): RegionalPrints {
+  if (!asia) {
+    return {
+      ...legacy,
+      cnVolPoints: [],
+      cnVolSource: "n/a — ASHR-Vol nicht geladen",
+      cnPe: null,
+      cnPeSource: "n/a — ASHR KGV nicht geladen",
+      jpGdpUsd: null,
+      cnGdpUsd: null,
+      jpGdpSource: `n/a — FRED ${ASIA_GDP_USD.JP} nicht geladen`,
+      cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} nicht geladen`,
+    };
+  }
+  return { ...legacy, ...asia };
+}
+
+async function fetchAsiaSupplement(today: string): Promise<AsiaSupplement> {
+  const cosd = yearsAgo(today, 20);
+  const closes = await bounded(ashrCloses(cosd), ASIA_SUPPLEMENT_TIMEOUT_MS, { closes: [], via: "none" as const });
+  const lastClose = closes.closes.length ? closes.closes[closes.closes.length - 1].close : null;
+  const vol = chinaVolFromCloses(closes.via, closes.closes);
+  const [cnPe, jpGdp, cnGdp] = await Promise.all([
+    bounded(ashrPe(today, lastClose), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }),
+    bounded(gdpUsd(ASIA_GDP_USD.JP), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }),
+    bounded(gdpUsd(ASIA_GDP_USD.CN), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }),
+  ]);
+  return {
+    cnVolPoints: vol.points,
+    cnVolSource: vol.source,
     cnPe: cnPe.value,
     cnPeSource: cnPe.source,
     jpGdpUsd: jpGdp.value,
@@ -492,6 +587,17 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     jpGdpSource: jpGdp.source,
     cnGdpSource: cnGdp.source,
   };
+}
+
+export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
+  const legacy = await fetchLegacyRegionalPrints(today);
+  let asia: AsiaSupplement | null = null;
+  try {
+    asia = await fetchAsiaSupplement(today);
+  } catch {
+    asia = null;
+  }
+  return applyAsiaSupplement(legacy, asia);
 }
 
 function fromReading(id: RegionSlot["id"], name: string, book: RegionSlot["book"], source: string, reading: ScoredReading, value?: string): RegionSlot {
