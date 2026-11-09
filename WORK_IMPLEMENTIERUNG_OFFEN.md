@@ -1,6 +1,7 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
 > Stand 11.10.2026 · Kopf-Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`) · Index-HEAD davor `a0979593fe13792fd13aa7eaf183cb808b396791` (#209 Gold-Chart im BTC-Design, parent `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2` #206 Ampel Gold MA50; Feature-Tip Gold `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` #201; Index davor Tip `8add9ed1e6d599283368896127711486955855f3` #200) · Companion `WORK_IST_VS_SOLL.md`
+> **Nachzug Docs-Ampel 09.11.2026 Europe/Madrid, HEAD main `01bf608981b842f5457695c92b5800a59cfec94f` (Philip Docs-Direktcommit 07.11. 22:03 CET, Parent `7b95276a`, neue Spec `WORK_MORNING_BRIEFING.md` +55, Blob `f1eb8224`):** Index-Kopf zuvor `4286b44f` (#445). Morning Briefing fehlte in diesem Index. Soll: Briefing-UI = Country-Macro-Pulse-Karten (`WORK_MORNING_BRIEFING.md`). Ist: BriefingModal bleibt Bild-2-Layout; Macro-Karten nur in `MacroPanel.tsx`; #180 Draft HOLD. Ampel 🔴 offen. Kein App-Code in diesem Nachzug, kein Rename, kein Rückbau von `fertig_`/`Fertig_` nach `Offen_`.
 > Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Kein Live-Deploy aus diesem Index-Nachzug. Dieser Nachzug benennt keine Spec um.
 > Index-Hinweis in `WORK.md`. Sprint-Log unten bleibt historisch (01.09.). `Future_Work.md` = Roadmap, kein Ticket.
 > Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.

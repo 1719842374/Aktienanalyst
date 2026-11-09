@@ -78,6 +78,13 @@
 - Ist: kein Commit dazu gemeldet oder geprüft → **OFFEN**.
 - Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §2 Asien-Aggregation: OFFEN. Vorgabe Philip 17:11 (von Stabschef übermittelt): dritter Markt China über ASHR. Ob §2 damit erfüllt ist, klärt Stabschef. Datei bleibt **Offen_**, bis §2 geklärt ist.
 
+### Soll-Ist 09.11.2026 (HEAD main `01bf6089`) — §2 Asien
+
+- Soll: Label „Asien“, Aggregation mind. Japan + China (BIP), ASHR Vol/KGV, Score/Treiber aggregiert.
+- Ist auf main: unverändert Japan-lastig („Asien (Japan)“ / Katalog Japan) — §2 **OFFEN**.
+- Draft PR #470 „feat(recession): Asien-Katalog aus Japan und China (BIP, ASHR)“ Head `e8a0e7564df9ce1cb4d9444079edf73307795262` (live 09.11.: state=open, draft=true, merged=false, mergeable_state=clean, Basis main `01bf6089`, 10 Dateien +892/−18). Merge **HOLD**. Nicht als erledigt führen.
+- §1 ✅ / §3 ✅ bleiben; Datei bleibt `Offen_`.
+
 **Priorität:** Hoch (konkreter Fix, den Philip angesprochen hat)  
 **Aufwand:** 1–1,5 Tage
 
