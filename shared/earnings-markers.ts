@@ -96,15 +96,23 @@ export function buildEarningsMarkers(rows: readonly EarningsRaw[]): EarningsMark
     };
   });
 
+  return { markers, inlineBandPct: band, beatRateLabel: beatRateLabelFor(markers) };
+}
+
+/** Dieselbe Zählung wie das API-Label, nur für die übergebenen Marker. */
+export function beatRateLabelFor(markers: readonly EarningsMarker[]): string {
   const classified = markers.filter(m => m.kind != null && m.basis === "revenue");
   const pool = classified.length > 0 ? classified : markers.filter(m => m.kind != null);
   const beats = pool.filter(m => m.kind === "beat").length;
   const basisName = classified.length > 0 ? "Revenue" : pool.some(m => m.basis === "eps") ? "EPS" : "Surprise";
-  const beatRateLabel = pool.length === 0
-    ? "n/a — keine klassifizierbare Surprise"
-    : `${basisName} Beat ${beats}/${pool.length} (${Math.round((beats / pool.length) * 100)} %)`;
+  if (pool.length === 0) return "n/a — keine klassifizierbare Surprise";
+  return `${basisName} Beat ${beats}/${pool.length} (${Math.round((beats / pool.length) * 100)} %)`;
+}
 
-  return { markers, inlineBandPct: band, beatRateLabel };
+/** Badge nur für Events, die auf einen Balken dieses Fensters fallen. */
+export function beatRateLabelForWindow(markers: readonly EarningsMarker[], dates: readonly string[]): string {
+  const visible = markers.filter(m => m.kind != null && snapEarningsToBar(dates, m.date) != null);
+  return beatRateLabelFor(visible);
 }
 
 /** Hängt klassifizierte Marker an Kurspunkte. Ohne Marker bleibt die Reihe dieselbe Referenz. */
@@ -113,7 +121,7 @@ export function attachEarningsToPoints<T extends { date: string; close: number }
   markers: readonly EarningsMarker[] | null | undefined,
 ): T[] {
   if (!markers?.some(m => m.kind)) return points as T[];
-  const dates = points.map(p => p.date);
+  const dates = points.filter(p => Number.isFinite(p.close)).map(p => p.date);
   const byDate = new Map<string, EarningsMarker>();
   for (const marker of markers) {
     if (!marker.kind) continue;
@@ -136,9 +144,20 @@ export function attachEarningsToPoints<T extends { date: string; close: number }
   });
 }
 
-/** Nächster Handelstag ≥ Earnings-Datum, sonst null. */
+/**
+ * Nächster Handelstag im Fenster. Liegt das Event vor dem ersten oder nach
+ * dem letzten Balken, ist es verworfen. Ein Wochenende oder Feiertag zwischen
+ * erstem und letztem Balken bleibt auf dem nächsten Handelstag.
+ */
 export function snapEarningsToBar(dates: readonly string[], eventDate: string): string | null {
-  if (!eventDate) return null;
+  if (!eventDate || dates.length === 0) return null;
+  let first = dates[0];
+  let last = dates[0];
+  for (const d of dates) {
+    if (d < first) first = d;
+    if (d > last) last = d;
+  }
+  if (eventDate < first || eventDate > last) return null;
   let best: string | null = null;
   for (const d of dates) {
     if (d >= eventDate && (best == null || d < best)) best = d;

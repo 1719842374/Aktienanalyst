@@ -17,7 +17,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Ey
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { attachEarningsToPoints, type EarningsMarker } from "@shared/earnings-markers";
+import { attachEarningsToPoints, beatRateLabelForWindow, type EarningsMarker } from "@shared/earnings-markers";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
 import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
@@ -273,13 +273,6 @@ export function TechnicalChart({
     },
   });
   const earningsMarkers = showEarnings ? earningsQuery.data?.markers ?? null : null;
-  const earningsBadge = !showEarnings
-    ? null
-    : earningsQuery.isLoading
-      ? "Earnings: werden geladen …"
-      : earningsQuery.isError
-        ? "n/a — Abruf fehlgeschlagen"
-        : (earningsQuery.data?.beatRateLabel ?? "n/a — keine klassifizierbare Surprise");
   // Earnings Yield und ROIC 5Y: nur Anzeige, Default aus, Reset je Ticker. Kein Score.
   const [showEy, setShowEy] = useState(false);
   const [showRoic, setShowRoic] = useState(false);
@@ -424,6 +417,13 @@ export function TechnicalChart({
   );
   const phaseByDateMap = symmetric.phases;
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
+  const earningsBadge = !showEarnings
+    ? null
+    : earningsQuery.isLoading
+      ? "Earnings: werden geladen …"
+      : earningsQuery.isError
+        ? "n/a — Abruf fehlgeschlagen"
+        : beatRateLabelForWindow(earningsQuery.data?.markers ?? [], aBuilt.points.map(p => p.date));
   const scenarioCone = useMemo(() => {
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
@@ -1313,7 +1313,7 @@ export function TechnicalChart({
         <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
           {earningsQuery.isLoading && "Earnings: werden geladen …"}
           {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
-          {earningsQuery.data && <>{earningsQuery.data.beatRateLabel}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · Grün Beat, Rot Miss, Grau Inline · kein Score</>}
+          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · Grün Beat, Rot Miss, Grau Inline · kein Score</>}
         </div>
       )}
       {showDividend && showKursA && !chartEmpty && (
