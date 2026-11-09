@@ -8,12 +8,13 @@ import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
-  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus, Mic
+  Zap, Flame, ListPlus, Mic
 } from "lucide-react";
 import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
 import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
-import { MacroPanel } from "@/components/researcher/MacroPanel";
+import { toBriefingKeyEvent } from "@shared/briefing-key-event";
+import { KeyEventCard, MacroPanel } from "@/components/researcher/MacroPanel";
 import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
 import { RegionalStocksStrip } from "@/components/researcher/RegionalStocksStrip";
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
@@ -529,14 +530,18 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
       ? briefing.regions
       : null;
   const isV2 = Array.isArray(regions) && regions.length === 3;
-  const headline = briefing?.headline || data?.headline || "";
+  const headline = textOrNa(briefing?.headline || data?.headline, "keine Headline in der Briefing-Antwort");
   const tacticalStance = data?.tacticalStance || briefing?.tacticalStance || "";
   const stanceRationale = data?.stanceRationale || briefing?.stanceRationale || "";
-  const events = (Array.isArray(briefing?.topChanges) ? briefing.topChanges : [])
-    .filter((c: any) => c && c.title && c.title !== "none");
-  const actionText = isV2
-    ? [tacticalStance, stanceRationale].filter(Boolean).join(": ")
-    : (briefing?.recommendation || "");
+  const heroBody = isV2
+    ? textOrNa(stanceRationale, "keine Makro-Zusammenfassung in der Briefing-Antwort")
+    : textOrNa(briefing?.summary, "keine Makro-Zusammenfassung in der Briefing-Antwort");
+  const stanceTag = isV2
+    ? textOrNa(tacticalStance, "keine taktische Haltung in der Briefing-Antwort")
+    : textOrNa(briefing?.recommendation, "keine taktische Haltung in der Briefing-Antwort");
+  const events: Array<{ raw: any; card: ReturnType<typeof toBriefingKeyEvent> }> = (Array.isArray(briefing?.topChanges) ? briefing.topChanges : [])
+    .filter((c: any) => c && c.title && c.title !== "none")
+    .map((c: any) => ({ raw: c, card: toBriefingKeyEvent(c) }));
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
       <div className="w-full max-w-5xl bg-card border border-border/50 rounded-lg shadow-2xl">
@@ -580,27 +585,32 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
           )}
 
           {briefing && !loading && (
-            <div className="rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.04] to-orange-500/[0.02] p-4">
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-                <h3 className="text-xs font-semibold text-foreground/90">{headline || "Aktuelle Key Events"}</h3>
-                <span className="text-[10px] text-foreground/40">({events.length} Events autonom erkannt)</span>
+            <div className="space-y-4">
+              <div data-testid="briefing-hero" className="rounded-lg border border-border/40 bg-card/30 p-4">
+                <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">Macro Synthesis</div>
+                <div className="text-xs font-semibold text-foreground/90 leading-relaxed">{headline}</div>
+                <p className="text-xs text-foreground/85 leading-relaxed mt-2">{heroBody}</p>
+                <div className="mt-4 p-2.5 rounded border border-border/30 bg-background/40 flex items-start gap-2">
+                  <span data-testid="briefing-stance-tag" className="text-[10px] font-semibold px-2 py-0.5 rounded border border-border/40">{stanceTag}</span>
+                </div>
               </div>
-              {!isV2 && briefing.summary && (
-                <p className="text-[12px] text-foreground/80 leading-relaxed mb-3">{briefing.summary}</p>
-              )}
-              {events.length > 0 && (
-                <div data-testid="briefing-events" className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {events.map((c: any, i: number) => (
-                    <BriefingChangeCard key={`${c.region || ""}-${c.title}-${c.rank ?? i}`} change={c} />
-                  ))}
+              <div className="rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.04] to-orange-500/[0.02] p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <h3 className="text-xs font-semibold text-foreground/90">Aktuelle Key Events & Geopolitik</h3>
+                  <span className="text-[10px] text-foreground/40">({events.length} Events autonom erkannt)</span>
                 </div>
-              )}
-              {actionText && (
-                <div className="mt-4 p-2.5 rounded border border-border/30 bg-background/40">
-                  <p className="text-[12px] text-foreground/85 leading-relaxed">{actionText}</p>
-                </div>
-              )}
+                {events.length > 0 && (
+                  <div data-testid="briefing-events" className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {events.map(({ raw, card }, i) => (
+                      <div key={`${raw.region || ""}-${raw.title}-${raw.rank ?? i}`} data-testid="briefing-event-card" className="space-y-2">
+                        <KeyEventCard ev={card} />
+                        <BriefingTickerRow change={raw} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -609,115 +619,32 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
   );
 }
 
-const SEVERITY_DOT: Record<string, string> = {
-  high: "bg-red-400",
-  medium: "bg-amber-400",
-  low: "bg-emerald-400",
-};
-
-const CATEGORY_BADGES: Record<string, string> = {
-  "Geopolitik": "bg-red-500/15 text-red-300 border-red-400/30",
-  "Geldpolitik": "bg-blue-500/15 text-blue-300 border-blue-400/30",
-  "Fiskalpolitik": "bg-indigo-500/15 text-indigo-300 border-indigo-400/30",
-  "Konjunktur": "bg-teal-500/15 text-teal-300 border-teal-400/30",
-  "Handel": "bg-orange-500/15 text-orange-300 border-orange-400/30",
-  "Zentralbank": "bg-blue-500/15 text-blue-300 border-blue-400/30",
-  "Wahl/Politik": "bg-purple-500/15 text-purple-300 border-purple-400/30",
-  "Lieferkette": "bg-orange-500/15 text-orange-300 border-orange-400/30",
-  "Energie/Rohstoffe": "bg-amber-500/15 text-amber-300 border-amber-400/30",
-  "Naturkatastrophe": "bg-emerald-500/15 text-emerald-300 border-emerald-400/30",
-  "Tech/Regulierung": "bg-cyan-500/15 text-cyan-300 border-cyan-400/30",
-  "Sonstiges": "bg-foreground/10 text-foreground/60 border-border/40",
-};
-
-function ImpactBadge({ label, value }: { label: string; value: string }) {
-  const safe = value ?? "neutral";
-  const isUp = /steigend|positiv/i.test(safe);
-  const isDown = /fallend|negativ/i.test(safe);
-  const isMixed = /gemischt/i.test(safe);
-  const isEquity = label === "Aktien";
-  let color = "text-foreground/50";
-  let Icon = Minus;
-  if (isEquity) {
-    if (isUp) { color = "text-emerald-400"; Icon = ArrowUp; }
-    else if (isDown) { color = "text-red-400"; Icon = ArrowDown; }
-    else if (isMixed) { color = "text-amber-400"; Icon = Activity; }
-  } else {
-    if (isUp) { color = "text-red-300"; Icon = ArrowUp; }
-    else if (isDown) { color = "text-emerald-300"; Icon = ArrowDown; }
-  }
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-[9px] uppercase tracking-wider text-foreground/40">{label}</span>
-      <Icon className={`w-2.5 h-2.5 ${color}`} />
-      <span className={`text-[10px] font-medium ${color}`}>{safe}</span>
-    </div>
-  );
+function textOrNa(value: unknown, reason: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return `n/a — ${reason}`;
 }
 
-function BriefingChangeCard({ change }: { change: any }) {
-  const dcf = change.dcfImplications || {};
-  const tickers = Array.isArray(change.affectedTickers) ? change.affectedTickers : [];
-  const sectors = Array.isArray(change.affectedSectors) && change.affectedSectors.length
-    ? change.affectedSectors
-    : Array.isArray(dcf.affectedSectors) ? dcf.affectedSectors : [];
-  const rationale = change.rationale || change.action || change.dcfImplication || "";
-  const description = change.description && change.description !== change.title ? change.description : "";
-  const timeframe = [change.region, change.timeframe].filter(Boolean).join(" · ");
-  const catClass = CATEGORY_BADGES[change.category] || CATEGORY_BADGES.Sonstiges;
-  const sevClass = SEVERITY_DOT[change.severity] || "bg-foreground/30";
+function BriefingTickerRow({ change }: { change: any }) {
+  const tickers = Array.isArray(change?.affectedTickers) ? change.affectedTickers : [];
+  if (!tickers.length) return null;
   return (
-    <div data-testid="briefing-event-card" className="rounded-md border border-border/40 bg-background/40 p-3 hover:bg-background/60 transition-colors">
-      <div className="flex items-start gap-2 mb-2">
-        <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${sevClass}`} title={`Severity: ${change.severity}`} />
-        <div className="flex-1 min-w-0">
-          <div className="text-[12px] font-semibold text-foreground/90 leading-tight">{change.title}</div>
-          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-            {change.category && (
-              <span className={`text-[9px] px-1.5 py-0.5 rounded border ${catClass}`}>{change.category}</span>
-            )}
-            {timeframe && <span className="text-[9px] text-foreground/50">· {timeframe}</span>}
-          </div>
-        </div>
-      </div>
-      {description && (
-        <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{description}</p>
-      )}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 pb-2 border-b border-border/20">
-        <ImpactBadge label="Inflation" value={change.inflationImpact} />
-        <ImpactBadge label="Zinsen" value={change.rateImpact} />
-        <ImpactBadge label="Aktien" value={change.equityImpact} />
-      </div>
-      {rationale && (
-        <p className="text-[10px] text-foreground/60 italic leading-relaxed mb-2">{rationale}</p>
-      )}
-      {sectors.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1">
-          {sectors.slice(0, 6).map((s: string, i: number) => (
-            <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/65 border border-border/30">{s}</span>
-          ))}
-        </div>
-      )}
-      {tickers.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1 items-center">
-          {tickers.slice(0, 8).map((t: string, i: number) => (
-            <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">
-              {t}
-              <TickerAddButtons ticker={t} source="researcher" region={change.region} compact />
-            </span>
-          ))}
-          <button
-            type="button"
-            className="text-[9px] px-1.5 py-0.5 rounded border border-border/40 text-foreground/60 hover:bg-muted/40"
-            onClick={() => {
-              const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher", change.region);
-              window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen`);
-            }}
-          >
-            Alle → Watchlist
-          </button>
-        </div>
-      )}
+    <div className="flex flex-wrap gap-1 items-center">
+      {tickers.slice(0, 8).map((t: string, i: number) => (
+        <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">
+          {t}
+          <TickerAddButtons ticker={t} source="researcher" region={change.region} compact />
+        </span>
+      ))}
+      <button
+        type="button"
+        className="text-[9px] px-1.5 py-0.5 rounded border border-border/40 text-foreground/60 hover:bg-muted/40"
+        onClick={() => {
+          const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher", change.region);
+          window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen`);
+        }}
+      >
+        Alle → Watchlist
+      </button>
     </div>
   );
 }

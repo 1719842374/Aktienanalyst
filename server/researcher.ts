@@ -31,6 +31,7 @@ import { callLLMJson } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { syncFiscalProgramsFromDiscovery } from "./fiscal-bridge";
 import { fetchMacroSnapshot } from "./fmp-macro";
+import { toBriefingKeyEvent } from "../shared/briefing-key-event";
 import {
   briefingSchema,
   briefingV2CacheFresh,
@@ -926,7 +927,8 @@ interface DailyBriefingResult {
       title: string;
       region: string;
       category?: string;
-      severity: "high" | "medium" | "low";
+      /** Source severity, or an n/a reason when the macro event has none. */
+      severity?: string;
       changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | "UNCHANGED";
       description: string;
       timeframe?: string;
@@ -1230,35 +1232,47 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
     headline: composed.headline,
     summary: composed.stanceRationale,
     topChanges: composed.topChanges.map((c, idx) => {
-      const src = inputs
-        .find(input => input.region === c.region)
-        ?.events.find(ev => ev.title === c.title);
-      const sectors = (src?.affectedSectors && src.affectedSectors.length
-        ? src.affectedSectors
-        : c.dcfImplications?.affectedSectors) || [];
-      const severity = src?.severity === "high" || src?.severity === "low" || src?.severity === "medium"
-        ? src.severity
-        : "medium" as const;
+      const src = c.title === "none"
+        ? undefined
+        : inputs
+          .find(input => input.region === c.region)
+          ?.events.find(ev => ev.title === c.title);
+      const card = c.title === "none"
+        ? null
+        : toBriefingKeyEvent({
+          title: c.title,
+          category: c.category,
+          severity: src?.severity,
+          timeframe: src?.timeframe,
+          description: src?.description,
+          rationale: src?.rationale,
+          inflationImpact: src?.inflationImpact,
+          rateImpact: src?.rateImpact,
+          equityImpact: src?.equityImpact,
+          affectedSectors: src?.affectedSectors?.length
+            ? src.affectedSectors
+            : c.dcfImplications?.affectedSectors,
+        });
       return {
         rank: idx + 1,
         title: c.title,
         region: c.region,
         category: c.category,
-        severity,
+        severity: card?.severity,
         changeType: c.changeType,
-        description: src?.description || (c.title === "none" ? "none" : ""),
-        timeframe: src?.timeframe,
-        rationale: src?.rationale,
-        inflationImpact: src?.inflationImpact || "neutral",
-        rateImpact: src?.rateImpact || "neutral",
-        equityImpact: src?.equityImpact || "neutral",
-        affectedSectors: sectors,
+        description: card?.description ?? "none",
+        timeframe: card?.timeframe,
+        rationale: card?.rationale,
+        inflationImpact: card?.inflationImpact,
+        rateImpact: card?.rateImpact,
+        equityImpact: card?.equityImpact,
+        affectedSectors: card?.affectedSectors,
         dcfImplications: {
           waccDeltaBps: c.dcfImplications?.waccDeltaBps || "n/v",
-          affectedSectors: sectors,
+          affectedSectors: c.dcfImplications?.affectedSectors || [],
           exposureType: "hedge" as const,
         },
-        action: src?.rationale || "",
+        action: "",
       };
     }),
     keyMetricsShift: {

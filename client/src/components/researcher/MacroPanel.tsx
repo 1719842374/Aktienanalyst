@@ -184,7 +184,7 @@ function ImpactBadge({ label, value }: { label: string; value: string }) {
   );
 }
 
-function KeyEventCard({ ev }: { ev: any }) {
+export function KeyEventCard({ ev }: { ev: any }) {
   const catClass = CATEGORY_BADGES[ev.category] || CATEGORY_BADGES.Sonstiges;
   const sevClass = SEVERITY_DOT[ev.severity] || "bg-foreground/30";
   return (
