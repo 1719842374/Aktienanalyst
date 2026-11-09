@@ -1,11 +1,13 @@
 /**
  * Chat-Verlauf im Prozess-Speicher, Schlüssel ist die Session aus dem Header.
  * Kein Supabase, keine Env, kein Score. Der Client spiegelt denselben Stand in sessionStorage.
+ * PUT und DELETE tragen optional denselben Schreibstand wie der Hook. Ein PUT mit kleinerem
+ * Stand als das Löschen derselben Id legt den Chat nicht wieder an.
  */
 import type { Express, Request, Response } from "express";
 import {
   CHAT_HISTORY_MEMORY_BUDGET_CHARS, CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION,
-  CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER,
+  CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, CHAT_WRITE_REVISION_HEADER,
   chatThreadTitle, clipChatMessages, isChatDashboard, isChatSessionId,
   type ChatThread,
 } from "../shared/chat-history";
@@ -27,11 +29,15 @@ export { CHAT_HISTORY_TTL_MS };
 interface Slot {
   thread: ChatThread;
   touchedAt: number;
+  /** Schreibstand des PUT. null: Aufruf ohne Header, wie vor der Ordnung. */
+  revision: number | null;
 }
 
 interface SessionBag {
   touchedAt: number;
   threads: Map<string, Slot>;
+  /** Id → Schreibstand des letzten DELETE, das diese Id verworfen hat. */
+  deletedAt: Map<string, number>;
 }
 
 const sessions = new Map<string, SessionBag>();
@@ -43,7 +49,7 @@ export function resetChatHistoryStore(): void {
 function promoteSession(sessionId: string, now: number): SessionBag {
   const existing = sessions.get(sessionId);
   if (existing) sessions.delete(sessionId);
-  const bag: SessionBag = existing ?? { touchedAt: now, threads: new Map() };
+  const bag: SessionBag = existing ?? { touchedAt: now, threads: new Map(), deletedAt: new Map() };
   bag.touchedAt = now;
   sessions.set(sessionId, bag);
   return bag;
@@ -89,7 +95,7 @@ function dropExpired(now: number): void {
       if (now - slot.touchedAt >= CHAT_HISTORY_TTL_MS) deadThreads.push(threadId);
     });
     deadThreads.forEach(threadId => bag.threads.delete(threadId));
-    if (bag.threads.size === 0) deadSessions.push(id);
+    if (bag.threads.size === 0 && bag.deletedAt.size === 0) deadSessions.push(id);
   });
   deadSessions.forEach(id => sessions.delete(id));
 }
@@ -123,25 +129,43 @@ export function listChatThreads(sessionId: string, dashboard?: string, entity?: 
   return matched.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
 }
 
-export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now()): ChatThread {
+export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now(), revision?: number): ChatThread | null {
   sweep(now);
   const bag = promoteSession(sessionId, now);
+  if (revision != null) {
+    const deletedAt = bag.deletedAt.get(thread.id);
+    if (deletedAt != null && revision < deletedAt) return null;
+    if (deletedAt != null) bag.deletedAt.delete(thread.id);
+  }
   const stored: ChatThread = { ...thread, updatedAt: new Date(now).toISOString() };
   bag.threads.delete(stored.id);
-  bag.threads.set(stored.id, { thread: stored, touchedAt: now });
+  bag.threads.set(stored.id, { thread: stored, touchedAt: now, revision: revision ?? null });
   evictThreads(bag, stored.id);
   evictSessions();
   return stored;
 }
 
-export function deleteChatThread(sessionId: string, id: string, now = Date.now()): boolean {
+export function deleteChatThread(sessionId: string, id: string, now = Date.now(), revision?: number): boolean {
   sweep(now);
-  const bag = sessions.get(sessionId);
+  const bag = revision == null ? sessions.get(sessionId) : promoteSession(sessionId, now);
   if (!bag) return false;
+  if (revision != null) {
+    const prev = bag.deletedAt.get(id);
+    if (prev == null || revision > prev) bag.deletedAt.set(id, revision);
+    const slot = bag.threads.get(id);
+    if (slot?.revision != null && slot.revision > revision) return false;
+  }
   const removed = bag.threads.delete(id);
-  if (bag.threads.size === 0) sessions.delete(sessionId);
+  if (bag.threads.size === 0 && bag.deletedAt.size === 0) sessions.delete(sessionId);
   else promoteSession(sessionId, now);
   return removed;
+}
+
+function writeRevisionOf(req: Request): number | undefined {
+  const raw = req.header(CHAT_WRITE_REVISION_HEADER) ?? "";
+  if (!/^[0-9]+$/.test(raw)) return undefined;
+  const revision = Number(raw);
+  return Number.isSafeInteger(revision) ? revision : undefined;
 }
 
 function sessionOf(req: Request): string | null {
@@ -180,7 +204,8 @@ export function registerChatHistoryRoute(app: Express): void {
     if (!sessionId) { res.status(400).json({ error: "n/a — keine Chat-Session" }); return; }
     const parsed = readThread(req.body, String(req.params.id ?? ""));
     if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
-    const thread = putChatThread(sessionId, { ...parsed.thread, updatedAt: "" });
+    const thread = putChatThread(sessionId, { ...parsed.thread, updatedAt: "" }, Date.now(), writeRevisionOf(req));
+    if (!thread) { res.json({ rejected: "stale-write" }); return; }
     res.json({ thread });
   });
 
@@ -189,7 +214,7 @@ export function registerChatHistoryRoute(app: Express): void {
     if (!sessionId) { res.status(400).json({ error: "n/a — keine Chat-Session" }); return; }
     const id = String(req.params.id ?? "");
     if (!isChatSessionId(id)) { res.status(400).json({ error: "n/a — Chat-Id ungültig" }); return; }
-    deleteChatThread(sessionId, id);
+    deleteChatThread(sessionId, id, Date.now(), writeRevisionOf(req));
     res.json({ ok: true, threads: listChatThreads(sessionId) });
   });
 }

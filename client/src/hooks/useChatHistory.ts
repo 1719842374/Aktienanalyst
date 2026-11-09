@@ -3,12 +3,12 @@
  * Kette: sessionStorage (lokal) und apiRequest → GET/PUT/DELETE /api/chat/history
  * → server/routes.ts → chat-history-route. Kein Supabase.
  * Eine Antwort, deren Auftrag vor dem Löschen begann, schreibt den Chat nicht zurück.
- * Ein späteres Lesen zeigt den Serverstand, auch wenn der Server den Chat danach neu anlegt.
+ * Dieselbe Schreibfolge geht mit PUT und DELETE an den Server. Ein späteres Lesen zeigt dessen Stand.
  */
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  CHAT_SESSION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
+  CHAT_SESSION_HEADER, CHAT_WRITE_REVISION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
   type ChatThread,
 } from "@shared/chat-history";
 
@@ -101,7 +101,7 @@ export function useChatHistory(dashboard: string, entity: string | null) {
         dashboard: thread.dashboard,
         entity: thread.entity,
         messages: thread.messages,
-      }, 15000, { [CHAT_SESSION_HEADER]: sessionId });
+      }, 15000, { [CHAT_SESSION_HEADER]: sessionId, [CHAT_WRITE_REVISION_HEADER]: String(issuedAt) });
       if (!res.ok) return;
       const body = await res.json().catch(() => null) as { thread?: ChatThread } | null;
       if (body?.thread) remember([body.thread], issuedAt);
@@ -109,12 +109,16 @@ export function useChatHistory(dashboard: string, entity: string | null) {
   }, [remember, sessionId]);
 
   const remove = useCallback(async (id: string) => {
-    deletedAtRevision.set(id, ++historyRevision);
+    const deletedAt = ++historyRevision;
+    deletedAtRevision.set(id, deletedAt);
     const next = readThreads(sessionId).filter(t => t.id !== id);
     writeThreads(sessionId, next);
     setThreads(next);
     try {
-      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, { [CHAT_SESSION_HEADER]: sessionId });
+      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, {
+        [CHAT_SESSION_HEADER]: sessionId,
+        [CHAT_WRITE_REVISION_HEADER]: String(deletedAt),
+      });
     } catch { /* lokal ist gelöscht */ }
   }, [sessionId]);
 

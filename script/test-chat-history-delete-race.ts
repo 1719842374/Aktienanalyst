@@ -4,8 +4,9 @@
  * Nur synthetische Thread-Ids. Kein Modell, keine Nutzerthreads, kein Live-UI-PASS.
  *
  * Fall A: GET/PUT ist serverseitig schon vor DELETE fertig, die HTTP-200-Antwort kommt später.
- * Fall B: der schon abgesendete PUT erreicht den Server erst nach erfolgreichem DELETE
- * und legt den Thread neu an. Abort liegt in apiRequest, der Hook bricht den Fetch nicht ab.
+ * Fall B: der schon abgesendete PUT erreicht den Server erst nach erfolgreichem DELETE.
+ * Er darf den gelöschten Thread serverseitig nicht wiederbeleben. Ein bewusstes
+ * Speichern nach dem Löschen bleibt ein eigenes Szenario. Abort liegt in apiRequest.
  *
  * react-dom/client und der Hook werden erst nach installFakeDom geladen (Fenster muss stehen).
  * Ausführen (Repo-Root):
@@ -455,7 +456,7 @@ async function main() {
       assert.equal(stored.includes(deleted.id), false, `zweite Instanz schreibt den gelöschten Thread in die gemeinsame Session: ${stored.join(",")}`);
     });
 
-    await scenario("B PUT erreicht den Server erst nach DELETE, Remount zeigt den neuen Serverstand", async () => {
+    await scenario("B PUT erreicht den Server erst nach DELETE und belebt den Thread nicht wieder", async () => {
       const sessionId = "sess-b-put01";
       const id = "synth-b-put";
       begin(sessionId);
@@ -489,15 +490,15 @@ async function main() {
       note(`remount-b content=${remountThread?.messages[0]?.content ?? "absent"} ids=${localIds(remount.bag).join(",")}`);
       assert.equal(first.status, 200);
       assert.equal(second.status, 200);
-      assert.deepEqual(afterFirst, [id]);
-      assert.deepEqual(afterSecond, [id]);
+      assert.deepEqual(afterFirst, [], `erster verspäteter PUT hat ${id} serverseitig wieder angelegt: ${afterFirst.join(",")}`);
+      assert.deepEqual(afterSecond, [], `zweiter verspäteter PUT hat ${id} serverseitig wieder angelegt: ${afterSecond.join(",")}`);
       assertOrder([
         "hold-before-forward PUT",
         "server-finished DELETE status=200",
         "forward-after-hold PUT",
-        `server-finished PUT status=200 body=${id}`,
+        "server-finished PUT status=200 body=",
       ]);
-      assert.equal(remountThread?.messages[0]?.content, "synthetic-b-v2", "Grenze B: späteres GET/Remount zeigt den PUT, der serverseitig nach DELETE lief");
+      assert.equal(remountThread, undefined, `Remount-GET zeigt den wiederbelebten Thread: ${remountThread?.messages[0]?.content ?? ""}`);
       assert.equal(localAfter.includes(id), false, `Antwort des nach dem DELETE ausgeführten PUT darf lokal nicht wieder einfügen: ${localAfter.join(",")}`);
     });
 
@@ -578,7 +579,7 @@ async function main() {
 
   console.log("\nGrenze: dieselbe Browser-Session (sessionStorage + Hook-Instanzen in diesem Fenster).");
   console.log("Keine Aussage über fremde Clients, einen zweiten Tab oder einen Server-Neustart.");
-  console.log("Fall B bleibt serverseitig offen: ein PUT nach erfolgreichem DELETE legt den Thread neu an.");
+  console.log("Fall B: ein vor dem DELETE ausgelöster PUT darf den Thread serverseitig nicht wiederbeleben.");
   console.log("Der Hook bricht den Fetch nicht ab; apiRequest besitzt den AbortController. Belegt ist HTTP 200.");
   console.log("Kein Live-UI-PASS. UI-Dateien wurden nicht gerendert.");
   console.log(failures.length === 0 ? "\nchat history delete race: all checks ok" : `\nchat history delete race: ${failures.length} scenario(s) failed: ${failures.join(" | ")}`);

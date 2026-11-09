@@ -7,6 +7,13 @@ import { CHAT_CONTEXT_BUDGET, CHAT_DASHBOARDS, CHAT_LIMITS, type ChatDashboard, 
 
 export const CHAT_SESSION_HEADER = "x-chat-session";
 
+/**
+ * Schreibstand eines PUT oder DELETE aus demselben Fenster.
+ * Der Server vergleicht diese Zahl, nicht die Ankunftszeit.
+ * Fehlt der Header, bleibt das frühere Verhalten: der letzte Aufruf gewinnt.
+ */
+export const CHAT_WRITE_REVISION_HEADER = "x-chat-write-revision";
+
 /** Sichtbare Länge einer Verlaufs-Zeile. Anzeige, kein Schwellenwert. */
 export const CHAT_THREAD_TITLE_CHARS = 80;
 
