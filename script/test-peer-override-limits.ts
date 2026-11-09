@@ -13,7 +13,7 @@
  */
 import { readFileSync } from "node:fs";
 import React from "react";
-import { QueryClient, QueryClientContext } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import { analyzeRequestSchema } from "../shared/schema";
 import { analyzePostBody, readOverrides, writeOverrides, type KeyValueStore } from "../shared/peer-override-persist";
@@ -23,11 +23,6 @@ import {
   PEER_RESET_NOTICE_TEXT, peerResetNoticeAfterSuccess, peerResetNoticeFor, type PeerResetNotice,
 } from "../client/src/lib/peerOverrideLimits";
 import { Section7 } from "../client/src/components/sections/Section7";
-
-const expandQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-const queryContext = QueryClientContext as { _currentValue?: QueryClient; _currentValue2?: QueryClient };
-queryContext._currentValue = expandQueryClient;
-queryContext._currentValue2 = expandQueryClient;
 
 (globalThis as any).React = React;
 
@@ -45,6 +40,7 @@ class MemoryStore implements KeyValueStore {
 // ── Flacher Renderer: expandiert Funktionskomponenten mit Default-Hook-Werten, damit
 //    onClick-Handler im Section7-Baum aufrufbar sind (kein DOM nötig).
 const internals = (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+let activeContexts = new Map<unknown, unknown>();
 const fakeDispatcher = {
   useState: (init: any) => [typeof init === "function" ? init() : init, () => {}],
   useReducer: (_r: any, init: any, f?: any) => [f ? f(init) : init, () => {}],
@@ -52,7 +48,7 @@ const fakeDispatcher = {
   useMemo: (fn: () => any) => fn(),
   useCallback: (fn: any) => fn,
   useEffect: () => {}, useLayoutEffect: () => {}, useInsertionEffect: () => {},
-  useContext: (ctx: any) => ctx?._currentValue,
+  useContext: (ctx: unknown) => activeContexts.get(ctx),
   useId: () => "id", useTransition: () => [false, (f: any) => f()], useDeferredValue: (v: any) => v,
   useSyncExternalStore: (_s: any, get: () => any) => get(), useDebugValue: () => {}, useImperativeHandle: () => {},
 };
@@ -71,11 +67,23 @@ function expand(node: Node): Node {
   }
   if (type && typeof type === "object") {
     const tag = String(type.$$typeof);
+    if (tag.includes("react.provider")) {
+      const next = new Map(activeContexts);
+      next.set(type._context, props.value);
+      const prev = activeContexts;
+      activeContexts = next;
+      try { return expand(props.children); }
+      finally { activeContexts = prev; }
+    }
     if (tag.includes("forward_ref")) return expand(type.render(props, null));
     if (tag.includes("memo")) return expand({ ...node, type: type.type });
     return { ...node, props: { ...props, children: expand(props?.children) } };
   }
   return { ...node, props: { ...props, children: expand(props?.children) } };
+}
+function expandSection(el: React.ReactElement): Node {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return expand(React.createElement(QueryClientProvider, { client }, el));
 }
 function findByTestId(node: Node, id: string): Node | null {
   if (node == null || typeof node !== "object") return null;
@@ -105,7 +113,7 @@ async function main() {
   check("Section7: Reset aktiv (remove=8 aktiv)", !/disabled=""[^>]*data-testid="button-peer-reset"/.test(html));
   check("Section7: Empty-State-Hinweis sichtbar", html.includes('data-testid="peer-empty-note"'));
 
-  const tree = expand(React.createElement(Section7 as any, { data: removedData, onPeerOverridesChange }));
+  const tree = expandSection(React.createElement(Section7 as any, { data: removedData, onPeerOverridesChange }));
   const resetBtn = findByTestId(tree, "button-peer-reset");
   check("Klickpfad: Reset-Button im Section7-Baum gefunden", !!resetBtn && typeof resetBtn.props.onClick === "function");
   resetBtn?.props.onClick();
@@ -152,7 +160,7 @@ async function main() {
   check("UI: kein „Max. 8 Peers erreicht“ (sichtbar < 8)", !capHtml.includes('data-testid="peer-cap-reached"'));
   check("UI: Add-Button gesperrt", /<button disabled=""[^>]*data-testid="button-peer-add"/.test(capHtml));
   calls.length = 0;
-  const capTree = expand(React.createElement(Section7 as any, { data: capData, onPeerOverridesChange }));
+  const capTree = expandSection(React.createElement(Section7 as any, { data: capData, onPeerOverridesChange }));
   const dropBtn = findByTestId(capTree, "peer-not-adopted-drop-XXXX1");
   dropBtn?.props.onClick();
   check("UI: nicht übernommenen Ticker einzeln aus der Add-Liste nehmen", JSON.stringify(calls) === JSON.stringify([{ add: eightFantasy.filter(t => t !== "XXXX1"), remove: [] }]), JSON.stringify(calls));
@@ -203,7 +211,7 @@ async function main() {
   check("Section7: Hinweis auch ohne sichtbaren Peer-Block", nHtml2.includes('data-testid="peer-reset-notice"') && !nHtml2.includes('data-testid="input-peer-add"'));
   const nHtml3 = renderToStaticMarkup(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange }));
   check("Section7: ohne Hinweis-Prop kein Hinweis", !nHtml3.includes('data-testid="peer-reset-notice"'));
-  const nTree = expand(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange, peerResetNotice: "NVO", onDismissPeerResetNotice: () => dismissed.push(1) }));
+  const nTree = expandSection(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange, peerResetNotice: "NVO", onDismissPeerResetNotice: () => dismissed.push(1) }));
   findByTestId(nTree, "button-peer-reset-notice-dismiss")?.props.onClick();
   check("Klickpfad: Schließen ruft onDismiss", dismissed.length === 1);
   check("Dashboard: Verwerfen setzt Hinweis", /setPeerResetNotice\(\{ ticker: variables\.ticker \}\);\s*startAnalyze\(/.test(dash));

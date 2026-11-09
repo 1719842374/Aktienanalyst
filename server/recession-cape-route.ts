@@ -44,6 +44,7 @@ export function multplCapeSeries(html: string): CapePoint[] {
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
   const out: CapePoint[] = [];
   for (const row of rows) {
+    // Beleg: matchAll liefert die Zellen derselben Tabellenzeile. Spread bleibt der Iterator.
     const cells = [...(row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) as unknown as RegExpExecArray[])].map(match => htmlCell(match[1]));
     if (cells.length < 2) continue;
     const date = englishLongDate(cells[0]);

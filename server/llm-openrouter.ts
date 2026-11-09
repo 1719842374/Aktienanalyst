@@ -1103,6 +1103,7 @@ Antworte NUR mit diesem JSON (GENAU 5 risks-Objekte, kein Markdown):
     if (!Array.isArray(risks) || risks.length < 3) return null;
     return risks.slice(0, 5).map((r: any) => ({
       name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
+      // Beleg: includes lässt nur Binary, Gradual oder Correlated durch, sonst steht hier "Gradual".
       category: (["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual") as "Binary" | "Gradual" | "Correlated",
       ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
       impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),

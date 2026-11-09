@@ -368,6 +368,7 @@ async function fetchRegionVol(
   from: string,
   to: string,
 ): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
+  // Beleg: MARKET_BOOKS.AS.volId ist "realized20". Nach volKind === "realized" engt TS die rechte Seite weg; der Vergleich bleibt im Quelltext.
   if (book.volKind === "realized" || (book.volId as string) === "realized20") {
     return { vol: realizedVol20(etfRows), volNote: null };
   }

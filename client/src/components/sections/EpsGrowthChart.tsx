@@ -19,6 +19,7 @@ export default function EpsGrowthChart({ data }: { data: StockAnalysis }) {
     if (!epsHistory || epsHistory.length < 3) return [];
     const years = new Set(epsHistory.map(h => h.year));
     if (peerAvgEpsHistory) peerAvgEpsHistory.forEach(h => years.add(h.year));
+    // Beleg: years ist das Set der EPS-Jahre aus epsHistory und peerAvgEpsHistory. Spread bleibt das Set.
     const sortedYears = [...(years as unknown as number[])].sort();
 
     // Limit to last ~8 historical + forward

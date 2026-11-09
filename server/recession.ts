@@ -1171,6 +1171,7 @@ export function latestMultplCape(html: string): { date: string; value: number } 
   if (!html || html.includes("Just a moment")) return null;
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
   for (const row of rows) {
+    // Beleg: matchAll liefert die Zellen derselben Tabellenzeile. Spread bleibt der Iterator.
     const cells = [...(row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) as unknown as RegExpExecArray[])].map(match => htmlCell(match[1]));
     if (cells.length < 2) continue;
     const date = englishLongDate(cells[0]);
