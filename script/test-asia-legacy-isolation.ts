@@ -27,6 +27,7 @@ import {
   type RegionScorers,
 } from "../server/recession-regions";
 import { fetchYahooTimeseriesFundamentals } from "../server/yahoo-fetcher";
+import { euroAreaUnemploymentFromEurostat } from "../server/recession-sahm";
 import { realizedVol20 } from "../shared/recession-market-charts";
 
 let failed = 0;
@@ -148,6 +149,69 @@ console.log("\n=== Ausfall der neuen Quellen lässt EZ/JP-Drucke stehen ===");
   });
   const keptLabor = occupied.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
   check("vorhandene ALQ-Punkte werden nicht durch EA21 ersetzt", keptLabor.source === "Eurostat une_rt_m EA21" && !keptLabor.source.includes("ohne Werte"));
+
+  const time = ["2026-06", "2026-07", "2026-08"];
+  const cube = (geos: Array<{ code: string; label: string; values: Array<number | null> }>) => {
+    const geoIndex: Record<string, number> = {};
+    const geoLabel: Record<string, string> = {};
+    const value: Record<string, number> = {};
+    geos.forEach((geo, geoAt) => {
+      geoIndex[geo.code] = geoAt;
+      geoLabel[geo.code] = geo.label;
+      geo.values.forEach((entry, timeAt) => {
+        if (entry != null) value[String(geoAt * time.length + timeAt)] = entry;
+      });
+    });
+    return {
+      id: ["freq", "s_adj", "age", "unit", "sex", "geo", "time"],
+      size: [1, 1, 1, 1, 1, geos.length, time.length],
+      dimension: {
+        geo: { category: { index: geoIndex, label: geoLabel } },
+        time: { category: { index: Object.fromEntries(time.map((period, index) => [period, index])) } },
+      },
+      value,
+    };
+  };
+  const onlyEa21 = euroAreaUnemploymentFromEurostat(cube([
+    { code: "EA21", label: "Euro area – 21 countries (from 2026)", values: [6.2, 6.3, 6.4] },
+  ]));
+  const labeledEa21 = catalogUnemploymentFromRegional(onlyEa21);
+  check(
+    "EA20 fehlt im Würfel, das Label nennt EA21 ohne Werte",
+    onlyEa21.geo === "EA21" && onlyEa21.ea20PointCount === 0 && labeledEa21?.geo === "EA21 (EA20 ohne Werte)",
+    labeledEa21?.geo,
+  );
+  const withEa20 = euroAreaUnemploymentFromEurostat(cube([
+    { code: "EA20", label: "Euro area – 20 countries", values: [7, 7.1, 7.2] },
+    { code: "EA21", label: "Euro area – 21 countries (from 2026)", values: [6.2, 6.3, 6.4] },
+  ]));
+  const labeledEa20 = catalogUnemploymentFromRegional(withEa20);
+  check(
+    "EA20 mit Werten bleibt EA20",
+    withEa20.geo === "EA20" && withEa20.rows.map(row => row.value).join(",") === "7,7.1,7.2" && labeledEa20?.geo === "EA20",
+    `${withEa20.geo} ${labeledEa20?.geo}`,
+  );
+  const timed = scoreRegionalCatalogs({
+    prints: emptyEa20,
+    ezUnemployment: { geo: "EA20", points: [], unavailableReason: "n/a — Eurostat une_rt_m Zeitüberschreitung" },
+    usSlots: [],
+    usRecession12m: 35,
+    usCorrection12m: 80,
+    today: "2026-11-09",
+    scorers: scorers(),
+  });
+  const timedLabor = timed.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
+  check("Zeitüberschreitung bleibt N/A mit Grund", timedLabor.available === false && timedLabor.source === "n/a — Eurostat une_rt_m Zeitüberschreitung");
+  const handler = readFileSync("server/recession.ts", "utf8");
+  const handlerStart = handler.indexOf("export async function runRecessionAnalysis");
+  const handlerHead = handler.slice(handlerStart, handler.indexOf("const indicators", handlerStart));
+  check(
+    "une_rt_m und die Regionalkette starten vor dem US-Block",
+    handlerHead.indexOf("loadEuroAreaUnemploymentAsync") >= 0
+      && handlerHead.indexOf("loadEuroAreaUnemploymentAsync") < handlerHead.indexOf("scoreSahm()")
+      && handlerHead.indexOf("fetchRegionalPrints") < handlerHead.indexOf("scoreSahm()")
+      && !handlerHead.includes("Promise.resolve().then"),
+  );
 }
 
 console.log("\n=== ASHR-Vol aus denselben Schlüssen wie der Marktchart ===");
@@ -215,6 +279,7 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
   check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", jpActivitySource(false, 0, "empty") === "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML");
   check("ein OECD-Timeout heißt Zeitüberschreitung", jpActivitySource(false, 0, "timeout") === "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung");
   check("ein OECD-HTTP-Fehler heißt nicht leer", jpActivitySource(false, 0, "http") === "FRED JPNPROINDMISMEI; OECD HTTP-Fehler");
+  check("200 mit 0 Punkten heißt leer ohne Wiederholung", jpActivitySource(false, 0, "nopoints") === "FRED JPNPROINDMISMEI; OECD leer (0 Punkte)");
   check("ältere OECD-Daten ohne zweite Abfrage heißen nicht Wiederholung", jpActivitySource(false, 3) === "FRED JPNPROINDMISMEI; OECD älter als FRED" && jpActivitySource(true, 3).includes("OECD"));
   check("EA20 wird bei leerer erster Antwort wiederholt, bevor EA21 kommt", eurostatStep(0, false) === "retry" && eurostatStep(0, true) === "next" && eurostatStep(2, false) === "use");
   check("ein 20s-Hänger von EA20 startet keine zweite Frist", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: "Timeout", dataset: "sts_inpr_m", httpStatus: null, hasNext: true }) === "next");

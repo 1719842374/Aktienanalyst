@@ -34,7 +34,7 @@ import {
   type TrendsHttpResponse,
 } from "./cache/google-trends-pytrends";
 import { sOfZ } from "./fiscal-frontend-math";
-import { catalogUnemploymentFromRegional, emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
+import { catalogUnemploymentFromRegional, emptyRegionalPrints, EZ_UNEMPLOYMENT_TIMEOUT_SOURCE, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
 import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
@@ -322,8 +322,10 @@ function sahmRegionBoard(
   };
 }
 
-function scoreEuroAreaSahmFrom(loaded: { geo: string | null; rows: Array<{ date: string; value: number | null }> }): SahmRegionBoard {
-  const source = loaded.geo ? `Eurostat une_rt_m ${loaded.geo}` : "Eurostat une_rt_m";
+function scoreEuroAreaSahmFrom(loaded: { geo: string | null; rows: Array<{ date: string; value: number | null }>; timedOut?: boolean }): SahmRegionBoard {
+  const source = loaded.timedOut
+    ? EZ_UNEMPLOYMENT_TIMEOUT_SOURCE
+    : loaded.geo ? `Eurostat une_rt_m ${loaded.geo}` : "Eurostat une_rt_m";
   return sahmRegionBoard("EZ", "Eurozone", source, scoreSahmFromUnemployment(loaded.rows, []), false);
 }
 
@@ -335,6 +337,28 @@ function scoreJapanSahm(cosd: string): SahmRegionBoard {
     scoreSahmFromUnemployment(fetchFredRows("LRUNTTTTJPM156S", cosd), []),
     false,
   );
+}
+
+/** One une_rt_m cube. fetch() starts before the synchronous US curls. */
+async function loadEuroAreaUnemploymentAsync(cosd: string): Promise<{
+  geo: string | null;
+  rows: Array<{ date: string; value: number | null }>;
+  ea20PointCount: number;
+  timedOut: boolean;
+}> {
+  const start = cosd.slice(0, 7);
+  const url = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/${EURO_AREA_UNEMPLOYMENT_DATAFLOW}?lang=en&s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=${start}`;
+  const empty = { geo: null, rows: [] as Array<{ date: string; value: number | null }>, ea20PointCount: 0, timedOut: false };
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) return empty;
+    const raw = await resp.text();
+    if (!raw || raw.includes("<html") || raw.includes("<!DOCTYPE")) return empty;
+    return { ...euroAreaUnemploymentFromEurostat(JSON.parse(raw) as EurostatDataset), timedOut: false };
+  } catch (err) {
+    const name = (err as Error)?.name;
+    return { ...empty, timedOut: name === "TimeoutError" || name === "AbortError" };
+  }
 }
 
 // 2. Yield curve. s(z) over 20 years of T10Y2Y. The zero line is only the label.
@@ -1552,11 +1576,10 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     .then(mod => mod.loadUsBuffettRatios())
     .catch(() => [] as { date: string; ratio: number }[]);
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
+  const unePromise = loadEuroAreaUnemploymentAsync(cosdSahm);
+  const catalogUne = unePromise.then(loaded => catalogUnemploymentFromRegional(loaded));
+  const regionalPromise = fetchRegionalPrints(undefined, catalogUne).catch(() => null);
   const usSahm = scoreSahm();
-  const ezUnemploymentLoaded = Promise.resolve().then(() => fetchEuroAreaUnemployment(cosdSahm));
-  const regionalPromise = ezUnemploymentLoaded
-    .then(loaded => fetchRegionalPrints(undefined, catalogUnemploymentFromRegional(loaded)))
-    .catch(() => null);
 
   const vix = resolveVixLevel(
     getLatestFredValue("VIXCLS"),
@@ -1757,12 +1780,12 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     bridge,
     sahmRegions: [
       sahmRegionBoard("US", "Vereinigte Staaten", usSahm.indicator.source, usSahm.evaluated, true),
-      scoreEuroAreaSahmFrom(await ezUnemploymentLoaded),
+      scoreEuroAreaSahmFrom(await unePromise),
       scoreJapanSahm(cosdSahm),
     ],
     regions: scoreRegionalCatalogs({
       prints: await regionalPromise ?? emptyRegionalPrints(),
-      ezUnemployment: catalogUnemploymentFromRegional(await ezUnemploymentLoaded),
+      ezUnemployment: await catalogUne,
       usSlots: usSlotsFromIndicators(indicators),
       usRecession12m: pRezFull,
       usCorrection12m: pCorrFull,

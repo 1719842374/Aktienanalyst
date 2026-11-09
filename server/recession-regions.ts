@@ -81,8 +81,10 @@ export interface ScoreInput {
   today: string;
   scorers: RegionScorers;
   /** Regional ALQ already loaded in this request. Used only when the catalog series is empty. */
-  ezUnemployment?: { geo: string; points: DatedPoint[] } | null;
+  ezUnemployment?: { geo: string; points: DatedPoint[]; unavailableReason?: string } | null;
 }
+
+type PreloadedUnemployment = { geo: string; points: DatedPoint[] } | null | Promise<{ geo: string; points: DatedPoint[]; unavailableReason?: string } | null>;
 
 async function getText(url: string, timeoutMs = 20000, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<string> {
   try {
@@ -368,11 +370,12 @@ export function parseDbNomicsSeries(payload: unknown): DatedPoint[] {
 }
 
 /** FRED label when OECD is not the newer series. A timeout is not described as an empty body. */
-export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number, failure?: "timeout" | "empty" | "http" | null): string {
+export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number, failure?: "timeout" | "empty" | "http" | "nopoints" | null): string {
   if (usedPrimary) return "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)";
   if (oecdPointCount > 0) return "FRED JPNPROINDMISMEI; OECD älter als FRED";
   if (failure === "timeout") return "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung";
   if (failure === "http") return "FRED JPNPROINDMISMEI; OECD HTTP-Fehler";
+  if (failure === "nopoints") return "FRED JPNPROINDMISMEI; OECD leer (0 Punkte)";
   return "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML";
 }
 
@@ -398,17 +401,24 @@ async function readOecdJpIp(url = OECD_JP_IP): Promise<{ text: string; failure: 
   return { text: "", failure: "empty" };
 }
 
-/** EA21 from the regional ALQ load, labeled when EA20 published no values. A series already in the catalog is kept. */
+export const EZ_UNEMPLOYMENT_TIMEOUT_SOURCE = "n/a — Eurostat une_rt_m Zeitüberschreitung";
+
+/** The regional cube becomes the catalog series. The EA21 note is used only when EA20 has no values. */
 export function catalogUnemploymentFromRegional(loaded: {
   geo: string | null;
   rows: Array<{ date: string; value: number | null }>;
-} | null): { geo: string; points: DatedPoint[] } | null {
-  if (!loaded?.geo) return null;
+  ea20PointCount?: number;
+  timedOut?: boolean;
+} | null): { geo: string; points: DatedPoint[]; unavailableReason?: string } | null {
+  if (!loaded) return null;
+  if (loaded.timedOut) return { geo: "EA20", points: [], unavailableReason: EZ_UNEMPLOYMENT_TIMEOUT_SOURCE };
+  if (!loaded.geo) return null;
   const points = loaded.rows.flatMap(row =>
     row.value != null && Number.isFinite(row.value) ? [{ date: row.date, value: row.value }] : [],
   );
   if (points.length === 0) return null;
-  const geo = loaded.geo === "EA21" ? "EA21 (EA20 ohne Werte)" : loaded.geo;
+  const ea20Empty = loaded.ea20PointCount != null ? loaded.ea20PointCount === 0 : loaded.geo === "EA21";
+  const geo = loaded.geo === "EA21" && ea20Empty ? "EA21 (EA20 ohne Werte)" : loaded.geo;
   return { geo, points };
 }
 
@@ -683,14 +693,16 @@ async function gdpUsd(id: string, signal?: AbortSignal): Promise<{ value: number
 /** Eurostat, OECD, FRED, ECB, BoJ, STOXX and TOPIX. Same calls as main, without ASHR or the GDP weights. */
 async function fetchLegacyRegionalPrints(
   today: string,
-  preloadedUnemployment?: { geo: string; points: DatedPoint[] } | null,
+  preloadedUnemployment?: PreloadedUnemployment,
 ): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
   const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
-    preloadedUnemployment && preloadedUnemployment.points.length > 0
-      ? Promise.resolve(preloadedUnemployment)
-      : eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
+    preloadedUnemployment == null
+      ? eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"])
+      : Promise.resolve(preloadedUnemployment).then(value =>
+        value && value.points.length > 0 ? value : { geo: "EA20", points: [] },
+      ),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
     fred("IR3TIB01EZM156N", cosd),
@@ -714,12 +726,21 @@ async function fetchLegacyRegionalPrints(
     }
   }
   const jpIpPick = newerSeries(oecdIp, jpIpFred);
+  const oecdFailure = jpIpPick.usedPrimary
+    ? null
+    : oecdIp.length > 0
+      ? null
+      : oecdIpText.failure ?? (oecdIpText.text ? "nopoints" as const : "empty" as const);
   if (!jpIpPick.usedPrimary) {
     const why = oecdIp.length > 0
       ? "OECD älter als FRED, keine Wiederholung"
-      : oecdIpText.failure === "timeout"
+      : oecdFailure === "timeout"
         ? "OECD Zeitüberschreitung, keine zweite 25s-Frist"
-        : "OECD nach Wiederholung leer oder HTML";
+        : oecdFailure === "http"
+          ? "OECD HTTP-Fehler"
+          : oecdFailure === "nopoints"
+            ? "OECD leer (0 Punkte), keine Wiederholung"
+            : "OECD nach Wiederholung leer oder HTML";
     console.warn(`[RECESSION] ${why}; Fallback JPNPROINDMISMEI`);
   }
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
@@ -737,7 +758,7 @@ async function fetchLegacyRegionalPrints(
     jpUnemployment,
     jpLong,
     jpIp: jpIpPick.points,
-    jpIpSource: jpActivitySource(jpIpPick.usedPrimary, oecdIp.length, oecdIpText.failure),
+    jpIpSource: jpActivitySource(jpIpPick.usedPrimary, oecdIp.length, oecdFailure),
     jpM2Yoy: m2.length ? m2[m2.length - 1].value : null,
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
@@ -876,7 +897,7 @@ export async function runAsiaSupplement(
 
 export async function fetchRegionalPrints(
   today = new Date().toISOString().slice(0, 10),
-  ezUnemployment?: { geo: string; points: DatedPoint[] } | null,
+  ezUnemployment?: PreloadedUnemployment,
 ): Promise<RegionalPrints> {
   const legacy = await fetchLegacyRegionalPrints(today, ezUnemployment);
   let asia: AsiaSupplement | null = null;
@@ -1058,12 +1079,16 @@ function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): Re
 
 export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const { prints, scorers, today } = input;
-  const shared = input.ezUnemployment && input.ezUnemployment.points.length > 0 ? input.ezUnemployment : null;
-  const une = prints.ezUnemployment.points.length > 0 || !shared ? prints.ezUnemployment : shared;
+  const shared = input.ezUnemployment ?? null;
+  const une = prints.ezUnemployment.points.length > 0
+    ? prints.ezUnemployment
+    : shared && shared.points.length > 0
+      ? shared
+      : prints.ezUnemployment;
   const ezRates = une.points.map(point => point.value);
   const ezLaborSource = une.points.length
     ? `Eurostat une_rt_m ${une.geo}`
-    : "Eurostat une_rt_m EA20";
+    : (shared?.unavailableReason ?? "Eurostat une_rt_m EA20");
   const ezSpread = alignSpread(prints.ezLong, prints.ezShort);
   const ezIpSource = prints.ezIp.points.length
     ? `Eurostat sts_inpr_m ${prints.ezIp.geo} I21`
