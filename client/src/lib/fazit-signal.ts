@@ -161,6 +161,21 @@ export function prepareFazitMetrics(
   };
 }
 
+/** Vier Technik-Flags als Anzeigetext. Ändert nicht, welcher Faktor positiv, negativ oder neutral zählt. */
+export function technicalFlagLabels(status: {
+  priceAboveMA200?: boolean;
+  ma50AboveMA200?: boolean;
+  macdAboveZero?: boolean;
+  macdRising?: boolean;
+}): string[] {
+  return [
+    status.priceAboveMA200 ? "Kurs > MA200" : "Kurs < MA200",
+    status.ma50AboveMA200 ? "MA50 > MA200 (Golden Cross)" : "MA50 < MA200 (Death Cross)",
+    status.macdAboveZero ? "MACD > 0" : "MACD < 0",
+    status.macdRising ? "MACD steigend" : "MACD nicht steigend",
+  ];
+}
+
 /** Build Ampel rating + factor lists — identical logic to S17 Fazit IIFE. */
 export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   const {
@@ -251,13 +266,15 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     else techBear.push('MA50 < MA200 (Death Cross)');
     if (techStatus.macdAboveZero && techStatus.macdRising) techBull.push('MACD > 0 & steigend');
     else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
+    void techBull;
 
+    const flagText = technicalFlagLabels(techStatus).join(", ");
     if (techStatus.buySignal) {
-      positive.push(`Technisch: BUY-Signal (${techBull.join(', ')})`);
+      positive.push(`Technisch: BUY-Signal (${flagText})`);
     } else if (techBear.length >= 2) {
-      negative.push(`Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
+      negative.push(`Technisch: KEIN Buy-Signal (${flagText})`);
     } else {
-      neutral.push(`Technisch gemischt: ${[...techBull, ...techBear].join(', ')}`);
+      neutral.push(`Technisch gemischt: ${flagText}`);
     }
   }
 
