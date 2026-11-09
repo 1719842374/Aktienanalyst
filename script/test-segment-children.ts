@@ -852,8 +852,8 @@ gap(
   "neutral-host-child",
   secChild.children.length === 1
     && secChild.children[0]?.shareOfParentPct === 40
-    && reutersChild.children.length === 1
-    && reutersChild.children[0]?.shareOfParentPct === 40
+    && reutersChild.children.length === 0
+    && /Fremdmarke verworfen: Azure/.test(reutersChild.reason ?? "")
     && brokenUrl.children.length === 1
     && brokenUrl.children[0]?.shareOfParentPct == null
     && /ungültige URL/.test(brokenUrl.reason ?? ""),

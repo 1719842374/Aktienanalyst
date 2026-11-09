@@ -114,6 +114,35 @@ export function segmentEstimateButtonVisible(segments: readonly unknown[] | null
   return !segments || segments.length === 0;
 }
 
+/**
+ * Berichtswährung aus GET /api/segment-growth (FMP income-statement reportedCurrency).
+ * Solange die Anfrage läuft: Ladezustand. Danach die Währung oder n/a mit Grund.
+ */
+export function SegmentCurrencyLine({
+  queried,
+  loading,
+  failed,
+  currency,
+}: {
+  queried: boolean;
+  loading: boolean;
+  failed: boolean;
+  currency: string | null;
+}) {
+  if (loading) {
+    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="loading">Währung …</p>;
+  }
+  if (currency) {
+    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="ready">{`Währung ${currency}`}</p>;
+  }
+  const reason = !queried
+    ? "keine Segmente, Berichtswährung nicht abgefragt"
+    : failed
+      ? "Segmentdaten nicht erreichbar"
+      : "Berichtswährung fehlt im Abschluss";
+  return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="na" title={reason}>{`Währung n/a — ${reason}`}</p>;
+}
+
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
@@ -514,10 +543,8 @@ export function Section2({ data }: Props) {
 
 
 export function SegmentEstimateBlock({ data }: Props) {
-  const segmentGrowth = useSegmentGrowth(
-    data.ticker,
-    (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0,
-  );
+  const segmentGrowthQueried = (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0;
+  const segmentGrowth = useSegmentGrowth(data.ticker, segmentGrowthQueried);
   const [openBusiness, setOpenBusiness] = useState<Record<string, boolean>>({});
   const [openGeo, setOpenGeo] = useState<Record<string, boolean>>({});
   const [businessOutline, setBusinessOutline] = useState<OutlineItem[] | null>(null);
@@ -572,7 +599,12 @@ export function SegmentEstimateBlock({ data }: Props) {
   const reportedCurrency = segmentGrowth.data?.currency || null;
   return (
     <>
-        <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency">{reportedCurrency ? `Währung ${reportedCurrency}` : "Währung n/a"}</p>
+        <SegmentCurrencyLine
+          queried={segmentGrowthQueried && (data.ticker ?? "").trim().length > 0}
+          loading={segmentGrowth.isLoading}
+          failed={segmentGrowth.isError}
+          currency={reportedCurrency}
+        />
         {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
             Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from
             one of THREE sources (see server/analyze-route.ts step 7/7b + server/sec-segments.ts):

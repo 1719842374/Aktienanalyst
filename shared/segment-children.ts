@@ -3,7 +3,6 @@
  * FMP nur, wenn die Segmentzeile das Hauptsegment als verschachtelte Werte führt.
  * Eine flache Umsatzzahl ist kein Untersegment. KI-Werte bleiben KI.
  */
-import { isOfficialEvidenceUrl } from "./btc-source-policy";
 import { prettifyProductSegmentName } from "./segment-growth-calc";
 
 export type SegmentChildSource = "FMP" | "KI";
@@ -429,15 +428,14 @@ const SEGMENT_FILING_HOSTS = [
   "szse.cn",
   "disclosure.edinet-fsa.go.jp",
   "sec.gov",
-  "reuters.com",
 ];
 
 function hostUnder(host: string, root: string): boolean {
   return host === root || host.endsWith(`.${root}`);
 }
 
+/** Nur die explizite Host-Liste. Kein generisches *.gov, keine Medien. */
 function neutralCitationHost(host: string): boolean {
-  if (isOfficialEvidenceUrl(`https://${host}/`)) return true;
   return SEGMENT_FILING_HOSTS.some((root) => hostUnder(host, root));
 }
 

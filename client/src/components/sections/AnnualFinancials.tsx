@@ -128,8 +128,9 @@ export function AnnualFinancialsView({
           {view === "sankey" ? "Tabelle" : "Sankey"}
         </button>
       </div>
-      {history && !reportedCurrency ? <p className="text-[10px] text-muted-foreground" data-testid="segment-currency-na">Währung n/a</p> : null}
-      {history?.currencyNote && <p className="text-[10px] text-muted-foreground" data-testid="annual-currency-note">{history.currencyNote}</p>}
+      {/* Ein Hinweis je Mangel: trägt currencyNote den n/a-Grund, steht „Währung n/a“ nur in dieser einen Zeile. */}
+      {history && !reportedCurrency && !history.currencyNote ? <p className="text-[10px] text-muted-foreground" data-testid="segment-currency-na">Währung n/a</p> : null}
+      {history?.currencyNote && <p className="text-[10px] text-muted-foreground" data-testid="annual-currency-note">{reportedCurrency ? history.currencyNote : `Währung n/a — ${history.currencyNote.replace(/^n\/a — /, "")}`}</p>}
       {history?.note && <p className="text-[10px] text-muted-foreground">{history.note}</p>}
       {errorText && <p className="text-[10px] text-muted-foreground" data-testid="annual-error">{errorText}</p>}
       {view === "sankey" ? (
