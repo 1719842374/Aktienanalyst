@@ -133,6 +133,8 @@ export function Section2({ data }: Props) {
     setBusinessOutlineError(null);
     setGeoOutlineError(null);
     setOutlineLoading(null);
+    setOpenBusiness({});
+    setOpenGeo({});
     outlineTicket.current += 1;
   }, [data.ticker]);
 

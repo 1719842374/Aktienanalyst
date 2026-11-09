@@ -213,10 +213,11 @@ export function reviewKiChildren(
   const kind = scope.kind ?? "product";
   const kept: SegmentChild[] = [];
   const notes: string[] = [];
+  const foreign: string[] = [];
   let filtered = 0;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -226,9 +227,10 @@ export function reviewKiChildren(
     }
     const companyName = scope.companyName ?? "";
     const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
-    const ownerOk = owner.length > 0 && echoTokens(companyName, 3).some((token) => owner.toLowerCase().includes(token));
+    const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
+    const ownerOk = companyReferenced(owner, companyName) || companyReferenced(ownerParent, companyName);
     if (companyName && !ownerOk) {
-      notes.push(`n/a — Fremdmarke verworfen: ${name}`);
+      foreign.push(name);
       continue;
     }
     if (sameChildName(kind, parent, name)) {
@@ -251,7 +253,7 @@ export function reviewKiChildren(
       continue;
     }
     const citation = typeof rec.source === "string" ? rec.source.trim() : "";
-    const sourced = concreteSource(citation);
+    const sourced = concreteSource(citation, companyName);
     let shareKept = share != null && share > 0 ? share : null;
     let growthKept = growth;
     if ((share != null || growth != null) && !sourced) {
@@ -278,8 +280,12 @@ export function reviewKiChildren(
   if (parentRevenue != null && parentRevenue > 0 && kept.some((row) => row.revenue != null) && revenueSum > parentRevenue) {
     return { parent, children: [], reason: KI_SUM_EXCEEDS_PARENT };
   }
-  if (kept.length === 0) return { parent, children: [], reason: filtered > 0 ? KI_FILTERED : notes[0] ?? NO_SEGMENT_CHILDREN };
-  return { parent, children: kept, reason: notes.length > 0 ? notes.join(" ") : null };
+  const foreignNote = foreign.length > 0 ? `n/a — Fremdmarke verworfen: ${foreign.join(", ")}` : "";
+  const parts = [foreignNote, filtered > 0 && kept.length === 0 ? KI_FILTERED : "", ...notes].filter((part) => part.length > 0);
+  if (kept.length === 0) {
+    return { parent, children: [], reason: parts.join(" ") || NO_SEGMENT_CHILDREN };
+  }
+  return { parent, children: kept, reason: parts.length > 0 ? parts.join(" ") : null };
 }
 
 export interface SegmentOutlineItem {
@@ -292,16 +298,34 @@ export interface SegmentOutlineItem {
 
 const GENERIC_SOURCE = new Set(["ki-schätzung", "ki schätzung", "ki", "schätzung", "unbekannt", "unknown", "n/a", "na"]);
 
-export function concreteSource(value: string): boolean {
+const SOURCE_DOC = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i;
+const SOURCE_BAD = /(peer-median|peer median|kein geschäftsbericht|ki-schätzung|ki schätzung|\bschätzung\b|abgeleitet)/i;
+
+export function concreteSource(value: string, companyName = ""): boolean {
   const text = value.replace(/\s+/g, " ").trim();
   if (!text) return false;
   const lower = text.toLowerCase();
-  if (GENERIC_SOURCE.has(lower)) return false;
-  if (/^https?:\/\/\S+$/i.test(text)) return true;
-  if (/^(10-k|20-f|10-q|8-k)$/i.test(lower)) return false;
-  const hasDocument = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i.test(text);
-  const hasPeriod = /(?:19|20)\d{2}/.test(text);
-  return hasDocument && hasPeriod;
+  if (GENERIC_SOURCE.has(lower) || SOURCE_BAD.test(lower)) return false;
+  const years = Array.from(text.matchAll(/(?:19|20)\d{2}/g), (match) => Number(match[0]));
+  const nowYear = new Date().getFullYear();
+  const yearOk = years.length > 0 && years.every((year) => year <= nowYear && year >= nowYear - 3);
+  if (!yearOk) return false;
+  const urlMatch = text.match(/https?:\/\/\S+/i);
+  if (urlMatch) {
+    if (!companyName) return false;
+    let host = "";
+    try {
+      host = new URL(urlMatch[0]).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+    const hostCompact = host.replace(/[^a-z0-9]/g, "");
+    if (!companyMatchTokens(companyName).some((token) => hostCompact.includes(token))) return false;
+    return SOURCE_DOC.test(text) || SOURCE_DOC.test(decodeURIComponent(urlMatch[0]));
+  }
+  if (!SOURCE_DOC.test(text)) return false;
+  if (!companyName) return true;
+  return companyReferenced(text, companyName);
 }
 
 function outlineNumber(value: unknown): number | null {
@@ -315,13 +339,33 @@ function echoTokens(value: string, min: number): string[] {
   return value.toLowerCase().split(/[^a-z0-9äöü]+/).filter((token) => token.length >= min && !ECHO_STOP.has(token));
 }
 
+function foldCompany(value: string): string {
+  const folded = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  return folded
+    .replace(/&/g, "")
+    .replace(/['’]/g, "")
+    .replace(/\b(?:p\.?\s*l\.?\s*c\.?|s\.?\s*a\.?|n\.?\s*v\.?|l\.?\s*l\.?\s*c\.?|incorporated|corporation|company|holdings|holding|limited|group|corp|inc|ltd|llc|plc|gmbh|oyj)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function companyMatchTokens(value: string): string[] {
+  return foldCompany(value).split(/\s+/).filter((token) => token.length >= 2);
+}
+
+function companyReferenced(text: string, companyName: string): boolean {
+  const tokens = companyMatchTokens(companyName);
+  if (!text.trim() || tokens.length === 0) return false;
+  const compact = foldCompany(text).replace(/\s+/g, "");
+  return tokens.some((token) => compact.includes(token));
+}
+
 export function outlineEchoMatches(payload: unknown, companyName: string, industry = "", sector = ""): boolean {
   if (!payload || typeof payload !== "object") return false;
   const record = payload as { companyEcho?: unknown; industryEcho?: unknown };
   const companyEcho = record.companyEcho;
   if (typeof companyEcho !== "string" || !companyEcho.trim()) return false;
-  const companyTokens = echoTokens(companyName, 3);
-  if (companyTokens.length === 0 || !companyTokens.some((token) => companyEcho.toLowerCase().includes(token))) return false;
+  if (!companyReferenced(companyEcho, companyName)) return false;
   const hints = echoTokens(`${industry} ${sector}`, 4);
   if (hints.length === 0) return true;
   const industryEcho = record.industryEcho;
@@ -334,7 +378,7 @@ export function outlineStillCurrent(startedTicker: string, currentTicker: string
   return startedTicker.trim().toUpperCase() === currentTicker.trim().toUpperCase();
 }
 
-export function reviewSegmentOutline(payload: unknown): { items: SegmentOutlineItem[]; reason: string | null } {
+export function reviewSegmentOutline(payload: unknown, companyName = ""): { items: SegmentOutlineItem[]; reason: string | null } {
   if (!payload || typeof payload !== "object") return { items: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
   const rawList = Array.isArray(record.children) ? record.children : Array.isArray(record.fills) ? record.fills : null;
@@ -360,7 +404,7 @@ export function reviewSegmentOutline(payload: unknown): { items: SegmentOutlineI
       notes.push(`${KI_NEGATIVE}: ${name}`);
       continue;
     }
-    const sourced = concreteSource(citation);
+    const sourced = concreteSource(citation, companyName);
     let shareKept = share != null && share > 0 ? share : null;
     let growthKept = growth;
     if ((share != null || growth != null) && !sourced) {

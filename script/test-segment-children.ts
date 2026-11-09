@@ -942,8 +942,8 @@ registerSegmentGrowthRoute(sumOutlineApp, {
     companyEcho: "BYD",
     industryEcho: "Auto Manufacturers",
     children: [
-      { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "Geschäftsbericht 2024" },
-      { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "Geschäftsbericht 2024" },
+      { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "BYD Geschäftsbericht 2024" },
+      { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "BYD Geschäftsbericht 2024" },
     ],
   }),
 });
@@ -1016,7 +1016,7 @@ registerSegmentGrowthRoute(unionApp, {
     return {
       companyEcho: "BYD",
     industryEcho: "Auto Manufacturers",
-      children: unionNames.map((name) => ({ name, shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" })),
+      children: unionNames.map((name) => ({ name, shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "BYD Geschäftsbericht 2024" })),
     };
   },
 });
@@ -1129,7 +1129,7 @@ registerSegmentGrowthRoute(ttlApp, {
   outline: async () => ({
     companyEcho: "BYD",
     industryEcho: "Auto Manufacturers",
-    children: [{ name: "Batteries", shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" }],
+    children: [{ name: "Batteries", shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "BYD Geschäftsbericht 2024" }],
   }),
 });
 const ttlServer = ttlApp.listen(0);
@@ -1273,8 +1273,73 @@ try {
 
 gap(
   "prompt-year-currency",
-  routeSource.includes("Geschäftsjahr") && routeSource.includes("Währung") && routeSource.includes("Annual Report"),
+  routeSource.includes("Geschäftsjahr") && routeSource.includes("Währung") && routeSource.includes('"source":null'),
   "prompt",
+);
+
+const strictCompany = "Xiaomi Corporation";
+const strictRejected = [
+  "Investor Presentation 2024",
+  "Investor-Präsentation 2024",
+  "investor presentation",
+  "2024",
+  "Geschäftsbericht 2024",
+  "Annual Report 2025",
+  "10-K 2024",
+  "abgeleitet aus Peer-Median, kein Geschäftsbericht, Stand 2025",
+  "KI-Schätzung in Anlehnung an Investor Presentation 2024",
+  "Apple Annual Report 2024",
+  "Investor Presentation 2099",
+  "https://example.com/x",
+  "KI-Schätzung",
+  "20-F",
+];
+const strictKept = reviewSegmentOutline({
+  children: [{ name: "Smartphones", shareOfParentPct: 40, growthPct: 5, basis: "Kern", source: "Xiaomi Annual Report 2024" }],
+}, strictCompany);
+const strictMiss = strictRejected.filter((source) => {
+  const reviewed = reviewSegmentOutline({
+    children: [{ name: "Smartphones", shareOfParentPct: 40, growthPct: 5, basis: "Kern", source }],
+  }, strictCompany);
+  return reviewed.items[0]?.shareOfParentPct != null;
+});
+gap(
+  "source-strict",
+  strictMiss.length === 0 && strictKept.items[0]?.shareOfParentPct === 40,
+  strictMiss.join(" | ") || `kept=${String(strictKept.items[0]?.shareOfParentPct)}`,
+);
+
+const shortNames = ["3M Company", "HP Inc.", "BP p.l.c.", "AT&T Inc.", "L'Oréal S.A."];
+const shortMiss = shortNames.filter((name) => {
+  const echo = echoMatches({ companyEcho: name, industryEcho: "Industry" }, name, "", "");
+  const child = reviewKiChildren("Seg", {
+    children: [{ name: "Produkt", owner: name, basis: "eigen", source: `${name} Annual Report 2024` }],
+  }, null, { companyName: name });
+  return echo !== true || child.children.length !== 1;
+});
+gap("owner-short-names", shortMiss.length === 0, shortMiss.join(" | ") || "ok");
+
+const subsidiary = reviewKiChildren("Google Services", {
+  children: [{ name: "YouTube", owner: "Google LLC", ownerParent: "Alphabet Inc.", basis: "Video", source: "Alphabet Annual Report 2024" }],
+}, null, { companyName: "Alphabet Inc." });
+gap(
+  "owner-parent",
+  subsidiary.children.some((row) => row.name === "YouTube"),
+  subsidiary.reason ?? subsidiary.children.map((row) => row.name).join(","),
+);
+
+const manyForeign = reviewKiChildren("Smartphones", {
+  children: [
+    { name: "Zorblax Hyperpod", owner: "Quantix Industries", basis: "erfunden" },
+    { name: "Glimmerphone", owner: "Nordwind AG", basis: "erfunden" },
+  ],
+}, null, { companyName: "Xiaomi Corporation" });
+gap(
+  "foreign-all-names",
+  manyForeign.children.length === 0
+    && /Zorblax Hyperpod/.test(manyForeign.reason ?? "")
+    && /Glimmerphone/.test(manyForeign.reason ?? ""),
+  manyForeign.reason ?? "leer",
 );
 
 const kindleChild = reviewKiChildren("Smartphones", {
@@ -1331,7 +1396,7 @@ registerSegmentGrowthRoute(noIndustryApp, {
   identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "", industry: "" }),
   outline: async () => ({
     companyEcho: "Xiaomi Corporation",
-    children: [{ name: "Smartphones", shareOfParentPct: 50, growthPct: 8, basis: "Kern", source: "Geschäftsbericht 2024" }],
+    children: [{ name: "Smartphones", shareOfParentPct: 50, growthPct: 8, basis: "Kern", source: "Xiaomi Geschäftsbericht 2024" }],
   }),
 });
 const noIndustryServer = noIndustryApp.listen(0);
@@ -1370,8 +1435,108 @@ gap(
 
 gap(
   "prompt-owner-source",
-  routeSource.includes("owner") && routeSource.includes("Geschäftsbericht") && routeSource.includes("Investor-Präsentation"),
+  routeSource.includes("ownerParent")
+    && routeSource.includes('"source":null')
+    && !routeSource.includes("Geschäftsbericht 2024")
+    && !routeSource.includes('"Azure"'),
   "prompt",
+);
+
+gap(
+  "outline-raw-gated",
+  routeSource.includes("SEGMENT_OUTLINE_DEBUG")
+    && routeSource.indexOf("SEGMENT_OUTLINE_DEBUG") < routeSource.indexOf("[OUTLINE-RAW]"),
+  "log",
+);
+
+const sectionSource = readFileSync("client/src/components/sections/Section2.tsx", "utf8");
+gap(
+  "ticker-closes-rows",
+  /setOpenBusiness\(\{\}\)/.test(sectionSource) && /setOpenGeo\(\{\}\)/.test(sectionSource),
+  "section2",
+);
+
+resetSegmentChildrenGuardsForTests();
+let foreignNow = 1_000_000;
+let foreignKi = 0;
+const foreignApp = express();
+registerSegmentGrowthRoute(foreignApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => ["Smartphones"],
+  now: () => foreignNow,
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
+  ki: async () => {
+    foreignKi += 1;
+    return { companyEcho: "Xiaomi Corporation", industryEcho: "Consumer Electronics", children: [{ name: "Zorblax Hyperpod", owner: "Quantix Industries", basis: "erfunden" }] };
+  },
+});
+const foreignServer = foreignApp.listen(0);
+const foreignPort = (foreignServer.address() as { port: number }).port;
+try {
+  await fetch(`http://127.0.0.1:${foreignPort}/api/segment-children/XIACY?parent=Smartphones&kind=product`);
+  foreignNow += 61_000;
+  await fetch(`http://127.0.0.1:${foreignPort}/api/segment-children/XIACY?parent=Smartphones&kind=product`);
+  gap("foreign-cache-60s", foreignKi === 2, String(foreignKi));
+} finally {
+  await new Promise<void>((resolve, reject) => foreignServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let capRound = 0;
+const capApp = express();
+capApp.use(express.json());
+registerSegmentGrowthRoute(capApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
+  ki: async () => ({ companyEcho: "Xiaomi Corporation", industryEcho: "Consumer Electronics", children: [{ name: "Kind", owner: "Xiaomi", basis: "x" }] }),
+  outline: async () => {
+    capRound += 1;
+    return {
+      companyEcho: "Xiaomi Corporation",
+      industryEcho: "Consumer Electronics",
+      children: Array.from({ length: 6 }, (_, i) => ({ name: `R${capRound}-Seg${i}`, basis: "b" })),
+    };
+  },
+});
+const capServer = capApp.listen(0);
+const capPort = (capServer.address() as { port: number }).port;
+try {
+  for (let i = 0; i < 5; i++) {
+    await fetch(`http://127.0.0.1:${capPort}/api/segment-outline`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ticker: "XIACY", kind: "product" }),
+    });
+  }
+  const newest = await fetch(`http://127.0.0.1:${capPort}/api/segment-children/XIACY?parent=${encodeURIComponent("R5-Seg0")}&kind=product`);
+  gap("outline-cap-newest", newest.status === 200, String(newest.status));
+} finally {
+  await new Promise<void>((resolve, reject) => capServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let incomeCalls = 0;
+await loadOutlineIdentity("BYDDY", {
+  profile: async () => ({ companyName: "BYD Company Limited", currency: "USD", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
+  income: async () => {
+    incomeCalls += 1;
+    return [{ fiscalYear: 2025, reportedCurrency: "CNY" }];
+  },
+});
+const incomeAgain = await loadOutlineIdentity("BYDDY", {
+  profile: async () => ({ companyName: "BYD Company Limited", currency: "USD" }),
+  income: async () => {
+    incomeCalls += 1;
+    return [{ fiscalYear: 2025, reportedCurrency: "CNY" }];
+  },
+});
+gap(
+  "reported-currency",
+  incomeCalls === 1 && incomeAgain?.fiscalYear === "2025" && incomeAgain?.currency === "CNY",
+  `calls=${incomeCalls} fy=${incomeAgain?.fiscalYear ?? ""} ccy=${incomeAgain?.currency ?? ""}`,
 );
 
 const indexSource = readFileSync("server/index.ts", "utf8");

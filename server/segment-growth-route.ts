@@ -93,7 +93,7 @@ function rememberOutlineNames(ticker: string, kind: "product" | "geographic", na
   for (const name of names) {
     if (!merged.some((current) => sameDisplayedName(kind, current, name))) merged.push(name);
   }
-  outlineNames.set(key, { names: merged.slice(0, OUTLINE_NAMES_PER_TICKER), at: now });
+  outlineNames.set(key, { names: merged.slice(-OUTLINE_NAMES_PER_TICKER), at: now });
   const expired: string[] = [];
   outlineNames.forEach((entry, entryKey) => {
     if (now - entry.at >= OUTLINE_NAME_TTL_MS) expired.push(entryKey);
@@ -328,8 +328,8 @@ export function segmentChildrenKiMessages(
   const identityLine = identity
     ? `Firma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}.`
     : "Geschäftsjahr: n/a. Währung: n/a.";
-  const form = `{"companyEcho":"","industryEcho":"","children":[{"name":"","owner":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":"Geschäftsbericht 2024"}]}`;
-  const sourceRule = "Schätze shareOfParentPct und growthPct als KI-Schätzung und nenne die Quelle, Geschäftsbericht, Annual Report oder Investor-Präsentation mit Jahr. Ohne echte Quelle bleibt die Zahl null, nie 0. Echte 0 bleibt 0. companyEcho nennt die Firma, industryEcho die Branche, owner den Eigentümer des Kindes. Nur Produkte dieser Firma.";
+  const form = `{"companyEcho":"","industryEcho":"","children":[{"name":"","owner":"","ownerParent":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}`;
+  const sourceRule = "owner oder ownerParent nennt die Firma. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Echte 0 bleibt 0. Ein unbekannter Wert ist null, nie 0.";
   if (kind === "geographic") {
     return {
       systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
@@ -338,7 +338,7 @@ export function segmentChildrenKiMessages(
   }
   return {
     systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-    prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments dieser Firma, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"companyEcho":"${identity?.companyName ?? ""}","industryEcho":"${identity?.industry || identity?.sector || ""}","children":[{"name":"Azure","owner":"${identity?.companyName ?? ""}","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Cloud-Plattform","source":"Geschäftsbericht 2024"}]}. ${sourceRule} Jedes Kind braucht name, basis und owner. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments dieser Firma, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"companyEcho":"${identity?.companyName ?? ""}","industryEcho":"${identity?.industry || identity?.sector || ""}","children":[{"name":"","owner":"${identity?.companyName ?? ""}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. ${sourceRule} Jedes Kind braucht name, basis und owner. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 
@@ -382,7 +382,31 @@ function profileText(profile: Record<string, unknown>, key: string): string {
 
 export interface OutlineIdentityLoad {
   profile?: (ticker: string) => Promise<unknown>;
+  income?: (ticker: string) => Promise<unknown>;
   now?: () => number;
+}
+
+async function ensureStatementFacts(ticker: string, now: number, load: OutlineIdentityLoad): Promise<{ fiscalYear: string; currency: string }> {
+  const hit = statementFacts.get(ticker);
+  if (hit && now - hit.at < IDENTITY_TTL_MS) return hit;
+  let fiscalYear = "";
+  let currency = "";
+  try {
+    const income = await (load.income ?? ((symbol: string) => fmpIncomeStatement(symbol, 1)))(ticker);
+    const row = Array.isArray(income) ? income[0] : null;
+    if (row && typeof row === "object") {
+      const statement = row as Record<string, unknown>;
+      const year = profileText(statement, "fiscalYear") || profileText(statement, "calendarYear") || profileText(statement, "date").slice(0, 4);
+      const reported = profileText(statement, "reportedCurrency").toUpperCase();
+      if (/^(19|20)\d{2}$/.test(year)) fiscalYear = year;
+      if (/^[A-Z]{3}$/.test(reported)) currency = reported;
+    }
+  } catch {
+    // Ohne Abschluss bleiben Jahr und Währung n/a.
+  }
+  const facts = { at: now, fiscalYear, currency };
+  statementFacts.set(ticker, facts);
+  return facts;
 }
 
 function rememberStatementFacts(ticker: string, income: unknown, now = Date.now()): void {
@@ -402,28 +426,26 @@ export async function loadOutlineIdentity(ticker: string, load: OutlineIdentityL
   const key = ticker.trim().toUpperCase();
   const now = load.now?.() ?? Date.now();
   const hit = identityCache.get(key);
-  if (hit && now - hit.at < IDENTITY_TTL_MS) return hit.identity;
+  if (hit && now - hit.at < IDENTITY_TTL_MS) {
+    const facts = await ensureStatementFacts(key, now, load);
+    return { ...hit.identity, fiscalYear: facts.fiscalYear, currency: facts.currency };
+  }
   try {
     const profile = await (load.profile ?? fmpProfile)(ticker);
     if (!profile || typeof profile !== "object") return null;
     const record = profile as Record<string, unknown>;
     const companyName = profileText(record, "companyName");
     if (companyName.length < 2) return null;
-    const facts = statementFacts.get(key);
-    const freshFacts = facts && now - facts.at < IDENTITY_TTL_MS ? facts : null;
-    const profileCurrency = profileText(record, "currency").toUpperCase();
-    const profileYear = profileText(record, "fiscalYear") || profileText(record, "calendarYear");
     const identity: OutlineIdentity = {
       companyName,
       exchange: profileText(record, "exchange") || profileText(record, "exchangeShortName"),
       country: profileText(record, "country"),
       sector: profileText(record, "sector"),
       industry: profileText(record, "industry"),
-      fiscalYear: /^(19|20)\d{2}$/.test(profileYear) ? profileYear : (freshFacts?.fiscalYear ?? ""),
-      currency: /^[A-Z]{3}$/.test(profileCurrency) ? profileCurrency : (freshFacts?.currency ?? ""),
     };
     identityCache.set(key, { at: now, identity });
-    return identity;
+    const facts = await ensureStatementFacts(key, now, load);
+    return { ...identity, fiscalYear: facts.fiscalYear, currency: facts.currency };
   } catch {
     return null;
   }
@@ -446,7 +468,7 @@ async function defaultOutline(ticker: string, kind: "product" | "geographic", id
   try {
     const result = await callLLMJson({
       systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. companyEcho muss den Firmennamen enthalten, industryEcho die Branche. Zahlen nur mit Dokumenttyp und Periode, sonst null. Echte 0 bleibt 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
-      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. Schätze Umsatzanteil und Wachstum als KI-Schätzung und nenne die Quelle, Geschäftsbericht oder Investor-Präsentation mit Jahr. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || "n/a"}","children":[{"name":"Fahrzeuge","owner":"${identity.companyName}","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Geschäftsbericht 2025"}]}. Ohne echte Quelle bleiben die Zahlen null. Echte 0 bleibt 0.`,
+      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || ""}","children":[{"name":"","owner":"${identity.companyName}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. Echte 0 bleibt 0.`,
       maxTokens: 800,
       temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
@@ -597,7 +619,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         }
       }
       const body = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames });
-      const shortCache = body.children.length === 0 && (body.reason === KI_UNAVAILABLE || body.reason === KI_FILTERED || body.reason === OUTLINE_NO_IDENTITY || body.reason === OUTLINE_MISMATCH);
+      const shortCache = body.children.length === 0;
       const ttl = shortCache ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;
@@ -637,13 +659,15 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       const payload = deps.outline
         ? await deps.outline(ticker, kind, identity)
         : await defaultOutline(ticker, kind, identity);
-      const rawJson = JSON.stringify(payload ?? null);
-      console.log(`[OUTLINE-RAW] ${ticker} ${kind} ${rawJson.slice(0, 2000)}`);
+      if (process.env.SEGMENT_OUTLINE_DEBUG === "1") {
+        const rawJson = JSON.stringify(payload ?? null);
+        console.log(`[OUTLINE-RAW] ${ticker} ${kind} ${rawJson.slice(0, 2000)}`);
+      }
       if (payload == null) return res.status(503).json({ error: KI_UNAVAILABLE });
       if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
         return res.json({ items: [], reason: OUTLINE_MISMATCH });
       }
-      const reviewed = reviewSegmentOutline(payload);
+      const reviewed = reviewSegmentOutline(payload, identity.companyName);
       if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name), now);
       return res.json(reviewed);
     } catch (err: unknown) {
