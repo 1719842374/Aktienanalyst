@@ -12,6 +12,7 @@ import express from "express";
 import {
   annotateMissingSegmentGrowth,
   annotationByName,
+  prettifyProductSegmentName,
   snapshotsFromFmpRows,
 } from "../shared/segment-growth-calc";
 import { SegmentGrowthReadout } from "../client/src/components/sections/SegmentGrowthReadout";
@@ -21,7 +22,7 @@ import {
   resolveSegmentChildren,
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
-import { loadSegmentChildren, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
+import { loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
 import { buildSegmentSupplement } from "../shared/segment-supplement";
 import { SegmentSupplementBody } from "../client/src/components/sections/SegmentSupplementView";
 
@@ -381,6 +382,82 @@ try {
   gap("fmp-after-cache-miss", rawCalls === afterFirst && afterFirst > 0, `raw=${afterFirst}->${rawCalls}`);
 } finally {
   await new Promise<void>((resolve, reject) => missServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const msftRaw = [
+  "Microsoft Three Six Five Commercial Products And Cloud Services",
+  "Server Products And Cloud Services",
+  "LinkedIn Corporation",
+  "Search And News Advertising",
+  "Windows And Devices",
+  "Gaming",
+];
+const aaplRaw = ["iPhone", "Mac", "iPad", "Wearables, Home And Accessories", "Services"];
+const shown = [...msftRaw, ...aaplRaw].map((name) => prettifyProductSegmentName(name));
+let serverPrompt = "";
+const prettyApp = express();
+registerSegmentGrowthRoute(prettyApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2024", data: Object.fromEntries([...msftRaw, ...aaplRaw].map((name) => [name, 10])) }],
+  ki: async (_ticker, parent) => {
+    if (prettifyProductSegmentName(parent) === "Server") serverPrompt = parent;
+    return { children: [{ name: "Teil", shareOfParentPct: 10, basis: "Bericht" }] };
+  },
+  rateLimit: { max: 40, windowMs: 60_000 },
+});
+const prettyServer = prettyApp.listen(0);
+const prettyPort = (prettyServer.address() as { port: number }).port;
+try {
+  const statuses: string[] = [];
+  for (const name of shown) {
+    const response = await fetch(`http://127.0.0.1:${prettyPort}/api/segment-children/MSFT?parent=${encodeURIComponent(name)}&kind=product`);
+    statuses.push(`${name}=${response.status}`);
+  }
+  const foreign = await fetch(`http://127.0.0.1:${prettyPort}/api/segment-children/MSFT?parent=${encodeURIComponent("Nicht vorhanden")}&kind=product`);
+  gap(
+    "prettified-names",
+    statuses.every((row) => row.endsWith("=200")) && foreign.status === 400 && serverPrompt === "Server Products And Cloud Services",
+    `${statuses.join(", ")} foreign=${foreign.status} prompt=${serverPrompt}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => prettyServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const routeSource = readFileSync("server/segment-growth-route.ts", "utf8");
+gap(
+  "sec-disk-cache",
+  !/fetchSecBusinessSegments/.test(routeSource) && /segments__/.test(routeSource),
+  /fetchSecBusinessSegments/.test(routeSource) ? "live SEC call remains" : (/segments__/.test(routeSource) ? "disk cache" : "disk key missing"),
+);
+let liveSec = 0;
+const cachedSec = { segments: [{ name: "Bitcoin Mining" }, { name: "AI Cloud Services" }] };
+const firstNames = namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
+const secondNames = namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
+let secNameReads = 0;
+const secApp = express();
+registerSegmentGrowthRoute(secApp, {
+  fmpAvailable: () => true,
+  raw: async () => [],
+  names: async () => {
+    secNameReads += 1;
+    liveSec += 0;
+    return namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
+  },
+  ki: async () => ({ children: [] }),
+});
+const secServer = secApp.listen(0);
+const secPort = (secServer.address() as { port: number }).port;
+try {
+  await fetch(`http://127.0.0.1:${secPort}/api/segment-children/IREN?parent=${encodeURIComponent("Bitcoin Mining")}&kind=product`);
+  await fetch(`http://127.0.0.1:${secPort}/api/segment-children/IREN?parent=${encodeURIComponent("Bitcoin Mining")}&kind=product`);
+  gap(
+    "sec-second-tap",
+    firstNames.includes("Bitcoin Mining") && secondNames.includes("AI Cloud Services") && secNameReads === 1 && liveSec === 0,
+    `reads=${secNameReads} live=${liveSec} names=${firstNames.join(",")}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => secServer.close((err) => err ? reject(err) : resolve()));
 }
 
 const indexSource = readFileSync("server/index.ts", "utf8");

@@ -22,8 +22,9 @@ import {
   promoteNonGeoRowsToBusiness,
 } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
-import { fetchSecBusinessSegments } from "./sec-segments";
 import { curatedSegmentNames } from "./curated-product-segments";
+import { diskResearcherGet } from "./disk-cache";
+import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import {
   KI_UNAVAILABLE,
   SEGMENT_CHILDREN_ROUTE,
@@ -152,26 +153,42 @@ export interface SegmentChildrenDeps {
   rateLimit?: { max: number; windowMs: number };
 }
 
-async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
-  const ownRows = await fmpSegmentationRows(kind, ticker, "annual");
-  const names = segmentNamesFromFmpRows(ownRows);
-  if (kind === "geographic") return names;
+export function namesFromDisplayedSources(input: {
+  kind: "product" | "geographic";
+  ticker: string;
+  ownRows: unknown[];
+  geoRows: unknown[];
+  secCache: { segments?: { name?: string }[] } | null;
+}): string[] {
+  const names = segmentNamesFromFmpRows(input.ownRows);
+  if (input.kind === "geographic") return names;
   if (names.length === 0) {
-    for (const name of curatedSegmentNames(ticker)) names.push(name);
+    for (const name of curatedSegmentNames(input.ticker)) names.push(name);
   }
   if (names.length === 0) {
-    const sec = await fetchSecBusinessSegments(ticker, ticker).catch(() => null);
-    for (const segment of sec?.segments ?? []) {
-      if (typeof segment.name === "string" && segment.name.trim()) names.push(segment.name.trim());
+    for (const segment of input.secCache?.segments ?? []) {
+      if (typeof segment?.name === "string" && segment.name.trim()) names.push(segment.name.trim());
     }
   }
-  const geoRows = await fmpSegmentationRows("geographic", ticker, "annual");
-  const geo = segmentNamesFromFmpRows(geoRows).map((name) => ({ name, revenue: 1 }));
+  const geo = segmentNamesFromFmpRows(input.geoRows).map((name) => ({ name, revenue: 1 }));
   const business = names.map((name) => ({ name, revenue: 1 }));
   for (const row of promoteNonGeoRowsToBusiness(business, geo)) {
     if (!names.some((name) => name.toLowerCase() === row.name.toLowerCase())) names.push(row.name);
   }
   return names;
+}
+
+async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
+  const ownRows = await fmpSegmentationRows(kind, ticker, "annual");
+  const geoRows = kind === "product" ? await fmpSegmentationRows("geographic", ticker, "annual") : [];
+  const secCache = diskResearcherGet(`segments__${ticker.toUpperCase()}`) as { segments?: { name?: string }[] } | null;
+  return namesFromDisplayedSources({ kind, ticker, ownRows, geoRows, secCache });
+}
+
+function sameDisplayedName(kind: "product" | "geographic", listed: string, requested: string): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  if (kind === "product") return fold(prettifyProductSegmentName(listed)) === fold(prettifyProductSegmentName(requested));
+  return fold(listed) === fold(requested);
 }
 
 async function defaultKiChildren(ticker: string, parent: string): Promise<unknown> {
@@ -289,8 +306,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       const listed = deps.names
         ? await deps.names(ticker, kind)
         : segmentNamesFromFmpRows(Array.isArray(rawRows) ? rawRows : []);
-      const wanted = parent.toLowerCase().replace(/\s+/g, " ").trim();
-      const canonical = listed.find((name) => name.toLowerCase().replace(/\s+/g, " ").trim() === wanted) ?? null;
+      const canonical = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
       if (!canonical) return res.status(400).json({ error: SEGMENT_UNKNOWN });
       const body = await loadSegmentChildren(ticker, canonical, kind, deps);
       const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
