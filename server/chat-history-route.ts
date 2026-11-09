@@ -49,6 +49,15 @@ const sessions = new Map<string, SessionBag>();
 /** Löschvermerke liegen neben den Sessions, damit ein DELETE keine Session anlegt. */
 const tombs = new Map<string, Map<string, Tomb>>();
 
+/** Obergrenze über alle Sessions: so viele Vermerke wie der Prozess an Threads hält. */
+export const CHAT_HISTORY_TOMB_CAP = CHAT_HISTORY_SESSION_CAP * CHAT_HISTORY_THREADS_PER_SESSION;
+
+export function chatHistoryTombCount(): number {
+  let n = 0;
+  tombs.forEach(byId => { n += byId.size; });
+  return n;
+}
+
 export function resetChatHistoryStore(): void {
   sessions.clear();
   tombs.clear();
@@ -108,17 +117,35 @@ function dropExpired(now: number): void {
   deadSessions.forEach(id => sessions.delete(id));
 }
 
-function sweepTombs(now: number): void {
-  const empty: string[] = [];
-  tombs.forEach((byId, sessionId) => {
-    const dead: string[] = [];
-    byId.forEach((tomb, id) => {
-      if (now - tomb.touchedAt >= CHAT_HISTORY_TTL_MS) dead.push(id);
-    });
-    dead.forEach(id => byId.delete(id));
-    if (byId.size === 0) empty.push(sessionId);
+function sweepSessionTombs(sessionId: string, now: number): void {
+  const byId = tombs.get(sessionId);
+  if (!byId) return;
+  const dead: string[] = [];
+  byId.forEach((tomb, id) => {
+    if (now - tomb.touchedAt >= CHAT_HISTORY_TTL_MS) dead.push(id);
   });
-  empty.forEach(id => tombs.delete(id));
+  dead.forEach(id => byId.delete(id));
+  if (byId.size === 0) tombs.delete(sessionId);
+}
+
+function evictOldestTomb(): void {
+  let bestSession: string | undefined;
+  let bestId: string | undefined;
+  let bestAt = Number.POSITIVE_INFINITY;
+  tombs.forEach((byId, sessionId) => {
+    byId.forEach((tomb, id) => {
+      if (tomb.touchedAt < bestAt) {
+        bestAt = tomb.touchedAt;
+        bestSession = sessionId;
+        bestId = id;
+      }
+    });
+  });
+  if (bestSession == null || bestId == null) return;
+  const byId = tombs.get(bestSession);
+  if (!byId) return;
+  byId.delete(bestId);
+  if (byId.size === 0) tombs.delete(bestSession);
 }
 
 function rememberTomb(sessionId: string, id: string, tomb: Tomb): void {
@@ -140,6 +167,8 @@ function rememberTomb(sessionId: string, id: string, tomb: Tomb): void {
     if (oldestId == null) break;
     byId.delete(oldestId);
   }
+  if (byId.size === 0) tombs.delete(sessionId);
+  while (chatHistoryTombCount() > CHAT_HISTORY_TOMB_CAP) evictOldestTomb();
 }
 
 function clearTomb(sessionId: string, id: string): void {
@@ -158,12 +187,12 @@ function staleWrite(sessionId: string, id: string, epoch: string, revision: numb
 
 function sweep(now: number): void {
   dropExpired(now);
-  sweepTombs(now);
   evictSessions();
 }
 
 export function listChatThreads(sessionId: string, dashboard?: string, entity?: string, now = Date.now()): ChatThread[] {
   sweep(now);
+  sweepSessionTombs(sessionId, now);
   const bag = sessions.get(sessionId);
   if (!bag) return [];
   promoteSession(sessionId, now);
@@ -188,6 +217,7 @@ export function listChatThreads(sessionId: string, dashboard?: string, entity?: 
 
 export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now(), revision?: number, epoch?: string): ChatThread | null {
   sweep(now);
+  sweepSessionTombs(sessionId, now);
   if (epoch != null && revision != null && isChatSessionId(epoch) && staleWrite(sessionId, thread.id, epoch, revision)) return null;
   const bag = promoteSession(sessionId, now);
   if (epoch != null && revision != null) clearTomb(sessionId, thread.id);
@@ -201,6 +231,7 @@ export function putChatThread(sessionId: string, thread: ChatThread, now = Date.
 
 export function deleteChatThread(sessionId: string, id: string, now = Date.now(), revision?: number, epoch?: string): boolean {
   sweep(now);
+  sweepSessionTombs(sessionId, now);
   if (epoch != null && revision != null && isChatSessionId(epoch)) {
     rememberTomb(sessionId, id, { epoch, revision, touchedAt: now });
   }

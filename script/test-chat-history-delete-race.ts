@@ -18,7 +18,7 @@ import type { AddressInfo } from "node:net";
 import React from "react";
 import express from "express";
 import { CHAT_HISTORY_THREADS_PER_SESSION, CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, CHAT_WRITE_EPOCH_HEADER, CHAT_WRITE_REVISION_HEADER, type ChatThread } from "../shared/chat-history";
-import { CHAT_HISTORY_SESSION_CAP, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
+import { CHAT_HISTORY_SESSION_CAP, CHAT_HISTORY_TOMB_CAP, chatHistoryTombCount, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
 import { installFakeDom } from "./lib/fake-dom";
 
 const { doc } = installFakeDom();
@@ -656,6 +656,22 @@ async function main() {
         assert.equal(del.body.ok, true);
       }
       assert.deepEqual(await observe("Session-nach-leeren-DELETEs", kept), ["synth-m3-kept"]);
+    });
+
+    await scenario("M4 viele DELETEs fremder Sessions bleiben unter dem Gesamt-Cap", async () => {
+      const t0 = 1_800_000_000_000;
+      resetChatHistoryStore();
+      const flood = CHAT_HISTORY_TOMB_CAP + 40;
+      for (let i = 0; i < flood; i++) {
+        deleteChatThread(`sess-m4-${i}`, "synth-m4-flood", t0 + i, 1, "epoch-m4-flood");
+      }
+      const size = chatHistoryTombCount();
+      note(`tomb-count=${size} cap=${CHAT_HISTORY_TOMB_CAP} flood=${flood}`);
+      assert.ok(size > 0 && size <= CHAT_HISTORY_TOMB_CAP, `Vermerke ${size} über Cap ${CHAT_HISTORY_TOMB_CAP}`);
+      const oldest = putChatThread("sess-m4-0", synth("synth-m4-flood", "synthetic-m4-oldest"), t0 + flood, 2, "epoch-m4-other");
+      const newest = putChatThread(`sess-m4-${flood - 1}`, synth("synth-m4-flood", "synthetic-m4-newest"), t0 + flood, 2, "epoch-m4-other");
+      assert.equal(oldest?.id, "synth-m4-flood", "der älteste fremde Vermerk wird verdrängt");
+      assert.equal(newest, null, "ein junger fremder Vermerk bleibt");
     });
   } finally {
     releaseArmed();
