@@ -319,8 +319,8 @@ export function concreteSource(value: string, companyName = ""): boolean {
     } catch {
       return false;
     }
-    const hostCompact = host.replace(/[^a-z0-9]/g, "");
-    if (!companyMatchTokens(companyName).some((token) => hostCompact.includes(token))) return false;
+    const labels = new Set(host.split(".").filter((label) => label.length >= 2));
+    if (!companyMatchTokens(companyName).some((token) => labels.has(token))) return false;
     return SOURCE_DOC.test(text) || SOURCE_DOC.test(decodeURIComponent(urlMatch[0]));
   }
   if (!SOURCE_DOC.test(text)) return false;
@@ -339,12 +339,22 @@ function echoTokens(value: string, min: number): string[] {
   return value.toLowerCase().split(/[^a-z0-9äöü]+/).filter((token) => token.length >= min && !ECHO_STOP.has(token));
 }
 
+function foldAmpersand(value: string): string {
+  const pair = /([a-z0-9]+)\s*&\s*([a-z0-9]+)/;
+  let folded = value;
+  while (pair.test(folded)) {
+    folded = folded.replace(pair, (_match, left: string, right: string) => (
+      left.length === 1 || right.length === 1 ? `${left}${right}` : `${left} ${right}`
+    ));
+  }
+  return folded;
+}
+
 function foldCompany(value: string): string {
   const folded = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
-  return folded
-    .replace(/\s*&\s*/g, "")
+  return foldAmpersand(folded)
     .replace(/['’]/g, "")
-    .replace(/\b(?:p\.?\s*l\.?\s*c\.?|s\.?\s*a\.?|n\.?\s*v\.?|l\.?\s*l\.?\s*c\.?|incorporated|corporation|company|holdings|holding|limited|group|corp|inc|ltd|llc|plc|gmbh|oyj)\b/g, " ")
+    .replace(/\b(?:p\.?\s*l\.?\s*c\.?|s\.?\s*a\.?|n\.?\s*v\.?|l\.?\s*l\.?\s*c\.?|incorporated|corporation|company|holdings|holding|limited|group|corp|inc|ltd|llc|plc|co|ag|gmbh|oyj)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
