@@ -16,7 +16,7 @@ export function Section9({ data }: Props) {
     return sorted.slice(0, 130).map((p) => p.close); // ~26 weeks of trading days
   }, [data.historicalPrices]);
 
-  const rsl = useMemo(() => calculateRSL(data.currentPrice, prices26w), [data.currentPrice, prices26w]);
+  const rsl = useMemo(() => calculateRSL(data.currentPrice, prices26w) as number, [data.currentPrice, prices26w]);
   const avg26w = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : data.currentPrice;
 
   // Sprint D1 §2 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md): der Malus greift jetzt klassenabhaengig

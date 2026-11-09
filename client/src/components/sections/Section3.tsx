@@ -43,7 +43,7 @@ export function Section3({ data }: Props) {
         const ti = data.technicalIndicators?.currentStatus;
         // RSL via kanonische calculateRSL() — identisches Zeitfenster wie Section 9 + 13 (26W = 130 Handelstage)
         const rslPrices26w = [...data.historicalPrices].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 130).map(p => p.close);
-        const rsl = calculateRSL(data.currentPrice, rslPrices26w);
+        const rsl = calculateRSL(data.currentPrice, rslPrices26w) as number;
         const isAboveMA200 = ti?.priceAboveMA200 ?? false;
         const isGolden = ti?.ma50AboveMA200 ?? false;
         const macdPos = ti?.macdAboveZero ?? false;

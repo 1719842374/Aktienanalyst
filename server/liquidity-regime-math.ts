@@ -400,8 +400,8 @@ export function classifyPolicyFromOps(input: {
   if (!ready) {
     return { available: false, qe: false, rmp: false, deskFlag: input.deskFlag, label: null };
   }
-  const qe = input.zNotes13w > 1.5 && input.notesDelta13wBn > 0;
-  const rmp = input.zBills13w > 1.5 && input.zNotes13w <= 0.5;
+  const qe = input.zNotes13w! > 1.5 && input.notesDelta13wBn! > 0;
+  const rmp = input.zBills13w! > 1.5 && input.zNotes13w! <= 0.5;
   return { available: true, qe, rmp, deskFlag: input.deskFlag, label: qe ? "QE" : rmp ? "RMP" : null };
 }
 
