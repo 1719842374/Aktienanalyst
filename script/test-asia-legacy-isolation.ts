@@ -13,10 +13,14 @@ import {
   ashrRealizedVolPoints,
   bounded,
   emptyRegionalPrints,
+  eurostatAttemptPlan,
   eurostatStep,
+  jpActivitySource,
   loadAshrCloses,
   runAsiaSupplement,
   scoreRegionalCatalogs,
+  ASIA_FMP_TIMEOUT_MS,
+  EUROSTAT_RETRY_MS,
   type RegionScorers,
 } from "../server/recession-regions";
 import { fetchYahooTimeseriesFundamentals } from "../server/yahoo-fetcher";
@@ -170,8 +174,12 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
   const src = readFileSync("server/recession-regions.ts", "utf8");
   check("leerer Katalog nennt FMP und Yahoo, nicht nur den alten Yahoo-Satz", src.includes("cnVolSource: \"n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)\""));
   check("OECD wird bei leerer erster Antwort ein zweites Mal gelesen", src.includes("if (first && !first.includes(\"<html\")) return first;"));
-  check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", src.includes("FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder älter"));
+  check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", jpActivitySource(false, 0) === "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML");
+  check("ältere OECD-Daten ohne zweite Abfrage heißen nicht Wiederholung", jpActivitySource(false, 3) === "FRED JPNPROINDMISMEI; OECD älter als FRED" && jpActivitySource(true, 3).includes("OECD"));
   check("EA20 wird bei leerer erster Antwort wiederholt, bevor EA21 kommt", eurostatStep(0, false) === "retry" && eurostatStep(0, true) === "next" && eurostatStep(2, false) === "use");
+  check("ein 20s-Hänger von EA20 startet keine zweite Frist", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: "Timeout", dataset: "sts_inpr_m", httpStatus: null, hasNext: true }) === "next");
+  check("sts_inpr_m leer bleibt eine kurze Wiederholung", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: "leer", dataset: "sts_inpr_m", httpStatus: 200, hasNext: true }) === "retry" && EUROSTAT_RETRY_MS <= 8000);
+  check("une_rt_m EA20 mit 0 Werten geht direkt zu EA21", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: null, dataset: "une_rt_m", httpStatus: 200, hasNext: true }) === "next");
   check("Eurostat loggt den Fallback-Grund", src.includes("Eurostat ${dataset} ${geo} nach Wiederholung"));
   check("ein Yahoo-Chart-Kurs trägt kein Kurs-FMP-Label", ashrPriceSource("yahoo", 30.5) == null && ashrPriceSource("fmp", 30.5) === "fmp");
   const yahooKurs = ashrPeFromProbes({
@@ -193,6 +201,51 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
     "der Asien-Block endet an der Gesamtfrist mit n/a Zeitüberschreitung",
     blockAborted && Date.now() - blockStart < 300 && blocked.cnVolSource.includes("Zeitüberschreitung") && blocked.cnPeSource.includes("Zeitüberschreitung"),
     `${Date.now() - blockStart}ms ${blocked.cnVolSource}`,
+  );
+  const keptCloses = Array.from({ length: 40 }, (_, index) => ({ date: day(index), close: 30 + (index % 3) }));
+  const keptStart = Date.now();
+  let ratiosAborted = false;
+  const kept = await runAsiaSupplement("2026-11-09", 80, async () => ({ closes: keptCloses, via: "fmp", reason: "ok" }), {
+    pe: (_today, _lastClose, signal) => new Promise(resolve => {
+      const stop = () => {
+        ratiosAborted = true;
+        resolve({ value: null, source: "n/a — ASHR KGV Zeitüberschreitung" });
+      };
+      if (signal.aborted) stop();
+      else signal.addEventListener("abort", stop, { once: true });
+    }),
+    gdp: async id => ({ value: id.includes("JPA") ? 4e12 : 16e12, source: `FRED ${id} 2024` }),
+  });
+  check(
+    "ratios-ttm hängt, BIP bleibt",
+    ratiosAborted
+      && kept.jpGdpUsd === 4e12
+      && kept.cnGdpUsd === 16e12
+      && kept.jpGdpSource.includes("2024")
+      && !kept.jpGdpSource.includes("Zeitüberschreitung")
+      && !kept.cnGdpSource.includes("Zeitüberschreitung")
+      && kept.cnVolPoints.length > 0
+      && kept.cnVolSource.includes("FMP")
+      && kept.cnPe == null
+      && kept.cnPeSource.includes("Zeitüberschreitung")
+      && Date.now() - keptStart < 500,
+    `${Date.now() - keptStart}ms ${kept.jpGdpSource} vol=${kept.cnVolSource}`,
+  );
+  const yahooStart = Date.now();
+  let yahooAt = -1;
+  const yahooAfterFmp = await loadAshrCloses("2020-01-01", {
+    fmpTimeoutMs: 40,
+    timeoutMs: 2000,
+    fmp: signal => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+    yahoo: async () => keptCloses.map(bar => ({ date: bar.date, value: bar.close })),
+  });
+  yahooAt = Date.now() - yahooStart;
+  check(
+    "FMP-Teilfrist lässt den Yahoo-Fallback vor der Blockfrist starten",
+    yahooAfterFmp.via === "yahoo" && yahooAfterFmp.closes.length === 40 && yahooAt < 300 && ASIA_FMP_TIMEOUT_MS <= 5000,
+    `${yahooAt}ms via=${yahooAfterFmp.via}`,
   );
   const aborted = new AbortController();
   aborted.abort();

@@ -147,29 +147,76 @@ export function eurostatStep(pointCount: number, alreadyRetried: boolean): "use"
   return "next";
 }
 
+/** Second Eurostat try. A 20s hang is not repeated. une_rt_m with a finished empty body goes straight to the next geo. */
+export const EUROSTAT_RETRY_MS = 8000;
+
+export function eurostatAttemptPlan(input: {
+  pointCount: number;
+  alreadyRetried: boolean;
+  why: string | null;
+  dataset: string;
+  httpStatus: number | null;
+  hasNext: boolean;
+}): "use" | "retry" | "next" {
+  const step = eurostatStep(input.pointCount, input.alreadyRetried);
+  if (step === "use") return "use";
+  if (!input.hasNext || step === "next") return "next";
+  if (input.why === "Timeout") return "next";
+  if (input.dataset === "une_rt_m" && input.httpStatus === 200 && input.pointCount === 0 && input.why == null) return "next";
+  return "retry";
+}
+
 async function eurostat(dataset: string, query: string, geos: string[]): Promise<{ geo: string; points: DatedPoint[] }> {
+  let uneEa20Empty = false;
   for (let index = 0; index < geos.length; index++) {
     const geo = geos[index];
     const url = `${EUROSTAT}/${dataset}?format=JSON&lang=en&geo=${geo}&${query}`;
     const result = await getTextResult(url);
     const why = eurostatWhy(result);
     const points = why ? [] : parseEurostatPoints(result.text);
-    if (eurostatStep(points.length, false) === "use") return { geo, points };
     const next = geos[index + 1];
-    if (!next || eurostatStep(points.length, false) !== "retry") {
-      console.warn(`[RECESSION] Eurostat ${dataset} ${geo} ${why ?? "ohne Punkte"}`);
+    const plan = eurostatAttemptPlan({
+      pointCount: points.length,
+      alreadyRetried: false,
+      why,
+      dataset,
+      httpStatus: result.status,
+      hasNext: Boolean(next),
+    });
+    if (plan === "use") {
+      return { geo: labeledGeo(dataset, geo, uneEa20Empty), points };
+    }
+    if (plan === "next") {
+      if (dataset === "une_rt_m" && geo === "EA20" && result.status === 200 && points.length === 0 && why == null) {
+        uneEa20Empty = true;
+        console.warn(`[RECESSION] Eurostat une_rt_m EA20 ohne Werte, keine Wiederholung${next ? `; Fallback ${next}` : ""}`);
+      } else {
+        console.warn(`[RECESSION] Eurostat ${dataset} ${geo} ${why ?? "ohne Punkte"}${why === "Timeout" ? ", keine zweite 20s-Frist" : ""}${next ? `; Fallback ${next}` : ""}`);
+      }
       continue;
     }
-    const again = await getTextResult(url);
+    const again = await getTextResult(url, EUROSTAT_RETRY_MS);
     const againWhy = eurostatWhy(again);
     const againPoints = againWhy ? [] : parseEurostatPoints(again.text);
-    if (eurostatStep(againPoints.length, true) === "use") {
+    if (eurostatAttemptPlan({
+      pointCount: againPoints.length,
+      alreadyRetried: true,
+      why: againWhy,
+      dataset,
+      httpStatus: again.status,
+      hasNext: Boolean(next),
+    }) === "use") {
       console.warn(`[RECESSION] Eurostat ${dataset} ${geo} erste Antwort ${why ?? "ohne Punkte"}, Wiederholung ok`);
-      return { geo, points: againPoints };
+      return { geo: labeledGeo(dataset, geo, uneEa20Empty), points: againPoints };
     }
     console.warn(`[RECESSION] Eurostat ${dataset} ${geo} nach Wiederholung ${againWhy ?? why ?? "ohne Punkte"}; Fallback ${next}`);
   }
   return { geo: geos[0] ?? "", points: [] };
+}
+
+function labeledGeo(dataset: string, geo: string, uneEa20Empty: boolean): string {
+  if (dataset === "une_rt_m" && geo === "EA21" && uneEa20Empty) return "EA21 (EA20 ohne Werte)";
+  return geo;
 }
 
 function parseEurostatPoints(text: string): DatedPoint[] {
@@ -318,6 +365,13 @@ export function parseDbNomicsSeries(payload: unknown): DatedPoint[] {
   return points;
 }
 
+/** FRED label when OECD is not the newer series. Older OECD data had no second fetch. */
+export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number): string {
+  if (usedPrimary) return "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)";
+  if (oecdPointCount > 0) return "FRED JPNPROINDMISMEI; OECD älter als FRED";
+  return "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML";
+}
+
 /** The series whose last print is newer. An empty side loses. A tie keeps the primary. */
 export function newerSeries(primary: DatedPoint[], fallback: DatedPoint[]): { points: DatedPoint[]; usedPrimary: boolean } {
   const last = (points: DatedPoint[]) => points.reduce((max, point) => point.date > max ? point.date : max, "");
@@ -392,6 +446,8 @@ export function ashrPeFromProbes(input: {
 /** ASHR lists in US-$, same currency as BENCHMARK_REGIONS.CN in server/buffett-route.ts. */
 const ASHR_LISTING_CURRENCY = "USD";
 const ASIA_SUPPLEMENT_TIMEOUT_MS = 12000;
+/** Inside the 12s block, so a hung FMP history still leaves time for the Yahoo closes. */
+export const ASIA_FMP_TIMEOUT_MS = 5000;
 
 export async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, fallback: T): Promise<{ value: T; timedOut: boolean }> {
   const controller = new AbortController();
@@ -484,13 +540,15 @@ export async function loadAshrCloses(
     fmp: (signal: AbortSignal) => Promise<unknown>;
     yahoo: (signal: AbortSignal) => Promise<{ date: string; value: number }[]>;
     timeoutMs?: number;
+    fmpTimeoutMs?: number;
     parent?: AbortSignal;
   },
 ): Promise<{ closes: { date: string; close: number }[]; via: "fmp" | "yahoo" | "none"; reason: "ok" | "timeout" | "empty" }> {
   const ms = deps.timeoutMs ?? ASIA_SUPPLEMENT_TIMEOUT_MS;
+  const fmpMs = deps.fmpTimeoutMs ?? (deps.timeoutMs == null ? Math.min(ASIA_FMP_TIMEOUT_MS, ms) : ms);
   const link = (signal: AbortSignal) => deps.parent ? AbortSignal.any([signal, deps.parent]) : signal;
   if (deps.parent?.aborted) return { closes: [], via: "none", reason: "timeout" };
-  const fmp = await bounded(async signal => closesFromPriceRows(await deps.fmp(link(signal))), ms, []);
+  const fmp = await bounded(async signal => closesFromPriceRows(await deps.fmp(link(signal))), fmpMs, []);
   if (!fmp.timedOut && ashrRealizedVolPoints(fmp.value).length > 0) {
     return { closes: fmp.value, via: "fmp", reason: "ok" };
   }
@@ -616,7 +674,8 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
   }
   const jpIpPick = newerSeries(oecdIp, jpIpFred);
   if (!jpIpPick.usedPrimary) {
-    console.warn("[RECESSION] OECD JP IP nach Wiederholung leer, HTML oder älter als FRED; Fallback JPNPROINDMISMEI");
+    const why = oecdIp.length > 0 ? "OECD älter als FRED, keine Wiederholung" : "OECD nach Wiederholung leer oder HTML";
+    console.warn(`[RECESSION] ${why}; Fallback JPNPROINDMISMEI`);
   }
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
   const vol = [...vstoxx.vol].sort((a, b) => a.date.localeCompare(b.date));
@@ -633,7 +692,7 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     jpUnemployment,
     jpLong,
     jpIp: jpIpPick.points,
-    jpIpSource: jpIpPick.usedPrimary ? "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)" : "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder älter",
+    jpIpSource: jpActivitySource(jpIpPick.usedPrimary, oecdIp.length),
     jpM2Yoy: m2.length ? m2[m2.length - 1].value : null,
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
@@ -684,10 +743,21 @@ function asiaTimeoutSupplement(): AsiaSupplement {
   };
 }
 
+function snapshotAsia(partial: AsiaSupplement): AsiaSupplement {
+  return { ...partial, cnVolPoints: partial.cnVolPoints.slice() };
+}
+
+export interface AsiaRuntimeDeps {
+  pe?: (today: string, lastClose: number | null, signal: AbortSignal, priceSource?: "fmp") => Promise<{ value: number | null; source: string }>;
+  gdp?: (id: string, signal: AbortSignal) => Promise<{ value: number | null; source: string }>;
+}
+
 async function buildAsiaSupplement(
   today: string,
   parent: AbortSignal,
   load: typeof loadAshrCloses,
+  partial: AsiaSupplement,
+  fields?: AsiaRuntimeDeps,
 ): Promise<AsiaSupplement> {
   const cosd = yearsAgo(today, 20);
   const loaded = await load(cosd, {
@@ -695,44 +765,53 @@ async function buildAsiaSupplement(
     yahoo: signal => fetchYahooDailySeries("ASHR", cosd, signal),
     parent,
   });
-  if (parent.aborted) return asiaTimeoutSupplement();
+  if (parent.aborted) return snapshotAsia(partial);
   const lastClose = loaded.closes.length ? loaded.closes[loaded.closes.length - 1].close : null;
   const vol = chinaVolFromCloses(loaded.via, loaded.closes, loaded.reason);
+  partial.cnVolPoints = vol.points;
+  partial.cnVolSource = vol.source;
+  if (parent.aborted) return snapshotAsia(partial);
   const priceSource = ashrPriceSource(loaded.via, lastClose);
   const linked = (signal: AbortSignal) => AbortSignal.any([signal, parent]);
-  const [cnPe, jpGdp, cnGdp] = await Promise.all([
-    bounded(signal => ashrPe(today, lastClose, linked(signal), priceSource), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }),
-    bounded(signal => gdpUsd(ASIA_GDP_USD.JP, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }),
-    bounded(signal => gdpUsd(ASIA_GDP_USD.CN, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }),
+  const pe = fields?.pe ?? ashrPe;
+  const gdp = fields?.gdp ?? gdpUsd;
+  await Promise.all([
+    bounded(signal => pe(today, lastClose, linked(signal), priceSource), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }).then(result => {
+      if (parent.aborted) return;
+      partial.cnPe = result.value.value;
+      partial.cnPeSource = result.value.source;
+    }),
+    bounded(signal => gdp(ASIA_GDP_USD.JP, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }).then(result => {
+      if (parent.aborted) return;
+      partial.jpGdpUsd = result.value.value;
+      partial.jpGdpSource = result.value.source;
+    }),
+    bounded(signal => gdp(ASIA_GDP_USD.CN, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }).then(result => {
+      if (parent.aborted) return;
+      partial.cnGdpUsd = result.value.value;
+      partial.cnGdpSource = result.value.source;
+    }),
   ]);
-  if (parent.aborted) return asiaTimeoutSupplement();
-  return {
-    cnVolPoints: vol.points,
-    cnVolSource: vol.source,
-    cnPe: cnPe.value.value,
-    cnPeSource: cnPe.value.source,
-    jpGdpUsd: jpGdp.value.value,
-    cnGdpUsd: cnGdp.value.value,
-    jpGdpSource: jpGdp.value.source,
-    cnGdpSource: cnGdp.value.source,
-  };
+  return snapshotAsia(partial);
 }
 
-/** One deadline for the whole ASHR/GDP block, so a hung FMP cannot stack with Yahoo and the GDP calls. */
+/** One deadline for the whole ASHR/GDP block. Finished fields stay; only open fields keep the timeout reason. */
 export async function runAsiaSupplement(
   today: string,
   timeoutMs = ASIA_BLOCK_MS,
   load: typeof loadAshrCloses = loadAshrCloses,
+  fields?: AsiaRuntimeDeps,
 ): Promise<AsiaSupplement> {
+  const partial = asiaTimeoutSupplement();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      buildAsiaSupplement(today, controller.signal, load),
+      buildAsiaSupplement(today, controller.signal, load, partial, fields),
       new Promise<AsiaSupplement>(resolve => {
         timer = setTimeout(() => {
           controller.abort();
-          resolve(asiaTimeoutSupplement());
+          resolve(snapshotAsia(partial));
         }, timeoutMs);
       }),
     ]);
