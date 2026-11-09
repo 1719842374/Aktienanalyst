@@ -4,13 +4,14 @@ import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
 import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
 import { annotationByName } from "../../../../shared/segment-growth-calc";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
+import { SegmentChildrenPanel, SegmentLine } from "./SegmentChildren";
 
 interface Props { data: StockAnalysis }
 
@@ -62,6 +63,8 @@ export function Section2({ data }: Props) {
     data.ticker,
     (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0,
   );
+  const [openBusiness, setOpenBusiness] = useState<Record<string, boolean>>({});
+  const [openGeo, setOpenGeo] = useState<Record<string, boolean>>({});
 
   // === SINGLE SOURCE OF TRUTH: shared DCF defaults (same as Section5/Section6/SummarySection) ===
   // buildDefaultDCFParams liefert auch `rsl` mit → identischer Fair Value wie Section 5/6.
@@ -230,7 +233,7 @@ export function Section2({ data }: Props) {
             ) : (
               <div className="space-y-1.5">
                 {data.revenueSegments.map((seg, i) => (
-                  <div key={i} className="relative">
+                  <SegmentLine key={i} name={seg.name} open={openBusiness[seg.name] === true} onToggle={() => setOpenBusiness((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                     <div className="flex items-center justify-between text-xs mb-0.5">
                       <span className="font-medium truncate mr-2">{seg.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -250,7 +253,10 @@ export function Section2({ data }: Props) {
                         style={{ width: `${Math.min(100, seg.percentage)}%` }}
                       />
                     </div>
-                  </div>
+                    {openBusiness[seg.name] === true && (
+                      <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="product" />
+                    )}
+                  </SegmentLine>
                 ))}
               </div>
             )}
@@ -290,7 +296,7 @@ export function Section2({ data }: Props) {
             {data.geoSegments && data.geoSegments.length > 0 && (
             <div className="space-y-1.5">
               {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
-                <div key={i} className="relative">
+                <SegmentLine key={i} name={seg.name} open={openGeo[seg.name] === true} onToggle={() => setOpenGeo((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                   <div className="flex items-center justify-between text-xs mb-0.5">
                     <span className="font-medium truncate mr-2">{seg.name}</span>
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -310,7 +316,10 @@ export function Section2({ data }: Props) {
                       style={{ width: `${Math.min(100, seg.percentage)}%` }}
                     />
                   </div>
-                </div>
+                  {openGeo[seg.name] === true && (
+                    <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="geographic" />
+                  )}
+                </SegmentLine>
               ))}
             </div>
             )}

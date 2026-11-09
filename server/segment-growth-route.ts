@@ -20,6 +20,14 @@ import {
   fmpSegmentationRows,
   isFmpAvailable,
 } from "./fmp";
+import { callLLMJson } from "./llm-openrouter";
+import {
+  SEGMENT_CHILDREN_ROUTE,
+  childrenFromFmpRows,
+  childrenFromKiPayload,
+  resolveSegmentChildren,
+  type SegmentChildrenResult,
+} from "../shared/segment-children";
 
 const CACHE_MS = 15 * 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
@@ -103,7 +111,58 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
   return body;
 }
 
-export function registerSegmentGrowthRoute(app: Express): void {
+export interface SegmentChildrenDeps {
+  fmpAvailable: () => boolean;
+  raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
+  ki: (ticker: string, parent: string) => Promise<unknown>;
+}
+
+async function defaultKiChildren(ticker: string, parent: string): Promise<unknown> {
+  const result = await callLLMJson({
+    systemPrompt: "Antworte nur mit JSON. Erfinde keine Untersegmente und keine Zahlen. Unbekannt heißt leeres children-Array.",
+    prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Gib nur Untersegmente dieses Hauptsegments zurück, die du belegen kannst. Form: {"children":[{"name":"","shareOfParentPct":null}]}. Sonst {"children":[]}.`,
+    maxTokens: 400,
+    temperature: 0,
+  });
+  return result?.data ?? null;
+}
+
+export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
+  return {
+    fmpAvailable: isFmpAvailable,
+    raw: (kind, ticker) => fmpSegmentationRows(kind, ticker, "annual"),
+    ki: defaultKiChildren,
+  };
+}
+
+export async function loadSegmentChildren(
+  ticker: string,
+  parent: string,
+  kind: "product" | "geographic",
+  deps: SegmentChildrenDeps = defaultSegmentChildrenDeps(),
+): Promise<SegmentChildrenResult> {
+  const label = parent.trim();
+  let raw: unknown[] = [];
+  if (deps.fmpAvailable()) {
+    try {
+      const rows = await deps.raw(kind, ticker);
+      raw = Array.isArray(rows) ? rows : [];
+    } catch {
+      raw = [];
+    }
+  }
+  const fmp = childrenFromFmpRows(raw, label);
+  if (fmp.length > 0) return resolveSegmentChildren(label, fmp, []);
+  let kiPayload: unknown = null;
+  try {
+    kiPayload = await deps.ki(ticker, label);
+  } catch {
+    kiPayload = null;
+  }
+  return resolveSegmentChildren(label, [], childrenFromKiPayload(label, kiPayload));
+}
+
+export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentChildrenDeps): void {
   app.get("/api/segment-growth/:ticker", async (req: Request, res: Response) => {
     const raw = req.params.ticker;
     const ticker = (Array.isArray(raw) ? raw[0] : raw) ?? "";
@@ -124,6 +183,22 @@ export function registerSegmentGrowthRoute(app: Express): void {
       return res.json(body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Segment-Wachstum fehlgeschlagen";
+      return res.status(502).json({ error: message.slice(0, 200) });
+    }
+  });
+
+  app.get(`${SEGMENT_CHILDREN_ROUTE}/:ticker`, async (req: Request, res: Response) => {
+    const raw = req.params.ticker;
+    const ticker = (Array.isArray(raw) ? raw[0] : raw) ?? "";
+    const parent = typeof req.query.parent === "string" ? req.query.parent.trim() : "";
+    const kind = req.query.kind === "geographic" ? "geographic" : req.query.kind === "product" ? "product" : null;
+    if (!TICKER_RE.test(ticker) || !parent || parent.length > 120 || !kind) {
+      return res.status(400).json({ error: "ticker, parent oder kind fehlt" });
+    }
+    try {
+      return res.json(await loadSegmentChildren(ticker, parent, kind, childrenDeps));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Untersegmente fehlgeschlagen";
       return res.status(502).json({ error: message.slice(0, 200) });
     }
   });
