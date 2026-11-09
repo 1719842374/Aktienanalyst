@@ -363,9 +363,16 @@ function companyMatchTokens(value: string): string[] {
   return foldCompany(value).split(/\s+/).filter((token) => token.length >= 2);
 }
 
+function expandWordAmpersand(value: string): string {
+  const pair = /([a-z0-9]{2,})\s*&\s*([a-z0-9]{2,})/;
+  let current = value;
+  while (pair.test(current)) current = current.replace(pair, "$1 and $2");
+  return current;
+}
+
 function hostNameTokens(value: string): string[] {
   const folded = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
-  return foldAmpersand(folded)
+  return foldAmpersand(expandWordAmpersand(folded))
     .replace(/['’]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
@@ -376,7 +383,8 @@ function hostNameTokens(value: string): string[] {
 function hostLabelMatches(label: string, companyName: string): boolean {
   const plain = label.replace(/-/g, "");
   if (plain.length < 2) return false;
-  if (companyMatchTokens(companyName).some((token) => token === plain)) return true;
+  const singleCore = companyMatchTokens(companyName).filter((token) => !COMPANY_FILLER.has(token) && foldCompany(token).length > 0);
+  if (singleCore.some((token) => token === plain)) return true;
   const parts = hostNameTokens(companyName);
   const kind = (token: string): "core" | "filler" | "legal" => {
     if (COMPANY_FILLER.has(token)) return "filler";
