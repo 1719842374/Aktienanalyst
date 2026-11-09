@@ -9,13 +9,17 @@ import { capeReading, durableReading, m2Reading, scoreSeriesStress, vixReading }
 import {
   applyAsiaSupplement,
   ashrPeFromProbes,
+  ashrPriceSource,
   ashrRealizedVolPoints,
   bounded,
   emptyRegionalPrints,
+  eurostatStep,
   loadAshrCloses,
+  runAsiaSupplement,
   scoreRegionalCatalogs,
   type RegionScorers,
 } from "../server/recession-regions";
+import { fetchYahooTimeseriesFundamentals } from "../server/yahoo-fetcher";
 import { realizedVol20 } from "../shared/recession-market-charts";
 
 let failed = 0;
@@ -35,7 +39,7 @@ function day(index: number): string {
 
 function legacyBlock(src: string): string {
   const start = src.indexOf("async function fetchLegacyRegionalPrints");
-  const end = src.indexOf("async function fetchAsiaSupplement");
+  const end = src.indexOf("export function applyAsiaSupplement");
   if (start === -1 || end === -1 || end < start) return "";
   return src.slice(start, end);
 }
@@ -51,7 +55,7 @@ console.log("\n=== Legacy-Abruf bleibt von ASHR/BIP getrennt ===");
     "ASHR, Yahoo-Chart und BIP-Gewichte stehen nicht im Legacy-Promise",
     !block.includes("ashrPe(") && !block.includes("gdpUsd(") && !block.includes("fetchYahooDailySeries") && !block.includes("fmpHistoricalPrices"),
   );
-  check("fetchRegionalPrints hängt den Nachzug erst nach dem Legacy-Abruf an", /const legacy = await fetchLegacyRegionalPrints\(today\);[\s\S]*fetchAsiaSupplement\(today\)/.test(src));
+  check("fetchRegionalPrints hängt den Nachzug erst nach dem Legacy-Abruf an", /const legacy = await fetchLegacyRegionalPrints\(today\);[\s\S]*runAsiaSupplement\(today\)/.test(src));
 }
 
 console.log("\n=== Ausfall der neuen Quellen lässt EZ/JP-Drucke stehen ===");
@@ -166,6 +170,43 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
   const src = readFileSync("server/recession-regions.ts", "utf8");
   check("leerer Katalog nennt FMP und Yahoo, nicht nur den alten Yahoo-Satz", src.includes("cnVolSource: \"n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)\""));
   check("OECD wird bei leerer erster Antwort ein zweites Mal gelesen", src.includes("if (first && !first.includes(\"<html\")) return first;"));
+  check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", src.includes("FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder älter"));
+  check("EA20 wird bei leerer erster Antwort wiederholt, bevor EA21 kommt", eurostatStep(0, false) === "retry" && eurostatStep(0, true) === "next" && eurostatStep(2, false) === "use");
+  check("Eurostat loggt den Fallback-Grund", src.includes("Eurostat ${dataset} ${geo} nach Wiederholung"));
+  check("ein Yahoo-Chart-Kurs trägt kein Kurs-FMP-Label", ashrPriceSource("yahoo", 30.5) == null && ashrPriceSource("fmp", 30.5) === "fmp");
+  const yahooKurs = ashrPeFromProbes({
+    fmp: null,
+    yahoo: { pe: 11, status: "ok", httpStatus: 200, epsAsOf: "2026-09-30" },
+    today: "2026-11-09",
+    priceSource: ashrPriceSource("yahoo", 30.5),
+  });
+  check("Yahoo-via nennt den Kurs nicht FMP", yahooKurs.value === 11 && !yahooKurs.source.includes("Kurs FMP"), yahooKurs.source);
+  const blockStart = Date.now();
+  let blockAborted = false;
+  const blocked = await runAsiaSupplement("2026-11-09", 40, (_cosd, deps) => new Promise(resolve => {
+    deps.parent?.addEventListener("abort", () => {
+      blockAborted = true;
+      resolve({ closes: [], via: "none", reason: "timeout" });
+    });
+  }));
+  check(
+    "der Asien-Block endet an der Gesamtfrist mit n/a Zeitüberschreitung",
+    blockAborted && Date.now() - blockStart < 300 && blocked.cnVolSource.includes("Zeitüberschreitung") && blocked.cnPeSource.includes("Zeitüberschreitung"),
+    `${Date.now() - blockStart}ms ${blocked.cnVolSource}`,
+  );
+  const aborted = new AbortController();
+  aborted.abort();
+  const chartStart = Date.now();
+  const chart = await fetchYahooTimeseriesFundamentals("ASHR", { signal: aborted.signal });
+  check("ein abgebrochenes ASHR-KGV startet die Yahoo-Chart-Meta nicht neu", Date.now() - chartStart < 300 && chart.status === "no_meta", `${Date.now() - chartStart}ms ${chart.status}`);
+  const yahooSrc = readFileSync("server/yahoo-fetcher.ts", "utf8");
+  check("die Chart-Meta bekommt das AbortSignal", yahooSrc.includes("fetchYahooChartMetaWithPrice(sym, opts.signal)") && yahooSrc.includes("if (opts.signal?.aborted) return value;"));
+}
+
+console.log("\n=== Recession-Seite hält unten Abstand zu den fixen Buttons ===");
+{
+  const page = readFileSync("client/src/pages/RecessionDashboard.tsx", "utf8");
+  check("nur die Recession-Seite bekommt mehr unteren Abstand", page.includes("pb-28 sm:pb-0"));
 }
 
 console.log("\n=== Schmale Kachel bricht die Notiz um ===");

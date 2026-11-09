@@ -112,18 +112,72 @@ async function fred(id: string, cosd: string, signal?: AbortSignal): Promise<Dat
   return parseFred(csv);
 }
 
+async function getTextResult(
+  url: string,
+  timeoutMs = 20000,
+  headers: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<{ text: string; status: number | null; error: string | null }> {
+  try {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const resp = await fetch(url, {
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+      headers: { "User-Agent": "Aktienanalyst/1.0", Accept: "application/json,text/csv,*/*", ...headers },
+    });
+    if (!resp.ok) return { text: "", status: resp.status, error: `HTTP ${resp.status}` };
+    return { text: await resp.text(), status: resp.status, error: null };
+  } catch (err) {
+    const name = (err as Error)?.name;
+    const error = name === "TimeoutError" || name === "AbortError" ? "Timeout" : String((err as Error)?.message || err).slice(0, 120);
+    return { text: "", status: null, error };
+  }
+}
+
+function eurostatWhy(result: { text: string; error: string | null }): string | null {
+  if (result.error) return result.error;
+  if (!result.text) return "leer";
+  if (result.text.includes("<html")) return "HTML";
+  return null;
+}
+
+/** EA20 is tried, retried once when empty, and only then EA21. */
+export function eurostatStep(pointCount: number, alreadyRetried: boolean): "use" | "retry" | "next" {
+  if (pointCount > 0) return "use";
+  if (!alreadyRetried) return "retry";
+  return "next";
+}
+
 async function eurostat(dataset: string, query: string, geos: string[]): Promise<{ geo: string; points: DatedPoint[] }> {
-  for (const geo of geos) {
-    const text = await getText(`${EUROSTAT}/${dataset}?format=JSON&lang=en&geo=${geo}&${query}`);
-    if (!text || text.includes("<html")) continue;
-    try {
-      const points = parseEurostatSeries(JSON.parse(text));
-      if (points.length > 0) return { geo, points };
-    } catch {
+  for (let index = 0; index < geos.length; index++) {
+    const geo = geos[index];
+    const url = `${EUROSTAT}/${dataset}?format=JSON&lang=en&geo=${geo}&${query}`;
+    const result = await getTextResult(url);
+    const why = eurostatWhy(result);
+    const points = why ? [] : parseEurostatPoints(result.text);
+    if (eurostatStep(points.length, false) === "use") return { geo, points };
+    const next = geos[index + 1];
+    if (!next || eurostatStep(points.length, false) !== "retry") {
+      console.warn(`[RECESSION] Eurostat ${dataset} ${geo} ${why ?? "ohne Punkte"}`);
       continue;
     }
+    const again = await getTextResult(url);
+    const againWhy = eurostatWhy(again);
+    const againPoints = againWhy ? [] : parseEurostatPoints(again.text);
+    if (eurostatStep(againPoints.length, true) === "use") {
+      console.warn(`[RECESSION] Eurostat ${dataset} ${geo} erste Antwort ${why ?? "ohne Punkte"}, Wiederholung ok`);
+      return { geo, points: againPoints };
+    }
+    console.warn(`[RECESSION] Eurostat ${dataset} ${geo} nach Wiederholung ${againWhy ?? why ?? "ohne Punkte"}; Fallback ${next}`);
   }
   return { geo: geos[0] ?? "", points: [] };
+}
+
+function parseEurostatPoints(text: string): DatedPoint[] {
+  try {
+    return parseEurostatSeries(JSON.parse(text));
+  } catch {
+    return [];
+  }
 }
 
 function latestFinite(points: DatedPoint[]): number | null {
@@ -372,10 +426,20 @@ function closesFromPriceRows(raw: unknown): { date: string; close: number }[] {
   return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 }
 
-async function ashrPe(today: string, lastClose: number | null, signal?: AbortSignal): Promise<{ value: number | null; source: string }> {
+/** „Kurs FMP“ only when the closes that produced lastClose came from FMP, not from the Yahoo chart. */
+export function ashrPriceSource(via: "fmp" | "yahoo" | "none", lastClose: number | null): "fmp" | undefined {
+  return via === "fmp" && lastClose != null && lastClose > 0 ? "fmp" : undefined;
+}
+
+async function ashrPe(
+  today: string,
+  lastClose: number | null,
+  signal?: AbortSignal,
+  inputPriceSource?: "fmp",
+): Promise<{ value: number | null; source: string }> {
   const fmp = await indexPe(["ASHR"], signal);
   if (fmp) return ashrPeFromProbes({ fmp, yahoo: null, today });
-  const priceSource = lastClose != null && lastClose > 0 ? "fmp" as const : undefined;
+  const priceSource = inputPriceSource;
   try {
     const yahoo = priceSource
       ? await fetchYahooTimeseriesFundamentals("ASHR", { price: lastClose, currency: ASHR_LISTING_CURRENCY, signal })
@@ -420,15 +484,19 @@ export async function loadAshrCloses(
     fmp: (signal: AbortSignal) => Promise<unknown>;
     yahoo: (signal: AbortSignal) => Promise<{ date: string; value: number }[]>;
     timeoutMs?: number;
+    parent?: AbortSignal;
   },
 ): Promise<{ closes: { date: string; close: number }[]; via: "fmp" | "yahoo" | "none"; reason: "ok" | "timeout" | "empty" }> {
   const ms = deps.timeoutMs ?? ASIA_SUPPLEMENT_TIMEOUT_MS;
-  const fmp = await bounded(async signal => closesFromPriceRows(await deps.fmp(signal)), ms, []);
+  const link = (signal: AbortSignal) => deps.parent ? AbortSignal.any([signal, deps.parent]) : signal;
+  if (deps.parent?.aborted) return { closes: [], via: "none", reason: "timeout" };
+  const fmp = await bounded(async signal => closesFromPriceRows(await deps.fmp(link(signal))), ms, []);
   if (!fmp.timedOut && ashrRealizedVolPoints(fmp.value).length > 0) {
     return { closes: fmp.value, via: "fmp", reason: "ok" };
   }
+  if (deps.parent?.aborted) return { closes: [], via: "none", reason: "timeout" };
   const yahoo = await bounded(async signal => {
-    const bars = await deps.yahoo(signal);
+    const bars = await deps.yahoo(link(signal));
     return bars
       .filter(bar => bar.date && Number.isFinite(bar.value) && bar.value > 0)
       .map(bar => ({ date: bar.date, close: bar.value }));
@@ -547,6 +615,9 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     }
   }
   const jpIpPick = newerSeries(oecdIp, jpIpFred);
+  if (!jpIpPick.usedPrimary) {
+    console.warn("[RECESSION] OECD JP IP nach Wiederholung leer, HTML oder älter als FRED; Fallback JPNPROINDMISMEI");
+  }
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
   const vol = [...vstoxx.vol].sort((a, b) => a.date.localeCompare(b.date));
   return {
@@ -562,7 +633,7 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     jpUnemployment,
     jpLong,
     jpIp: jpIpPick.points,
-    jpIpSource: jpIpPick.usedPrimary ? "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)" : "FRED JPNPROINDMISMEI",
+    jpIpSource: jpIpPick.usedPrimary ? "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)" : "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder älter",
     jpM2Yoy: m2.length ? m2[m2.length - 1].value : null,
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
@@ -598,19 +669,43 @@ export function applyAsiaSupplement(legacy: RegionalPrints, asia: AsiaSupplement
   return { ...legacy, ...asia };
 }
 
-async function fetchAsiaSupplement(today: string): Promise<AsiaSupplement> {
+const ASIA_BLOCK_MS = 12000;
+
+function asiaTimeoutSupplement(): AsiaSupplement {
+  return {
+    cnVolPoints: [],
+    cnVolSource: "n/a — ASHR-Vol Zeitüberschreitung",
+    cnPe: null,
+    cnPeSource: "n/a — ASHR KGV Zeitüberschreitung",
+    jpGdpUsd: null,
+    cnGdpUsd: null,
+    jpGdpSource: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung`,
+    cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung`,
+  };
+}
+
+async function buildAsiaSupplement(
+  today: string,
+  parent: AbortSignal,
+  load: typeof loadAshrCloses,
+): Promise<AsiaSupplement> {
   const cosd = yearsAgo(today, 20);
-  const loaded = await loadAshrCloses(cosd, {
+  const loaded = await load(cosd, {
     fmp: signal => fmpHistoricalPrices("ASHR", cosd, today, signal),
     yahoo: signal => fetchYahooDailySeries("ASHR", cosd, signal),
+    parent,
   });
+  if (parent.aborted) return asiaTimeoutSupplement();
   const lastClose = loaded.closes.length ? loaded.closes[loaded.closes.length - 1].close : null;
   const vol = chinaVolFromCloses(loaded.via, loaded.closes, loaded.reason);
+  const priceSource = ashrPriceSource(loaded.via, lastClose);
+  const linked = (signal: AbortSignal) => AbortSignal.any([signal, parent]);
   const [cnPe, jpGdp, cnGdp] = await Promise.all([
-    bounded(signal => ashrPe(today, lastClose, signal), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }),
-    bounded(signal => gdpUsd(ASIA_GDP_USD.JP, signal), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }),
-    bounded(signal => gdpUsd(ASIA_GDP_USD.CN, signal), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }),
+    bounded(signal => ashrPe(today, lastClose, linked(signal), priceSource), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }),
+    bounded(signal => gdpUsd(ASIA_GDP_USD.JP, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }),
+    bounded(signal => gdpUsd(ASIA_GDP_USD.CN, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }),
   ]);
+  if (parent.aborted) return asiaTimeoutSupplement();
   return {
     cnVolPoints: vol.points,
     cnVolSource: vol.source,
@@ -623,11 +718,34 @@ async function fetchAsiaSupplement(today: string): Promise<AsiaSupplement> {
   };
 }
 
+/** One deadline for the whole ASHR/GDP block, so a hung FMP cannot stack with Yahoo and the GDP calls. */
+export async function runAsiaSupplement(
+  today: string,
+  timeoutMs = ASIA_BLOCK_MS,
+  load: typeof loadAshrCloses = loadAshrCloses,
+): Promise<AsiaSupplement> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      buildAsiaSupplement(today, controller.signal, load),
+      new Promise<AsiaSupplement>(resolve => {
+        timer = setTimeout(() => {
+          controller.abort();
+          resolve(asiaTimeoutSupplement());
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const legacy = await fetchLegacyRegionalPrints(today);
   let asia: AsiaSupplement | null = null;
   try {
-    asia = await fetchAsiaSupplement(today);
+    asia = await runAsiaSupplement(today);
   } catch {
     asia = null;
   }
