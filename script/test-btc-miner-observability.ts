@@ -291,6 +291,172 @@ async function main() {
     check("Fallback-Text vorhanden", body.error === GENERIC);
   }
 
+  console.log("\nfetchMinerData — MEMPOOL_API_BASE");
+  {
+    const prev = process.env.MEMPOOL_API_BASE;
+    const restore = () => {
+      if (prev === undefined) delete process.env.MEMPOOL_API_BASE;
+      else process.env.MEMPOOL_API_BASE = prev;
+    };
+    try {
+      delete process.env.MEMPOOL_API_BASE;
+      resetMinerCacheForTests();
+      const defaultUrls: string[] = [];
+      installFetch((url) => {
+        defaultUrls.push(url);
+        if (url.includes("hashrate")) return jsonResponse(hashratePayload(80));
+        return jsonResponse(difficultyPayload);
+      });
+      const unset = await fetchMinerData();
+      check("unset liefert Daten", unset != null && unset.stale !== true);
+      check("unset Quelle mempool.space", unset?.hashrateSource === "mempool.space");
+      check(
+        "unset nutzt https://mempool.space/api/v1",
+        defaultUrls.includes("https://mempool.space/api/v1/mining/hashrate/all") &&
+          defaultUrls.includes("https://mempool.space/api/v1/mining/difficulty-adjustments?interval=144"),
+        defaultUrls.join(" | "),
+      );
+
+      process.env.MEMPOOL_API_BASE = "   ";
+      resetMinerCacheForTests();
+      const blankUrls: string[] = [];
+      installFetch((url) => {
+        blankUrls.push(url);
+        if (url.includes("hashrate")) return jsonResponse(hashratePayload(80));
+        return jsonResponse(difficultyPayload);
+      });
+      await fetchMinerData();
+      check(
+        "leer/Whitespace bleibt Default",
+        blankUrls.includes("https://mempool.space/api/v1/mining/hashrate/all"),
+        blankUrls.join(" | "),
+      );
+
+      process.env.MEMPOOL_API_BASE = "https://relay.example/mempool/api/v1/";
+      resetMinerCacheForTests();
+      const overrideUrls: string[] = [];
+      installFetch((url) => {
+        overrideUrls.push(url);
+        if (url.includes("hashrate")) return jsonResponse(hashratePayload(80));
+        return jsonResponse(difficultyPayload);
+      });
+      const overridden = await fetchMinerData();
+      check("Override liefert Daten", overridden != null && overridden.stale !== true);
+      check("Override-Erfolg Quelle mempool.space", overridden?.hashrateSource === "mempool.space");
+      check(
+        "Hashrate-Fetch geht an Override-Base",
+        overrideUrls.includes("https://relay.example/mempool/api/v1/mining/hashrate/all"),
+        overrideUrls.join(" | "),
+      );
+      check(
+        "Difficulty-Fetch geht an Override-Base",
+        overrideUrls.includes("https://relay.example/mempool/api/v1/mining/difficulty-adjustments?interval=144"),
+        overrideUrls.join(" | "),
+      );
+
+      resetMinerCacheForTests();
+      const warns: string[] = [];
+      const errors: string[] = [];
+      const origWarn = console.warn;
+      const origError = console.error;
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(" "));
+        origWarn(...args);
+      };
+      console.error = (...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+        origError(...args);
+      };
+      let failedFetch: Awaited<ReturnType<typeof fetchMinerData>> = null;
+      let last: ReturnType<typeof getMinerLastError> = null;
+      let body: ReturnType<typeof minerUnavailableBody> | null = null;
+      let failCounts = { hashrate: 0, difficulty: 0 };
+      try {
+        const installed = installFetch(() => {
+          throw Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          });
+        });
+        failCounts = installed.counts;
+        failedFetch = await fetchMinerData();
+        last = getMinerLastError();
+        body = minerUnavailableBody();
+      } finally {
+        console.warn = origWarn;
+        console.error = origError;
+      }
+      check("Override-Netzwerkfehler bleibt null ohne Cache", failedFetch === null);
+      check("Override-Fail-Code bleibt MEMPOOL_NETWORK", last?.code === "MEMPOOL_NETWORK", JSON.stringify(last));
+      check("Override-Fail-Body bleibt MEMPOOL_NETWORK", body?.code === "MEMPOOL_NETWORK" && body.error === last?.message);
+      check("Override-Fail hat genau einen Retry", failCounts.hashrate === 2, `hashrate=${failCounts.hashrate}`);
+      check(
+        "Retry-Log nennt die Override-Base",
+        warns.some((line) => line.includes("— base https://relay.example/mempool/api/v1")),
+        warns.join(" || "),
+      );
+      check(
+        "Fehler-Log nennt die Override-Base",
+        errors.some((line) => line.includes("— base https://relay.example/mempool/api/v1")),
+        errors.join(" || "),
+      );
+
+      resetMinerCacheForTests();
+      let relayHashrateCalls = 0;
+      const fallbackUrls: string[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        fallbackUrls.push(url);
+        if (url.includes("/mining/hashrate/") || url.includes("/mining/difficulty-adjustments")) {
+          if (url.includes("/mining/hashrate/")) relayHashrateCalls++;
+          throw Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          });
+        }
+        if (url.includes("/charts/hash-rate")) {
+          return jsonResponse({
+            values: Array.from({ length: 220 }, (_, i) => ({ x: 1_700_000_000 + i * 86400, y: 900_000_000 })),
+          });
+        }
+        if (url.includes("/charts/difficulty")) {
+          return jsonResponse({
+            values: Array.from({ length: 220 }, (_, i) => ({ x: 1_700_000_000 + i * 86400, y: 8e13 })),
+          });
+        }
+        throw new Error(`unexpected url ${url}`);
+      }) as typeof fetch;
+      const viaFallback = await fetchMinerData();
+      check(
+        "Override-Fail fällt auf blockchain.info zurück",
+        viaFallback != null && viaFallback.stale !== true && viaFallback.hashrateSource === "blockchain.info",
+      );
+      check(
+        "Override-Fail-Fallback hat genau einen Mempool-Retry",
+        relayHashrateCalls === 2,
+        `hashrate=${relayHashrateCalls}`,
+      );
+      check(
+        "Override-Fail hat den Relay getroffen",
+        fallbackUrls.some((u) => u === "https://relay.example/mempool/api/v1/mining/hashrate/all"),
+        fallbackUrls.join(" | "),
+      );
+      check(
+        "Fallback-Charts bleiben blockchain.info",
+        fallbackUrls.some((u) => u.startsWith("https://api.blockchain.info/charts/hash-rate")) &&
+          fallbackUrls.some((u) => u.startsWith("https://api.blockchain.info/charts/difficulty")),
+        fallbackUrls.join(" | "),
+      );
+      check(
+        "Override-Fail-Fallback Hashrate 900 EH/s",
+        Math.abs((viaFallback?.currentHashrateEH ?? 0) - 900) < 0.01,
+        String(viaFallback?.currentHashrateEH),
+      );
+      check("lastError nach erfolgreichem Fallback leer", getMinerLastError() === null);
+    } finally {
+      restore();
+      resetMinerCacheForTests();
+    }
+  }
+
   console.log(`\n${total - failed}/${total} bestanden`);
   if (failed > 0) {
     console.error(`${failed} fehlgeschlagen`);
