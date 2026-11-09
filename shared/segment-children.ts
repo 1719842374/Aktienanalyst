@@ -378,10 +378,23 @@ function hostLabelMatches(label: string, companyName: string): boolean {
   if (plain.length < 2) return false;
   if (companyMatchTokens(companyName).some((token) => token === plain)) return true;
   const parts = hostNameTokens(companyName);
+  const kind = (token: string): "core" | "filler" | "legal" => {
+    if (COMPANY_FILLER.has(token)) return "filler";
+    if (foldCompany(token).length === 0) return "legal";
+    return "core";
+  };
   for (let start = 0; start < parts.length; start += 1) {
+    if (kind(parts[start] ?? "") !== "core") continue;
     let joined = parts[start] ?? "";
     for (let end = start + 1; end < parts.length; end += 1) {
-      joined += parts[end] ?? "";
+      const token = parts[end] ?? "";
+      const tokenKind = kind(token);
+      joined += token;
+      if (tokenKind === "filler") continue;
+      if (tokenKind === "legal") {
+        if (kind(parts[end - 1] ?? "") === "core" && joined === plain) return true;
+        break;
+      }
       if (joined === plain) return true;
     }
   }
