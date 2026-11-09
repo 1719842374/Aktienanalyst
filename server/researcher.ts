@@ -31,7 +31,7 @@ import { callLLMJson } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { syncFiscalProgramsFromDiscovery } from "./fiscal-bridge";
 import { fetchMacroSnapshot } from "./fmp-macro";
-import { toBriefingKeyEvent } from "../shared/briefing-key-event";
+import { briefingCardForChange } from "../shared/briefing-key-event";
 import {
   briefingSchema,
   briefingV2CacheFresh,
@@ -927,6 +927,7 @@ interface DailyBriefingResult {
       title: string;
       region: string;
       category?: string;
+      sourceIndex?: number;
       /** Source severity, or an n/a reason when the macro event has none. */
       severity?: string;
       changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | "UNCHANGED";
@@ -1153,8 +1154,9 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
 
   const inputs: ComposeRegionInput[] = regions.map((region) => {
     const data = macroResults.find(r => r.region === region)?.data;
-    const events = ((data?.llmSynthesis?.keyEvents || []) as any[]).map((ev) => ({
+    const events = ((data?.llmSynthesis?.keyEvents || []) as any[]).map((ev, sourceIndex) => ({
       region,
+      sourceIndex,
       title: String(ev?.title || ""),
       category: ev?.category ? String(ev.category) : undefined,
       severity: ev?.severity ? String(ev.severity) : undefined,
@@ -1232,32 +1234,14 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
     headline: composed.headline,
     summary: composed.stanceRationale,
     topChanges: composed.topChanges.map((c, idx) => {
-      const src = c.title === "none"
-        ? undefined
-        : inputs
-          .find(input => input.region === c.region)
-          ?.events.find(ev => ev.title === c.title);
-      const card = c.title === "none"
-        ? null
-        : toBriefingKeyEvent({
-          title: c.title,
-          category: c.category,
-          severity: src?.severity,
-          timeframe: src?.timeframe,
-          description: src?.description,
-          rationale: src?.rationale,
-          inflationImpact: src?.inflationImpact,
-          rateImpact: src?.rateImpact,
-          equityImpact: src?.equityImpact,
-          affectedSectors: src?.affectedSectors?.length
-            ? src.affectedSectors
-            : c.dcfImplications?.affectedSectors,
-        });
+      const regionEvents = inputs.find(input => input.region === c.region)?.events ?? [];
+      const card = c.title === "none" ? null : briefingCardForChange(c, regionEvents);
       return {
         rank: idx + 1,
         title: c.title,
         region: c.region,
         category: c.category,
+        sourceIndex: c.sourceIndex,
         severity: card?.severity,
         changeType: c.changeType,
         description: card?.description ?? "none",

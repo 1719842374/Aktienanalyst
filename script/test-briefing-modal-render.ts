@@ -154,7 +154,8 @@ const checks: Record<string, boolean> = {
   reusesExport: researcherSrc.includes("KeyEventCard")
     && macroSrc.includes("export function KeyEventCard")
     && !researcherSrc.includes("function ImpactBadge"),
-  serverMapsCardFields: serverSrc.includes("toBriefingKeyEvent(")
+  serverMapsCardFields: serverSrc.includes("briefingCardForChange(")
+    && !serverSrc.includes("ev.title === c.title")
     && !serverSrc.includes('inflationImpact: src?.inflationImpact || "neutral"'),
   missingStaysNa: !!missing
     && missing.inflationImpact === "n/a — Makro-Event ohne Inflationsimpuls"

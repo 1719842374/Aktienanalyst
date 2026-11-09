@@ -54,6 +54,8 @@ export interface BriefingTopChange {
   category: BriefingCategory;
   title: string;
   changeType: ChangeType;
+  /** Position in that region's macro keyEvents. Absent when the change has no source row. */
+  sourceIndex?: number;
   dcfImplications?: { waccDeltaBps: string; affectedSectors: string[] };
 }
 
@@ -85,6 +87,8 @@ export interface RegionIndexNumbers {
 
 export interface SourceEvent {
   region: RegionId;
+  /** Position in this region's macro keyEvents. Unique per region when assigned. */
+  sourceIndex?: number;
   title: string;
   category?: string;
   severity?: string;
@@ -111,6 +115,7 @@ export interface KeptEvent {
   title: string;
   category: BriefingCategory;
   changeType: ChangeType;
+  sourceIndex?: number;
   severity?: string;
   description?: string;
   affectedSectors?: string[];
@@ -253,6 +258,7 @@ export function selectRegionalEvents(regions: ComposeRegionInput[]): KeptEvent[]
         title: String(ev.title || ""),
         category,
         changeType: changeType ?? "UNCHANGED",
+        sourceIndex: integerIndex(ev.sourceIndex),
         severity: ev.severity,
         description: ev.description,
         affectedSectors: ev.affectedSectors,
@@ -288,6 +294,10 @@ function noneEvent(region: RegionId): KeptEvent {
   return { region, category: "Sonstiges", title: "none", changeType: "UNCHANGED" };
 }
 
+function integerIndex(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 function toTopChange(e: KeptEvent): BriefingTopChange {
   const change: BriefingTopChange = {
     region: e.region,
@@ -295,6 +305,8 @@ function toTopChange(e: KeptEvent): BriefingTopChange {
     title: e.title,
     changeType: e.changeType,
   };
+  const sourceIndex = integerIndex(e.sourceIndex);
+  if (sourceIndex !== undefined) change.sourceIndex = sourceIndex;
   if (e.title !== "none" && Array.isArray(e.affectedSectors) && e.affectedSectors.length) {
     change.dcfImplications = { waccDeltaBps: "n/v", affectedSectors: e.affectedSectors.slice(0, 6).map(String) };
   }
