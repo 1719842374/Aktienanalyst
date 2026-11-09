@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { capeReading, durableReading, m2Reading, scoreSeriesStress, vixReading } from "../server/recession";
 import {
   applyAsiaSupplement,
+  catalogUnemploymentFromRegional,
   ashrPeFromProbes,
   ashrPriceSource,
   ashrRealizedVolPoints,
@@ -61,7 +62,7 @@ console.log("\n=== Legacy-Abruf bleibt von ASHR/BIP getrennt ===");
     "ASHR, Yahoo-Chart und BIP-Gewichte stehen nicht im Legacy-Promise",
     !block.includes("ashrPe(") && !block.includes("gdpUsd(") && !block.includes("fetchYahooDailySeries") && !block.includes("fmpHistoricalPrices"),
   );
-  check("fetchRegionalPrints hängt den Nachzug erst nach dem Legacy-Abruf an", /const legacy = await fetchLegacyRegionalPrints\(today\);[\s\S]*runAsiaSupplement\(today\)/.test(src));
+  check("fetchRegionalPrints hängt den Nachzug erst nach dem Legacy-Abruf an", /const legacy = await fetchLegacyRegionalPrints\(today, ezUnemployment\);[\s\S]*runAsiaSupplement\(today\)/.test(src));
 }
 
 console.log("\n=== Ausfall der neuen Quellen lässt EZ/JP-Drucke stehen ===");
@@ -112,6 +113,41 @@ console.log("\n=== Ausfall der neuen Quellen lässt EZ/JP-Drucke stehen ===");
   const jpAct = jp.slots.find(slot => slot.name === "Aktivität JP")!;
   check("Aktivität EZ bleibt ein YoY aus der Eurostat-Serie", ezAct.available && ezAct.value.startsWith("YoY") && ezAct.value.includes("2026-08") && ezAct.source.includes("EA20"), ezAct.value);
   check("Aktivität JP bleibt YoY der OECD-Serie 2026-04", jpAct.available && jpAct.value.includes("2026-04") && jpAct.source.includes("OECD") && !jpAct.value.includes("92.3"), jpAct.value);
+
+  const emptyEa20 = emptyRegionalPrints();
+  emptyEa20.ezUnemployment = { geo: "EA20", points: [] };
+  emptyEa20.ezIp = { geo: "EA20", points: [{ date: "2025-08-01", value: 100 }, { date: "2026-08-01", value: 98.9 }] };
+  const shared = catalogUnemploymentFromRegional({
+    geo: "EA21",
+    rows: Array.from({ length: 20 }, (_, index) => ({ date: day(index), value: 6 })),
+  });
+  const filled = scoreRegionalCatalogs({
+    prints: emptyEa20,
+    ezUnemployment: shared,
+    usSlots: [],
+    usRecession12m: 35,
+    usCorrection12m: 80,
+    today: "2026-11-09",
+    scorers: scorers(),
+  });
+  const labor = filled.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
+  const activity = filled.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.name === "Aktivität EZ")!;
+  check(
+    "EA20 leer wird im Slot zu EA21",
+    labor.available === true && labor.value === "+0.00 pp" && labor.source === "Eurostat une_rt_m EA21 (EA20 ohne Werte)" && activity.source.includes("EA20"),
+    `${labor.available} ${labor.value} ${labor.source}`,
+  );
+  const occupied = scoreRegionalCatalogs({
+    prints: withGdp,
+    ezUnemployment: shared,
+    usSlots: [],
+    usRecession12m: 40,
+    usCorrection12m: 35,
+    today: "2026-11-09",
+    scorers: scorers(),
+  });
+  const keptLabor = occupied.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
+  check("vorhandene ALQ-Punkte werden nicht durch EA21 ersetzt", keptLabor.source === "Eurostat une_rt_m EA21" && !keptLabor.source.includes("ohne Werte"));
 }
 
 console.log("\n=== ASHR-Vol aus denselben Schlüssen wie der Marktchart ===");
@@ -178,6 +214,7 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
   check("OECD leer oder HTML wird einmal kurz wiederholt, ein Timeout nicht", oecdAttemptPlan(null) === "use" && oecdAttemptPlan("leer") === "retry" && oecdAttemptPlan("HTML") === "retry" && oecdAttemptPlan("HTTP 503") === "retry" && oecdAttemptPlan("Timeout") === "stop" && OECD_RETRY_MS <= 8000);
   check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", jpActivitySource(false, 0, "empty") === "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML");
   check("ein OECD-Timeout heißt Zeitüberschreitung", jpActivitySource(false, 0, "timeout") === "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung");
+  check("ein OECD-HTTP-Fehler heißt nicht leer", jpActivitySource(false, 0, "http") === "FRED JPNPROINDMISMEI; OECD HTTP-Fehler");
   check("ältere OECD-Daten ohne zweite Abfrage heißen nicht Wiederholung", jpActivitySource(false, 3) === "FRED JPNPROINDMISMEI; OECD älter als FRED" && jpActivitySource(true, 3).includes("OECD"));
   check("EA20 wird bei leerer erster Antwort wiederholt, bevor EA21 kommt", eurostatStep(0, false) === "retry" && eurostatStep(0, true) === "next" && eurostatStep(2, false) === "use");
   check("ein 20s-Hänger von EA20 startet keine zweite Frist", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: "Timeout", dataset: "sts_inpr_m", httpStatus: null, hasNext: true }) === "next");

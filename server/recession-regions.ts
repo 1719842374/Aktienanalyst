@@ -80,6 +80,8 @@ export interface ScoreInput {
   usCorrection12m: number;
   today: string;
   scorers: RegionScorers;
+  /** Regional ALQ already loaded in this request. Used only when the catalog series is empty. */
+  ezUnemployment?: { geo: string; points: DatedPoint[] } | null;
 }
 
 async function getText(url: string, timeoutMs = 20000, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<string> {
@@ -366,10 +368,11 @@ export function parseDbNomicsSeries(payload: unknown): DatedPoint[] {
 }
 
 /** FRED label when OECD is not the newer series. A timeout is not described as an empty body. */
-export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number, failure?: "timeout" | "empty" | null): string {
+export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number, failure?: "timeout" | "empty" | "http" | null): string {
   if (usedPrimary) return "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)";
   if (oecdPointCount > 0) return "FRED JPNPROINDMISMEI; OECD älter als FRED";
   if (failure === "timeout") return "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung";
+  if (failure === "http") return "FRED JPNPROINDMISMEI; OECD HTTP-Fehler";
   return "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML";
 }
 
@@ -382,7 +385,7 @@ export function oecdAttemptPlan(why: string | null): "use" | "retry" | "stop" {
   return "retry";
 }
 
-async function readOecdJpIp(url = OECD_JP_IP): Promise<{ text: string; failure: "timeout" | "empty" | null }> {
+async function readOecdJpIp(url = OECD_JP_IP): Promise<{ text: string; failure: "timeout" | "empty" | "http" | null }> {
   const first = await getTextResult(url, 25000);
   const why = eurostatWhy(first);
   if (oecdAttemptPlan(why) === "use") return { text: first.text, failure: null };
@@ -390,8 +393,23 @@ async function readOecdJpIp(url = OECD_JP_IP): Promise<{ text: string; failure: 
   const again = await getTextResult(url, OECD_RETRY_MS);
   const againWhy = eurostatWhy(again);
   if (oecdAttemptPlan(againWhy) === "use") return { text: again.text, failure: null };
-  if (againWhy === "Timeout") return { text: "", failure: "timeout" };
+  if (againWhy === "Timeout" || why === "Timeout") return { text: "", failure: "timeout" };
+  if (againWhy?.startsWith("HTTP") || why?.startsWith("HTTP")) return { text: "", failure: "http" };
   return { text: "", failure: "empty" };
+}
+
+/** EA21 from the regional ALQ load, labeled when EA20 published no values. A series already in the catalog is kept. */
+export function catalogUnemploymentFromRegional(loaded: {
+  geo: string | null;
+  rows: Array<{ date: string; value: number | null }>;
+} | null): { geo: string; points: DatedPoint[] } | null {
+  if (!loaded?.geo) return null;
+  const points = loaded.rows.flatMap(row =>
+    row.value != null && Number.isFinite(row.value) ? [{ date: row.date, value: row.value }] : [],
+  );
+  if (points.length === 0) return null;
+  const geo = loaded.geo === "EA21" ? "EA21 (EA20 ohne Werte)" : loaded.geo;
+  return { geo, points };
 }
 
 /** The series whose last print is newer. An empty side loses. A tie keeps the primary. */
@@ -663,11 +681,16 @@ async function gdpUsd(id: string, signal?: AbortSignal): Promise<{ value: number
 }
 
 /** Eurostat, OECD, FRED, ECB, BoJ, STOXX and TOPIX. Same calls as main, without ASHR or the GDP weights. */
-async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints> {
+async function fetchLegacyRegionalPrints(
+  today: string,
+  preloadedUnemployment?: { geo: string; points: DatedPoint[] } | null,
+): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
   const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
-    eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
+    preloadedUnemployment && preloadedUnemployment.points.length > 0
+      ? Promise.resolve(preloadedUnemployment)
+      : eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
     fred("IR3TIB01EZM156N", cosd),
@@ -851,8 +874,11 @@ export async function runAsiaSupplement(
   }
 }
 
-export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
-  const legacy = await fetchLegacyRegionalPrints(today);
+export async function fetchRegionalPrints(
+  today = new Date().toISOString().slice(0, 10),
+  ezUnemployment?: { geo: string; points: DatedPoint[] } | null,
+): Promise<RegionalPrints> {
+  const legacy = await fetchLegacyRegionalPrints(today, ezUnemployment);
   let asia: AsiaSupplement | null = null;
   try {
     asia = await runAsiaSupplement(today);
@@ -1032,9 +1058,11 @@ function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): Re
 
 export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const { prints, scorers, today } = input;
-  const ezRates = prints.ezUnemployment.points.map(point => point.value);
-  const ezLaborSource = prints.ezUnemployment.points.length
-    ? `Eurostat une_rt_m ${prints.ezUnemployment.geo}`
+  const shared = input.ezUnemployment && input.ezUnemployment.points.length > 0 ? input.ezUnemployment : null;
+  const une = prints.ezUnemployment.points.length > 0 || !shared ? prints.ezUnemployment : shared;
+  const ezRates = une.points.map(point => point.value);
+  const ezLaborSource = une.points.length
+    ? `Eurostat une_rt_m ${une.geo}`
     : "Eurostat une_rt_m EA20";
   const ezSpread = alignSpread(prints.ezLong, prints.ezShort);
   const ezIpSource = prints.ezIp.points.length
