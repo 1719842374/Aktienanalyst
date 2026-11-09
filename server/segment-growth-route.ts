@@ -35,6 +35,7 @@ import {
   reportedParentRevenue,
   resolveSegmentChildren,
   reviewKiChildren,
+  reviewSegmentOutline,
   segmentNamesFromFmpRows,
   type SegmentChildrenResult,
 } from "../shared/segment-children";
@@ -64,9 +65,21 @@ const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const childCache = new Map<string, { at: number; ttl: number; body: SegmentChildrenResult }>();
 const rateBuckets = new Map<string, number[]>();
 
+const outlineNames = new Map<string, string[]>();
+
 export function resetSegmentChildrenGuardsForTests(): void {
   childCache.clear();
   rateBuckets.clear();
+  outlineNames.clear();
+}
+
+function rememberOutlineNames(ticker: string, kind: "product" | "geographic", names: string[]): void {
+  outlineNames.set(`${ticker.toUpperCase()}|${kind}`, names);
+}
+
+function rememberedOutlineName(ticker: string, kind: "product" | "geographic", parent: string): string | null {
+  const names = outlineNames.get(`${ticker.toUpperCase()}|${kind}`) ?? [];
+  return names.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
 }
 
 export function takeSegmentChildrenSlot(ip: string, now: number, max: number, windowMs: number): boolean {
@@ -151,6 +164,7 @@ export interface SegmentChildrenDeps {
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
   ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[]) => Promise<unknown>;
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
+  outline?: (ticker: string, kind: "product" | "geographic") => Promise<unknown>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
 }
@@ -301,12 +315,41 @@ async function defaultKiChildren(
   }
 }
 
+async function defaultOutline(ticker: string, kind: "product" | "geographic"): Promise<unknown> {
+  if (!isLLMAvailable()) return null;
+  let peerLine = "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht geladen. Eine Zahl ohne eigene Quelle weglassen.";
+  try {
+    const anchor = await loadPeerGrowthAnchor(ticker);
+    if (anchor?.medianRevenueYoyPct != null) {
+      peerLine = `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}.`;
+    }
+  } catch {
+    // Ohne Anker bleibt jede Zahl an die eigene Quelle gebunden.
+  }
+  const subject = kind === "geographic"
+    ? "Schätze die geografischen Umsatzregionen."
+    : "Schätze die Geschäftssegmente oder Produktgruppen.";
+  try {
+    const result = await callLLMJson({
+      systemPrompt: "Antworte nur mit JSON. Schätze Hauptsegmente nur mit Basis und Quelle. Unbekannte Zahlen sind null, nie 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
+      prompt: `${peerLine}\nTicker ${ticker}. ${subject} Die Summe der Anteile darf 100 nicht übersteigen. Form: {"children":[{"name":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":""}]}. Jede Zeile braucht name und basis. shareOfParentPct und growthPct nur zusammen mit source, sonst null.`,
+      maxTokens: 800,
+      temperature: 0.2,
+      signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+    });
+    return result?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
   return {
     fmpAvailable: isFmpAvailable,
     raw: (kind, ticker) => fmpSegmentationRows(kind, ticker, "annual"),
     names: defaultDisplayedNames,
     ki: defaultKiChildren,
+    outline: defaultOutline,
   };
 }
 
@@ -407,9 +450,10 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         ? await deps.names(ticker, kind)
         : segmentNamesFromFmpRows(rows);
       const hit = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
-      if (!hit) return res.status(400).json({ error: SEGMENT_UNKNOWN });
-      const fromNewestYear = newestMatchingRawKey(rows, kind, parent, listed);
-      const canonical = fromNewestYear ?? hit;
+      const remembered = rememberedOutlineName(ticker, kind, parent);
+      if (!hit && !remembered) return res.status(400).json({ error: SEGMENT_UNKNOWN });
+      const fromNewestYear = hit ? newestMatchingRawKey(rows, kind, parent, listed) : null;
+      const canonical = fromNewestYear ?? hit ?? remembered!;
       const siblings = listed.filter((name) => !sameDisplayedName(kind, name, canonical));
       let businessNames: string[] = [];
       if (kind === "geographic" && deps.fmpAvailable()) {
@@ -442,6 +486,33 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       return res.json(body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Untersegmente fehlgeschlagen";
+      return res.status(502).json({ error: message.slice(0, 200) });
+    }
+  });
+
+  app.post("/api/segment-outline", async (req: Request, res: Response) => {
+    const ticker = typeof req.body?.ticker === "string" ? req.body.ticker.trim() : "";
+    const kind = req.body?.kind === "geographic" ? "geographic" : req.body?.kind === "product" ? "product" : null;
+    if (!TICKER_RE.test(ticker) || !kind) {
+      return res.status(400).json({ error: "ticker oder kind fehlt" });
+    }
+    const deps = childrenDeps ?? defaultSegmentChildrenDeps();
+    const now = deps.now?.() ?? Date.now();
+    const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    if (!takeSegmentChildrenSlot(ip, now, limit.max, limit.windowMs)) {
+      return res.status(429).json({ error: "Zu viele Abfragen" });
+    }
+    try {
+      const payload = deps.outline
+        ? await deps.outline(ticker, kind)
+        : await defaultOutline(ticker, kind);
+      if (payload == null) return res.status(503).json({ error: KI_UNAVAILABLE });
+      const reviewed = reviewSegmentOutline(payload);
+      if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name));
+      return res.json(reviewed);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Segment-Schätzung fehlgeschlagen";
       return res.status(502).json({ error: message.slice(0, 200) });
     }
   });

@@ -272,6 +272,64 @@ export function reviewKiChildren(
   return { parent, children: kept, reason: notes.length > 0 ? notes.join(" ") : null };
 }
 
+export interface SegmentOutlineItem {
+  name: string;
+  shareOfParentPct: number | null;
+  growthPct: number | null;
+  basis: string;
+  origin: "KI";
+}
+
+export function reviewSegmentOutline(payload: unknown): { items: SegmentOutlineItem[]; reason: string | null } {
+  if (!payload || typeof payload !== "object") return { items: [], reason: NO_SEGMENT_CHILDREN };
+  const record = payload as { children?: unknown; fills?: unknown };
+  const rawList = Array.isArray(record.children) ? record.children : Array.isArray(record.fills) ? record.fills : null;
+  if (!rawList || rawList.length === 0) return { items: [], reason: NO_SEGMENT_CHILDREN };
+  const items: SegmentOutlineItem[] = [];
+  const notes: string[] = [];
+  const seen = new Set<string>();
+  for (const item of rawList) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown };
+    const name = (typeof rec.name === "string" && rec.name.trim() ? rec.name : typeof rec.segmentName === "string" ? rec.segmentName : "").trim().slice(0, 80);
+    if (!name || seen.has(norm(name))) continue;
+    const basisText = [rec.basis, rec.rationale, rec.formula].filter((part) => typeof part === "string" && part.trim()).join(" · ");
+    const basis = basisText ? boundBasis(basisText) : "";
+    if (!basis) {
+      notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
+      continue;
+    }
+    const citation = (typeof rec.source === "string" && rec.source.trim() ? rec.source : typeof rec.tamSource === "string" ? rec.tamSource : "").trim();
+    const share = finite(rec.shareOfParentPct);
+    const growth = finite(rec.growthPct ?? rec.segmentGrowth);
+    if ((share != null && share < 0) || (growth != null && growth < -100)) {
+      notes.push(`${KI_NEGATIVE}: ${name}`);
+      continue;
+    }
+    let shareKept = share != null && share > 0 ? share : null;
+    let growthKept = growth != null && growth !== 0 ? growth : null;
+    if ((shareKept != null || growthKept != null) && !citation) {
+      notes.push(`${KI_WITHOUT_SOURCE}: ${name}`);
+      shareKept = null;
+      growthKept = null;
+    }
+    seen.add(norm(name));
+    items.push({
+      name,
+      shareOfParentPct: shareKept,
+      growthPct: growthKept,
+      basis: citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis,
+      origin: "KI",
+    });
+  }
+  const shareSum = items.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
+  if (items.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
+    return { items: [], reason: KI_SUM_EXCEEDS_PARENT };
+  }
+  if (items.length === 0) return { items: [], reason: notes[0] ?? NO_SEGMENT_CHILDREN };
+  return { items, reason: notes.length > 0 ? notes.join(" ") : null };
+}
+
 export function resolveSegmentChildren(
   parent: string,
   fmp: readonly SegmentChild[],

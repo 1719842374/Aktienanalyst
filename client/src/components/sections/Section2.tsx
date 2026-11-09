@@ -12,6 +12,15 @@ import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
 import { SegmentChildrenPanel, SegmentLine } from "./SegmentChildren";
+import { apiRequest } from "../../lib/queryClient";
+
+interface OutlineItem {
+  name: string;
+  shareOfParentPct: number | null;
+  growthPct: number | null;
+  basis: string;
+  origin: "KI";
+}
 
 interface Props { data: StockAnalysis }
 
@@ -56,6 +65,49 @@ const CYCLICAL_TICKERS = new Set([
   'CF','MOS','NTR',
 ]);
 
+function OutlineRows({
+  ticker,
+  kind,
+  items,
+  open,
+  setOpen,
+}: {
+  ticker: string;
+  kind: "product" | "geographic";
+  items: OutlineItem[];
+  open: Record<string, boolean>;
+  setOpen: (next: Record<string, boolean>) => void;
+}) {
+  return (
+    <div className="mt-2 space-y-1.5" data-testid={`segment-outline-${kind}`}>
+      {items.map((item) => (
+        <SegmentLine key={item.name} name={item.name} open={open[item.name] === true} onToggle={() => setOpen({ ...open, [item.name]: !open[item.name] })}>
+          <div className="mb-0.5 flex items-center justify-between text-xs">
+            <span className="mr-2 truncate font-medium">{item.name}</span>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                {item.shareOfParentPct != null ? `${formatNumber(item.shareOfParentPct, 1)}%` : "n/a"}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground" title={item.basis}>
+                {item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}%` : "n/a"}
+              </span>
+              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200">KI-Schätzung</span>
+            </div>
+          </div>
+          {item.shareOfParentPct != null && (
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-violet-500/60" style={{ width: `${Math.min(100, item.shareOfParentPct)}%` }} />
+            </div>
+          )}
+          {open[item.name] === true && (
+            <SegmentChildrenPanel ticker={ticker} parent={item.name} kind={kind} />
+          )}
+        </SegmentLine>
+      ))}
+    </div>
+  );
+}
+
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
@@ -65,6 +117,36 @@ export function Section2({ data }: Props) {
   );
   const [openBusiness, setOpenBusiness] = useState<Record<string, boolean>>({});
   const [openGeo, setOpenGeo] = useState<Record<string, boolean>>({});
+  const [businessOutline, setBusinessOutline] = useState<OutlineItem[] | null>(null);
+  const [geoOutline, setGeoOutline] = useState<OutlineItem[] | null>(null);
+  const [outlineError, setOutlineError] = useState<string | null>(null);
+  const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
+
+  async function estimateOutline(kind: "product" | "geographic") {
+    if (outlineLoading) return;
+    setOutlineLoading(kind);
+    setOutlineError(null);
+    try {
+      const res = await apiRequest("POST", "/api/segment-outline", {
+        ticker: data.ticker,
+        kind,
+        companyName: data.companyName,
+        sector: data.sector,
+        industry: data.industry,
+      });
+      const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
+      if (!res.ok || !json || !Array.isArray(json.items) || json.items.length === 0) {
+        setOutlineError(json?.reason || json?.error || "KI-Schätzung unvollständig — nichts übernommen");
+        return;
+      }
+      if (kind === "product") setBusinessOutline(json.items);
+      else setGeoOutline(json.items);
+    } catch (err: unknown) {
+      setOutlineError(err instanceof Error ? err.message : "KI-Schätzung fehlgeschlagen");
+    } finally {
+      setOutlineLoading(null);
+    }
+  }
 
   // === SINGLE SOURCE OF TRUTH: shared DCF defaults (same as Section5/Section6/SummarySection) ===
   // buildDefaultDCFParams liefert auch `rsl` mit → identischer Fair Value wie Section 5/6.
@@ -283,6 +365,16 @@ export function Section2({ data }: Props) {
               <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
                 <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage}</span>
               </div>
+              <button
+                type="button"
+                data-testid="button-segment-outline-product"
+                disabled={outlineLoading !== null || !!businessOutline}
+                onClick={() => { void estimateOutline("product"); }}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+              >
+                {outlineLoading === "product" ? "…" : businessOutline ? "KI ✓" : "N/A mit KI schätzen"}
+              </button>
+              {businessOutline && <OutlineRows ticker={data.ticker} kind="product" items={businessOutline} open={openBusiness} setOpen={setOpenBusiness} />}
             </div>
           )
         )}
@@ -290,9 +382,22 @@ export function Section2({ data }: Props) {
         {/* Geographic Segments. The server already removed name+revenue and
             non-geo duplicates. geoSegmentsNote is the spelled footnote when
             that removal happened. */}
-        {((data.geoSegments && data.geoSegments.length > 0) || data.geoSegmentsNote) && (
-          <div>
+        <div>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+            {!(data.geoSegments && data.geoSegments.length > 0) && (
+              <>
+                <button
+                  type="button"
+                  data-testid="button-segment-outline-geo"
+                  disabled={outlineLoading !== null || !!geoOutline}
+                  onClick={() => { void estimateOutline("geographic"); }}
+                  className="mb-2 inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+                >
+                  {outlineLoading === "geographic" ? "…" : geoOutline ? "KI ✓" : "N/A mit KI schätzen"}
+                </button>
+                {geoOutline && <OutlineRows ticker={data.ticker} kind="geographic" items={geoOutline} open={openGeo} setOpen={setOpenGeo} />}
+              </>
+            )}
             {data.geoSegments && data.geoSegments.length > 0 && (
             <div className="space-y-1.5">
               {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
@@ -328,8 +433,8 @@ export function Section2({ data }: Props) {
                 {data.geoSegmentsNote}
               </p>
             )}
+            {outlineError && <p className="mt-1 text-[10px] text-red-500" data-testid="segment-outline-error">{outlineError}</p>}
           </div>
-        )}
 
         {/* Growth Thesis & Catalyst Reasoning (expanded) */}
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">

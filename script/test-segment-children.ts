@@ -848,6 +848,113 @@ try {
   await new Promise<void>((resolve, reject) => geoNamesServer.close((err) => err ? reject(err) : resolve()));
 }
 
+resetSegmentChildrenGuardsForTests();
+const outlineApp = express();
+outlineApp.use(express.json());
+registerSegmentGrowthRoute(outlineApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  outline: async () => ({
+    children: [
+      { name: "Automobiles", shareOfParentPct: 70, growthPct: 12, basis: "Fahrzeuge", source: "BYD Jahresbericht 2024" },
+      { name: "Batteries", shareOfParentPct: 20, growthPct: 8, basis: "Speicher", source: "BYD Jahresbericht 2024" },
+    ],
+  }),
+});
+const outlineServer = outlineApp.listen(0);
+const outlinePort = (outlineServer.address() as { port: number }).port;
+try {
+  const posted = await fetch(`http://127.0.0.1:${outlinePort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "product" }),
+  });
+  const postedBody = await posted.json().catch(() => ({})) as { items?: { name: string; shareOfParentPct: number | null; origin?: string }[]; reason?: string };
+  const tap = await fetch(`http://127.0.0.1:${outlinePort}/api/segment-children/BYDDY?parent=${encodeURIComponent("Automobiles")}&kind=product`);
+  const text = JSON.stringify(postedBody);
+  gap(
+    "outline-sourced",
+    posted.status === 200
+      && postedBody.items?.[0]?.name === "Automobiles"
+      && postedBody.items?.[0]?.shareOfParentPct === 70
+      && postedBody.items?.every((item) => item.origin === "KI")
+      && !text.includes("Override")
+      && !text.includes("\"FMP\"")
+      && tap.status === 200,
+    `status=${posted.status} tap=${tap.status} body=${text.slice(0, 240)}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => outlineServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const bareApp = express();
+bareApp.use(express.json());
+registerSegmentGrowthRoute(bareApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  outline: async () => ({
+    children: [{ name: "Handsets", shareOfParentPct: 55, growthPct: 9, basis: "Smartphones", source: "" }],
+  }),
+});
+const bareServer = bareApp.listen(0);
+const barePort = (bareServer.address() as { port: number }).port;
+try {
+  const bare = await fetch(`http://127.0.0.1:${barePort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "XIACY", kind: "product" }),
+  });
+  const bareBody = await bare.json().catch(() => ({})) as { items?: { shareOfParentPct: number | null; growthPct: number | null }[]; reason?: string };
+  gap(
+    "outline-unsourced",
+    bare.status === 200
+      && bareBody.items?.[0]?.shareOfParentPct == null
+      && bareBody.items?.[0]?.growthPct == null
+      && /ohne Quelle/.test(bareBody.reason ?? ""),
+    `status=${bare.status} reason=${bareBody.reason ?? ""}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => bareServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const sumOutlineApp = express();
+sumOutlineApp.use(express.json());
+registerSegmentGrowthRoute(sumOutlineApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  outline: async () => ({
+    children: [
+      { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "Bericht" },
+      { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "Bericht" },
+    ],
+  }),
+});
+const sumOutlineServer = sumOutlineApp.listen(0);
+const sumOutlinePort = (sumOutlineServer.address() as { port: number }).port;
+try {
+  const summed = await fetch(`http://127.0.0.1:${sumOutlinePort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "geographic" }),
+  });
+  const summedBody = await summed.json().catch(() => ({})) as { items?: unknown[]; reason?: string };
+  gap(
+    "outline-sum",
+    summed.status === 200 && (summedBody.items?.length ?? 1) === 0 && /überschreitet/.test(summedBody.reason ?? ""),
+    `status=${summed.status} reason=${summedBody.reason ?? ""}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => sumOutlineServer.close((err) => err ? reject(err) : resolve()));
+}
+
 const indexSource = readFileSync("server/index.ts", "utf8");
 gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");
 
