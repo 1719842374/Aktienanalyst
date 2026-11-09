@@ -191,18 +191,12 @@ function YahooFinancialStatements({ data, eps, divKpi }: { data: StockAnalysis; 
   );
 }
 
-function sourceCurrency(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const code = value.trim().toUpperCase();
-  return /^[A-Z]{3}$/.test(code) ? code : null;
-}
-
 export function annualSegments(data: StockAnalysis): { name: string; revenue: number | null; fiscalYear: string | null; currency: string | null }[] {
   return (data.revenueSegments ?? []).map((segment) => ({
     name: segment.name,
     revenue: segment.revenue > 0 ? segment.revenue : null,
     fiscalYear: segment.fiscalYear ?? null,
-    currency: sourceCurrency(segment.currency),
+    currency: null,
   }));
 }
 

@@ -52,6 +52,14 @@ interface CacheBody {
   business: SegmentGrowthAnnotation[];
   geographic: SegmentGrowthAnnotation[];
   source: string;
+  currency: string | null;
+}
+
+function incomeReportedCurrency(income: unknown): string | null {
+  const row = Array.isArray(income) ? income[0] : null;
+  if (!row || typeof row !== "object") return null;
+  const reported = profileText(row as Record<string, unknown>, "reportedCurrency").toUpperCase();
+  return /^[A-Z]{3}$/.test(reported) ? reported : null;
 }
 
 const cache = new Map<string, { at: number; body: CacheBody }>();
@@ -196,6 +204,7 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
       statements,
     }),
     source: "FMP revenue-product-segmentation, revenue-geographic-segmentation, income-statement, cash-flow-statement, balance-sheet-statement",
+    currency: incomeReportedCurrency(income),
   };
   cache.set(key, { at: Date.now(), body });
   return body;
@@ -550,6 +559,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         business: [],
         geographic: [],
         source: "n/a — FMP_API_KEY fehlt",
+        currency: null,
       });
     }
     try {

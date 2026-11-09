@@ -1,6 +1,7 @@
 /**
- * Kuratierte Produktsegmente, wenn FMP keine Produktzeilen liefert.
- * Dieselbe Liste benutzt /api/analyze und die Untersegment-Whitelist.
+ * Dieselbe kuratierte Produktliste wie das Inline-Objekt in server/analyze-route.ts.
+ * Die Analyze-Route importiert diese Datei nicht. Die Segment-Routen lesen sie hier.
+ * script/test-segment-statements-rest.ts prüft die Gleichheit beider Kopien.
  */
 export const CURATED_PRODUCT_SEGMENTS: Record<string, Array<{ name: string; pct: number }>> = {
   // Novo Nordisk FY2024 (annual report): Diabetes & obesity care 91.7%

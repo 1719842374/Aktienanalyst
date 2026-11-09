@@ -569,8 +569,10 @@ export function SegmentEstimateBlock({ data }: Props) {
       if (current()) setOutlineLoading(null);
     }
   }
+  const reportedCurrency = segmentGrowth.data?.currency || null;
   return (
     <>
+        <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency">{reportedCurrency ? `Währung ${reportedCurrency}` : "Währung n/a"}</p>
         {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
             Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from
             one of THREE sources (see server/analyze-route.ts step 7/7b + server/sec-segments.ts):

@@ -24,6 +24,7 @@ import { loadSegmentSupplement, registerSegmentSupplementRoute } from "../server
 import { registerRoutes } from "../server/routes-register";
 import { registerApiNotFound } from "../server/api-not-found";
 import { AnnualFinancials, AnnualFinancialsView, fetchFinancialHistory } from "../client/src/components/sections/AnnualFinancials";
+import { CURATED_PRODUCT_SEGMENTS } from "../server/curated-product-segments";
 import { annualSegments } from "../client/src/components/sections/FinancialStatements";
 import { StatementSankey } from "../client/src/components/sections/StatementSankey";
 import {
@@ -617,18 +618,63 @@ try {
 const filingSegments = annualSegments({
   revenueSegments: [{ name: "Cloud", revenue: 40, percentage: 100, fiscalYear: "2024", currency: "EUR" }],
 } as never);
-assert.equal(filingSegments[0].currency, "EUR");
+assert.equal(filingSegments[0].currency, null);
 assert.equal(filingSegments[0].fiscalYear, "2024");
-const filingSankey = incomeSankey({
-  segments: filingSegments,
+const fromHistory = buildFinancialHistory({
+  income: [{ date: "2024-12-31", fiscalYear: "2024", revenue: 100, grossProfit: 60, operatingIncome: 20, netIncome: 10, reportedCurrency: "EUR" }],
+  balance: [{ date: "2024-12-31", fiscalYear: "2024", reportedCurrency: "EUR", totalAssets: 1 }],
+  cashflow: [{ date: "2024-12-31", fiscalYear: "2024", reportedCurrency: "EUR", freeCashFlow: 1 }],
+});
+assert.equal(fromHistory.currency, "EUR");
+const stamped = filingSegments.map((segment) => ({ ...segment, currency: fromHistory.currency }));
+const stampedSankey = incomeSankey({
+  segments: stamped,
   revenue: 100,
   grossProfit: 60,
   operatingIncome: 20,
   netIncome: 10,
   statementYear: "2024",
-  statementCurrency: "EUR",
+  statementCurrency: fromHistory.currency,
 });
-assert.equal(filingSankey.links.some((link) => link.source === "Cloud"), true);
+assert.equal(stampedSankey.links.some((link) => link.source === "Cloud"), true);
+const missingCurrency = buildFinancialHistory({
+  income: [{ date: "2024-12-31", fiscalYear: "2024", revenue: 100, grossProfit: 60, operatingIncome: 20, netIncome: 10 }],
+  balance: [],
+  cashflow: [],
+});
+assert.equal(missingCurrency.currency, null);
+const missingHtml = htmlOf(React.createElement(AnnualFinancialsView, {
+  history: { ticker: "EURX", source: "fmp", ...missingCurrency },
+  segments: filingSegments,
+  view: "sankey",
+}));
+assert.match(missingHtml, /Währung n\/a/);
+function curatedFallbackFromAnalyze(): Record<string, { name: string; pct: number }[]> {
+  const src = readFileSync("server/analyze-route.ts", "utf8");
+  const marker = "const productFallback: Record<string, Array<{ name: string; pct: number }>> = ";
+  const start = src.indexOf(marker);
+  assert.notEqual(start, -1);
+  const equals = src.indexOf("= {", start);
+  assert.notEqual(equals, -1);
+  const brace = equals + 2;
+  let depth = 0;
+  let end = -1;
+  for (let i = brace; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  assert.notEqual(end, -1);
+  const literal = src.slice(brace, end + 1).replace(/\/\/[^\n]*/g, "");
+  return new Function(`return ${literal}`)() as Record<string, { name: string; pct: number }[]>;
+}
+assert.deepEqual(CURATED_PRODUCT_SEGMENTS, curatedFallbackFromAnalyze());
+assert.doesNotMatch(readFileSync("server/analyze-route.ts", "utf8"), /curated-product-segments/);
 const sourced = await loadSegmentSupplement("MSFT", [{ name: "Alpha", percentage: 100, reportedGrowthPct: null }], {
   fmpAvailable: () => true,
   raw: async () => [{ parent: "Alpha", name: "Hinweis", shareOfParentPct: 12, source: "FMP revenue-product-segmentation" }],

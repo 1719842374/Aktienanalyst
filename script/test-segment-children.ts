@@ -820,6 +820,34 @@ const brokenUrl = reviewKiChildren("Cloud", {
     source: "Annual Report 2024 https://%",
   }],
 }, null, { companyName: "Microsoft Corporation" });
+const bydFiling = reviewKiChildren("Vehicles", {
+  children: [{
+    name: "Blade Battery",
+    owner: "BYD",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Annual Report",
+    source: "Annual Report 2024 https://www.hkexnews.hk/listedco/listconews/sehk/2024/byd.pdf",
+  }],
+}, null, { companyName: "BYD Company Limited" });
+const xiaomiFiling = reviewKiChildren("Smartphones", {
+  children: [{
+    name: "Xiaomi 14",
+    owner: "Xiaomi",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Annual Report",
+    source: "Annual Report 2024 https://www1.hkexnews.hk/listedco/listconews/sehk/2024/1810.pdf",
+  }],
+}, null, { companyName: "Xiaomi Corporation" });
+gap(
+  "filing-host-hkex",
+  bydFiling.children.length === 1
+    && bydFiling.children[0]?.shareOfParentPct === 40
+    && xiaomiFiling.children.length === 1
+    && xiaomiFiling.children[0]?.shareOfParentPct === 40,
+  `byd=${bydFiling.children.length}/${bydFiling.reason ?? ""} xiaomi=${xiaomiFiling.children.length}/${xiaomiFiling.reason ?? ""}`,
+);
 gap(
   "neutral-host-child",
   secChild.children.length === 1

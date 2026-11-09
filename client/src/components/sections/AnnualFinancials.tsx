@@ -91,9 +91,14 @@ export function AnnualFinancialsView({
 }) {
   const years = history?.years ?? [];
   const latest = years.length > 0 ? years[years.length - 1] : null;
+  const reportedCurrency = history?.currency ?? null;
+  const sankeySegments = segments.map((segment) => ({
+    ...segment,
+    currency: segment.currency ?? reportedCurrency,
+  }));
   const income = latest
     ? incomeSankey({
-      segments,
+      segments: sankeySegments,
       revenue: latest.revenue,
       grossProfit: latest.grossProfit,
       operatingIncome: latest.operatingIncome,
@@ -123,6 +128,7 @@ export function AnnualFinancialsView({
           {view === "sankey" ? "Tabelle" : "Sankey"}
         </button>
       </div>
+      {history && !reportedCurrency ? <p className="text-[10px] text-muted-foreground" data-testid="segment-currency-na">Währung n/a</p> : null}
       {history?.currencyNote && <p className="text-[10px] text-muted-foreground" data-testid="annual-currency-note">{history.currencyNote}</p>}
       {history?.note && <p className="text-[10px] text-muted-foreground">{history.note}</p>}
       {errorText && <p className="text-[10px] text-muted-foreground" data-testid="annual-error">{errorText}</p>}

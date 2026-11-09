@@ -3,7 +3,7 @@
  * FMP nur, wenn die Segmentzeile das Hauptsegment als verschachtelte Werte führt.
  * Eine flache Umsatzzahl ist kein Untersegment. KI-Werte bleiben KI.
  */
-import { isAllowedBtcCitation, isOfficialEvidenceUrl } from "./btc-source-policy";
+import { isOfficialEvidenceUrl } from "./btc-source-policy";
 import { prettifyProductSegmentName } from "./segment-growth-calc";
 
 export type SegmentChildSource = "FMP" | "KI";
@@ -422,9 +422,23 @@ function hostLabelMatches(label: string, companyName: string): boolean {
 
 const COMPANY_FILLER = new Set(["of", "the", "and"]);
 
+const SEGMENT_FILING_HOSTS = [
+  "hkexnews.hk",
+  "cninfo.com.cn",
+  "sse.com.cn",
+  "szse.cn",
+  "disclosure.edinet-fsa.go.jp",
+  "sec.gov",
+  "reuters.com",
+];
+
+function hostUnder(host: string, root: string): boolean {
+  return host === root || host.endsWith(`.${root}`);
+}
+
 function neutralCitationHost(host: string): boolean {
-  const url = `https://${host}/`;
-  return isOfficialEvidenceUrl(url) || isAllowedBtcCitation(url);
+  if (isOfficialEvidenceUrl(`https://${host}/`)) return true;
+  return SEGMENT_FILING_HOSTS.some((root) => hostUnder(host, root));
 }
 
 function citedHostVerdict(citation: string, companyName: string): "none" | "foreign" | "invalid" {
