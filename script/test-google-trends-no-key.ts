@@ -1,10 +1,15 @@
 /**
  * F2-03 / F3-05 / F4-06: without SERPAPI_KEY the order is
  * cache → (no SerpApi) → pytrends → n/a with a reason.
- * A Google 429 is n/a and is not written into the cache.
+ * A finite print inside 48h stays when pytrends answers 429.
+ * Without that print the n/a reason is stored.
  * Run: npx tsx script/test-google-trends-no-key.ts
  */
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
+  GOOGLE_TRENDS_DISK_NAME,
   readGoogleTrendsCache,
   resetGoogleTrendsCache,
   setGoogleTrendsDiskDirForTests,
@@ -106,6 +111,79 @@ console.log("\n=== Google 429: reason is cached and the next read returns it ===
   const second = scoreGoogleTrendsForTests();
   check("the second read comes from the cache with the same reason", second.value === GOOGLE_TRENDS_RATE_LIMIT_NA && calls === 0, `${second.value} calls=${calls}`);
   resetGoogleTrendsCache();
+}
+
+console.log("\n=== rate_limited keeps a 20h last-good in memory and on disk ===");
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "trends-last-good-"));
+  const file = path.join(dir, GOOGLE_TRENDS_DISK_NAME);
+  setGoogleTrendsDiskDirForTests(dir);
+  resetGoogleTrendsCache();
+  const hour = 60 * 60 * 1000;
+  writeGoogleTrendsCache({
+    value: 59.1,
+    timestamp: Date.now() - 20 * hour,
+    source: "Google Trends via SerpApi (7d Ø=59.1, Latest=53, Peak=100)",
+  });
+  const before = readFileSync(file, "utf8");
+  let calls = 0;
+  setGoogleTrendsTransportForTests(() => {
+    calls += 1;
+    return { status: 429, body: "Too Many Requests" };
+  });
+  const first = scoreGoogleTrendsForTests();
+  const stored = readGoogleTrendsCache();
+  check("20h print is scored and not stale", first.value.startsWith("59") && first.weight === 1.7 && first.ageHours === 20 && first.isStale === false, `${first.value} age=${first.ageHours}`);
+  check("disk and memory still hold 59.1", stored?.value === 59.1 && readFileSync(file, "utf8") === before, JSON.stringify(stored));
+  const second = scoreGoogleTrendsForTests();
+  check("follow-up still scores the same print and asks again", second.value.startsWith("59") && second.weight === 1.7 && calls === 2 && readGoogleTrendsCache()?.value === 59.1, `calls=${calls} ${second.value}`);
+  resetGoogleTrendsCache();
+  setGoogleTrendsDiskDirForTests(null);
+}
+
+console.log("\n=== rate_limited without, expired, and fresh ===");
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "trends-rate-edges-"));
+  const file = path.join(dir, GOOGLE_TRENDS_DISK_NAME);
+  const hour = 60 * 60 * 1000;
+  setGoogleTrendsDiskDirForTests(dir);
+  resetGoogleTrendsCache();
+  setGoogleTrendsTransportForTests(() => ({ status: 429, body: "Too Many Requests" }));
+  const empty = scoreGoogleTrendsForTests();
+  check("no last-good stores the 429 reason", empty.value === GOOGLE_TRENDS_RATE_LIMIT_NA && empty.weight === 0 && readGoogleTrendsCache()?.value == null, empty.value);
+  let follow = 0;
+  setGoogleTrendsTransportForTests(() => {
+    follow += 1;
+    return { status: 500, body: "should-not-run" };
+  });
+  const again = scoreGoogleTrendsForTests();
+  check("fresh n/a reason is the follow-up", again.value === GOOGLE_TRENDS_RATE_LIMIT_NA && follow === 0, `calls=${follow}`);
+
+  resetGoogleTrendsCache();
+  writeGoogleTrendsCache({
+    value: 59.1,
+    timestamp: Date.now() - 49 * hour,
+    source: "Google Trends via SerpApi (7d Ø=59.1, Latest=53, Peak=100)",
+  });
+  setGoogleTrendsTransportForTests(() => ({ status: 429, body: "Too Many Requests" }));
+  const expired = scoreGoogleTrendsForTests();
+  check("49h print is not kept", expired.value === GOOGLE_TRENDS_RATE_LIMIT_NA && expired.weight === 0 && readGoogleTrendsCache()?.value == null && readFileSync(file, "utf8").includes(GOOGLE_TRENDS_RATE_LIMIT_NA), expired.value);
+
+  resetGoogleTrendsCache();
+  writeGoogleTrendsCache({
+    value: 59.1,
+    timestamp: Date.now() - hour,
+    source: "Google Trends via SerpApi (7d Ø=59.1, Latest=53, Peak=100)",
+  });
+  let freshCalls = 0;
+  setGoogleTrendsTransportForTests(() => {
+    freshCalls += 1;
+    return { status: 429, body: "Too Many Requests" };
+  });
+  const fresh = scoreGoogleTrendsForTests();
+  check("1h print is served and pytrends is not called", fresh.value.startsWith("59") && fresh.weight === 1.7 && fresh.isStale === false && freshCalls === 0 && readGoogleTrendsCache()?.value === 59.1, `calls=${freshCalls}`);
+  resetGoogleTrendsCache();
+  setGoogleTrendsDiskDirForTests(null);
 }
 
 restore();

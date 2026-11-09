@@ -224,6 +224,22 @@ Ein VIX- oder VSTOXX-Fallback, der einen heute leeren Slot füllt, **ändert** K
 
 **PR 5** nach PR 2: `vixReading` bei nicht-endlichem FRED auf Yahoo `^VIX`. VSTOXX: STOXX-Pfad behalten, Yahoo nur wenn FMP und STOXX leer. SPY-`quoteSummary` nicht in denselben PR (anderer Datenfluss, Factpack).
 
+### (g) Nachzug 08.11.2026, Pin `01bf608981b842f5457695c92b5800a59cfec94f`
+
+Die Absätze (a)–(f) bleiben der Inventurstand vom 11.10.2026. Future_2 bleibt **offen / teilweise**. Die Datei `Future_2_NA_Fixes_Research.md` wird nicht nach `fertig_` gedreht.
+
+Auf diesem Pin liegt mehr als (b) beschreibt: Trends-Cache 12 h, Last-Good 48 h über `acceptGoogleTrendsFetch`, UI-Stale ab 24 h, pytrends, VIX-Score und VIX-Chart mit Yahoo `^VIX`, Buffett-Retry und `period2` in `buffett-route.ts`, SPY-`quoteSummary` wenn FMP-PE leer. Der Satz in (c) „Fallbacks Yahoo und Trends-Cache fehlen“ gilt für den 11.10., nicht für diesen Pin.
+
+Dieser Nachzug ändert nur den `rate_limited`-Zweig in `scoreGoogleTrends`: ein endlicher Druck innerhalb 48 h bleibt im einen Store (Memory und Disk) und wird weiter gescort. Ohne solchen Druck, oder nach Ablauf, wird der n/a-Grund `n/a — Google Trends 429` gespeichert. Frische Treffer unter 12 h fragen pytrends nicht. Die Score-Formel von `googleReading` bleibt.
+
+Nicht in diesem Nachzug, und keine Fertig-Bedingung: dieselbe Retry-Funktion für VIX-Score und VIX-Chart; dieselbe Robustheit für `scoreBuffett` und `buffett-route.ts`. Beides ist offene Auslegung, kein Fixauftrag.
+
+VSTOXX-Pfad bleibt FMP, dann STOXX `h_v2tx.txt`. Keine Quellenumstellung. Öffentliche Prüfung am 08.11.2026, ohne FMP-Key: Yahoo-Chart `^V2TX` und `V2TX.DE` HTTP 404, Body „No data found, symbol may be delisted“. STOXX-Datei HTTP 200, 7090 Punkte, 1999-01-04 bis 2026-11-06, letzter Wert 21.2793. FMP ohne authentifizierten Abruf offen.
+
+EZ-Serien `IRLTLT01EZM156N` und `IR3TIB01EZM156N`: der öffentliche `fredgraph.csv`-Abruf endete in Timeout und HTTP/2-Fehler, 0 Bytes, kein 404 und kein leerer CSV-Körper. Das ist keine belegte Lücke. ECB-Yield wird nicht gebaut.
+
+Der Wächter in `script/test-vix-fred-retry-source.ts` lässt für `server/recession.ts` nur den vollständigen Diff von `da608133d2ae16cadc6c0c7d6b464dff4bddd8df` gegen `01bf608981b842f5457695c92b5800a59cfec94f` durch (`script/guard-approved-461.ts`, `git diff --full-index -U3`, Hunklage und Kontext). `reviewedHead` ist die Quelle dieses Diffs. Reihenfolge, Häufigkeit, derselbe Text an anderer Stelle und jeder weitere Hunk bleiben gesperrt. Das ist keine #326-Freigabe und keine Dateifreigabe. Sobald die Vergleichsbasis nicht mehr dieser Pin ist, gilt die Ausnahme nicht mehr. Der S10-VIX-Fehler wird davon nicht ausgenommen.
+
 ---
 
 ## Future_3, Future_4, Future_5 (ein Thema)

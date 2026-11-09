@@ -528,8 +528,8 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 
 // 11. Google Trends "Recession"
 // Order: fresh cache → SerpApi only when a key is set → pytrends → n/a with a reason.
-// A Google 429 is n/a and is not written into the cache. Other misses still keep
-// the last print inside 48h. One cache, no second route.
+// A finite print inside 48h stays in the one store, including when pytrends is
+// rate_limited. Without that print the n/a reason is stored. One cache, no second route.
 export type GoogleTrendsTransport = (
   url: string,
   timeoutMs: number,
@@ -607,6 +607,14 @@ function scoreGoogleTrends(): IndicatorResult {
   }
 
   if (googleRateLimited) {
+    const kept = acceptGoogleTrendsFetch(null, cached, now);
+    if (kept.value != null) {
+      console.log(`  Google Trends last good after 429 (age=${kept.ageHours}h stale=${kept.isStale})`);
+      return googleReading(kept.value, kept.source, {
+        ageHours: kept.ageHours ?? 0,
+        isStale: kept.isStale,
+      });
+    }
     writeGoogleTrendsCache({
       value: null,
       timestamp: now,
