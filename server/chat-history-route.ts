@@ -1,13 +1,14 @@
 /**
  * Chat-Verlauf im Prozess-Speicher, Schlüssel ist die Session aus dem Header.
  * Kein Supabase, keine Env, kein Score. Der Client spiegelt denselben Stand in sessionStorage.
- * PUT und DELETE tragen optional denselben Schreibstand wie der Hook. Ein PUT mit kleinerem
- * Stand als das Löschen derselben Id legt den Chat nicht wieder an.
+ * PUT und DELETE können Epoche und Schreibstand eines Seitenlaufs tragen.
+ * DELETE entfernt den Chat immer. Ein PUT derselben Epoche mit kleinerem Stand,
+ * oder ein PUT einer anderen Epoche, legt ihn danach nicht wieder an.
  */
 import type { Express, Request, Response } from "express";
 import {
   CHAT_HISTORY_MEMORY_BUDGET_CHARS, CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION,
-  CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, CHAT_WRITE_REVISION_HEADER,
+  CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, CHAT_WRITE_EPOCH_HEADER, CHAT_WRITE_REVISION_HEADER,
   chatThreadTitle, clipChatMessages, isChatDashboard, isChatSessionId,
   type ChatThread,
 } from "../shared/chat-history";
@@ -36,20 +37,27 @@ interface Slot {
 interface SessionBag {
   touchedAt: number;
   threads: Map<string, Slot>;
-  /** Id → Schreibstand des letzten DELETE, das diese Id verworfen hat. */
-  deletedAt: Map<string, number>;
+}
+
+interface Tomb {
+  epoch: string;
+  revision: number;
+  touchedAt: number;
 }
 
 const sessions = new Map<string, SessionBag>();
+/** Löschvermerke liegen neben den Sessions, damit ein DELETE keine Session anlegt. */
+const tombs = new Map<string, Map<string, Tomb>>();
 
 export function resetChatHistoryStore(): void {
   sessions.clear();
+  tombs.clear();
 }
 
 function promoteSession(sessionId: string, now: number): SessionBag {
   const existing = sessions.get(sessionId);
   if (existing) sessions.delete(sessionId);
-  const bag: SessionBag = existing ?? { touchedAt: now, threads: new Map(), deletedAt: new Map() };
+  const bag: SessionBag = existing ?? { touchedAt: now, threads: new Map() };
   bag.touchedAt = now;
   sessions.set(sessionId, bag);
   return bag;
@@ -95,13 +103,62 @@ function dropExpired(now: number): void {
       if (now - slot.touchedAt >= CHAT_HISTORY_TTL_MS) deadThreads.push(threadId);
     });
     deadThreads.forEach(threadId => bag.threads.delete(threadId));
-    if (bag.threads.size === 0 && bag.deletedAt.size === 0) deadSessions.push(id);
+    if (bag.threads.size === 0) deadSessions.push(id);
   });
   deadSessions.forEach(id => sessions.delete(id));
 }
 
+function sweepTombs(now: number): void {
+  const empty: string[] = [];
+  tombs.forEach((byId, sessionId) => {
+    const dead: string[] = [];
+    byId.forEach((tomb, id) => {
+      if (now - tomb.touchedAt >= CHAT_HISTORY_TTL_MS) dead.push(id);
+    });
+    dead.forEach(id => byId.delete(id));
+    if (byId.size === 0) empty.push(sessionId);
+  });
+  empty.forEach(id => tombs.delete(id));
+}
+
+function rememberTomb(sessionId: string, id: string, tomb: Tomb): void {
+  let byId = tombs.get(sessionId);
+  if (!byId) {
+    byId = new Map();
+    tombs.set(sessionId, byId);
+  }
+  byId.set(id, tomb);
+  while (byId.size > CHAT_HISTORY_THREADS_PER_SESSION) {
+    let oldestId: string | undefined;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    byId.forEach((entry, entryId) => {
+      if (entry.touchedAt < oldestAt) {
+        oldestAt = entry.touchedAt;
+        oldestId = entryId;
+      }
+    });
+    if (oldestId == null) break;
+    byId.delete(oldestId);
+  }
+}
+
+function clearTomb(sessionId: string, id: string): void {
+  const byId = tombs.get(sessionId);
+  if (!byId) return;
+  byId.delete(id);
+  if (byId.size === 0) tombs.delete(sessionId);
+}
+
+/** Andere Epoche, oder dieselbe Epoche mit keinem höheren Stand als das Löschen. */
+function staleWrite(sessionId: string, id: string, epoch: string, revision: number): boolean {
+  const tomb = tombs.get(sessionId)?.get(id);
+  if (!tomb) return false;
+  return tomb.epoch !== epoch || revision <= tomb.revision;
+}
+
 function sweep(now: number): void {
   dropExpired(now);
+  sweepTombs(now);
   evictSessions();
 }
 
@@ -129,14 +186,11 @@ export function listChatThreads(sessionId: string, dashboard?: string, entity?: 
   return matched.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
 }
 
-export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now(), revision?: number): ChatThread | null {
+export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now(), revision?: number, epoch?: string): ChatThread | null {
   sweep(now);
+  if (epoch != null && revision != null && isChatSessionId(epoch) && staleWrite(sessionId, thread.id, epoch, revision)) return null;
   const bag = promoteSession(sessionId, now);
-  if (revision != null) {
-    const deletedAt = bag.deletedAt.get(thread.id);
-    if (deletedAt != null && revision < deletedAt) return null;
-    if (deletedAt != null) bag.deletedAt.delete(thread.id);
-  }
+  if (epoch != null && revision != null) clearTomb(sessionId, thread.id);
   const stored: ChatThread = { ...thread, updatedAt: new Date(now).toISOString() };
   bag.threads.delete(stored.id);
   bag.threads.set(stored.id, { thread: stored, touchedAt: now, revision: revision ?? null });
@@ -145,20 +199,22 @@ export function putChatThread(sessionId: string, thread: ChatThread, now = Date.
   return stored;
 }
 
-export function deleteChatThread(sessionId: string, id: string, now = Date.now(), revision?: number): boolean {
+export function deleteChatThread(sessionId: string, id: string, now = Date.now(), revision?: number, epoch?: string): boolean {
   sweep(now);
-  const bag = revision == null ? sessions.get(sessionId) : promoteSession(sessionId, now);
-  if (!bag) return false;
-  if (revision != null) {
-    const prev = bag.deletedAt.get(id);
-    if (prev == null || revision > prev) bag.deletedAt.set(id, revision);
-    const slot = bag.threads.get(id);
-    if (slot?.revision != null && slot.revision > revision) return false;
+  if (epoch != null && revision != null && isChatSessionId(epoch)) {
+    rememberTomb(sessionId, id, { epoch, revision, touchedAt: now });
   }
+  const bag = sessions.get(sessionId);
+  if (!bag) return false;
   const removed = bag.threads.delete(id);
-  if (bag.threads.size === 0 && bag.deletedAt.size === 0) sessions.delete(sessionId);
+  if (bag.threads.size === 0) sessions.delete(sessionId);
   else promoteSession(sessionId, now);
   return removed;
+}
+
+function writeEpochOf(req: Request): string | undefined {
+  const raw = req.header(CHAT_WRITE_EPOCH_HEADER) ?? "";
+  return isChatSessionId(raw) ? raw : undefined;
 }
 
 function writeRevisionOf(req: Request): number | undefined {
@@ -204,7 +260,7 @@ export function registerChatHistoryRoute(app: Express): void {
     if (!sessionId) { res.status(400).json({ error: "n/a — keine Chat-Session" }); return; }
     const parsed = readThread(req.body, String(req.params.id ?? ""));
     if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
-    const thread = putChatThread(sessionId, { ...parsed.thread, updatedAt: "" }, Date.now(), writeRevisionOf(req));
+    const thread = putChatThread(sessionId, { ...parsed.thread, updatedAt: "" }, Date.now(), writeRevisionOf(req), writeEpochOf(req));
     if (!thread) { res.json({ rejected: "stale-write" }); return; }
     res.json({ thread });
   });
@@ -214,7 +270,7 @@ export function registerChatHistoryRoute(app: Express): void {
     if (!sessionId) { res.status(400).json({ error: "n/a — keine Chat-Session" }); return; }
     const id = String(req.params.id ?? "");
     if (!isChatSessionId(id)) { res.status(400).json({ error: "n/a — Chat-Id ungültig" }); return; }
-    deleteChatThread(sessionId, id, Date.now(), writeRevisionOf(req));
+    deleteChatThread(sessionId, id, Date.now(), writeRevisionOf(req), writeEpochOf(req));
     res.json({ ok: true, threads: listChatThreads(sessionId) });
   });
 }

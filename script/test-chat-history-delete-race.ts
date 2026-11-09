@@ -17,8 +17,8 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import React from "react";
 import express from "express";
-import { CHAT_SESSION_HEADER, type ChatThread } from "../shared/chat-history";
-import { registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
+import { CHAT_HISTORY_THREADS_PER_SESSION, CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, CHAT_WRITE_EPOCH_HEADER, CHAT_WRITE_REVISION_HEADER, type ChatThread } from "../shared/chat-history";
+import { CHAT_HISTORY_SESSION_CAP, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
 import { installFakeDom } from "./lib/fake-dom";
 
 const { doc } = installFakeDom();
@@ -255,6 +255,21 @@ async function main() {
     const ids = await serverIds(sessionId);
     note(`observe-server ${label} ids=${ids.join(",")}`);
     return ids;
+  }
+
+  async function revisionWrite(method: "PUT" | "DELETE", sessionId: string, id: string, epoch: string, revision: number, content = "synthetic-revision"): Promise<{ status: number; body: { ok?: boolean; thread?: { id?: string } } }> {
+    const headers: Record<string, string> = {
+      [CHAT_SESSION_HEADER]: sessionId,
+      [CHAT_WRITE_REVISION_HEADER]: String(revision),
+      [CHAT_WRITE_EPOCH_HEADER]: epoch,
+    };
+    if (method === "PUT") headers["content-type"] = "application/json";
+    const res = await realFetch(`${base}/api/chat/history/${id}`, {
+      method,
+      headers,
+      body: method === "PUT" ? JSON.stringify({ dashboard: "stock", entity: "SYNTH", messages: [{ role: "user", content }] }) : undefined,
+    });
+    return { status: res.status, body: await res.json() as { ok?: boolean; thread?: { id?: string } } };
   }
 
   async function seed(sessionId: string, thread: ChatThread): Promise<ChatThread> {
@@ -570,6 +585,77 @@ async function main() {
       assert.equal(localIds(mounted.bag).includes(keeper.id), false, "lokales Löschen bleibt auch wenn DELETE scheitert");
       assert.equal(storedIds(sessionId).includes(keeper.id), false);
       assert.equal((await serverIds(sessionId)).includes(keeper.id), true, "gescheitertes DELETE lässt den Serverstand unverändert");
+    });
+
+    await scenario("M1 Reload: DELETE mit neuem Zähler löscht einen älteren Seitenstand", async () => {
+      const sessionId = "sess-reload1";
+      const id = "synth-reload1";
+      begin(sessionId);
+      const put = await revisionWrite("PUT", sessionId, id, "epoch-page-old", 50, "synthetic-reload-old");
+      assert.equal(put.status, 200);
+      assert.deepEqual(await observe("nach-altem-Seitenstand", sessionId), [id]);
+      const del = await revisionWrite("DELETE", sessionId, id, "epoch-page-new", 1);
+      assert.equal(del.status, 200);
+      assert.equal(del.body.ok, true);
+      const left = await observe("GET-nach-Reload-DELETE", sessionId);
+      assert.deepEqual(left, [], `Reload-DELETE ließ ${id} liegen: ${left.join(",")}`);
+    });
+
+    await scenario("M1 zweiter Tab: DELETE löscht, alter Tab belebt nicht, neuer Tab darf danach speichern", async () => {
+      const sessionId = "sess-tab-dup1";
+      const id = "synth-tab-dup1";
+      begin(sessionId);
+      assert.equal((await revisionWrite("PUT", sessionId, id, "epoch-tab-old", 50, "synthetic-tab-old")).status, 200);
+      const del = await revisionWrite("DELETE", sessionId, id, "epoch-tab-new", 1);
+      assert.equal(del.status, 200);
+      assert.equal(del.body.ok, true);
+      const afterDelete = await observe("GET-nach-Tab-DELETE", sessionId);
+      assert.deepEqual(afterDelete, [], `zweiter Tab löschte ${id} nicht: ${afterDelete.join(",")}`);
+      await revisionWrite("PUT", sessionId, id, "epoch-tab-old", 51, "synthetic-old-tab-late");
+      const afterOld = await observe("PUT-des-alten-Tabs", sessionId);
+      assert.deepEqual(afterOld, [], `alter Tab hat ${id} wieder angelegt: ${afterOld.join(",")}`);
+      await revisionWrite("PUT", sessionId, id, "epoch-tab-new", 2, "synthetic-saved-after-tab-delete");
+      const afterNew = await observe("Speichern-im-löschenden-Tab", sessionId);
+      assert.deepEqual(afterNew, [id], `bewusstes Speichern nach dem Löschen fehlt: ${afterNew.join(",")}`);
+    });
+
+    await scenario("M2 Löschvermerk läuft mit der Thread-TTL ab und ist je Session gedeckelt", async () => {
+      const sessionId = "sess-tomb-ttl";
+      const id = "synth-tomb-ttl";
+      const t0 = 1_700_000_000_000;
+      begin(sessionId);
+      assert.ok(putChatThread(sessionId, synth(id, "synthetic-tomb-old"), t0, 50, "epoch-tomb-old"));
+      assert.equal(deleteChatThread(sessionId, id, t0, 1, "epoch-tomb-new"), true);
+      assert.deepEqual(listChatThreads(sessionId, "stock", "SYNTH", t0 + 1).map(thread => thread.id), []);
+      assert.equal(putChatThread(sessionId, synth(id, "synthetic-tomb-stale"), t0 + 1, 40, "epoch-tomb-old"), null);
+      const revived = putChatThread(sessionId, synth(id, "synthetic-tomb-after-ttl"), t0 + CHAT_HISTORY_TTL_MS, 40, "epoch-tomb-old");
+      assert.equal(revived?.messages[0]?.content, "synthetic-tomb-after-ttl", "Vermerk älter als die Thread-TTL blockiert nicht mehr");
+
+      const capped = "sess-tomb-cap";
+      resetChatHistoryStore();
+      const overflow = CHAT_HISTORY_THREADS_PER_SESSION + 1;
+      for (let i = 0; i < overflow; i++) {
+        const threadId = `synth-cap-${i}`;
+        assert.ok(putChatThread(capped, synth(threadId, `synthetic-cap-${i}`), t0, 9, "epoch-cap-old"));
+        deleteChatThread(capped, threadId, t0 + i, 1, "epoch-cap-new");
+      }
+      const oldest = putChatThread(capped, synth("synth-cap-0", "synthetic-cap-0-back"), t0 + overflow, 2, "epoch-cap-old");
+      const newestId = `synth-cap-${CHAT_HISTORY_THREADS_PER_SESSION}`;
+      const newest = putChatThread(capped, synth(newestId, "synthetic-cap-newest-back"), t0 + overflow, 2, "epoch-cap-old");
+      assert.equal(oldest?.id, "synth-cap-0", "der älteste Vermerk fällt aus dem Cap");
+      assert.equal(newest, null, "der jüngste Vermerk bleibt innerhalb des Caps");
+    });
+
+    await scenario("M3 DELETE mit Schreibstand legt keine Session an", async () => {
+      const kept = "sess-m3-kept1";
+      begin(kept);
+      await seed(kept, synth("synth-m3-kept", "synthetic-m3-kept"));
+      for (let i = 0; i < CHAT_HISTORY_SESSION_CAP; i++) {
+        const del = await revisionWrite("DELETE", `sess-m3-new-${i}`, "synth-m3-miss", "epoch-m3-page", 1);
+        assert.equal(del.status, 200);
+        assert.equal(del.body.ok, true);
+      }
+      assert.deepEqual(await observe("Session-nach-leeren-DELETEs", kept), ["synth-m3-kept"]);
     });
   } finally {
     releaseArmed();

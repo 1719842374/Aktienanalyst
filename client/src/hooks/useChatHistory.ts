@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  CHAT_SESSION_HEADER, CHAT_WRITE_REVISION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
+  CHAT_SESSION_HEADER, CHAT_WRITE_EPOCH_HEADER, CHAT_WRITE_REVISION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
   type ChatThread,
 } from "@shared/chat-history";
 
@@ -16,16 +16,24 @@ const SESSION_KEY = "chatSession:v1";
 let memorySession = "";
 
 /**
- * Schreibfolge nur in diesem Fenster. Andere Tabs und andere Clients sehen sie nicht.
- * `deletedAtRevision` merkt, ab welchem Stand ein Chat gelöscht wurde.
- * Aufträge mit kleinerem Stand dürfen ihn nicht wieder einsetzen.
+ * Schreibfolge nur in diesem Seitenlauf. Reload und ein zweiter Tab haben eine neue Epoche.
+ * `deletedAtRevision` gilt nur für verspätete Antworten in diesem Fenster.
  */
+const historyEpoch = newChatId();
 let historyRevision = 0;
 const deletedAtRevision = new Map<string, number>();
 
 function responseMayApply(id: string, issuedAt: number): boolean {
   const deletedAt = deletedAtRevision.get(id);
   return deletedAt == null || issuedAt >= deletedAt;
+}
+
+function revisionHeaders(sessionId: string, revision: number): Record<string, string> {
+  return {
+    [CHAT_SESSION_HEADER]: sessionId,
+    [CHAT_WRITE_REVISION_HEADER]: String(revision),
+    [CHAT_WRITE_EPOCH_HEADER]: historyEpoch,
+  };
 }
 
 function storage(): Storage | null {
@@ -101,7 +109,7 @@ export function useChatHistory(dashboard: string, entity: string | null) {
         dashboard: thread.dashboard,
         entity: thread.entity,
         messages: thread.messages,
-      }, 15000, { [CHAT_SESSION_HEADER]: sessionId, [CHAT_WRITE_REVISION_HEADER]: String(issuedAt) });
+      }, 15000, revisionHeaders(sessionId, issuedAt));
       if (!res.ok) return;
       const body = await res.json().catch(() => null) as { thread?: ChatThread } | null;
       if (body?.thread) remember([body.thread], issuedAt);
@@ -115,10 +123,7 @@ export function useChatHistory(dashboard: string, entity: string | null) {
     writeThreads(sessionId, next);
     setThreads(next);
     try {
-      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, {
-        [CHAT_SESSION_HEADER]: sessionId,
-        [CHAT_WRITE_REVISION_HEADER]: String(deletedAt),
-      });
+      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, revisionHeaders(sessionId, deletedAt));
     } catch { /* lokal ist gelöscht */ }
   }, [sessionId]);
 
