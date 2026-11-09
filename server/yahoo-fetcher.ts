@@ -504,6 +504,7 @@ export interface YahooTimeseriesOpts {
   currency?: string | null;
   name?: string | null;
   exchangeName?: string | null;
+  signal?: AbortSignal;
 }
 
 const tsCache = new Map<string, { value: YahooTimeseriesFundamentals; at: number }>();
@@ -552,7 +553,8 @@ async function fetchYahooTimeseriesFundamentalsUncached(sym: string, opts: Yahoo
     await spaceYahooCall();
     const nowSec = Math.floor(Date.now() / 1000);
     const url = `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${TIMESERIES_TYPES.join(",")}&period1=${nowSec - 2 * 366 * 86400}&period2=${nowSec}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" } });
+    const timeout = AbortSignal.timeout(10000);
+    const resp = await fetch(url, { signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout, headers: { "User-Agent": UA, Accept: "application/json" } });
     if (!resp.ok) {
       yahooDiag(sym, "timeseries", resp.status, `nicht ok${statusHint(resp.status)}${redirectNote(resp)}: ${await bodySnippet(resp)} → MCap/KGV/EPS n/a`);
       return { ...base, status: "http_error", httpStatus: resp.status };

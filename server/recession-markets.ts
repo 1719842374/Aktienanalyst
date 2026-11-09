@@ -105,13 +105,14 @@ export function parseYahooChartSeries(payload: unknown): VolPoint[] {
 }
 
 /** Yahoo v8 chart (no key, no crumb), daily, from cosd to now + 1 day. */
-export async function fetchYahooDailySeries(symbol: string, cosd: string): Promise<VolPoint[]> {
+export async function fetchYahooDailySeries(symbol: string, cosd: string, signal?: AbortSignal): Promise<VolPoint[]> {
   const p1 = Math.floor(Date.parse(cosd + "T00:00:00Z") / 1000);
   const p2 = Math.floor(Date.now() / 1000) + 86400;
   if (!Number.isFinite(p1)) return [];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d`;
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(20000), headers: { "User-Agent": "Mozilla/5.0" } });
+    const timeout = AbortSignal.timeout(20000);
+    const resp = await fetch(url, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout, headers: { "User-Agent": "Mozilla/5.0" } });
     if (!resp.ok) return [];
     return parseYahooChartSeries(await resp.json());
   } catch {

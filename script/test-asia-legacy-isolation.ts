@@ -8,8 +8,11 @@ import { readFileSync } from "node:fs";
 import { capeReading, durableReading, m2Reading, scoreSeriesStress, vixReading } from "../server/recession";
 import {
   applyAsiaSupplement,
+  ashrPeFromProbes,
   ashrRealizedVolPoints,
+  bounded,
   emptyRegionalPrints,
+  loadAshrCloses,
   scoreRegionalCatalogs,
   type RegionScorers,
 } from "../server/recession-regions";
@@ -110,6 +113,59 @@ console.log("\n=== ASHR-Vol aus denselben Schlüssen wie der Marktchart ===");
   check("Monatswerte sind die letzten realizedVol20-Drucke", points.every(point => direct.some(row => row.date === point.date && row.value === point.value)));
   const empty = ashrRealizedVolPoints([]);
   check("ohne Schlüsse keine erfundene Vol", empty.length === 0);
+}
+
+console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===");
+{
+  const closes = Array.from({ length: 40 }, (_, index) => ({ date: day(index), value: 30 + (index % 3) }));
+  let fmpAborted = false;
+  const loaded = await loadAshrCloses("2020-01-01", {
+    timeoutMs: 40,
+    fmp: signal => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        fmpAborted = true;
+        reject(new Error("aborted"));
+      });
+    }),
+    yahoo: async () => closes,
+  });
+  check("hängendes FMP wird abgebrochen und Yahoo liefert die Schlüsse", fmpAborted && loaded.via === "yahoo" && loaded.reason === "ok" && loaded.closes.length === 40);
+  const empty = await loadAshrCloses("2020-01-01", {
+    timeoutMs: 50,
+    fmp: async () => [],
+    yahoo: async () => [],
+  });
+  check("beide leer bleibt leer und ist keine Zeitüberschreitung", empty.via === "none" && empty.reason === "empty");
+  const slow = await loadAshrCloses("2020-01-01", {
+    timeoutMs: 30,
+    fmp: signal => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+    yahoo: signal => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+  });
+  check("beide Zeitüberschreitungen heißen timeout, nicht leer", slow.reason === "timeout" && slow.via === "none");
+  let sawAbort = false;
+  const timed = await bounded(signal => new Promise<string>((_resolve, reject) => {
+    signal.addEventListener("abort", () => {
+      sawAbort = true;
+      reject(new Error("aborted"));
+    });
+  }), 30, "fallback");
+  check("bounded bricht das Signal ab und gibt den Fallback", timed.timedOut && timed.value === "fallback" && sawAbort);
+  const mixed = ashrPeFromProbes({
+    fmp: null,
+    yahoo: { pe: 12.5, status: "ok", httpStatus: 200, epsAsOf: "2026-09-30" },
+    today: "2026-11-09",
+    priceSource: "fmp",
+  });
+  check("FMP-Kurs plus Yahoo-EPS ist als Mischquelle benannt", mixed.value === 12.5 && mixed.source.includes("Kurs FMP") && mixed.source.includes("trailingDilutedEPS Yahoo"), mixed.source);
+  const thrown = applyAsiaSupplement(emptyRegionalPrints(), null);
+  check("ein geworfener Nachzug lässt die leeren Legacy-Felder stehen und setzt ASHR auf n/a", thrown.cnVolSource.startsWith("n/a —") && thrown.jpIpSource === "FRED JPNPROINDMISMEI");
+  const src = readFileSync("server/recession-regions.ts", "utf8");
+  check("leerer Katalog nennt FMP und Yahoo, nicht nur den alten Yahoo-Satz", src.includes("cnVolSource: \"n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)\""));
+  check("OECD wird bei leerer erster Antwort ein zweites Mal gelesen", src.includes("if (first && !first.includes(\"<html\")) return first;"));
 }
 
 console.log("\n=== Schmale Kachel bricht die Notiz um ===");
