@@ -188,26 +188,47 @@ async function defaultDisplayedNames(ticker: string, kind: "product" | "geograph
   return namesFromDisplayedSources({ kind, ticker, ownRows, geoRows, secCache });
 }
 
-function rowFiscalYear(row: Record<string, unknown>): number {
-  const year = row.fiscalYear;
-  if (typeof year === "number" && Number.isInteger(year)) return year;
-  if (typeof year === "string" && /^\d{4}/.test(year)) return Number(year.slice(0, 4));
-  return 0;
+const RAW_SKIP_KEYS = new Set([
+  "symbol", "date", "reportedCurrency", "cik", "fillingDate",
+  "acceptedDate", "calendarYear", "period", "link", "finalLink",
+  "fiscalYear", "data",
+]);
+
+function yearPart(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d{4}/.test(value)) return Number(value.slice(0, 4));
+  return null;
 }
 
-function newestMatchingRawKey(rawRows: unknown[], kind: "product" | "geographic", requested: string): string | null {
+function rowFiscalYear(row: Record<string, unknown>): number {
+  return yearPart(row.fiscalYear) ?? yearPart(row.calendarYear) ?? yearPart(row.date) ?? 0;
+}
+
+function newestMatchingRawKey(
+  rawRows: unknown[],
+  kind: "product" | "geographic",
+  requested: string,
+  listed: readonly string[],
+): string | null {
+  const allowed = new Set(listed.map((name) => name.trim()));
   let bestName: string | null = null;
   let bestYear = -1;
   for (const item of rawRows) {
     if (!item || typeof item !== "object") continue;
     const row = item as Record<string, unknown>;
+    if (typeof row.period === "string" && /^Q[1-4]$/i.test(row.period.trim())) continue;
     const year = rowFiscalYear(row);
     const source = row.data && typeof row.data === "object" ? row.data as Record<string, unknown> : row;
-    for (const key of Object.keys(source)) {
-      if (!key.trim() || !sameDisplayedName(kind, key, requested)) continue;
-      if (year >= bestYear) {
+    for (const [key, value] of Object.entries(source)) {
+      const name = key.trim();
+      if (!name || RAW_SKIP_KEYS.has(key) || !allowed.has(name)) continue;
+      const numeric = typeof value === "number" ? value : Number(value);
+      const nested = !!value && typeof value === "object";
+      if (!Number.isFinite(numeric) && !nested) continue;
+      if (!sameDisplayedName(kind, name, requested)) continue;
+      if (year > bestYear) {
         bestYear = year;
-        bestName = key.trim();
+        bestName = name;
       }
     }
   }
@@ -332,12 +353,14 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     }
     try {
       const rawRows = deps.fmpAvailable() ? await deps.raw(kind, ticker) : [];
+      const rows = Array.isArray(rawRows) ? rawRows : [];
       const listed = deps.names
         ? await deps.names(ticker, kind)
-        : segmentNamesFromFmpRows(Array.isArray(rawRows) ? rawRows : []);
-      const fromNewestYear = newestMatchingRawKey(Array.isArray(rawRows) ? rawRows : [], kind, parent);
-      const canonical = fromNewestYear ?? listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
-      if (!canonical) return res.status(400).json({ error: SEGMENT_UNKNOWN });
+        : segmentNamesFromFmpRows(rows);
+      const hit = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
+      if (!hit) return res.status(400).json({ error: SEGMENT_UNKNOWN });
+      const fromNewestYear = newestMatchingRawKey(rows, kind, parent, listed);
+      const canonical = fromNewestYear ?? hit;
       const body = await loadSegmentChildren(ticker, canonical, kind, deps);
       const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {

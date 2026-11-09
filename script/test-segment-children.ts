@@ -6,10 +6,10 @@
  */
 import React from "react";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
-import { diskResearcherSet } from "../server/disk-cache";
+import { spawnSync } from "node:child_process";
 import { renderToStaticMarkup } from "react-dom/server";
 import express from "express";
 import {
@@ -485,34 +485,129 @@ try {
   await new Promise<void>((resolve, reject) => yearServer.close((err) => err ? reject(err) : resolve()));
 }
 
-const secKey = "segments__ZZSEGTTL";
-diskResearcherSet(secKey, { segments: [{ name: "Bitcoin Mining" }] });
-const secDb = new Database(path.resolve(process.cwd(), "data.db"));
-secDb.prepare("UPDATE researcher_cache SET updated_at = ? WHERE cache_key = ?").run(Date.now() - 25 * 60 * 60 * 1000, secKey);
-secDb.close();
-const savedFmp = process.env.FMP_API_KEY;
-const savedFmpAlt = process.env.FMP_API_key;
-delete process.env.FMP_API_KEY;
-delete process.env.FMP_API_key;
 resetSegmentChildrenGuardsForTests();
-const agedApp = express();
-registerSegmentGrowthRoute(agedApp);
-const agedServer = agedApp.listen(0);
-const agedPort = (agedServer.address() as { port: number }).port;
+const flatApp = express();
+registerSegmentGrowthRoute(flatApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ symbol: "MSFT", period: "FY", reportedCurrency: "USD", date: "2024-06-30", Server: 10 }],
+  ki: async () => ({ children: [] }),
+  rateLimit: { max: 20, windowMs: 60_000 },
+});
+const flatServer = flatApp.listen(0);
+const flatPort = (flatServer.address() as { port: number }).port;
+const blockedApp = express();
+let blockedPrompt = "";
+registerSegmentGrowthRoute(blockedApp, {
+  fmpAvailable: () => true,
+  raw: async () => [
+    { fiscalYear: "2024", data: { Server: 10, Hinweistext: "n/a" } },
+    { fiscalYear: "2024", period: "Q2", data: { NurQuartal: 5 } },
+    { fiscalYear: "2019", data: { "Legacy Segment": 4 } },
+  ],
+  names: async () => ["Server"],
+  ki: async (_ticker, parent) => {
+    blockedPrompt = parent;
+    return { children: [] };
+  },
+  rateLimit: { max: 20, windowMs: 60_000 },
+});
+const blockedServer = blockedApp.listen(0);
+const blockedPort = (blockedServer.address() as { port: number }).port;
 try {
-  const aged = await fetch(`http://127.0.0.1:${agedPort}/api/segment-children/ZZSEGTTL?parent=${encodeURIComponent("Bitcoin Mining")}&kind=product`);
-  const agedBody = await aged.json() as { error?: string; reason?: string };
-  gap("sec-cache-25h", aged.status === 200, `status=${aged.status} ${agedBody.error ?? agedBody.reason ?? ""}`);
+  const ask = async (parent: string) => {
+    const response = await fetch(`http://127.0.0.1:${blockedPort}/api/segment-children/MSFT?parent=${encodeURIComponent(parent)}&kind=product`);
+    return response.status;
+  };
+  const askFlat = async (parent: string) => {
+    const response = await fetch(`http://127.0.0.1:${flatPort}/api/segment-children/MSFT?parent=${encodeURIComponent(parent)}&kind=product`);
+    return response.status;
+  };
+  const meta = await askFlat("symbol");
+  const period = await askFlat("period");
+  const currency = await askFlat("reportedCurrency");
+  const dateKey = await askFlat("date");
+  const text = await ask("Hinweistext");
+  const quarter = await ask("NurQuartal");
+  const legacy = await ask("Legacy Segment");
+  const known = await ask("Server");
+  const invented = await ask("frei erfunden");
+  gap(
+    "whitelist-first",
+    [meta, period, currency, dateKey, text, quarter, legacy, invented].every((status) => status === 400) && known === 200 && blockedPrompt === "Server",
+    `meta=${meta} period=${period} ccy=${currency} date=${dateKey} text=${text} q=${quarter} legacy=${legacy} known=${known} invented=${invented} prompt=${blockedPrompt}`,
+  );
 } finally {
-  await new Promise<void>((resolve, reject) => agedServer.close((err) => err ? reject(err) : resolve()));
-  const cleanup = new Database(path.resolve(process.cwd(), "data.db"));
-  cleanup.prepare("DELETE FROM researcher_cache WHERE cache_key = ?").run(secKey);
-  cleanup.close();
-  if (savedFmp === undefined) delete process.env.FMP_API_KEY;
-  else process.env.FMP_API_KEY = savedFmp;
-  if (savedFmpAlt === undefined) delete process.env.FMP_API_key;
-  else process.env.FMP_API_key = savedFmpAlt;
+  await new Promise<void>((resolve, reject) => flatServer.close((err) => err ? reject(err) : resolve()));
+  await new Promise<void>((resolve, reject) => blockedServer.close((err) => err ? reject(err) : resolve()));
 }
+
+resetSegmentChildrenGuardsForTests();
+const datedApp = express();
+let datedPrompt = "";
+registerSegmentGrowthRoute(datedApp, {
+  fmpAvailable: () => true,
+  raw: async () => [
+    { date: "2025-06-30", data: { "Search And News Advertising": 13, "Search & News Advertising": 1 } },
+    { calendarYear: 2023, data: { "Search & News Advertising": 12 } },
+  ],
+  ki: async (_ticker, parent) => {
+    datedPrompt = parent;
+    return { children: [] };
+  },
+});
+const datedServer = datedApp.listen(0);
+const datedPort = (datedServer.address() as { port: number }).port;
+try {
+  const datedHit = await fetch(`http://127.0.0.1:${datedPort}/api/segment-children/MSFT?parent=${encodeURIComponent("Search & News Advertising")}&kind=product`);
+  gap("year-from-date", datedHit.status === 200 && datedPrompt === "Search And News Advertising", `status=${datedHit.status} prompt=${datedPrompt}`);
+} finally {
+  await new Promise<void>((resolve, reject) => datedServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const agedDir = mkdtempSync(path.join(tmpdir(), "seg-cache-"));
+const agedScript = path.join(agedDir, "aged.ts");
+const repoRoot = process.cwd();
+writeFileSync(agedScript, `
+import path from "path";
+import Database from "better-sqlite3";
+import express from "express";
+import { diskResearcherSet } from ${JSON.stringify(path.join(repoRoot, "server/disk-cache.ts"))};
+import { registerSegmentGrowthRoute } from ${JSON.stringify(path.join(repoRoot, "server/segment-growth-route.ts"))};
+
+async function main() {
+  const key = "segments__ZZSEGTTL";
+  diskResearcherSet(key, { segments: [{ name: "Bitcoin Mining" }] });
+  const db = new Database(path.resolve(process.cwd(), "data.db"));
+  db.prepare("UPDATE researcher_cache SET updated_at = ? WHERE cache_key = ?").run(Date.now() - 25 * 60 * 60 * 1000, key);
+  db.close();
+  const app = express();
+  registerSegmentGrowthRoute(app);
+  const server = app.listen(0);
+  const port = (server.address() as { port: number }).port;
+  const response = await fetch("http://127.0.0.1:" + port + "/api/segment-children/ZZSEGTTL?parent=" + encodeURIComponent("Bitcoin Mining") + "&kind=product");
+  const body = await response.json();
+  console.log(JSON.stringify({ status: response.status, error: body.error ?? null, reason: body.reason ?? null, db: path.resolve(process.cwd(), "data.db") }));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+main();
+`);
+const savedFmpKey = process.env.FMP_API_KEY;
+const savedFmpKeyAlt = process.env.FMP_API_key;
+const agedRun = spawnSync("npx", ["tsx", "--tsconfig", path.join(repoRoot, "script/tsconfig.jsx.json"), agedScript], {
+  cwd: agedDir,
+  env: { ...process.env, FMP_API_KEY: "", FMP_API_key: "", NODE_PATH: path.join(repoRoot, "node_modules") },
+  encoding: "utf8",
+});
+rmSync(agedDir, { recursive: true, force: true });
+let agedStatus = 0;
+try {
+  const line = agedRun.stdout.trim().split("\n").filter((row) => row.startsWith("{")).pop() ?? "";
+  agedStatus = JSON.parse(line).status;
+} catch {
+  agedStatus = 0;
+}
+const envRestored = process.env.FMP_API_KEY === savedFmpKey && process.env.FMP_API_key === savedFmpKeyAlt;
+gap("sec-cache-25h", agedStatus === 200 && envRestored && !agedRun.stdout.includes(path.resolve(repoRoot, "data.db")), `status=${agedStatus} env=${envRestored} out=${agedRun.stdout.slice(-240)} err=${agedRun.stderr.slice(-240)}`);
 
 const indexSource = readFileSync("server/index.ts", "utf8");
 gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");
