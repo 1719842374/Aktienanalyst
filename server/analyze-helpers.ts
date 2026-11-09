@@ -12,7 +12,7 @@ import {
   fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
 import { indicatorWarmupFromDate } from "./history-fallback";
-import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
+import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd, statementFxFromRows, type StatementFxStatus } from "./fmp";
 import { minorUnitInfo, listingCurrencyOf, normalizeListingToUsd } from "../shared/listing-units";
 import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
 // #265 v2: SAP.DE/VOW3.DE (FMP 402) über das US-/ADR-Symbol; Bausteine in fmp-adr-map.ts.
@@ -587,18 +587,26 @@ export async function getFmpFallbackData(ticker: string, opts: { yahooOn402?: bo
       convertFmpRowsToUsd(get(balanceSheetRes) || []),
       convertFmpRowsToUsd(estimatesTagged),
     ]);
+    const statementFx = statementFxFromRows(incomeUsd) ?? statementFxFromRows(estimatesUsd);
     const out = {
       quote, profile: get(profileRes),
       financials: { income: incomeUsd, cashflow: cashflowUsd, balanceSheet: balanceSheetUsd },
       analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: estimatesUsd },
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
       source: 'fmp' as const,
+      ...(statementFx ? { statementFx } : {}),
     };
     // DCF-FX (Philip 18.10.2026 „alles in dollar … umrechnen“): Nicht-USD-Listings (EUR, CAD, GBp …) →
     // Marktseite (Kurs, Market Cap, OHLCV, Kursziel) in USD, Statements sind schon USD (convertFmpRowsToUsd).
     // Damit teilen Kurs, Market Cap, DCF und Bilanz eine Währung. USD-Listings (inkl. ADRs wie NVO) unverändert.
     // Ohne FX: Minor Units wie bisher nach #244 (Pence → Pfund), Major-Währungen bleiben stehen und werden markiert.
-    return await listingToUsd(ticker, out);
+    const norm = await listingToUsd(ticker, out);
+    const fx = (norm as { statementFx?: StatementFxStatus }).statementFx;
+    if (fx) {
+      const priceCcy = (listingCurrencyOf(norm) ?? "USD").toUpperCase();
+      fx.blocksUsdMix = fx.missing && priceCcy === "USD";
+    }
+    return norm;
   } catch (err: any) {
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };
@@ -609,16 +617,17 @@ export async function getFmpFallbackData(ticker: string, opts: { yahooOn402?: bo
 export type FmpViaAdrDeps = {
   snapshot: typeof getYahooSnapshot;
   fetchAdr: (symbol: string) => ReturnType<typeof getFmpFallbackData>;
-  fxToUsd: (currency: string) => Promise<number>;
+  fxToUsd: (currency: string) => Promise<number | null>;
   toUsd: (ticker: string, data: any) => Promise<any>;
 };
 const defaultAdrDeps: FmpViaAdrDeps = {
   snapshot: getYahooSnapshot,
   fetchAdr: (symbol) => getFmpFallbackData(symbol, { yahooOn402: false }),
   fxToUsd: async (cur) => {
-    let fx = await getFxRateToUsd(cur).catch(() => 1);
-    if (!(fx > 0) || fx === 1) fx = (await fetchYahooFxToUsd(cur).catch(() => null)) ?? fx;
-    return fx;
+    const fx = await getFxRateToUsd(cur).catch(() => null);
+    let rate = fx?.rate ?? null;
+    if (!(rate != null && rate > 0) || rate === 1) rate = (await fetchYahooFxToUsd(cur).catch(() => null)) ?? rate;
+    return rate;
   },
   toUsd: (ticker, data) => listingToUsd(ticker, data, { barsInMajor: true }),
 };
@@ -637,8 +646,8 @@ export async function fmpViaAdrData(ticker: string, deps: FmpViaAdrDeps = defaul
   if (!snap || !(snap.price > 0)) { console.warn(`[FMP-ADR] ${ticker}: kein lokaler Yahoo-Kurs → Yahoo-Fallback`); return null; }
   const cur = snap.currency ? snap.currency.trim().toUpperCase() : "";
   if (!cur || minorUnitInfo(snap.currency as string)) { console.warn(`[FMP-ADR] ${ticker}: Listing-Währung ${cur || "fehlt"} nicht nutzbar → Yahoo-Fallback`); return null; }
-  const fx = cur === "USD" ? 1 : await deps.fxToUsd(cur).catch(() => 1);
-  if (cur !== "USD" && !(fx > 0 && fx !== 1)) { console.warn(`[FMP-ADR] ${ticker}: FX ${cur}USD fehlt → Yahoo-Fallback`); return null; }
+  const fx = cur === "USD" ? 1 : await deps.fxToUsd(cur).catch(() => null);
+  if (typeof fx !== "number" || (cur !== "USD" && !(fx > 0 && fx !== 1))) { console.warn(`[FMP-ADR] ${ticker}: FX ${cur}USD fehlt → Yahoo-Fallback`); return null; }
   for (const c of candidates) {
     const res: any = await deps.fetchAdr(c.symbol).catch((e: any) => ({ failure: { errorCode: "FMP_UNREACHABLE", fmpStatus: null, message: String(e?.message ?? e) } }));
     if ("failure" in res || !adrBundleHasData(res)) {
@@ -713,13 +722,22 @@ async function listingToUsd<T extends Parameters<typeof normalizeListingToUsd>[0
   if (!code || code === "USD") return data;
   const minor = minorUnitInfo(code);
   const major = minor?.major ?? code.toUpperCase();
-  let majorToUsd = await getFxRateToUsd(major).catch(() => 1);
-  if (!(majorToUsd > 0) || majorToUsd === 1) {
-    // FMP ohne FX-Kurs (getFxRateToUsd → 1) → Yahoo-FX als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
+  const fxDetail = await getFxRateToUsd(major).catch(() => null);
+  let majorToUsd: number | null = fxDetail?.rate ?? null;
+  let usedDetail = fxDetail;
+  if (!(majorToUsd != null && majorToUsd > 0) || majorToUsd === 1) {
+    // FMP ohne nutzbaren FX-Kurs → Yahoo-FX als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
     const y = await fetchYahooFxToUsd(major).catch(() => null);
-    if (y != null) { console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y}`); majorToUsd = y; }
+    if (y != null) { console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y}`); majorToUsd = y; usedDetail = null; }
   }
   const norm = normalizeListingToUsd(data, majorToUsd, FX_CONVERTIBLE_FIELDS, opts);
+  const listingFx = (norm.profile as any)?._listingFx;
+  if (listingFx && usedDetail?.fxStale) {
+    (norm.profile as any)._listingFx = { ...listingFx, fxStale: true, fxAgeMs: usedDetail.fxAgeMs };
+  }
+  if (listingFx && listingFx.converted !== true && major !== "USD") {
+    console.warn(`[FX] ${major}USD used rate is 1 while reported currency is ${major}`);
+  }
   const fx = (norm.profile as any)?._listingFx;
   if (fx?.converted) console.log(`[FX-LISTING] ${ticker}: ${code} → USD @ ${major}USD ${majorToUsd}${minor ? ` (÷${minor.factor})` : ""}`);
   else if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FX-LISTING] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${code}, Statements USD wie bisher)`);

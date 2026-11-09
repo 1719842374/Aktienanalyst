@@ -834,24 +834,61 @@ export async function fmpStockList(): Promise<Array<{ symbol: string; companyNam
 // is more accurate and lower-maintenance than a hardcoded FX table.
 const fxRateCache = new Map<string, { rate: number; fetchedAt: number }>();
 const FX_CACHE_TTL_MS = 60 * 60 * 1000; // 1h — FX doesn't need to be real-time for this use case
+const latestFxDetail = new Map<string, FxRateToUsd>();
 
-export async function getFxRateToUsd(currency: string): Promise<number> {
+/** Live- oder Cache-Kurs einer Berichtswährung nach USD. rate null = kein Kurs, nie still 1. */
+export interface FxRateToUsd {
+  rate: number | null;
+  /** true, wenn der Live-Abruf fehlschlug und der abgelaufene Cache-Kurs verwendet wird. */
+  fxStale: boolean;
+  /** Alter des Cache-Eintrags in ms, nur bei fxStale. */
+  fxAgeMs: number | null;
+  /** true, wenn die Währung nicht USD ist und der verwendete Kurs genau 1 ist. */
+  fxRateOneWarning: boolean;
+}
+
+/** Ergebnis von statementFxFromRows, bevor der Aufrufer blocksUsdMix setzt. */
+export interface StatementFxStatus extends FxRateToUsd {
+  reportedCurrency: string;
+  missing: boolean;
+  naReason: string | null;
+  /** Preis ist USD, die Statements brauchten eine Umrechnung und es gibt keinen Kurs. */
+  blocksUsdMix: boolean;
+}
+
+function fxResult(currency: string, rate: number | null, fxStale: boolean, fxAgeMs: number | null): FxRateToUsd {
+  const fxRateOneWarning = currency !== "USD" && rate === 1;
+  if (fxRateOneWarning) {
+    console.warn(`[FX] ${currency}USD rate is 1 while reported currency is ${currency}`);
+  }
+  const detail: FxRateToUsd = { rate, fxStale, fxAgeMs, fxRateOneWarning };
+  latestFxDetail.set(currency, detail);
+  return detail;
+}
+
+/** Letztes Ergebnis von getFxRateToUsd für diese Währung (gleicher Prozess). */
+export function latestFxRateDetail(currency: string): FxRateToUsd | undefined {
+  return latestFxDetail.get((currency || "").toUpperCase());
+}
+
+export async function getFxRateToUsd(currency: string): Promise<FxRateToUsd> {
   const cur = (currency || "USD").toUpperCase();
-  if (cur === "USD") return 1;
+  if (cur === "USD") return fxResult(cur, 1, false, null);
   const cached = fxRateCache.get(cur);
-  if (cached && Date.now() - cached.fetchedAt < FX_CACHE_TTL_MS) return cached.rate;
+  const ageMs = cached ? Date.now() - cached.fetchedAt : null;
+  if (cached && ageMs != null && ageMs < FX_CACHE_TTL_MS) return fxResult(cur, cached.rate, false, null);
   try {
     const q = await fmpQuote(`${cur}USD`);
     const rate = Number(q?.price);
     if (rate > 0 && rate < 1000) {
       fxRateCache.set(cur, { rate, fetchedAt: Date.now() });
-      return rate;
+      return fxResult(cur, rate, false, null);
     }
-  } catch { /* fall through to stale cache / 1 */ }
-  // Stale cache is still better than silently treating foreign currency as USD
-  if (cached) return cached.rate;
-  console.warn(`[FX] Could not fetch ${cur}USD rate — financial figures may be misdenominated`);
-  return 1;
+  } catch { /* fall through to stale cache / null */ }
+  // Abgelaufener Cache ist ein echter Kurs. Ohne Cache kein stilles 1.
+  if (cached) return fxResult(cur, cached.rate, true, Date.now() - cached.fetchedAt);
+  console.warn(`[FX] Could not fetch ${cur}USD rate — no cached rate, not using 1`);
+  return fxResult(cur, null, false, null);
 }
 
 // Converts the numeric financial-statement fields of a FMP income/cashflow/balance-sheet
@@ -881,17 +918,32 @@ export const FX_CONVERTIBLE_FIELDS = new Set([
   "investedCapital", "freeCashFlowToFirm", "freeCashFlowToEquity", "grahamNumber", "grahamNetNet",
 ]);
 
+const FX_MISSING_REASON = (currency: string) => `FX ${currency}USD fehlt – keine Umrechnung, Werte nicht mit Kurs 1 gerechnet`;
+
+function withFxRate<T extends Record<string, any>>(row: T, currency: string, fx: FxRateToUsd): T {
+  if (fx.rate == null) {
+    return { ...row, _fxMissing: { from: currency, reason: FX_MISSING_REASON(currency) } };
+  }
+  // Bestehende Grenze: Kurs 1 rechnet nicht um (kein geratener Faktor). Sichtbar bleibt die Warnung.
+  if (fx.rate === 1) return { ...row, _fxRateOneWarning: true };
+  const converted: any = { ...row };
+  for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+    if (typeof converted[field] === "number") converted[field] = converted[field] * fx.rate;
+  }
+  const marker: Record<string, unknown> = { from: currency, rate: fx.rate };
+  if (fx.fxStale) {
+    marker.fxStale = true;
+    marker.fxAgeMs = fx.fxAgeMs;
+  }
+  converted._fxConverted = marker;
+  return converted;
+}
+
 export async function convertFmpRowToUsd<T extends Record<string, any>>(row: T): Promise<T> {
   const currency = row?.reportedCurrency;
   if (!currency || currency === "USD") return row;
-  const rate = await getFxRateToUsd(currency);
-  if (rate === 1) return row; // fetch failed — leave as-is rather than guess
-  const converted: any = { ...row };
-  for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
-    if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
-  }
-  converted._fxConverted = { from: currency, rate };
-  return converted;
+  const fx = await getFxRateToUsd(currency);
+  return withFxRate(row, currency, fx);
 }
 
 // Convenience: convert every row in an array (income-statement/cash-flow/balance-sheet
@@ -900,16 +952,123 @@ export async function convertFmpRowsToUsd<T extends Record<string, any>>(rows: T
   if (!Array.isArray(rows) || rows.length === 0) return rows;
   const currency = rows[0]?.reportedCurrency;
   if (!currency || currency === "USD") return rows;
-  const rate = await getFxRateToUsd(currency);
-  if (rate === 1) return rows;
-  return rows.map((row) => {
-    const converted: any = { ...row };
-    for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
-      if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+  const fx = await getFxRateToUsd(currency);
+  if (fx.rate != null && fx.rate !== 1 && !fx.fxStale) {
+    const rate = fx.rate;
+    return rows.map((row) => {
+      const converted: any = { ...row };
+      for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+        if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+      }
+      converted._fxConverted = { from: currency, rate };
+      return converted;
+    });
+  }
+  return rows.map((row) => withFxRate(row, currency, fx));
+}
+
+/** Liest das Umrechnungsergebnis von der ersten betroffenen Zeile. null bei USD oder ohne Hinweis. */
+export function statementFxFromRows(rows: any[] | null | undefined): StatementFxStatus | null {
+  if (!Array.isArray(rows)) return null;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const missing = row._fxMissing;
+    if (missing && typeof missing.from === "string") {
+      const reason = typeof missing.reason === "string" ? missing.reason : FX_MISSING_REASON(missing.from);
+      return {
+        reportedCurrency: missing.from,
+        rate: null,
+        fxStale: false,
+        fxAgeMs: null,
+        fxRateOneWarning: false,
+        missing: true,
+        naReason: reason,
+        blocksUsdMix: false,
+      };
     }
-    converted._fxConverted = { from: currency, rate };
-    return converted;
-  });
+    const conv = row._fxConverted;
+    if (conv && typeof conv.from === "string" && typeof conv.rate === "number") {
+      const fxStale = conv.fxStale === true;
+      return {
+        reportedCurrency: conv.from,
+        rate: conv.rate,
+        fxStale,
+        fxAgeMs: fxStale && typeof conv.fxAgeMs === "number" ? conv.fxAgeMs : null,
+        fxRateOneWarning: conv.from !== "USD" && conv.rate === 1,
+        missing: false,
+        naReason: null,
+        blocksUsdMix: false,
+      };
+    }
+    if (row._fxRateOneWarning === true && typeof row.reportedCurrency === "string" && row.reportedCurrency !== "USD") {
+      return {
+        reportedCurrency: row.reportedCurrency,
+        rate: 1,
+        fxStale: false,
+        fxAgeMs: null,
+        fxRateOneWarning: true,
+        missing: false,
+        naReason: null,
+        blocksUsdMix: false,
+      };
+    }
+  }
+  return null;
+}
+
+const STATEMENT_LEVEL_KEYS = [
+  "revenue", "ebitda", "operatingIncome", "netIncome", "grossProfit",
+  "totalDebt", "cashEquivalents", "totalEquity", "totalAssets", "netDebt",
+  "enterpriseValue", "epsAdjFY", "epsConsensusNextFY", "fcfTTM", "fcfYield",
+] as const;
+
+/**
+ * Schreibt fxStale / fxAgeMs / Kurs-1-Warnung in die Analyse, wenn die Umrechnung
+ * nicht der frische Live-Pfad ist. Bei fehlendem Kurs und USD-Preis werden
+ * Geldbeträge, die eine Umrechnung brauchten, null (n/a) statt mit Kurs 1 gefüllt.
+ * Keine DCF-Sperre: der bestehende Rechenweg läuft nicht auf unkonvertierten Beträgen.
+ */
+export function publishStatementFx(analysis: any, fx: StatementFxStatus | null | undefined): void {
+  if (!fx || !(fx.blocksUsdMix || fx.fxStale || fx.fxRateOneWarning)) return;
+  const naReason = fx.blocksUsdMix ? (fx.naReason ?? FX_MISSING_REASON(fx.reportedCurrency)) : null;
+  analysis.fxConversion = {
+    reportedCurrency: fx.reportedCurrency,
+    rate: fx.rate,
+    fxStale: fx.fxStale,
+    fxAgeMs: fx.fxAgeMs,
+    fxRateOneWarning: fx.fxRateOneWarning,
+    naReason,
+  };
+  if (!fx.blocksUsdMix) return;
+  for (const key of STATEMENT_LEVEL_KEYS) analysis[key] = null;
+  analysis.fcfAvailable = false;
+  analysis.fcfYieldYoyAvailable = false;
+  analysis.pegRatio = null;
+  analysis.peg = null;
+  if (!(analysis.forwardPE > 0)) analysis.forwardPE = null;
+  analysis.dcfFairValue = null;
+  analysis.impliedGStar = null;
+  analysis.scoring = undefined;
+  if (analysis.biasFix) delete analysis.biasFix;
+  delete analysis.crvBase;
+  delete analysis.crvRiskAdj;
+  delete analysis.maxEntryCrv3;
+  const income = analysis.financialStatements?.incomeStatement;
+  if (income) {
+    for (const key of ["revenue", "grossProfit", "operatingIncome", "netIncome", "ebitda"]) income[key] = null;
+  }
+  const balance = analysis.financialStatements?.balanceSheet;
+  if (balance) {
+    for (const key of ["totalAssets", "totalLiabilities", "totalEquity", "cashEquivalents", "totalDebt", "netDebt"]) balance[key] = null;
+  }
+  const cash = analysis.financialStatements?.cashFlow;
+  if (cash) {
+    for (const key of ["operatingCashFlow", "capex", "fcf", "fcfPerShare"]) cash[key] = null;
+  }
+  if (analysis.financialStatements && naReason) {
+    const prev = Array.isArray(analysis.financialStatements.healthReasons) ? analysis.financialStatements.healthReasons : [];
+    analysis.financialStatements.healthReasons = [naReason, ...prev.filter((line: string) => line !== naReason)];
+  }
 }
 
 // === EPS Growth Calculations (formula-based, no external source needed) ===
@@ -944,6 +1103,9 @@ export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
   const rawRows = await fmpIncomeStatement(symbol, 6);
   // Apply DKK / FX normalisation — critical for ADRs like NVO, AZN, RHHBY etc.
   const rows = await convertFmpRowsToUsd(rawRows);
+  if (Array.isArray(rows) && rows.some((row: any) => row?._fxMissing)) {
+    return { epsHistory: [], yoyGrowthRates: [], cagr1Y: null, cagr3Y: null, cagr5Y: null };
+  }
 
   // Sort oldest → newest so index 0 is the earliest year
   const sorted = (Array.isArray(rows) ? rows : [])
