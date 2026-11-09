@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { withoutApproved326 } from "./guard-approved-326";
+import { withoutApproved180 } from "./guard-approved-180";
 import type { AddressInfo } from "node:net";
 import { installFakeDom, findByTestId, FakeElement, FakeText, type FakeNode } from "./lib/fake-dom";
 
@@ -211,7 +212,9 @@ async function main() {
   assert.deepEqual(alarms(["server/analyze-route.ts", "server/researcher.ts", "shared/schema.ts", "server/pdf-export.ts"]), ["server/analyze-route.ts", "server/researcher.ts", "shared/schema.ts"], "Wächter-Selbsttest: gesperrte Dateien schlagen weiter an");
   assert.deepEqual(alarms(["server/pdf-export.ts", "shared/fazit-entry.ts"]), [], "Wächter-Selbsttest: nur pdf-export.ts ausgenommen");
   // #326: analyze-route.ts/schema.ts nur ausgenommen, wenn jede Diff-Zeile exakt freigegeben ist (script/guard-approved-326.ts).
-  for (const f of alarms(withoutApproved326(squash274 ? `${squash274}^` : mergeBase, changed))) assert.fail(f);
+  // #180: researcher.ts nur ausgenommen, wenn der Diff exakt die 4 freigegebenen Briefing-Hunks ist (script/guard-approved-180.ts).
+  const guardBase = squash274 ? `${squash274}^` : mergeBase;
+  for (const f of alarms(withoutApproved180(guardBase, withoutApproved326(guardBase, changed)))) assert.fail(f);
   assert.equal(route.WILSHIRE_DOLLARS_PER_POINT_BN, 1.05, "Konstante, die recession.ts importiert, unverändert");
   const rec = readFileSync("server/recession.ts", "utf8");
   assert.ok(/import \{ WILSHIRE_DOLLARS_PER_POINT_BN \} from "\.\/buffett-route";/.test(rec) && !/analyze-recession\/buffett|buildUnitedStates|fallback/.test(rec.match(/function scoreBuffett[\s\S]*?\n\}/)![0]), "Rezessions-Score nutzt die Route nicht");

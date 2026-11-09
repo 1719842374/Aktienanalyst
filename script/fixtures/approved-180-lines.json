@@ -1,0 +1,78 @@
+{
+ "_note": "#180: exakt freigegebene -U0-Hunks in server/researcher.ts (merge-base ed1e98cd → 709d5bc1; 4 Briefing-Hunks :34, :927–940, :1157–1165, :1236–1261; freigegeben 09.11.2026 21:59 Europe/Madrid). Reihenfolge, Anzahl und Text muessen exakt stimmen; jede andere Zeile in gesperrten Dateien schlaegt in den Waechtern an.",
+ "files": {
+  "server/researcher.ts": [
+   [
+    "+import { briefingCardForChange } from \"../shared/briefing-key-event\";"
+   ],
+   [
+    "-      severity: \"high\" | \"medium\" | \"low\";",
+    "+      sourceIndex?: number;",
+    "+      /** Source severity, or an n/a reason when the macro event has none. */",
+    "+      severity?: string;"
+   ],
+   [
+    "+      timeframe?: string;",
+    "+      rationale?: string;",
+    "+      inflationImpact?: string;",
+    "+      rateImpact?: string;",
+    "+      equityImpact?: string;",
+    "+      affectedSectors?: string[];"
+   ],
+   [
+    "-    const events = ((data?.llmSynthesis?.keyEvents || []) as any[]).map((ev) => ({",
+    "+    const events = ((data?.llmSynthesis?.keyEvents || []) as any[]).map((ev, sourceIndex) => ({"
+   ],
+   [
+    "+      sourceIndex,"
+   ],
+   [
+    "+      timeframe: ev?.timeframe ? String(ev.timeframe) : undefined,",
+    "+      rationale: ev?.rationale ? String(ev.rationale) : undefined,"
+   ],
+   [
+    "-    topChanges: composed.topChanges.map((c, idx) => ({",
+    "-      rank: idx + 1,",
+    "-      title: c.title,",
+    "-      region: c.region,",
+    "-      category: c.category,",
+    "-      severity: \"medium\" as const,",
+    "-      changeType: c.changeType,",
+    "-      description: c.title === \"none\" ? \"none\" : c.title,",
+    "-      dcfImplications: {",
+    "-        waccDeltaBps: c.dcfImplications?.waccDeltaBps || \"n/v\",",
+    "-        affectedSectors: c.dcfImplications?.affectedSectors || [],",
+    "-        exposureType: \"hedge\" as const,",
+    "-      },",
+    "-      action: \"\",",
+    "-    })),",
+    "+    topChanges: composed.topChanges.map((c, idx) => {",
+    "+      const regionEvents = inputs.find(input => input.region === c.region)?.events ?? [];",
+    "+      const card = c.title === \"none\" ? null : briefingCardForChange(c, regionEvents);",
+    "+      return {",
+    "+        rank: idx + 1,",
+    "+        title: c.title,",
+    "+        region: c.region,",
+    "+        category: c.category,",
+    "+        sourceIndex: c.sourceIndex,",
+    "+        severity: card?.severity,",
+    "+        changeType: c.changeType,",
+    "+        description: card?.description ?? \"none\",",
+    "+        timeframe: card?.timeframe,",
+    "+        rationale: card?.rationale,",
+    "+        inflationImpact: card?.inflationImpact,",
+    "+        rateImpact: card?.rateImpact,",
+    "+        equityImpact: card?.equityImpact,",
+    "+        affectedSectors: card?.affectedSectors,",
+    "+        dcfImplications: {",
+    "+          waccDeltaBps: c.dcfImplications?.waccDeltaBps || \"n/v\",",
+    "+          affectedSectors: c.dcfImplications?.affectedSectors || [],",
+    "+          exposureType: \"hedge\" as const,",
+    "+        },",
+    "+        action: \"\",",
+    "+      };",
+    "+    }),"
+   ]
+  ]
+ }
+}
