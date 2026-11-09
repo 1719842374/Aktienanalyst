@@ -13,7 +13,8 @@
  */
 import { readFileSync } from "node:fs";
 import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientContext } from "@tanstack/react-query";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import { analyzeRequestSchema } from "../shared/schema";
 import { analyzePostBody, readOverrides, writeOverrides, type KeyValueStore } from "../shared/peer-override-persist";
 import {
@@ -22,6 +23,11 @@ import {
   PEER_RESET_NOTICE_TEXT, peerResetNoticeAfterSuccess, peerResetNoticeFor, type PeerResetNotice,
 } from "../client/src/lib/peerOverrideLimits";
 import { Section7 } from "../client/src/components/sections/Section7";
+
+const expandQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const queryContext = QueryClientContext as { _currentValue?: QueryClient; _currentValue2?: QueryClient };
+queryContext._currentValue = expandQueryClient;
+queryContext._currentValue2 = expandQueryClient;
 
 (globalThis as any).React = React;
 
