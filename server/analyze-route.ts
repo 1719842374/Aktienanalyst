@@ -1481,7 +1481,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             revenue, revenueGrowth, fcfMargin, grossMargin, forwardPE, beta,
             governmentExposure: govExposure,
             topCatalysts: catalysts.slice(0, 3).map((c) => ({ name: c.name, context: c.context ?? "" })),
-            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as CapexTailwindContext).sector, programmes: (capexContext as CapexTailwindContext).programmes, rationale: (capexContext as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
+            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as unknown as CapexTailwindContext).sector, programmes: (capexContext as unknown as CapexTailwindContext).programmes, rationale: (capexContext as unknown as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
           if (llmRisks && llmRisks.length >= 3) {
@@ -1560,7 +1560,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             revenueGrowth, fcfMargin, grossMargin, operatingMargin, forwardPE, evEbitda,
             analystPTMedian, currentPrice: price, returnOnEquity,
             catalysts,
-            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as CapexTailwindContext).sector, programmes: (capexContext as CapexTailwindContext).programmes, rationale: (capexContext as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
+            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as unknown as CapexTailwindContext).sector, programmes: (capexContext as unknown as CapexTailwindContext).programmes, rationale: (capexContext as unknown as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
             revenueSegments,
             gStar: impliedGStar,
             moat: (moatAssessment as any).moatStrength ?? null,
