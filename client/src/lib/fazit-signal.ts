@@ -266,7 +266,6 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     else techBear.push('MA50 < MA200 (Death Cross)');
     if (techStatus.macdAboveZero && techStatus.macdRising) techBull.push('MACD > 0 & steigend');
     else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
-    void techBull;
 
     const flagText = technicalFlagLabels(techStatus).join(", ");
     if (techStatus.buySignal) {
