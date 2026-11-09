@@ -624,7 +624,7 @@ export function ruleMoatFromAnalysis(data: StockAnalysis): RuleMoat {
     .filter((n): n is number => finite(n));
   const desc = `${data.description ?? ""} ${(data.moatAssessment?.moatSources ?? []).join(" ")}`;
   const rivalry = (data.moatAssessment?.porterForces ?? []).some(f =>
-    /rival|wettbewerb/i.test(f.force) && (f.score >= 4 || /hoch|high/i.test(f.rating)),
+    /rival|wettbewerb/i.test(f.force!) && (f.score >= 4 || /hoch|high/i.test(f.rating)),
   );
   const fcfStable = data.fcfMarginYoyAvailable === false || data.fcfMarginYoyPp == null
     ? null
