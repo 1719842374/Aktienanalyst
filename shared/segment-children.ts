@@ -192,7 +192,7 @@ export function reviewKiChildren(
   parent: string,
   payload: unknown,
   parentRevenue: number | null,
-  scope: { kind?: "product" | "geographic"; siblings?: readonly string[]; businessNames?: readonly string[] } = {},
+  scope: { kind?: "product" | "geographic"; siblings?: readonly string[]; businessNames?: readonly string[]; companyName?: string } = {},
 ): SegmentChildrenResult {
   if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
@@ -216,12 +216,20 @@ export function reviewKiChildren(
   let filtered = 0;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; brand?: unknown; companyEcho?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
     if (!basis) {
       notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
+      continue;
+    }
+    const companyName = scope.companyName ?? "";
+    const brand = typeof rec.brand === "string" ? rec.brand : typeof rec.companyEcho === "string" ? rec.companyEcho : "";
+    const brandMiss = companyName.length > 0 && brand.trim().length > 0 && !echoTokens(companyName, 3).some((token) => brand.toLowerCase().includes(token));
+    if (companyName && (foreignCompanyProduct(name, companyName) || brandMiss)) {
+      notes.push(`n/a — Fremdmarke verworfen: ${name}`);
+      filtered += 1;
       continue;
     }
     if (sameChildName(kind, parent, name)) {
@@ -236,17 +244,18 @@ export function reviewKiChildren(
       filtered += 1;
       continue;
     }
-    const share = finite(rec.shareOfParentPct);
+    const share = outlineNumber(rec.shareOfParentPct);
     const revenue = finite(rec.revenue);
-    const growth = finite(rec.growthPct);
+    const growth = outlineNumber(rec.growthPct);
     if ((share != null && share < 0) || (revenue != null && revenue < 0)) {
       notes.push(`${KI_NEGATIVE}: ${name}`);
       continue;
     }
     const citation = typeof rec.source === "string" ? rec.source.trim() : "";
+    const sourced = concreteSource(citation);
     let shareKept = share != null && share > 0 ? share : null;
-    let growthKept = growth != null && growth !== 0 ? growth : null;
-    if ((shareKept != null || growthKept != null) && !citation) {
+    let growthKept = growth;
+    if ((share != null || growth != null) && !sourced) {
       notes.push(`${KI_WITHOUT_SOURCE}: ${name}`);
       shareKept = null;
       growthKept = null;
@@ -315,11 +324,31 @@ export function outlineEchoMatches(payload: unknown, companyName: string, indust
   const companyTokens = echoTokens(companyName, 3);
   if (companyTokens.length === 0 || !companyTokens.some((token) => companyEcho.toLowerCase().includes(token))) return false;
   const industryEcho = record.industryEcho;
-  if (typeof industryEcho !== "string" || !industryEcho.trim()) return true;
+  if (typeof industryEcho !== "string" || !industryEcho.trim()) return false;
   const hints = echoTokens(`${industry} ${sector}`, 4);
-  if (hints.length === 0) return true;
+  if (hints.length === 0) return false;
   const industryFold = industryEcho.toLowerCase();
   return hints.some((token) => industryFold.includes(token));
+}
+
+const OTHER_FIRM_PRODUCTS: { owner: string; names: readonly string[] }[] = [
+  { owner: "apple", names: ["iphone", "ipad", "ipod", "macbook", "airpod"] },
+  { owner: "oppo", names: ["oppo"] },
+  { owner: "samsung", names: ["galaxy"] },
+  { owner: "google", names: ["pixel"] },
+  { owner: "huawei", names: ["huawei"] },
+  { owner: "oneplus", names: ["oneplus"] },
+  { owner: "vivo", names: ["vivo"] },
+];
+
+export function foreignCompanyProduct(name: string, companyName: string): boolean {
+  const company = companyName.toLowerCase();
+  const child = name.toLowerCase();
+  for (const firm of OTHER_FIRM_PRODUCTS) {
+    if (company.includes(firm.owner)) continue;
+    if (firm.names.some((product) => child.includes(product))) return true;
+  }
+  return false;
 }
 
 export function outlineStillCurrent(startedTicker: string, currentTicker: string): boolean {

@@ -198,7 +198,7 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
 export interface SegmentChildrenDeps {
   fmpAvailable: () => boolean;
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
-  ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[]) => Promise<unknown>;
+  ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[], identity?: OutlineIdentity) => Promise<unknown>;
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
   outline?: (ticker: string, kind: "product" | "geographic", identity: OutlineIdentity) => Promise<unknown>;
   identity?: (ticker: string) => Promise<OutlineIdentity | null>;
@@ -212,6 +212,8 @@ export interface OutlineIdentity {
   country: string;
   sector: string;
   industry: string;
+  fiscalYear?: string;
+  currency?: string;
 }
 
 export interface SegmentChildrenScope {
@@ -313,19 +315,24 @@ export function segmentChildrenKiMessages(
   kind: "product" | "geographic",
   siblings: readonly string[],
   peerLine = "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht geladen. Eine Zahl ohne eigene Quelle weglassen.",
+  identity?: OutlineIdentity,
 ): { systemPrompt: string; prompt: string } {
   const blocked = siblings.map((name) => name.trim()).filter((name) => name.length > 0).slice(0, 24).join(", ");
   const siblingLine = blocked ? ` Diese Namen sind Geschwister und keine Kinder: ${blocked}.` : "";
-  const form = `{"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":""}]}`;
+  const identityLine = identity
+    ? `Firma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}.`
+    : "Geschäftsjahr: n/a. Währung: n/a.";
+  const form = `{"companyEcho":"","industryEcho":"","children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":"Annual Report 2024"}]}`;
+  const sourceRule = "Wenn eine Zahl aus einem veröffentlichten Bericht stammt, setze source auf das konkrete Dokument mit Jahr, zum Beispiel Annual Report 2024. Ohne echte Quelle bleibt die Zahl null, nie 0. Echte 0 bleibt 0. companyEcho nennt die Firma, industryEcho die Branche. Nur Produkte dieser Firma, keine Fremdmarke.";
   if (kind === "geographic") {
     return {
-      systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-      prompt: `${peerLine}\nTicker ${ticker}. Geografisches Segment "${parent}". Nenne die bekannten Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente. Nicht den Namen "${parent}" wiederholen.${siblingLine} Form: ${form}. Jedes Kind braucht name und basis. shareOfParentPct und growthPct sind Schätzungen und brauchen zusätzlich source, sonst null, nie 0. Leeres children nur, wenn keine Unterregion bekannt ist.`,
+      systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+      prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geografisches Segment "${parent}". Nenne die bekannten Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente. Nicht den Namen "${parent}" wiederholen.${siblingLine} Form: ${form}. ${sourceRule} Jedes Kind braucht name und basis. Leeres children nur, wenn keine Unterregion bekannt ist.`,
     };
   }
   return {
-    systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-    prompt: `${peerLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"children":[{"name":"Azure","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Cloud-Plattform","source":"Microsoft 10-K"}]}. Jedes Kind braucht name und basis. shareOfParentPct und growthPct sind Schätzungen und brauchen zusätzlich source, sonst null, nie 0. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+    prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments dieser Firma, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"companyEcho":"${identity?.companyName ?? ""}","industryEcho":"${identity?.industry || identity?.sector || ""}","children":[{"name":"Azure","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Cloud-Plattform","source":"Annual Report 2024"}]}. ${sourceRule} Jedes Kind braucht name und basis. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 
@@ -334,6 +341,7 @@ async function defaultKiChildren(
   parent: string,
   kind: "product" | "geographic" = "product",
   siblings: readonly string[] = [],
+  identity?: OutlineIdentity,
 ): Promise<unknown> {
   if (!isLLMAvailable()) return null;
   try {
@@ -346,7 +354,7 @@ async function defaultKiChildren(
     } catch {
       // Ohne Anker bleibt die Schätzung an die eigene Quelle gebunden.
     }
-    const messages = segmentChildrenKiMessages(ticker, parent, kind, siblings, peerLine);
+    const messages = segmentChildrenKiMessages(ticker, parent, kind, siblings, peerLine, identity);
     const result = await callLLMJson({
       systemPrompt: messages.systemPrompt,
       prompt: messages.prompt,
@@ -361,7 +369,9 @@ async function defaultKiChildren(
 }
 
 function profileText(profile: Record<string, unknown>, key: string): string {
-  return typeof profile[key] === "string" ? profile[key].trim() : "";
+  const value = profile[key];
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function loadOutlineIdentity(ticker: string): Promise<OutlineIdentity | null> {
@@ -371,12 +381,29 @@ export async function loadOutlineIdentity(ticker: string): Promise<OutlineIdenti
     const record = profile as Record<string, unknown>;
     const companyName = profileText(record, "companyName");
     if (companyName.length < 2) return null;
+    let fiscalYear = "";
+    let currency = profileText(record, "currency").toUpperCase();
+    try {
+      const income = await fmpIncomeStatement(ticker, 1);
+      const row = Array.isArray(income) ? income[0] : null;
+      if (row && typeof row === "object") {
+        const statement = row as Record<string, unknown>;
+        const year = profileText(statement, "fiscalYear") || profileText(statement, "calendarYear") || profileText(statement, "date").slice(0, 4);
+        if (/^(19|20)\d{2}$/.test(year)) fiscalYear = year;
+        const reported = profileText(statement, "reportedCurrency").toUpperCase();
+        if (!currency && /^[A-Z]{3}$/.test(reported)) currency = reported;
+      }
+    } catch {
+      // Ohne Abschluss bleibt das Jahr im Prompt n/a.
+    }
     return {
       companyName,
       exchange: profileText(record, "exchange") || profileText(record, "exchangeShortName"),
       country: profileText(record, "country"),
       sector: profileText(record, "sector"),
       industry: profileText(record, "industry"),
+      fiscalYear,
+      currency,
     };
   } catch {
     return null;
@@ -400,7 +427,7 @@ async function defaultOutline(ticker: string, kind: "product" | "geographic", id
   try {
     const result = await callLLMJson({
       systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. companyEcho muss den Firmennamen enthalten, industryEcho die Branche. Zahlen nur mit Dokumenttyp und Periode, sonst null. Echte 0 bleibt 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
-      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. Schätze Umsatzanteil und Umsatzwachstum. source muss Dokumenttyp und Periode nennen, zum Beispiel Geschäftsbericht 2025 oder 20-F FY2025. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || "n/a"}","children":[{"name":"Fahrzeuge","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Geschäftsbericht 2025"}]}. Ohne konkrete Quelle bleiben die Zahlen null.`,
+      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen und keine Fremdmarke. Schätze Umsatzanteil und Umsatzwachstum. Wenn eine Zahl aus einem veröffentlichten Bericht stammt, setze source auf das konkrete Dokument mit Jahr, zum Beispiel Annual Report 2024 oder Geschäftsbericht 2025. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || "n/a"}","children":[{"name":"Fahrzeuge","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Annual Report 2024"}]}. Ohne echte Quelle bleiben die Zahlen null. Echte 0 bleibt 0.`,
       maxTokens: 800,
       temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
@@ -441,17 +468,31 @@ export async function loadSegmentChildren(
   }
   const fmp = childrenFromFmpRows(raw, label);
   if (fmp.length > 0) return resolveSegmentChildren(label, fmp, []);
+  let identity: OutlineIdentity | null = null;
+  if (deps.identity) {
+    try {
+      identity = await deps.identity(ticker);
+    } catch {
+      identity = null;
+    }
+    if (!identity?.companyName) return { parent: label, children: [], reason: OUTLINE_NO_IDENTITY };
+  }
   let kiPayload: unknown = null;
   try {
-    kiPayload = await deps.ki(ticker, label, kind, scope.siblings ?? []);
+    kiPayload = await deps.ki(ticker, label, kind, scope.siblings ?? [], identity ?? undefined);
   } catch {
     kiPayload = null;
   }
   if (kiPayload == null) return { parent: label, children: [], reason: KI_UNAVAILABLE };
+  console.log(`[CHILDREN-RAW] ${ticker} ${label} ${JSON.stringify(kiPayload).slice(0, 2000)}`);
+  if (identity && !outlineEchoMatches(kiPayload, identity.companyName, identity.industry, identity.sector)) {
+    return { parent: label, children: [], reason: OUTLINE_MISMATCH };
+  }
   return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label), {
     kind,
     siblings: scope.siblings,
     businessNames: scope.businessNames,
+    companyName: identity?.companyName,
   });
 }
 
@@ -538,7 +579,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         }
       }
       const body = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames });
-      const shortCache = body.children.length === 0 && (body.reason === KI_UNAVAILABLE || body.reason === KI_FILTERED);
+      const shortCache = body.children.length === 0 && (body.reason === KI_UNAVAILABLE || body.reason === KI_FILTERED || body.reason === OUTLINE_NO_IDENTITY || body.reason === OUTLINE_MISMATCH);
       const ttl = shortCache ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;

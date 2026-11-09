@@ -860,6 +860,7 @@ registerSegmentGrowthRoute(outlineApp, {
   identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
   outline: async () => ({
     companyEcho: "BYD",
+    industryEcho: "Auto Manufacturers",
     children: [
       { name: "Automobiles", shareOfParentPct: 70, growthPct: 12, basis: "Fahrzeuge", source: "BYD Jahresbericht 2024" },
       { name: "Batteries", shareOfParentPct: 20, growthPct: 8, basis: "Speicher", source: "BYD Jahresbericht 2024" },
@@ -903,6 +904,7 @@ registerSegmentGrowthRoute(bareApp, {
   identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
   outline: async () => ({
     companyEcho: "Xiaomi",
+    industryEcho: "Consumer Electronics",
     children: [{ name: "Handsets", shareOfParentPct: 55, growthPct: 9, basis: "Smartphones", source: "" }],
   }),
 });
@@ -938,6 +940,7 @@ registerSegmentGrowthRoute(sumOutlineApp, {
   identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
   outline: async () => ({
     companyEcho: "BYD",
+    industryEcho: "Auto Manufacturers",
     children: [
       { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "Geschäftsbericht 2024" },
       { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "Geschäftsbericht 2024" },
@@ -1012,6 +1015,7 @@ registerSegmentGrowthRoute(unionApp, {
     outlineCalls += 1;
     return {
       companyEcho: "BYD",
+    industryEcho: "Auto Manufacturers",
       children: unionNames.map((name) => ({ name, shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" })),
     };
   },
@@ -1049,7 +1053,8 @@ registerSegmentGrowthRoute(noIdApp, {
   identity: async () => null,
   outline: async () => {
     identityCalls += 1;
-    return { companyEcho: "BYD", children: [{ name: "Fahrzeuge", shareOfParentPct: 80, growthPct: 10, basis: "Autos", source: "Geschäftsbericht 2024" }] };
+    return { companyEcho: "BYD",
+    industryEcho: "Auto Manufacturers", children: [{ name: "Fahrzeuge", shareOfParentPct: 80, growthPct: 10, basis: "Autos", source: "Geschäftsbericht 2024" }] };
   },
 });
 const noIdServer = noIdApp.listen(0);
@@ -1123,6 +1128,7 @@ registerSegmentGrowthRoute(ttlApp, {
   identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
   outline: async () => ({
     companyEcho: "BYD",
+    industryEcho: "Auto Manufacturers",
     children: [{ name: "Batteries", shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" }],
   }),
 });
@@ -1141,6 +1147,135 @@ try {
 } finally {
   await new Promise<void>((resolve, reject) => ttlServer.close((err) => err ? reject(err) : resolve()));
 }
+
+const iphoneChild = reviewKiChildren("Smartphones", {
+  companyEcho: "Xiaomi Corporation",
+  industryEcho: "Consumer Electronics",
+  children: [
+    { name: "iPhone", shareOfParentPct: null, growthPct: 16.5, basis: "Flagship-Smartphone", source: "KI" },
+    { name: "Redmi", shareOfParentPct: null, growthPct: null, basis: "Xiaomi Smartphone" },
+  ],
+}, null, { companyName: "Xiaomi Corporation" });
+gap(
+  "child-iphone",
+  !iphoneChild.children.some((row) => row.name === "iPhone") && iphoneChild.children.some((row) => row.name === "Redmi"),
+  iphoneChild.children.map((row) => row.name).join(",") || iphoneChild.reason || "leer",
+);
+
+const kiCited = reviewKiChildren("Smartphones", {
+  children: [{ name: "Redmi", shareOfParentPct: 40, growthPct: 16.5, basis: "Linie", source: "KI" }],
+}, null);
+const zeroKept = reviewKiChildren("Smartphones", {
+  children: [{ name: "Redmi", shareOfParentPct: 40, growthPct: 0, basis: "Linie", source: "Annual Report 2024" }],
+}, null);
+gap(
+  "child-concrete-source",
+  kiCited.children[0]?.growthPct == null
+    && kiCited.children[0]?.shareOfParentPct == null
+    && zeroKept.children[0]?.growthPct === 0
+    && zeroKept.children[0]?.shareOfParentPct === 40,
+  `ki=${String(kiCited.children[0]?.growthPct)} zero=${String(zeroKept.children[0]?.growthPct)}`,
+);
+
+const echoMod = await import("../shared/segment-children.ts");
+const echoMatches = echoMod.outlineEchoMatches;
+gap(
+  "industry-echo-required",
+  typeof echoMatches === "function" && echoMatches(
+    { companyEcho: "Xiaomi Corporation" },
+    "Xiaomi Corporation",
+    "Consumer Electronics",
+    "Technology",
+  ) === false,
+  typeof echoMatches,
+);
+
+resetSegmentChildrenGuardsForTests();
+let childKiCalls = 0;
+const noChildIdApp = express();
+registerSegmentGrowthRoute(noChildIdApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => ["Smartphones"],
+  identity: async () => null,
+  ki: async () => {
+    childKiCalls += 1;
+    return { companyEcho: "Xiaomi", industryEcho: "Consumer Electronics", children: [{ name: "Redmi", basis: "Smartphone", source: "Annual Report 2024" }] };
+  },
+});
+const noChildIdServer = noChildIdApp.listen(0);
+const noChildIdPort = (noChildIdServer.address() as { port: number }).port;
+try {
+  const missingChild = await fetch(`http://127.0.0.1:${noChildIdPort}/api/segment-children/XIACY?parent=${encodeURIComponent("Smartphones")}&kind=product`);
+  const missingChildBody = await missingChild.json().catch(() => ({})) as { children?: unknown[]; reason?: string };
+  gap(
+    "child-identity",
+    childKiCalls === 0 && (missingChildBody.children?.length ?? 0) === 0 && /Identität/.test(missingChildBody.reason ?? ""),
+    `calls=${childKiCalls} ${missingChildBody.reason ?? missingChild.status}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => noChildIdServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const childMismatchApp = express();
+registerSegmentGrowthRoute(childMismatchApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => ["Smartphones"],
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
+  ki: async () => ({
+    companyEcho: "Apple",
+    industryEcho: "Consumer Electronics",
+    children: [{ name: "iPhone", basis: "Flagship", source: "Annual Report 2024", growthPct: 16.5 }],
+  }),
+});
+const childMismatchServer = childMismatchApp.listen(0);
+const childMismatchPort = (childMismatchServer.address() as { port: number }).port;
+try {
+  const wrongChild = await fetch(`http://127.0.0.1:${childMismatchPort}/api/segment-children/XIACY?parent=${encodeURIComponent("Smartphones")}&kind=product`);
+  const wrongChildBody = await wrongChild.json().catch(() => ({})) as { children?: { name?: string }[]; reason?: string };
+  gap(
+    "child-mismatch",
+    (wrongChildBody.children?.length ?? 1) === 0 && /passt nicht/.test(wrongChildBody.reason ?? ""),
+    wrongChildBody.reason ?? (wrongChildBody.children ?? []).map((row) => row.name).join(","),
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => childMismatchServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let fmpKiCalls = 0;
+const fmpFirstApp = express();
+registerSegmentGrowthRoute(fmpFirstApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2025", data: { Server: { Azure: 40 } } }],
+  names: async () => ["Server"],
+  identity: async () => null,
+  ki: async () => {
+    fmpKiCalls += 1;
+    return { children: [{ name: "iPhone", basis: "fremd" }] };
+  },
+});
+const fmpFirstServer = fmpFirstApp.listen(0);
+const fmpFirstPort = (fmpFirstServer.address() as { port: number }).port;
+try {
+  const fmpHit = await fetch(`http://127.0.0.1:${fmpFirstPort}/api/segment-children/MSFT?parent=Server&kind=product`);
+  const fmpBody = await fmpHit.json().catch(() => ({})) as { children?: { name?: string; source?: string }[] };
+  gap(
+    "fmp-before-identity",
+    fmpHit.status === 200 && fmpKiCalls === 0 && fmpBody.children?.[0]?.source === "FMP" && fmpBody.children?.[0]?.name === "Azure",
+    `status=${fmpHit.status} ki=${fmpKiCalls} name=${fmpBody.children?.[0]?.name ?? ""}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => fmpFirstServer.close((err) => err ? reject(err) : resolve()));
+}
+
+gap(
+  "prompt-year-currency",
+  routeSource.includes("Geschäftsjahr") && routeSource.includes("Währung") && routeSource.includes("Annual Report"),
+  "prompt",
+);
 
 const indexSource = readFileSync("server/index.ts", "utf8");
 gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");
