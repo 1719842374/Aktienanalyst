@@ -207,11 +207,6 @@ export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
   }
 }
 
-/** GET /stable/earnings-surprises. Wirft, damit der Aufrufer auf Income Statement und Analyst Estimates ausweichen kann. */
-export async function fmpEarningsSurprises(symbol: string): Promise<unknown> {
-  return fmpFetch(`/earnings-surprises`, { symbol: symbol.toUpperCase() });
-}
-
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
   const params: Record<string, string> = { symbol };
   if (from) params.from = from;
@@ -997,6 +992,11 @@ export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
  */
 export async function fmpIncomeStatementQuarterly(symbol: string, limit = 16) {
   return fmpFetch(`/income-statement`, { symbol, period: "quarter", limit: String(limit) });
+}
+
+/** GET /stable/earnings-surprises. Wirft, damit der Aufrufer auf Income Statement und Analyst Estimates ausweichen kann. */
+export async function fmpEarningsSurprises(symbol: string): Promise<unknown> {
+  return fmpFetch(`/earnings-surprises`, { symbol: symbol.toUpperCase() });
 }
 
 /** GET /stable/analyst-estimates?period=quarter. Wirft. Die Jahresfunktion bleibt unverändert. */
