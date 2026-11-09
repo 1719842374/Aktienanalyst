@@ -193,8 +193,21 @@ export function reviewKiChildren(
   scope: { kind?: "product" | "geographic"; siblings?: readonly string[]; businessNames?: readonly string[] } = {},
 ): SegmentChildrenResult {
   if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
-  const list = (payload as { children?: unknown }).children;
-  if (!Array.isArray(list) || list.length === 0) return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
+  const record = payload as { children?: unknown; fills?: unknown };
+  const rawList = Array.isArray(record.children) ? record.children : Array.isArray(record.fills) ? record.fills : null;
+  if (!Array.isArray(rawList) || rawList.length === 0) return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
+  const list = rawList.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const row = item as { name?: unknown; segmentName?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown; growthPct?: unknown; segmentGrowth?: unknown };
+    const basis = [row.basis, row.rationale, row.formula].filter((part) => typeof part === "string" && part.trim()).join(" · ");
+    return {
+      ...row,
+      name: typeof row.name === "string" && row.name.trim() ? row.name : row.segmentName,
+      basis,
+      source: typeof row.source === "string" && row.source.trim() ? row.source : row.tamSource,
+      growthPct: row.growthPct ?? row.segmentGrowth,
+    };
+  });
   const kind = scope.kind ?? "product";
   const kept: SegmentChild[] = [];
   const notes: string[] = [];

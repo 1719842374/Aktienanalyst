@@ -261,12 +261,12 @@ export function segmentChildrenKiMessages(
   if (kind === "geographic") {
     return {
       systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-      prompt: `${peerLine}\nTicker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente. Nicht den Namen "${parent}" wiederholen.${siblingLine} Form: ${form}. shareOfParentPct und growthPct sind Schätzungen und brauchen basis und source. Ohne source die Zahl weglassen. Leeres children nur, wenn keine Unterregion bekannt ist.`,
+      prompt: `${peerLine}\nTicker ${ticker}. Geografisches Segment "${parent}". Nenne die bekannten Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente. Nicht den Namen "${parent}" wiederholen.${siblingLine} Form: ${form}. Jedes Kind braucht name und basis. shareOfParentPct und growthPct sind Schätzungen und brauchen zusätzlich source, sonst null, nie 0. Leeres children nur, wenn keine Unterregion bekannt ist.`,
     };
   }
   return {
     systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-    prompt: `${peerLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. shareOfParentPct und growthPct sind Schätzungen und brauchen basis und source. Ohne source die Zahl weglassen. basis benennt die Produktlinie. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    prompt: `${peerLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"children":[{"name":"Azure","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Cloud-Plattform","source":"Microsoft 10-K"}]}. Jedes Kind braucht name und basis. shareOfParentPct und growthPct sind Schätzungen und brauchen zusätzlich source, sonst null, nie 0. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 
@@ -292,7 +292,7 @@ async function defaultKiChildren(
       systemPrompt: messages.systemPrompt,
       prompt: messages.prompt,
       maxTokens: 800,
-      temperature: 0,
+      temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
     });
     return result?.data ?? null;
