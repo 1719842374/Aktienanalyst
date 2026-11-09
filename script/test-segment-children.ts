@@ -33,6 +33,7 @@ import { reviewSegmentOutline } from "../shared/segment-children";
 import { priorSegmentRevenue } from "../server/fmp";
 import { buildSegmentSupplement } from "../shared/segment-supplement";
 import { SegmentSupplementBody } from "../client/src/components/sections/SegmentSupplementView";
+(globalThis as any).React = React; // Komponenten nutzen das automatische JSX-Runtime im Vite-Build
 
 function html(node: React.ReactElement): string {
   return renderToStaticMarkup(node);

@@ -32,6 +32,7 @@ import {
   UnregisteredRouteError,
   fetchSegmentSupplement,
 } from "../client/src/components/sections/SegmentSupplementView";
+(globalThis as any).React = React; // Komponenten nutzen das automatische JSX-Runtime im Vite-Build
 
 function htmlOf(node: React.ReactNode): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

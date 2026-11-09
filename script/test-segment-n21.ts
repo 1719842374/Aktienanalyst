@@ -12,6 +12,7 @@ import { reviewKiChildren, reviewSegmentOutline } from "../shared/segment-childr
 import { SegmentEstimateBlock } from "../client/src/components/sections/Section2";
 import { AnnualFinancialsView } from "../client/src/components/sections/AnnualFinancials";
 import { buildFinancialHistory } from "../shared/financial-history";
+(globalThis as any).React = React; // Komponenten nutzen das automatische JSX-Runtime im Vite-Build
 
 const gaps: string[] = [];
 function gap(name: string, ok: boolean, detail: string) {
