@@ -332,7 +332,7 @@ async function defaultOutline(ticker: string, kind: "product" | "geographic"): P
   try {
     const result = await callLLMJson({
       systemPrompt: "Antworte nur mit JSON. Schätze Hauptsegmente nur mit Basis und Quelle. Unbekannte Zahlen sind null, nie 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
-      prompt: `${peerLine}\nTicker ${ticker}. ${subject} Die Summe der Anteile darf 100 nicht übersteigen. Form: {"children":[{"name":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":""}]}. Jede Zeile braucht name und basis. shareOfParentPct und growthPct nur zusammen mit source, sonst null.`,
+      prompt: `${peerLine}\nTicker ${ticker}. ${subject} Nenne drei bis sechs Namen. Schätze zu jedem Namen den Umsatzanteil und das Umsatzwachstum und setze source auf die Grundlage, zum Beispiel Jahresbericht oder 20-F. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"children":[{"name":"Fahrzeuge","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Jahresbericht"}]}. Ohne source bleiben die Zahlen null, nie 0.`,
       maxTokens: 800,
       temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
