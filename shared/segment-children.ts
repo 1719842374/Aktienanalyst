@@ -319,8 +319,8 @@ export function concreteSource(value: string, companyName = ""): boolean {
     } catch {
       return false;
     }
-    const labels = new Set(host.split(".").filter((label) => label.length >= 2));
-    if (!companyMatchTokens(companyName).some((token) => labels.has(token))) return false;
+    const labels = host.split(".").filter((label) => label.length >= 2);
+    if (!labels.some((label) => hostLabelMatches(label, companyName))) return false;
     return SOURCE_DOC.test(text) || SOURCE_DOC.test(decodeURIComponent(urlMatch[0]));
   }
   if (!SOURCE_DOC.test(text)) return false;
@@ -361,6 +361,31 @@ function foldCompany(value: string): string {
 
 function companyMatchTokens(value: string): string[] {
   return foldCompany(value).split(/\s+/).filter((token) => token.length >= 2);
+}
+
+function hostNameTokens(value: string): string[] {
+  const folded = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  return foldAmpersand(folded)
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function hostLabelMatches(label: string, companyName: string): boolean {
+  const plain = label.replace(/-/g, "");
+  if (plain.length < 2) return false;
+  if (companyMatchTokens(companyName).some((token) => token === plain)) return true;
+  const parts = hostNameTokens(companyName);
+  for (let start = 0; start < parts.length; start += 1) {
+    let joined = parts[start] ?? "";
+    for (let end = start + 1; end < parts.length; end += 1) {
+      joined += parts[end] ?? "";
+      if (joined === plain) return true;
+    }
+  }
+  return false;
 }
 
 const COMPANY_FILLER = new Set(["of", "the", "and"]);
