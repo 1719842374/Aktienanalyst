@@ -23,7 +23,7 @@ import {
 } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { curatedSegmentNames } from "./curated-product-segments";
-import { diskResearcherGet } from "./disk-cache";
+import { diskResearcherGetWithTtl } from "./disk-cache";
 import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import {
   KI_UNAVAILABLE,
@@ -181,8 +181,37 @@ export function namesFromDisplayedSources(input: {
 async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
   const ownRows = await fmpSegmentationRows(kind, ticker, "annual");
   const geoRows = kind === "product" ? await fmpSegmentationRows("geographic", ticker, "annual") : [];
-  const secCache = diskResearcherGet(`segments__${ticker.toUpperCase()}`) as { segments?: { name?: string }[] } | null;
+  // Dieselbe Frist wie der Analyse-Disk-Cache (disk-cache.ts CACHE_TTL_DAYS = 7).
+  // diskResearcherGet löscht nach einem Tag und würde die Zeile vor diesem Lesen entfernen.
+  const secHit = diskResearcherGetWithTtl(`segments__${ticker.toUpperCase()}`, 7 * 24 * 60 * 60 * 1000);
+  const secCache = (secHit?.data ?? null) as { segments?: { name?: string }[] } | null;
   return namesFromDisplayedSources({ kind, ticker, ownRows, geoRows, secCache });
+}
+
+function rowFiscalYear(row: Record<string, unknown>): number {
+  const year = row.fiscalYear;
+  if (typeof year === "number" && Number.isInteger(year)) return year;
+  if (typeof year === "string" && /^\d{4}/.test(year)) return Number(year.slice(0, 4));
+  return 0;
+}
+
+function newestMatchingRawKey(rawRows: unknown[], kind: "product" | "geographic", requested: string): string | null {
+  let bestName: string | null = null;
+  let bestYear = -1;
+  for (const item of rawRows) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const year = rowFiscalYear(row);
+    const source = row.data && typeof row.data === "object" ? row.data as Record<string, unknown> : row;
+    for (const key of Object.keys(source)) {
+      if (!key.trim() || !sameDisplayedName(kind, key, requested)) continue;
+      if (year >= bestYear) {
+        bestYear = year;
+        bestName = key.trim();
+      }
+    }
+  }
+  return bestName;
 }
 
 function sameDisplayedName(kind: "product" | "geographic", listed: string, requested: string): boolean {
@@ -306,7 +335,8 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       const listed = deps.names
         ? await deps.names(ticker, kind)
         : segmentNamesFromFmpRows(Array.isArray(rawRows) ? rawRows : []);
-      const canonical = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
+      const fromNewestYear = newestMatchingRawKey(Array.isArray(rawRows) ? rawRows : [], kind, parent);
+      const canonical = fromNewestYear ?? listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
       if (!canonical) return res.status(400).json({ error: SEGMENT_UNKNOWN });
       const body = await loadSegmentChildren(ticker, canonical, kind, deps);
       const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;

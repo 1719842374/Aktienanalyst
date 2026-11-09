@@ -7,6 +7,9 @@
 import React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { diskResearcherSet } from "../server/disk-cache";
 import { renderToStaticMarkup } from "react-dom/server";
 import express from "express";
 import {
@@ -430,7 +433,7 @@ gap(
   !/fetchSecBusinessSegments/.test(routeSource) && /segments__/.test(routeSource),
   /fetchSecBusinessSegments/.test(routeSource) ? "live SEC call remains" : (/segments__/.test(routeSource) ? "disk cache" : "disk key missing"),
 );
-let liveSec = 0;
+const liveSec = (routeSource.match(/fetchSecBusinessSegments\s*\(/g) || []).length;
 const cachedSec = { segments: [{ name: "Bitcoin Mining" }, { name: "AI Cloud Services" }] };
 const firstNames = namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
 const secondNames = namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
@@ -441,7 +444,6 @@ registerSegmentGrowthRoute(secApp, {
   raw: async () => [],
   names: async () => {
     secNameReads += 1;
-    liveSec += 0;
     return namesFromDisplayedSources({ kind: "product", ticker: "IREN", ownRows: [], geoRows: [], secCache: cachedSec });
   },
   ki: async () => ({ children: [] }),
@@ -458,6 +460,58 @@ try {
   );
 } finally {
   await new Promise<void>((resolve, reject) => secServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const yearApp = express();
+let yearPrompt = "";
+registerSegmentGrowthRoute(yearApp, {
+  fmpAvailable: () => true,
+  raw: async () => [
+    { fiscalYear: "2023", data: { "Search & News Advertising": 12 } },
+    { fiscalYear: "2025", data: { "Search And News Advertising": 13 } },
+  ],
+  ki: async (_ticker, parent) => {
+    yearPrompt = parent;
+    return { children: [] };
+  },
+});
+const yearServer = yearApp.listen(0);
+const yearPort = (yearServer.address() as { port: number }).port;
+try {
+  const yearHit = await fetch(`http://127.0.0.1:${yearPort}/api/segment-children/MSFT?parent=${encodeURIComponent("Search & News Advertising")}&kind=product`);
+  gap("newest-raw-key", yearHit.status === 200 && yearPrompt === "Search And News Advertising", `status=${yearHit.status} prompt=${yearPrompt}`);
+} finally {
+  await new Promise<void>((resolve, reject) => yearServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const secKey = "segments__ZZSEGTTL";
+diskResearcherSet(secKey, { segments: [{ name: "Bitcoin Mining" }] });
+const secDb = new Database(path.resolve(process.cwd(), "data.db"));
+secDb.prepare("UPDATE researcher_cache SET updated_at = ? WHERE cache_key = ?").run(Date.now() - 25 * 60 * 60 * 1000, secKey);
+secDb.close();
+const savedFmp = process.env.FMP_API_KEY;
+const savedFmpAlt = process.env.FMP_API_key;
+delete process.env.FMP_API_KEY;
+delete process.env.FMP_API_key;
+resetSegmentChildrenGuardsForTests();
+const agedApp = express();
+registerSegmentGrowthRoute(agedApp);
+const agedServer = agedApp.listen(0);
+const agedPort = (agedServer.address() as { port: number }).port;
+try {
+  const aged = await fetch(`http://127.0.0.1:${agedPort}/api/segment-children/ZZSEGTTL?parent=${encodeURIComponent("Bitcoin Mining")}&kind=product`);
+  const agedBody = await aged.json() as { error?: string; reason?: string };
+  gap("sec-cache-25h", aged.status === 200, `status=${aged.status} ${agedBody.error ?? agedBody.reason ?? ""}`);
+} finally {
+  await new Promise<void>((resolve, reject) => agedServer.close((err) => err ? reject(err) : resolve()));
+  const cleanup = new Database(path.resolve(process.cwd(), "data.db"));
+  cleanup.prepare("DELETE FROM researcher_cache WHERE cache_key = ?").run(secKey);
+  cleanup.close();
+  if (savedFmp === undefined) delete process.env.FMP_API_KEY;
+  else process.env.FMP_API_KEY = savedFmp;
+  if (savedFmpAlt === undefined) delete process.env.FMP_API_key;
+  else process.env.FMP_API_key = savedFmpAlt;
 }
 
 const indexSource = readFileSync("server/index.ts", "utf8");
