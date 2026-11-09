@@ -58,7 +58,7 @@ const MODEL_FALLBACK_CHAIN = [
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean },
+  opts?: { online?: boolean; signal?: AbortSignal },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
   const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
@@ -70,7 +70,7 @@ async function callWithFallback(
         const completion = await (client.chat.completions.create as any)({
           ...params,
           model: modelId,
-        });
+        }, opts?.signal ? { signal: opts.signal } : undefined);
         const text = completion.choices?.[0]?.message?.content?.trim() || '';
         if (!text) { lastErr = new Error('Empty response'); continue; }
         return { text, modelUsed: modelId, usage: completion.usage };
@@ -364,8 +364,23 @@ export interface CatalystDeepDiveInput {
   fcfMargin: number;
   price: number;
   analystPT: number;
+  /** JOB D: Listing-Währung (data.currency) für Kurs und Kursziel im Prompt. Fehlt sie, bleibt es "$" (bisheriges Verhalten). */
+  currency?: string | null;
   catalysts: Array<{ name: string; pos: number; bruttoUpside: number; einpreisungsgrad: number; context?: string; }>;
   newsHeadlines?: string[];
+}
+
+/** JOB D: Kurs-/Kursziel-Präfix im Deep-Dive-Prompt. USD/leer → "$", sonst der Code ("GBP 45.00", "CAD 120.00"). */
+export function deepDivePricePrefix(currency?: string | null): string {
+  const c = typeof currency === "string" ? currency.trim() : "";
+  return !c || c === "USD" ? "$" : `${c} `;
+}
+
+/** JOB D: Kursziel wie L165/L895 nur bei PT > 0 (endlich) ausgeben, sonst "N/A" statt "$0.00". */
+export function deepDiveAnalystPtText(analystPT: number | null | undefined, currency?: string | null): string {
+  return typeof analystPT === "number" && Number.isFinite(analystPT) && analystPT > 0
+    ? `${deepDivePricePrefix(currency)}${analystPT.toFixed(2)}`
+    : "N/A";
 }
 
 export async function generateCatalystDeepDives(
@@ -375,6 +390,7 @@ export async function generateCatalystDeepDives(
   if (!client) return null;
   const model = pickModel();
   const { ticker, companyName, sector, description, revenue, revenueGrowth, fcfMargin, price, analystPT, catalysts, newsHeadlines = [] } = input;
+  const pxPrefix = deepDivePricePrefix(input.currency);
 
   const newsCtx = newsHeadlines.length > 0 ? `\nAktuelle News: ${newsHeadlines.slice(0, 4).map((h, i) => `N${i + 1}: ${h}`).join(' | ')}` : '';
   const catList = catalysts.map((c, i) =>
@@ -382,7 +398,7 @@ export async function generateCatalystDeepDives(
   ).join('\n');
 
   const prompt = `Aktien-Analyst. Unternehmen: ${companyName} (${ticker}), Sektor: ${sector}.
-Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | Kurs: $${price.toFixed(2)} | Analyst PT: $${analystPT.toFixed(2)}
+Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | Kurs: ${pxPrefix}${price.toFixed(2)} | Analyst PT: ${deepDiveAnalystPtText(analystPT, input.currency)}
 Beschreibung: ${description.substring(0, 300)}${newsCtx}
 
 Katalysatoren:
@@ -791,6 +807,8 @@ export async function callLLMJson(opts: {
   systemPrompt?: string;
   /** OpenRouter-Websuche nur fuer diesen Abruf. Andere Aufrufer bleiben offline. */
   online?: boolean;
+  /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
+  signal?: AbortSignal;
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -803,7 +821,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online });
+    }, { online: opts.online, signal: opts.signal });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {

@@ -16,6 +16,8 @@ export interface SeriesBundle {
   points: Obs[];
   /** Companion series stored under the same cache key (SOMA bills). */
   parts?: Record<string, Obs[]>;
+  /** Overrides spec.impulse for a snapshot fallback. */
+  impulse?: "level";
 }
 
 export interface BookSlot {
@@ -203,7 +205,14 @@ function yoyImpulse(points: Obs[], alreadyPercent: boolean): Impulse | null {
   return { x: history[history.length - 1], asOf, history };
 }
 
-function impulseFor(spec: SeriesSpec, points: Obs[]): Impulse | null {
+function levelImpulse(points: Obs[]): Impulse | null {
+  const pts = sorted(points);
+  if (!pts.length) return null;
+  return { x: pts[pts.length - 1].value, asOf: pts[pts.length - 1].date, history: pts.map(p => p.value) };
+}
+
+function impulseFor(spec: SeriesSpec, points: Obs[], mode?: "level"): Impulse | null {
+  if (mode === "level" || spec.impulse === "level") return levelImpulse(points);
   const window = windowDays(spec.role);
   if (window === "yoy") return yoyImpulse(points, spec.unit === "pct");
   return deltaImpulse(points, window);
@@ -240,11 +249,18 @@ function emptySlot(spec: SeriesSpec): Scored {
 function scoreSpec(spec: SeriesSpec, bundle: SeriesBundle | undefined): Scored {
   const base = emptySlot(spec);
   if (!bundle) return base;
-  const impulse = impulseFor(spec, bundle.points);
+  const mode = bundle.impulse ?? spec.impulse;
+  const impulse = impulseFor(spec, bundle.points, mode);
   if (!impulse) return base;
   base.slot.x = Math.round(impulse.x * 10) / 10;
   base.slot.asOf = impulse.asOf;
-  if (impulse.history.length < H_MIN) return base;
+  if (impulse.history.length < H_MIN) {
+    if (mode === "level") {
+      base.slot.available = true;
+      base.slot.score = 50;
+    }
+    return base;
+  }
   const signed = impulse.history.map(v => spec.sign * v);
   const mu = mean(signed);
   const sigma = sampleStdev(signed);

@@ -1,363 +1,1122 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
-import { useMemo, useState, useCallback } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchGoldWithRetry, goldChartHistoryRefetchInterval, goldChartHistoryStaleTime } from "@/lib/goldFetchPolicy";
+import { apiRequest } from "@/lib/queryClient";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, ReferenceArea, Area, ComposedChart,
+  Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar,
 } from "recharts";
-import { Ruler, X } from "lucide-react";
+import {
+  CheckCircle2, AlertTriangle, Eye, EyeOff, TrendingUp, TrendingDown,
+} from "lucide-react";
+import { SectionCard } from "@/components/SectionCard";
+import { TaStatusPill } from "@/components/sections/TaStatusPill";
+import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
+import { useIsNarrow } from "@/hooks/use-mobile";
+import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import {
+  buildGoldTechnical, describeRelativeRsi, volumeLegendText, goldRangeNote, macroRangeState, needsLongHistory,
+  type GoldTechPoint, type GoldTimeRange,
+} from "./goldTechnical";
+import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
+import type { GoldPricePoint } from "../../../../shared/gold-schema";
+import { goldQeQtView, type QeQtRegime } from "../../../../shared/gold-qe-qt";
+import {
+  FMP_RATIO_SOURCE,
+  goldSilverRatioAvailability,
+  type GoldSilverRatioHistory,
+} from "../../../../shared/gold-silver-ratio";
 
-interface Props { data: GoldAnalysis }
+/**
+ * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
+ * (Future_10 §4 / §7, Philip LOCKED): vier JA/NEIN-Karten, Kaufsignal-Box,
+ * MA200-Break-Warnung, Cross-Banner, Zeitfenster 3M–5Y, 10Y, Max, MA/EMA-Chips,
+ * Signale, Volumen, Makro-Overlays (nur echte FRED-Daten), Messen, MACD, RSI.
+ * 50-DMA und Golden/Death-Marker aus #201 (goldChartMa.ts) bleiben.
+ */
 
-type TimeRange = "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL";
+interface Props {
+  data: GoldAnalysis & { fallbackReason?: string };
+  onRetryPrices?: () => void;
+}
 
-export function GoldPriceChart({ data }: Props) {
-  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
-  // WORK_TEIL7_SCORING.md §7.8.3: "Chart: Gold (links) vs Real10Y (rechts)" —
-  // Default AN, da genau das die geforderte Kernansicht ist; abschaltbar, weil
-  // eine zweite Achse den Chart bei kurzen Zeitraeumen ueberladen kann.
-  const [showReal10y, setShowReal10y] = useState(true);
-  const hasReal10y = useMemo(
-    () => (data.historicalPrices ?? []).some(p => p.real10y != null),
-    [data.historicalPrices]
+// Farben und Labels 1:1 aus BTCDashboard MA_LINES.
+const MA_LINES = [
+  { key: "ma200", label: "MA200 (SMA)", color: "#ef4444", defaultOn: true },
+  { key: "ma100", label: "MA100 (SMA)", color: "#f97316", defaultOn: false },
+  { key: "ma50", label: "MA50 (SMA)", color: "#eab308", defaultOn: true },
+  { key: "ma20", label: "MA20 (SMA)", color: "#84cc16", defaultOn: false },
+  { key: "ema26", label: "EMA26", color: "#06b6d4", defaultOn: false },
+  { key: "ema12", label: "EMA12", color: "#8b5cf6", defaultOn: false },
+  { key: "ema9", label: "EMA9", color: "#ec4899", defaultOn: false },
+] as const;
+
+// Makro-Overlays (Future_10 §7). Real10Y Standard AN, Rest manuell.
+const MACRO = [
+  { key: "real10y", label: "Real10Y", name: "Real10Y (DFII10)", color: "#38bdf8", defaultOn: true, unit: "%", width: 44, step: false, title: "Realzins (DFII10, FRED)" },
+  { key: "m2Yoy", label: "M2 YoY", name: "M2 YoY (M2SL)", color: "#a78bfa", defaultOn: false, unit: "%", width: 44, step: true, title: "US-M2-Wachstum YoY (FRED M2SL)" },
+  { key: "dxy", label: "DXY", name: "DXY (DTWEXBGS)", color: "#34d399", defaultOn: false, unit: "", width: 44, step: false, title: "Broad Dollar Index (FRED DTWEXBGS)" },
+  { key: "t10yie", label: "Inflations-BE (T10YIE)", name: "Inflations-BE (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE) — Inflationserwartung, nicht die Minenkosten (AISC)" },
+  { key: "walcl", label: "WALCL", name: "Fed-Bilanz (WALCL)", color: "#e2e8f0", defaultOn: false, unit: "T", width: 54, step: true, title: "Fed-Bilanzsumme in Bio. USD (FRED WALCL)" },
+] as const;
+
+const GS_RATIO_COLOR = "#cbd5e1";
+const GS_RATIO_AXIS_WIDTH = 44;
+
+type MAKey = typeof MA_LINES[number]["key"];
+type MacroKey = typeof MACRO[number]["key"];
+/** Dieselben Presets und Handelstage wie TechnicalChart (`slicePresetWindow`). */
+const GOLD_PRESETS = Object.keys(TIME_RANGE_CUTOFF) as TimeRange[];
+
+interface GoldChartHistory {
+  source: string;
+  points: GoldPricePoint[];
+  incomplete?: boolean;
+  incompleteReason?: string | null;
+  range?: "10Y" | "Max";
+  warmupPoints?: number;
+  /** Gesetzter Text = Ladefehler (HTTP-Status oder Timeout). Leer und ohne diesen Text = wirklich keine Punkte. */
+  loadError?: string | null;
+}
+
+function GoldChartLoadNotice({ reason, onRetry, lead = "Preisdaten nicht geladen" }: { reason: string; onRetry?: () => void; lead?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-chart-load-error" role="status">
+      <span className="min-w-0 flex-1">{lead}: {reason}</span>
+      <button
+        type="button"
+        data-testid="gold-chart-retry"
+        onClick={onRetry}
+        className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-700"
+      >
+        Neu laden
+      </button>
+    </div>
   );
+}
 
-  // Measurement tool state — analog TechnicalChart (Aktien/BTC-Technikanalyse)
-  const [measureMode, setMeasureMode] = useState(false);
-  const [measurePoints, setMeasurePoints] = useState<{ date: string; close: number }[]>([]);
+const fmtMacro = (key: MacroKey, v: number) =>
+  key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
 
-  const handleChartClick = useCallback((e: any) => {
-    if (!measureMode || !e?.activePayload?.[0]) return;
-    const point = e.activePayload[0].payload;
-    if (!point?.date || point.close == null) return;
-    setMeasurePoints(prev => {
-      if (prev.length >= 2) return [{ date: point.date, close: point.close }];
-      return [...prev, { date: point.date, close: point.close }];
-    });
-  }, [measureMode]);
+const QE_FILL: Record<QeQtRegime, string> = { expansion: "#22c55e", contraction: "#ef4444", neutral: "#94a3b8" };
+const QE_LABEL: Record<QeQtRegime, string> = { expansion: "Ausweitung", contraction: "Abbau", neutral: "neutral" };
 
-  const measurement = useMemo(() => {
-    if (measurePoints.length !== 2) return null;
-    const [a, b] = measurePoints;
-    const diff = b.close - a.close;
-    const pct = (diff / a.close) * 100;
-    const isGain = diff >= 0;
-    return { a, b, diff, pct, isGain };
-  }, [measurePoints]);
+export function GoldPriceChart({ data, onRetryPrices }: Props) {
+  const narrow = useIsNarrow();
+  const tech = useMemo(() => buildGoldTechnical(data.historicalPrices ?? []), [data.historicalPrices]);
+  const fullChart = tech.points;
 
-  const formatDateFull = (d: string) =>
-    new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  const [visibleMAs, setVisibleMAs] = useState<Set<MAKey>>(() => new Set(MA_LINES.filter(m => m.defaultOn).map(m => m.key)));
+  const [visibleMacro, setVisibleMacro] = useState<Set<MacroKey>>(() => new Set(MACRO.filter(m => m.defaultOn).map(m => m.key)));
+  const [showSignals, setShowSignals] = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
+  const [showQeQt, setShowQeQt] = useState(false);
+  const [showGoldWalcl, setShowGoldWalcl] = useState(false);
+  const [timeRange, setTimeRange] = useState<GoldTimeRange>("1Y");
+  const [isMeasuring, setIsMeasuring] = useState(false);
+  const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
+  const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
+  const [showGsRatio, setShowGsRatio] = useState(false);
 
+  // 10Y/Max: lange Historie lazy laden (nur Chart-Daten, kein Score). Indikatoren laufen auf der
+  // vollen Reihe, danach Fenster + Ausduennung. Pills, Cross-Banner und Rel. RSI bleiben auf `tech`.
+  const longRange = needsLongHistory(timeRange);
+  // Je Fenster eigene Antwort: 10Y = Fenster + 300 Punkte Vorlauf (MA/EMA/MACD eingeschwungen), Max = volle Reihe.
+  const historyRange = timeRange === "10Y" ? "10Y" : "Max";
+  const historyQuery = useQuery<GoldChartHistory>({
+    queryKey: ["/api/gold-chart-history", historyRange],
+    queryFn: async () => {
+      const result = await fetchGoldWithRetry<GoldChartHistory>(`/api/gold-chart-history?range=${historyRange}`);
+      // Fehler als sofort veraltete Antwort, nicht als liegenbleibender Error-Status.
+      if (!result.ok) return { source: "keine", points: [], loadError: result.reason };
+      const points = Array.isArray(result.data.points) ? result.data.points : [];
+      return { ...result.data, points, loadError: null };
+    },
+    enabled: longRange,
+    // Unvollstaendige Historie (FMP-Fehler mitten in der Reihe) nicht 6 h halten, sondern nach 10 min neu laden.
+    // Ein Ladefehler hat staleTime 0 und wird im Hintergrund wiederholt.
+    staleTime: (query) => goldChartHistoryStaleTime(query.state.data),
+    refetchInterval: (query) => goldChartHistoryRefetchInterval(query.state.data),
+    retry: false,
+  });
+  const ratioQuery = useQuery<GoldSilverRatioHistory & { loadError?: string | null }>({
+    queryKey: ["/api/gold-silver-ratio/history"],
+    queryFn: async () => {
+      const empty = {
+        points: [] as GoldSilverRatioHistory["points"],
+        source: FMP_RATIO_SOURCE,
+        goldSource: null,
+        silverSource: null,
+        from: null,
+        to: null,
+        unavailableReason: null as string | null,
+        loadError: null as string | null,
+      };
+      try {
+        const res = await apiRequest("GET", "/api/gold-silver-ratio/history");
+        if (!res.ok) {
+          let reason = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (typeof body?.error === "string" && body.error) reason = body.error;
+            else if (typeof body?.unavailableReason === "string" && body.unavailableReason) reason = body.unavailableReason;
+          } catch {
+            /* Status bleibt der Grund */
+          }
+          return { ...empty, unavailableReason: reason, loadError: reason };
+        }
+        const data = await res.json();
+        const points = Array.isArray(data?.points) ? data.points : [];
+        return { ...empty, ...data, points, loadError: null };
+      } catch (err) {
+        const reason = err instanceof Error && err.message ? err.message : "Abruf fehlgeschlagen";
+        return { ...empty, unavailableReason: reason, loadError: reason };
+      }
+    },
+    enabled: fullChart.length > 0,
+    staleTime: (query) => (query.state.data?.points?.length ? 10 * 60 * 1000 : 0),
+    retry: false,
+  });
+  const longTech = useMemo(
+    () => (historyQuery.data?.points?.length ? buildGoldTechnical(historyQuery.data.points) : null),
+    [historyQuery.data],
+  );
+  const rangeTech = longRange && longTech ? longTech : tech;
+  const rangeSource = longRange && longTech ? historyQuery.data!.source : "FMP GCUSD";
+
+  const filteredData = useMemo(() => {
+    if (rangeTech.points.length === 0) return [];
+    return slicePresetWindow(rangeTech.points, timeRange);
+  }, [rangeTech, timeRange]);
+
+  // Downsampling wie BTC (max ~500 Punkte). Cross-Tage bleiben erhalten,
+  // damit die #201-Marker nicht aus dem Plot fallen.
   const chartData = useMemo(() => {
-    const prices = data.historicalPrices;
-    if (!prices || prices.length === 0) return [];
+    if (filteredData.length <= 500) return filteredData;
+    const step = Math.ceil(filteredData.length / 500);
+    // 10Y/Max: nur Cross-Tage zusaetzlich behalten — Volumen-Marker-Tage wuerden sonst bei
+    // Jahrzehnten Historie hunderte Extra-Punkte erzwingen und die Ausduennung aushebeln.
+    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || (!longRange && (d.volSpike || d.volDivergence)));
+    if (result[result.length - 1] !== filteredData[filteredData.length - 1]) result.push(filteredData[filteredData.length - 1]);
+    return result;
+  }, [filteredData, longRange]);
 
-    const now = new Date();
-    let cutoff: Date;
-    switch (timeRange) {
-      case "3M": cutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); break;
-      case "6M": cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000); break;
-      case "1Y": cutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000); break;
-      case "3Y": cutoff = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000); break;
-      case "5Y": cutoff = new Date(now.getTime() - 5 * 365 * 24 * 60 * 60 * 1000); break;
-      case "ALL": cutoff = new Date(0); break;
+  const hasMacro = useMemo(() => {
+    const out = {} as Record<MacroKey, boolean>;
+    for (const m of MACRO) out[m.key] = chartData.some(d => d[m.key] != null);
+    return out;
+  }, [chartData]);
+  // Reihe existiert in der Historie, hat aber im Fenster keine Werte -> Chip "n/a", keine Linie.
+  const macroNa = useMemo(() => MACRO.filter(m => macroRangeState(rangeTech.points, chartData, m.key) === "na"), [rangeTech, chartData]);
+  const rangeNote = goldRangeNote(timeRange, filteredData, rangeSource,
+    Object.fromEntries(MACRO.map(m => [m.key, m.label])) as Record<MacroKey, string>,
+    timeRange === "10Y" && filteredData.length >= TIME_RANGE_CUTOFF["10Y"]);
+
+  const macroDomain = useMemo(() => {
+    const out = {} as Record<MacroKey, [number, number]>;
+    for (const m of MACRO) {
+      const vals = chartData.map(d => d[m.key]).filter((v): v is number => v != null);
+      if (vals.length === 0) { out[m.key] = [0, 1]; continue; }
+      const min = Math.min(...vals), max = Math.max(...vals);
+      const padding = Math.max((max - min) * 0.15, m.key === "dxy" ? 1 : 0.2);
+      out[m.key] = [+(min - padding).toFixed(2), +(max + padding).toFixed(2)];
     }
+    return out;
+  }, [chartData]);
 
-    return prices
-      .filter(p => new Date(p.date) >= cutoff)
-      .map(p => ({
-        date: p.date,
-        close: p.close,
-        ma200: p.ma200,
-        real10y: p.real10y,
-        dateLabel: new Date(p.date).toLocaleDateString("de-DE", { day: "2-digit", month: "short" }),
-      }));
-  }, [data.historicalPrices, timeRange]);
+  const activeMacro = MACRO.filter(m => visibleMacro.has(m.key) && hasMacro[m.key]);
+
+  const ratioByDate = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const point of ratioQuery.data?.points ?? []) {
+      if (typeof point?.date === "string" && typeof point.ratio === "number" && Number.isFinite(point.ratio)) {
+        out.set(point.date, point.ratio);
+      }
+    }
+    return out;
+  }, [ratioQuery.data]);
+  const chartDataWithVol = useMemo(() => {
+    const rawVols = chartData.map(d => d.volume ?? 0);
+    const maxVol = Math.max(...rawVols, 0);
+    return chartData.map((d, i) => ({
+      ...d,
+      gsRatio: ratioByDate.get(d.date) ?? null,
+      _volNorm: maxVol > 0 ? (d.volume ?? 0) / maxVol : 0,
+      _volUp: i === 0 ? true : d.price >= chartData[i - 1].price,
+    }));
+  }, [chartData, ratioByDate]);
+  const gsAvail = useMemo(() => goldSilverRatioAvailability({
+    pending: ratioQuery.isPending,
+    loadError: ratioQuery.data?.loadError ?? null,
+    unavailableReason: ratioQuery.data?.unavailableReason ?? null,
+    source: ratioQuery.data?.source ?? null,
+    windowDates: chartData.map(d => d.date),
+    ratioDates: ratioQuery.data?.points?.map(p => p.date) ?? [],
+  }), [ratioQuery.isPending, ratioQuery.data, chartData]);
+  const showGsLine = showGsRatio && (gsAvail.availability === "ready" || gsAvail.availability === "partial");
+  const gsHint = (gsAvail.availability === "loading" || gsAvail.availability === "partial") && !showGsRatio
+    ? null
+    : gsAvail.hint;
+  const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
+  const qeQt = useMemo(() => goldQeQtView(
+    rangeTech.points.map(p => ({ date: p.date, price: p.price, walcl: p.walcl })),
+    chartData.map(d => d.date),
+  ), [rangeTech, chartData]);
+
+  // #208 Server-Signale (technicalSignals). Marker nur, wenn das Server-Signal
+  // verfuegbar ist UND echtes Volumen im Chart liegt — sonst N/A-Hinweis.
+  const serverSig = (id: string) => data.technicalSignals?.find(s => s.id === id) ?? null;
+  const sigSpike = serverSig("technical.volumeSpike");
+  const sigDiv = serverSig("technical.volumeDivergence");
+  const sigRsi = serverSig("technical.rsi");
+  const spikeOn = hasVolume && !!sigSpike?.available;
+  const divOn = hasVolume && !!sigDiv?.available;
+  const volMarkers = chartDataWithVol.filter(d => (spikeOn && d.volSpike) || (divOn && d.volDivergence));
+  const sigNote = (label: string, sig: typeof sigSpike, on: boolean) =>
+    on ? volumeLegendText(label, sig!.detail) : `${label}: N/A — ${!hasVolume ? "kein echtes Volumen" : sig ? volumeLegendText("", sig.detail).replace(/^: /, "") : "Server-Signal fehlt"}`;
+  const relRsi = describeRelativeRsi(tech.rsiPercentile, tech.rsiHistoryDays, sigRsi?.available ? sigRsi.z : null);
+
+  const visibleSignals = useMemo(() => {
+    if (!showSignals || chartData.length === 0) return [];
+    const startDate = chartData[0].date;
+    return rangeTech.signals.filter(s => s.date >= startDate);
+  }, [rangeTech.signals, chartData, showSignals]);
+
+  const toggleSet = <K,>(setter: React.Dispatch<React.SetStateAction<Set<K>>>, key: K) =>
+    setter(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+
+  const bc = tech.bullConditions;
+  const isBuySignal = bc.priceAboveMA200 && bc.ma50AboveMA200 && bc.macdAboveZero && bc.macdRising;
 
   const yDomain = useMemo(() => {
-    if (chartData.length === 0) return [0, 100];
-    const prices = chartData.map(d => d.close).filter(Boolean);
-    const ma200s = chartData.map(d => d.ma200).filter(Boolean) as number[];
-    const allValues = [...prices, ...ma200s];
-    const min = Math.min(...allValues);
-    const max = Math.max(...allValues);
-    const padding = (max - min) * 0.05;
-    return [Math.floor(min - padding), Math.ceil(max + padding)];
-  }, [chartData]);
+    let minVal = Infinity, maxVal = -Infinity;
+    for (const d of chartDataWithVol) {
+      if (d.price > 0) { minVal = Math.min(minVal, d.price); maxVal = Math.max(maxVal, d.price); }
+      for (const ma of MA_LINES) {
+        if (!visibleMAs.has(ma.key)) continue;
+        const v = d[ma.key];
+        if (v && v > 0) { minVal = Math.min(minVal, v); maxVal = Math.max(maxVal, v); }
+      }
+    }
+    if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) return [0, 5000] as [number, number];
+    const padding = (maxVal - minVal) * 0.05;
+    return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
+  }, [chartDataWithVol, visibleMAs]);
 
-  const real10yDomain = useMemo(() => {
-    const vals = chartData.map(d => d.real10y).filter((v): v is number => v != null);
-    if (vals.length === 0) return [0, 5] as [number, number];
+  const gsDomain = useMemo(() => {
+    const vals = chartDataWithVol.map(d => d.gsRatio).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 1] as [number, number];
     const min = Math.min(...vals);
     const max = Math.max(...vals);
-    const padding = Math.max((max - min) * 0.15, 0.2);
-    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
-  }, [chartData]);
+    const pad = Math.max((max - min) * 0.12, 1);
+    return [+(min - pad).toFixed(2), +(max + pad).toFixed(2)] as [number, number];
+  }, [chartDataWithVol]);
 
-  if (chartData.length === 0) {
+  const formatDate = (date: string) => {
+    const parts = date.split("-");
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") return `${parts[1]}/${parts[0].slice(2)}`;
+    return `${parts[1]}/${parts[2]}`;
+  };
+  const formatDateFull = (date: string) =>
+    new Date(date + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  const formatYAxis = (v: number) => (v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(0)}`);
+
+  // Cross-Banner wie BTC: letztes Cross der letzten 2 Jahre + drohendes Death Cross.
+  const crossInfo = useMemo(() => {
+    if (fullChart.length < 2) return null;
+    let lastCross: { type: "golden" | "death"; date: string } | null = null;
+    const lookback = Math.min(730, fullChart.length - 1);
+    for (let i = fullChart.length - 1; i >= fullChart.length - lookback; i--) {
+      const cur = fullChart[i], prev = fullChart[i - 1];
+      if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
+        if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) { lastCross = { type: "golden", date: cur.date }; break; }
+        if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) { lastCross = { type: "death", date: cur.date }; break; }
+      }
+    }
+    const latest = fullChart[fullChart.length - 1];
+    const prev30 = fullChart.length > 30 ? fullChart[fullChart.length - 31] : null;
+    if (latest?.ma50 && latest?.ma200 && prev30?.ma50 && prev30?.ma200) {
+      const gap = latest.ma50 - latest.ma200;
+      const gapPrev = prev30.ma50 - prev30.ma200;
+      const gapPct = (gap / latest.ma200) * 100;
+      const isConverging = gap > 0 && gap < gapPrev;
+      const priceBelowBoth = latest.price < latest.ma50 && latest.price < latest.ma200;
+      if (priceBelowBoth && isConverging && gapPct < 25) {
+        return { type: "imminent_death" as const, date: lastCross?.date || "", lastCross, gapPct };
+      }
+    }
+    return lastCross ? { ...lastCross, lastCross, gapPct: undefined } : null;
+  }, [fullChart]);
+
+  // Mobile: höchstens eine volle rechte Achse (BTC-Regel), Rest im Tooltip.
+  const primaryMacro = narrow ? activeMacro[0]?.key ?? null : null;
+  const macroAxisHidden = (key: MacroKey) => narrow && primaryMacro !== key;
+  const gsAxisWidth = showGsLine ? GS_RATIO_AXIS_WIDTH : 0;
+  const visibleRightWidth = (primaryMacro ? MACRO.find(m => m.key === primaryMacro)!.width : 0) + (narrow ? gsAxisWidth : 0);
+  const desktopRightAxes = (narrow ? 0 : activeMacro.reduce((s, m) => s + m.width, 0)) + gsAxisWidth;
+  const plotMinWidth = narrow ? taChartMinWidth(55, visibleRightWidth, 8) : taChartMinWidth(55, desktopRightAxes, 106);
+  const hiddenMacroSeries = narrow ? activeMacro.filter(m => m.key !== primaryMacro) : [];
+  const priceMargin = narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 106, left: 0, bottom: 5 };
+  const xTick = axisTick(narrow, 9, "var(--muted-foreground)");
+  const xInterval = xAxisIntervalProps(narrow, Math.floor(chartData.length / 8));
+  const chipCls = "inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px]";
+
+  const historyLoadError = historyQuery.data?.loadError ?? null;
+  const priceLoadError = data.fallbackReason ?? null;
+
+  if (fullChart.length === 0) {
+    const pendingHistory = longRange && historyQuery.isFetching && !historyQuery.data;
+    const loadError = priceLoadError || historyLoadError;
     return (
-      <div className="bg-card border border-card-border rounded-lg p-4">
-        <div className="text-sm text-muted-foreground text-center">Keine Preisdaten verfügbar</div>
-      </div>
+      <SectionCard number={2} title="Gold-Preis-Chart" subtitle="Technische Analyse">
+        {pendingHistory ? (
+          <div className="text-xs text-muted-foreground text-center py-8">Lade volle Historie …</div>
+        ) : loadError ? (
+          <div className="px-3 py-6">
+            <GoldChartLoadNotice
+              reason={loadError}
+              onRetry={() => {
+                if (historyLoadError) void historyQuery.refetch();
+                if (priceLoadError) onRetryPrices?.();
+              }}
+            />
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground text-center py-8" data-testid="gold-chart-empty">Keine Preisdaten verfügbar</div>
+        )}
+      </SectionCard>
     );
   }
 
+  const usd = (v: number | null) => (v != null ? `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "");
+
   return (
-    <div className="bg-card border border-card-border rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-border">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-7 h-7 rounded-md bg-amber-500/10 text-amber-500 text-xs font-bold tabular-nums">2</span>
-          <h2 className="text-sm font-semibold text-foreground tracking-tight">Gold-Preis-Chart</h2>
-          <div className="ml-auto flex gap-1 items-center">
-            {(["3M", "6M", "1Y", "3Y", "5Y", "ALL"] as TimeRange[]).map(r => (
-              <button
-                key={r}
-                onClick={() => {
-                  setTimeRange(r);
-                  // Points außerhalb der neuen Domain vermeiden (analog robustes Chart-Verhalten)
-                  setMeasurePoints([]);
-                }}
-                className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                  timeRange === r
-                    ? "bg-amber-500/20 text-amber-500 border border-amber-500/30"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                {r}
-              </button>
-            ))}
-            {hasReal10y && (
-              <>
-                <div className="w-px h-4 bg-border mx-1" />
-                <button
-                  onClick={() => setShowReal10y(v => !v)}
-                  className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                    showReal10y
-                      ? "bg-sky-500/20 text-sky-500 border border-sky-500/30"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                  }`}
-                  title="Realzins (DFII10) als zweite Achse ein-/ausblenden"
-                  data-testid="toggle-real10y"
-                >
-                  Real10Y
-                </button>
-              </>
-            )}
-            <div className="w-px h-4 bg-border mx-1" />
-            <button
-              onClick={() => { setMeasureMode(!measureMode); setMeasurePoints([]); }}
-              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                measureMode
-                  ? "bg-amber-500/20 text-amber-500 border border-amber-500/30"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-              data-testid="toggle-measure-gold"
-            >
-              <Ruler className="w-2.5 h-2.5" />
-              Messen
-            </button>
-          </div>
-        </div>
+    <SectionCard number={2} title="Gold-Preis-Chart" subtitle="Technische Analyse">
+      <div data-testid="gold-ta">
+      {/* Status bar — 4 pills (BTC-Komponente) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4" data-testid="gold-ta-pills">
+        <TaStatusPill label="Kurs > MA200" value={bc.priceAboveMA200} detail={tech.currentMA200 ? `MA200: ${usd(tech.currentMA200)}` : ""} />
+        <TaStatusPill label="MA50 > MA200" value={bc.ma50AboveMA200} detail={tech.currentMA50 ? `MA50: ${usd(tech.currentMA50)}` : ""} />
+        <TaStatusPill label="MACD > 0" value={bc.macdAboveZero} detail={tech.currentMACD !== null ? `MACD: ${tech.currentMACD.toFixed(2)}` : ""} />
+        <TaStatusPill label="MACD steigend" value={bc.macdRising} detail={tech.currentSignal !== null ? `Signal: ${tech.currentSignal.toFixed(2)}` : ""} />
       </div>
-      <div className="px-4 pb-4 pt-3">
-        {/* Measurement instructions / result */}
-        {measureMode && (
-          <div className={`rounded-lg p-2.5 mb-3 border text-[10px] flex items-center justify-between ${
-            measurement
-              ? measurement.isGain ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"
-              : "bg-amber-500/10 border-amber-500/30"
-          }`}>
-            <div className="flex items-center gap-2">
-              <Ruler className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              {!measurement ? (
-                <span className="text-muted-foreground">
-                  {measurePoints.length === 0
-                    ? "Klicke auf den Chart um Punkt A zu setzen"
-                    : "Klicke auf den Chart um Punkt B zu setzen"}
-                  {measurePoints.length === 1 && (
-                    <span className="ml-1.5 font-mono text-foreground">
-                      A: {formatDateFull(measurePoints[0].date)} — ${measurePoints[0].close.toFixed(2)}
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-mono text-muted-foreground">
-                    {formatDateFull(measurement.a.date)} → {formatDateFull(measurement.b.date)}
-                  </span>
-                  <span className={`font-bold font-mono text-sm ${
-                    measurement.isGain ? "text-emerald-500" : "text-red-500"
-                  }`}>
-                    {measurement.isGain ? "+" : ""}{measurement.diff.toFixed(2)} ({measurement.isGain ? "+" : ""}{measurement.pct.toFixed(2)}%)
-                    {measurement.isGain ? " ↑" : " ↓"}
-                  </span>
-                  <span className="text-muted-foreground font-mono">
-                    ${measurement.a.close.toFixed(2)} → ${measurement.b.close.toFixed(2)}
-                  </span>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => { setMeasurePoints([]); setMeasureMode(false); }}
-              className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground shrink-0"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+
+      {/* Buy/Sell verdict */}
+      <div className={`rounded-lg p-3 mb-4 border ${isBuySignal ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"}`} data-testid="gold-ta-verdict">
+        <div className="flex items-center gap-2">
+          {isBuySignal ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertTriangle className="w-4 h-4 text-amber-500" />}
+          <span className="text-xs font-semibold">
+            {isBuySignal
+              ? "BUY-Bedingungen erfüllt: Kurs > MA200 AND MA50 > MA200 AND MACD > 0 + steigend"
+              : "KEIN Kaufsignal – nicht alle Bedingungen erfüllt"}
+          </span>
+        </div>
+        {!isBuySignal && (
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            Fehlend: {[
+              !bc.priceAboveMA200 && "Kurs < MA200",
+              !bc.ma50AboveMA200 && "MA50 < MA200",
+              !bc.macdAboveZero && "MACD < 0",
+              !bc.macdRising && "MACD fallend",
+            ].filter(Boolean).join(" | ")}
           </div>
         )}
+        {!bc.priceAboveMA200 && (
+          <div className="mt-1 text-[10px] text-red-400 font-medium">
+            ⚠ MA200-Break-Warnung: Historischer Max-Drawdown zzgl. 15-20% (defensiv) bzw. 35-50% (Beta &gt;1.5) einkalkulieren
+          </div>
+        )}
+      </div>
 
-        <div className={`h-64 sm:h-80 w-full ${measureMode ? "cursor-crosshair" : ""}`}>
+      {/* Golden / Death / drohendes Death Cross */}
+      {crossInfo && (() => {
+        if (crossInfo.type === "imminent_death") {
+          const gapStr = crossInfo.gapPct !== undefined ? crossInfo.gapPct.toFixed(1) : "?";
+          const lastCrossDate = crossInfo.lastCross?.date ? formatDateFull(crossInfo.lastCross.date) : null;
+          return (
+            <div className="rounded-lg p-3 mb-3 border flex items-center gap-3 bg-red-500/10 border-red-500/30" data-testid="gold-cross-banner">
+              <div className="text-2xl font-bold text-red-500 animate-pulse">⚠</div>
+              <div>
+                <div className="text-sm font-bold text-red-500">
+                  DROHENDES DEATH CROSS
+                  <span className="text-xs font-normal text-muted-foreground ml-1.5">(MA50/MA200-Abstand: {gapStr}% — konvergierend)</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  MA50 fällt Richtung MA200 — Kurs unter beiden MAs. Bei Kreuzung = Death Cross (bärisches Struktursignal).
+                  {lastCrossDate && crossInfo.lastCross?.type === "golden" ? ` Letztes Golden Cross am ${lastCrossDate} wird zunehmend neutralisiert.` : ""}
+                </div>
+              </div>
+            </div>
+          );
+        }
+        const isGolden = crossInfo.type === "golden";
+        const crossDateObj = new Date(crossInfo.date + "T00:00:00");
+        const dateStr = formatDateFull(crossInfo.date);
+        const daysAgo = Math.round((Date.now() - crossDateObj.getTime()) / (1000 * 60 * 60 * 24));
+        const isRecent = daysAgo <= 60;
+        return (
+          <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${isGolden ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"}`} data-testid="gold-cross-banner">
+            <div className={`text-2xl font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>{isGolden ? "\u2726" : "\u2715"}</div>
+            <div>
+              <div className={`text-sm font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"}
+                <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                  ({dateStr}{isRecent ? " — kürzlich" : ` — vor ${daysAgo} Tagen`})
+                </span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {isGolden
+                  ? `MA50 kreuzte MA200 von unten nach oben am ${dateStr} — bullisches Trendsignal.${!isRecent ? ` Strukturelles Signal aktiv seit ${daysAgo} Tagen.` : ""}`
+                  : `MA50 kreuzte MA200 von oben nach unten am ${dateStr} — bärisches Trendsignal.${!isRecent ? ` Struktureller Abwärtstrend seit ${daysAgo} Tagen.` : ""}`}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Controls — Preset → MAs → Signale/Volumen */}
+      <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="gold-presets">
+          {GOLD_PRESETS.map(r => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => { setTimeRange(r); setMeasureStart(null); setMeasureEnd(null); }}
+              className={`min-h-9 shrink-0 rounded-md border border-border px-2.5 text-[11px] font-medium transition-colors sm:min-h-0 sm:rounded-none sm:border-0 sm:py-1 sm:text-[10px] ${
+                timeRange === r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
+              }`}
+              data-testid={`button-gold-range-${r}`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+        {historyLoadError && (
+          <div className="w-full basis-full">
+            <GoldChartLoadNotice lead="Lange Historie nicht geladen — vorhandene Kurse bleiben sichtbar" reason={historyLoadError} onRetry={() => void historyQuery.refetch()} />
+          </div>
+        )}
+        {longRange && !historyLoadError && (
+          <div className="w-full basis-full text-[10px] text-muted-foreground" data-testid="gold-range-note">
+            {historyQuery.isLoading
+              ? "Lade volle Historie …"
+              : rangeNote}
+            {longRange && longTech && historyQuery.data?.incomplete && (
+              <span className="ml-1 font-medium text-amber-400" data-testid="gold-range-incomplete" title={historyQuery.data.incompleteReason ?? undefined}>
+                · unvollständig{historyQuery.data.incompleteReason ? ` (${historyQuery.data.incompleteReason})` : ""}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
+          {MA_LINES.map(ma => (
+            <button
+              key={ma.key}
+              onClick={() => toggleSet(setVisibleMAs, ma.key)}
+              className={`${chipCls} font-mono ${visibleMAs.has(ma.key) ? "border-current opacity-100" : "border-border opacity-40 hover:opacity-60"}`}
+              style={{ color: ma.color }}
+              data-testid={ma.key === "ma50" ? "gold-ma50-legend" : undefined}
+            >
+              {visibleMAs.has(ma.key) ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              {ma.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:contents">
+          <button
+            onClick={() => setShowSignals(!showSignals)}
+            className={`${chipCls} ${showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"}`}
+          >
+            {showSignals ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+            Signale
+          </button>
+          <button
+            onClick={() => setShowVolume(!showVolume)}
+            disabled={!hasVolume}
+            title={hasVolume ? "Volumen ein-/ausblenden" : "Kein echtes Volumen von der Preisquelle (FMP GCUSD) — nicht erfunden"}
+            className={`${chipCls} ${showVolume && hasVolume ? "border-sky-500 text-sky-400" : "border-border text-muted-foreground opacity-50"}`}
+            data-testid="toggle-gold-volume"
+          >
+            {showVolume && hasVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+            Volumen{hasVolume ? "" : " (N/A)"}
+          </button>
+        </div>
+      </div>
+
+      {/* Makro-Overlays (nur Serien mit echten FRED-Werten) + Messen */}
+      <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1">
+        {(MACRO.some(m => hasMacro[m.key]) || macroNa.length > 0) && (
+          <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+            <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Makro:</span>
+            {MACRO.filter(m => hasMacro[m.key]).map(m => {
+              const on = visibleMacro.has(m.key);
+              return (
+                <button
+                  key={m.key}
+                  onClick={() => toggleSet(setVisibleMacro, m.key)}
+                  className={`${chipCls} font-mono ${on ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
+                  style={on ? { color: m.color } : undefined}
+                  title={`${m.title} ein-/ausblenden`}
+                  data-testid={`toggle-gold-${m.key.toLowerCase()}`}
+                >
+                  {on ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                  {m.label}
+                </button>
+              );
+            })}
+            {macroNa.map(m => (
+              <span
+                key={`na-${m.key}`}
+                className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+                title={`${m.title}: keine Werte im gewählten Zeitraum`}
+                data-testid={`gold-macro-na-${m.key.toLowerCase()}`}
+              >
+                {m.label} n/a
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          {gsAvail.availability === "missing" || gsAvail.availability === "window-miss" ? (
+            <span
+              className={`${chipCls} cursor-default border-dashed border-border font-mono text-muted-foreground opacity-70`}
+              title={gsAvail.hint ?? undefined}
+              data-testid="gold-silver-ratio-na"
+            >
+              Gold/Silber-Ratio n/a
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowGsRatio(v => !v)}
+              className={`${chipCls} font-mono ${showGsRatio ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
+              style={showGsRatio ? { color: GS_RATIO_COLOR } : undefined}
+              title={ratioQuery.data?.source ? `Gold/Silber-Ratio (${ratioQuery.data.source}) ein-/ausblenden` : "Gold/Silber-Ratio ein-/ausblenden"}
+              data-testid="toggle-gold-silver-ratio"
+              aria-pressed={showGsRatio}
+            >
+              {showGsRatio ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              Gold/Silber-Ratio
+            </button>
+          )}
+        </div>
+        {gsHint && (
+          <div className="w-full basis-full text-[10px] text-amber-200/90" data-testid="gold-silver-ratio-note" role="status">
+            {gsHint}
+          </div>
+        )}
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Minen:</span>
+          <button
+            type="button"
+            className={`${chipCls} border-border text-muted-foreground hover:text-foreground`}
+            data-testid="gold-aisc-link-s9"
+            title="AISC liegt nicht mehr auf dieser Preisachse."
+            onClick={() => document.getElementById("gold-miner-breakeven")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          >
+            Minen-AISC → Abschnitt 9 Miner-Breakeven
+          </button>
+        </div>
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Bilanz:</span>
+          {qeQt.unavailableReason ? (
+            <span className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`} title={qeQt.unavailableReason} data-testid="gold-qe-qt-na">QE/QT n/a</span>
+          ) : (
+            <button
+              onClick={() => setShowQeQt(v => !v)}
+              className={`${chipCls} font-mono ${showQeQt ? "border-emerald-500 text-emerald-400" : "border-border text-muted-foreground opacity-50"}`}
+              title="Hintergrund nach dem Perzentil der eigenen 91-Tage-WALCL-Änderung. Grün Ausweitung, rot Abbau, grau dazwischen. Kein Gate, kein GIS."
+              data-testid="toggle-gold-qe-qt"
+            >
+              {showQeQt ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              QE/QT-Bänder
+            </button>
+          )}
+          {qeQt.ratios.length === 0 ? (
+            <span className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`} title={qeQt.ratioReason ?? "n/a"} data-testid="gold-walcl-ratio-na">Gold/WALCL n/a</span>
+          ) : (
+            <button
+              onClick={() => setShowGoldWalcl(v => !v)}
+              className={`${chipCls} font-mono ${showGoldWalcl ? "border-slate-300 text-slate-200" : "border-border text-muted-foreground opacity-50"}`}
+              title="Unterchart Goldkurs geteilt durch die Fed-Bilanz (WALCL). Kein Score."
+              data-testid="toggle-gold-walcl-ratio"
+            >
+              {showGoldWalcl ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              Gold/WALCL
+            </button>
+          )}
+        </div>
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <button
+            onClick={() => { setIsMeasuring(!isMeasuring); setMeasureStart(null); setMeasureEnd(null); }}
+            className={`${chipCls} ${isMeasuring ? "border-amber-500 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground opacity-60 hover:opacity-80"}`}
+            data-testid="toggle-measure-gold"
+          >
+            📐 Messen
+          </button>
+          {measureStart && measureEnd && (
+            <button
+              onClick={() => { setMeasureStart(null); setMeasureEnd(null); }}
+              className={`${chipCls} border-border text-muted-foreground opacity-60 hover:opacity-80`}
+            >
+              ✕ Zurücksetzen
+            </button>
+          )}
+        </div>
+      </div>
+
+      {measureStart && measureEnd && (() => {
+        const priceDiff = measureEnd.price - measureStart.price;
+        const pctChange = (priceDiff / measureStart.price) * 100;
+        const isGain = priceDiff >= 0;
+        return (
+          <div className={`rounded-lg px-3 py-2 mb-2 border flex items-center gap-3 text-xs ${isGain ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"}`}>
+            <div className="text-[10px] text-muted-foreground">{formatDateFull(measureStart.date)} → {formatDateFull(measureEnd.date)}</div>
+            <div className={`font-bold font-mono tabular-nums ${isGain ? "text-emerald-500" : "text-red-500"}`}>
+              {isGain ? "+" : ""}{pctChange.toFixed(2)}% {isGain ? "↑" : "↓"}
+            </div>
+            <div className={`font-mono tabular-nums text-[10px] ${isGain ? "text-emerald-400" : "text-red-400"}`}>
+              ({isGain ? "+" : "-"}${Math.abs(priceDiff).toLocaleString("en-US", { maximumFractionDigits: 2 })})
+            </div>
+            <div className="text-[9px] text-muted-foreground ml-auto">
+              A: ${measureStart.price.toLocaleString("en-US", { maximumFractionDigits: 2 })} → B: ${measureEnd.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+            </div>
+          </div>
+        );
+      })()}
+
+      <TaPlotScroll minWidth={plotMinWidth} testId="gold-ta-plot-scroll">
+        <div className={`h-[380px] sm:h-[420px] md:h-[460px] w-full shrink-0 ${isMeasuring ? "cursor-crosshair" : ""}`}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={handleChartClick}>
-              <defs>
-                <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="date"
-                tickFormatter={(d: string) => {
-                  const date = new Date(d);
-                  return date.toLocaleDateString("de-DE", { month: "short", year: "2-digit" });
-                }}
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                interval="preserveStartEnd"
-                minTickGap={50}
-              />
+            <ComposedChart
+              data={chartDataWithVol}
+              margin={priceMargin}
+              onClick={(e: any) => {
+                if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
+                const point = e.activePayload[0].payload as GoldTechPoint;
+                const clicked = { date: point.date, price: point.price };
+                if (!measureStart || (measureStart && measureEnd)) { setMeasureStart(clicked); setMeasureEnd(null); }
+                else setMeasureEnd(clicked);
+              }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+              <XAxis dataKey="date" tickFormatter={formatDate} tick={xTick} {...xInterval} axisLine={{ stroke: "var(--border)" }} />
               <YAxis
-                yAxisId="left"
                 domain={yDomain}
-                tickFormatter={(v: number) => `$${v.toLocaleString()}`}
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                width={60}
+                tick={xTick}
+                tickFormatter={formatYAxis}
+                width={55}
+                axisLine={{ stroke: "var(--border)" }}
+                {...(narrow ? { ticks: narrowPriceTicks(yDomain[0], yDomain[1], 5) } : {})}
               />
-              {showReal10y && hasReal10y && (
+              <YAxis yAxisId="vol" hide domain={[0, 1]} orientation="right" />
+              {activeMacro.map(m => (
                 <YAxis
-                  yAxisId="right"
+                  key={`ax-${m.key}`}
+                  yAxisId={m.key}
                   orientation="right"
-                  domain={real10yDomain}
-                  tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                  width={44}
+                  domain={macroDomain[m.key]}
+                  hide={macroAxisHidden(m.key)}
+                  tickFormatter={(v: number) => (m.key === "walcl" ? `$${v.toFixed(1)}T` : m.key === "dxy" ? v.toFixed(0) : `${v.toFixed(1)}%`)}
+                  tick={macroAxisHidden(m.key) ? false : { fontSize: narrow ? 10 : 9, fill: m.color }}
+                  width={macroAxisHidden(m.key) ? 0 : m.width}
+                  axisLine={macroAxisHidden(m.key) ? false : { stroke: m.color }}
+                  tickLine={false}
+                  {...(narrow ? { tickCount: 4 } : {})}
+                />
+              ))}
+              {showGsLine && (
+                <YAxis
+                  yAxisId="gsRatio"
+                  orientation="right"
+                  domain={gsDomain}
+                  tickFormatter={(v: number) => v.toFixed(0)}
+                  tick={{ fontSize: narrow ? 10 : 9, fill: GS_RATIO_COLOR }}
+                  width={GS_RATIO_AXIS_WIDTH}
+                  axisLine={{ stroke: GS_RATIO_COLOR }}
+                  tickLine={false}
+                  {...(narrow ? { tickCount: 4 } : {})}
                 />
               )}
               <Tooltip
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "6px",
-                  fontSize: "11px",
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const pt = chartDataWithVol.find(d => d.date === label);
+                  return (
+                    <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                      <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
+                      {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => {
+                        const macro = MACRO.find(m => m.key === p.dataKey);
+                        const text = p.dataKey === "gsRatio"
+                          ? Number(p.value).toFixed(1)
+                          : macro
+                            ? fmtMacro(macro.key, Number(p.value))
+                            : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+                        return (
+                          <div key={p.dataKey} className="flex justify-between gap-3">
+                            <span style={{ color: p.color }}>{p.name}</span>
+                            <span className="font-mono tabular-nums">
+                              {text}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {payload.some((p: any) => p.dataKey === "gsRatio") && ratioQuery.data?.source && (
+                        <div className="mt-1 border-t border-border pt-1 text-muted-foreground" data-testid="gold-silver-ratio-tooltip-source">
+                          Quelle {ratioQuery.data.source}
+                        </div>
+                      )}
+                      {(pt?.volume ?? 0) > 0 && (
+                        <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(pt!.volume ?? 0).toLocaleString("en-US")}</span></div>
+                      )}
+                      {pt?.cross && (
+                        <div className={`mt-1 pt-1 border-t border-border ${pt.cross === "golden" ? "text-emerald-400" : "text-red-400"}`}>
+                          {pt.cross === "golden" ? "✦ Golden Cross" : "✕ Death Cross"}
+                        </div>
+                      )}
+                      {visibleSignals.filter(s => s.date === label).map((s, i) => (
+                        <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
+                          {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
+                        </div>
+                      ))}
+                    </div>
+                  );
                 }}
-                labelFormatter={(d: string) => new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
-                formatter={(value: number, name: string) => {
-                  if (name === "real10y") return [`${value.toFixed(2)}%`, "Real10Y (DFII10)"];
-                  const label = name === "close" ? "Gold" : "200-DMA";
-                  return [`$${value.toFixed(2)}`, label];
-                }}
               />
-              {/* Fair Value reference */}
-              <ReferenceLine
-                yAxisId="left"
-                y={data.fairValue.fvAdj}
-                stroke="#a855f7"
-                strokeDasharray="5 5"
-                strokeOpacity={0.5}
-              />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="close"
-                fill="url(#goldGradient)"
-                stroke="none"
-              />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="close"
-                stroke="#f59e0b"
-                strokeWidth={1.5}
-                dot={false}
-                name="close"
-              />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="ma200"
-                stroke="#ef4444"
-                strokeWidth={1}
-                strokeDasharray="4 2"
-                dot={false}
-                name="ma200"
-                connectNulls
-              />
-              {showReal10y && hasReal10y && (
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="real10y"
-                  stroke="#38bdf8"
-                  strokeWidth={1.25}
-                  dot={false}
-                  name="real10y"
-                  connectNulls
+
+              {/* Fair Value (bestehend) */}
+              <ReferenceLine y={data.fairValue.fvAdj} stroke="#a855f7" strokeDasharray="5 5" strokeOpacity={0.5} ifOverflow="hidden" />
+
+              {showQeQt && qeQt.bands.map(b => (
+                <ReferenceArea
+                  key={`qe-${b.x1}-${b.regime}`}
+                  x1={b.x1}
+                  x2={b.x2}
+                  fill={QE_FILL[b.regime]}
+                  fillOpacity={b.regime === "neutral" ? 0.05 : 0.14}
+                  stroke="none"
+                  ifOverflow="hidden"
+                />
+              ))}
+
+              {showVolume && hasVolume && !narrow && (
+                <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
+                  shape={(props: any) => {
+                    const { x, y, width, height, payload } = props;
+                    const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
+                    return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
+                  }}
                 />
               )}
 
-              {/* Measurement overlay — yAxisId="left" Pflicht bei dualer Achse
-                  (ohne yAxisId crasht Recharts → Blank-Screen nach Punkt A).
-                  Analog TechnicalChart.tsx yAxisId="price". */}
-              {measurePoints.length >= 1 && (
-                <ReferenceLine
-                  yAxisId="left"
-                  x={measurePoints[0].date}
-                  stroke="#f59e0b"
-                  strokeDasharray="4 3"
+              {/* Volumen-Spike/-Divergenz-Marker als Grundlinie im Volumenband (Desktop), nicht auf dem Kurs. */}
+              {showVolume && !narrow && volMarkers.map(d => (
+                <ReferenceDot
+                  key={`vm-${d.date}`}
+                  yAxisId="vol"
+                  x={d.date}
+                  y={0.02}
+                  r={3}
+                  fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"}
+                  stroke="#0a0a0a"
+                  strokeWidth={0.5}
+                  ifOverflow="discard"
+                />
+              ))}
+
+              <Line type="monotone" dataKey="price" name="Gold Kurs" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+
+              {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
+                <Line
+                  key={ma.key}
+                  type="monotone"
+                  dataKey={ma.key}
+                  name={ma.label}
+                  stroke={ma.color}
                   strokeWidth={1.5}
-                  label={{ value: "A", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }}
+                  dot={false}
+                  strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              ))}
+
+              {activeMacro.map(m => (
+                <Line
+                  key={m.key}
+                  yAxisId={m.key}
+                  type={m.step ? "stepAfter" : "monotone"}
+                  dataKey={m.key}
+                  name={m.name}
+                  stroke={m.color}
+                  strokeWidth={1.25}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              ))}
+
+              {showGsLine && (
+                <Line
+                  yAxisId="gsRatio"
+                  type="monotone"
+                  dataKey="gsRatio"
+                  name="Gold/Silber-Ratio"
+                  stroke={GS_RATIO_COLOR}
+                  strokeWidth={1.25}
+                  dot={false}
+                  connectNulls={false}
+                  isAnimationActive={false}
                 />
               )}
-              {measurement && (
-                <>
-                  <ReferenceArea
-                    yAxisId="left"
-                    x1={measurement.a.date}
-                    x2={measurement.b.date}
-                    fill={measurement.isGain ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)"}
-                    stroke={measurement.isGain ? "#10b981" : "#ef4444"}
-                    strokeDasharray="4 3"
-                    strokeWidth={1}
-                  />
-                  <ReferenceLine
-                    yAxisId="left"
-                    x={measurement.b.date}
-                    stroke="#f59e0b"
-                    strokeDasharray="4 3"
-                    strokeWidth={1.5}
-                    label={{ value: "B", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }}
-                  />
-                </>
+
+              {/* #201 Golden/Death-Marker auf der 50-DMA (nicht auf dem Kurs). */}
+              {visibleMAs.has("ma50") && chartDataWithVol.filter(p => p.cross && p.ma50 != null).map(p => (
+                <ReferenceDot
+                  key={`${p.cross}-${p.date}`}
+                  x={p.date}
+                  y={p.ma50 as number}
+                  r={4}
+                  fill={p.cross === "golden" ? "#10b981" : "#ef4444"}
+                  stroke="#0a0a0a"
+                  strokeWidth={1}
+                  ifOverflow="discard"
+                  label={{ value: p.cross === "golden" ? "GC" : "DC", position: "top", fontSize: 8, fill: p.cross === "golden" ? "#10b981" : "#ef4444", fontWeight: 700 }}
+                />
+              ))}
+
+              {/* Signale als senkrechte Linien — keine Punkte auf dem Kurs (BTC-Mobile-Regel). */}
+              {showSignals && visibleSignals.map((s, i) => (
+                <Fragment key={`sig-${i}`}>
+                  <ReferenceLine x={s.date} stroke={s.type === "BUY" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
+                </Fragment>
+              ))}
+
+              {measureStart && <ReferenceLine x={measureStart.date} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" />}
+              {measureEnd && <ReferenceLine x={measureEnd.date} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" />}
+              {measureStart && measureEnd && (
+                <ReferenceArea
+                  x1={measureStart.date < measureEnd.date ? measureStart.date : measureEnd.date}
+                  x2={measureStart.date < measureEnd.date ? measureEnd.date : measureStart.date}
+                  fill="#f59e0b" fillOpacity={0.08} stroke="#f59e0b" strokeOpacity={0.3} strokeDasharray="3 3"
+                />
               )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        {/* Legend */}
-        <div className="flex items-center justify-center gap-4 mt-2 text-[10px] text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-0.5 bg-amber-500 rounded-full" /> Gold
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-0.5 bg-red-500 rounded-full border-dashed" style={{ borderTop: "1px dashed #ef4444" }} /> 200-DMA
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-0.5 bg-purple-500 rounded-full border-dashed" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value
-          </span>
-          {showReal10y && hasReal10y && (
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-sky-400 rounded-full" /> Real10Y (DFII10, %, rechte Achse)
-            </span>
-          )}
+        {narrow && showVolume && hasVolume && (
+          <TaVolumeBand data={chartDataWithVol} leftAxisWidth={55} rightAxisWidth={visibleRightWidth} marginRight={8} />
+        )}
+        {narrow && showVolume && volMarkers.length > 0 && (
+          <div className="h-[14px] w-full" data-testid="gold-vol-marker-strip">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartDataWithVol} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="date" hide />
+                <YAxis width={55} tick={false} axisLine={false} tickLine={false} domain={[0, 1]} />
+                {visibleRightWidth > 0 && <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />}
+                {volMarkers.map(d => (
+                  <ReferenceDot key={`vmm-${d.date}`} x={d.date} y={0.5} r={2.5} fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"} stroke="none" ifOverflow="discard" />
+                ))}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        {showVolume && (
+          <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground" style={narrow ? { maxWidth: "calc(100vw - 3rem)" } : undefined} data-testid="gold-vol-signals">
+            <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: spikeOn ? "#f59e0b" : "transparent", border: "1px solid #f59e0b" }} />{sigNote("Volumen-Spike (>1,5× Ø20T)", sigSpike, spikeOn)}</span>
+            <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: divOn ? "#c084fc" : "transparent", border: "1px solid #c084fc" }} />{sigNote("Volumen-Divergenz", sigDiv, divOn)}</span>
+          </div>
+        )}
+        {hiddenMacroSeries.length > 0 && (
+          <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="gold-macro-axis-note">
+            <span>Ohne eigene Achse — Wert im Tooltip:</span>
+            {hiddenMacroSeries.map(series => (
+              <span key={series.key} className="inline-flex items-center gap-1 font-medium" style={{ color: series.color }}>
+                <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: series.color }} />
+                {series.label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* MACD(12,26,9) */}
+        <div className="mb-1 mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:flex-nowrap">
+          MACD(12,26,9)
+          <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
         </div>
+        <div className="h-[160px] min-h-10 w-full shrink-0 sm:h-[180px]" style={{ minHeight: TA_OSC_MIN_PX }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartDataWithVol} margin={narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+              <XAxis dataKey="date" tickFormatter={formatDate} tick={xTick} {...xInterval} axisLine={{ stroke: "var(--border)" }} />
+              <YAxis tick={xTick} width={55} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(0)} {...(narrow ? { tickCount: 5 } : {})} />
+              {narrow && visibleRightWidth > 0 && (
+                <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+              )}
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  return (
+                    <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                      <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
+                      {payload.map((p: any) => (
+                        <div key={p.dataKey} className="flex justify-between gap-3">
+                          <span style={{ color: p.color }}>{p.name}</span>
+                          <span className="font-mono tabular-nums">{Number(p.value).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={0.5} />
+              <Bar
+                dataKey="histogram"
+                name="Histogram"
+                isAnimationActive={false}
+                shape={(props: any) => {
+                  const { x, y, width, height, payload } = props;
+                  const isPositive = (payload?.histogram ?? 0) >= 0;
+                  return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={isPositive ? "rgba(34, 197, 94, 0.5)" : "rgba(239, 68, 68, 0.5)"} />;
+                }}
+              />
+              <Line type="monotone" dataKey="macd" name="MACD" stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+              <Line type="monotone" dataKey="signal" name="Signal" stroke="#f97316" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* RSI(14) */}
+        <div className="mt-3 min-h-10 shrink-0" style={{ minHeight: TA_OSC_MIN_PX }}>
+          <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:flex-nowrap">
+            <span className="font-medium">RSI(14)</span>
+            <span className="opacity-60">= Relative Strength Index | Überkauft &gt; 70 | Überverkauft &lt; 30 | Wilder Smoothing</span>
+            {(() => {
+              const lastRSI = chartDataWithVol.length > 0 ? chartDataWithVol[chartDataWithVol.length - 1]?.rsi14 : null;
+              if (lastRSI === null || lastRSI === undefined) return null;
+              const color = lastRSI > 70 ? "text-red-400" : lastRSI < 30 ? "text-emerald-400" : "text-blue-400";
+              const label = lastRSI > 70 ? "Überkauft" : lastRSI < 30 ? "Überverkauft" : "Neutral";
+              return <span className={`ml-auto font-mono font-semibold ${color}`}>{lastRSI.toFixed(1)} — {label}</span>;
+            })()}
+            <span className="font-mono text-[10px] text-indigo-300" data-testid="gold-rsi-relative" title={relRsi.title}>
+              {relRsi.label}
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={130}>
+            <ComposedChart data={chartDataWithVol} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} ticks={[0, 30, 50, 70, 100]} tick={{ fontSize: narrow ? 10 : 9, fill: "rgba(255,255,255,0.4)" }} tickLine={false} axisLine={false} width={narrow ? 55 : 28} />
+              {narrow && visibleRightWidth > 0 && (
+                <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+              )}
+              <Tooltip
+                contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+                formatter={(value: number) => [value?.toFixed(1), "RSI(14)"]}
+                labelFormatter={(label) => label}
+              />
+              <ReferenceArea y1={70} y2={100} fill="rgba(239,68,68,0.08)" />
+              <ReferenceArea y1={0} y2={30} fill="rgba(34,197,94,0.08)" />
+              <ReferenceLine y={70} stroke="rgba(239,68,68,0.5)" strokeDasharray="3 2" strokeWidth={1} />
+              <ReferenceLine y={50} stroke="rgba(255,255,255,0.15)" strokeDasharray="2 3" strokeWidth={1} />
+              <ReferenceLine y={30} stroke="rgba(34,197,94,0.5)" strokeDasharray="3 2" strokeWidth={1} />
+              <Line type="monotone" dataKey="rsi14" stroke="#818cf8" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        {showGoldWalcl && qeQt.ratios.length > 0 && (
+          <div className="mt-3" data-testid="gold-walcl-ratio-chart">
+            <div className="mb-1 text-[10px] font-medium text-muted-foreground">Gold / WALCL · Unterchart · nur Anzeige, kein Gate</div>
+            <div className="h-[120px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={qeQt.ratios.filter(r => chartData.some(d => d.date === r.date))} margin={narrow ? { top: 4, right: 8, left: 0, bottom: 4 } : { top: 4, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+                  <XAxis dataKey="date" tickFormatter={formatDate} tick={xTick} {...xInterval} axisLine={{ stroke: "var(--border)" }} />
+                  <YAxis tick={xTick} width={55} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(0)} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+                    formatter={(value: number) => [Number(value).toFixed(1), "Gold/WALCL"]}
+                  />
+                  <Line type="monotone" dataKey="ratio" name="Gold/WALCL" stroke="#e2e8f0" strokeWidth={1.4} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </TaPlotScroll>
+
+      {/* Legende: Fair Value + #201-Cross-Marker */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1" data-testid="gold-cross-legend">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Golden
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> Death (auf MA50)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
+        </span>
+        {showGsLine && ratioQuery.data?.source && (
+          <span className="flex items-center gap-1" data-testid="gold-silver-ratio-legend">
+            <span className="w-3 h-0.5 rounded-full" style={{ background: GS_RATIO_COLOR }} />
+            Gold/Silber-Ratio · Quelle {ratioQuery.data.source}
+          </span>
+        )}
+        <span className="min-w-0 break-words" data-testid="gold-qe-qt-status">
+          {qeQt.unavailableReason
+            ? qeQt.unavailableReason
+            : `Bilanz ${qeQt.asOf ?? "n/a"}: ${qeQt.regime ? QE_LABEL[qeQt.regime] : "n/a"}${qeQt.changePercentile == null ? "" : ` · Perzentil ${qeQt.changePercentile.toFixed(0)} %`}${qeQt.ratio == null ? "" : ` · Gold/WALCL ${qeQt.ratio.toFixed(1)}`}${qeQt.ratioReason ? ` · ${qeQt.ratioReason}` : ""} · kein Gate`}
+        </span>
       </div>
-    </div>
+
+      {visibleSignals.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-medium text-muted-foreground mb-2">Letzte Signale ({visibleSignals.length} im Zeitraum)</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Datum</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Signal</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Grund</th>
+                  <th className="text-right py-1 font-medium text-muted-foreground">Kurs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSignals.slice(-10).reverse().map((s, i) => (
+                  <tr key={i} className="border-b border-border/50">
+                    <td className="py-1 pr-2 font-mono tabular-nums">{s.date}</td>
+                    <td className="py-1 pr-2">
+                      <span className={`inline-flex items-center gap-0.5 font-semibold ${s.type === "BUY" ? "text-green-500" : "text-red-500"}`}>
+                        {s.type === "BUY" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                        {s.type}
+                      </span>
+                    </td>
+                    <td className={`py-1 pr-2 ${s.reason.includes("Death") ? "font-bold text-red-500" : s.reason.includes("Golden Cross") ? "font-bold text-emerald-500" : s.reason.includes("Bearish") ? "text-red-500" : s.reason.includes("Bullish") ? "text-emerald-500" : ""}`}>
+                      {s.reason}
+                    </td>
+                    <td className="py-1 text-right font-mono tabular-nums">${s.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 p-2 rounded bg-muted/30 text-[9px] text-muted-foreground leading-relaxed">
+        <span className="font-semibold">Anti-Bias Protokoll:</span> Kauf nur wenn: Kurs &gt; MA200 AND MA50 &gt; MA200 AND MACD &gt; 0 + steigend.
+        Bei MA200-Break: historischen Max-Drawdown +15-20% (defensiv) bzw. +35-50% (Beta &gt;1.5) als Downside einplanen.
+        MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
+        Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
+        Gold/Silber-Ratio = Gold-Schluss geteilt durch Silber-Schluss am selben Tag (FMP GCUSD/SIUSD, sonst Yahoo GC=F/SI=F, dieselbe Quellwahl wie die Gold-Historie). Ohne gemeinsamen Tag keine Linie, nur der Hinweis.
+        10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
+        „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten. Die Minen-AISC steht in Abschnitt 9.
+      </div>
+      </div>
+    </SectionCard>
   );
 }

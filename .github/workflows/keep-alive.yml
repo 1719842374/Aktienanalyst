@@ -27,13 +27,24 @@ jobs:
     steps:
       - name: Ping Render /api/health
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 20 \
-            "${{ vars.RENDER_URL }}/api/health")
+          # bash -e (Actions default) aborts on curl exit 28 before HTTP 000
+          # can be treated as a cold start. `|| true` lets STATUS be captured.
+          ping_health() {
+            curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 20 \
+              "${{ vars.RENDER_URL }}/api/health" || true
+          }
+          STATUS=$(ping_health)
           echo "HTTP status: $STATUS"
+          if [ "$STATUS" = "000" ] || [ -z "$STATUS" ]; then
+            echo "⚠️  Render cold start or timeout — retrying once in 30s"
+            sleep 30
+            STATUS=$(ping_health)
+            echo "HTTP status (retry): $STATUS"
+          fi
           if [ "$STATUS" = "200" ]; then
             echo "✅ Render is warm (HTTP 200)"
-          elif [ "$STATUS" = "000" ]; then
+          elif [ "$STATUS" = "000" ] || [ -z "$STATUS" ]; then
             echo "⚠️  Render cold start triggered (timeout/no response — will warm up)"
             exit 0
           else

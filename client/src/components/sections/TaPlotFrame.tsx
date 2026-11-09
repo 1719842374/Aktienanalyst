@@ -1,26 +1,65 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Bar, ComposedChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { TA_VOLUME_BAND_PX } from "@/lib/taChartScale";
 
-/** Chart-Fläche: unter der Mindestbreite horizontal scrollen, nicht quetschen. */
+/**
+ * Chart-Fläche: unter der Mindestbreite horizontal scrollen, nicht quetschen.
+ * `width: max(100%, min)` setzt die benutzte Breite (nicht nur min-width).
+ * Safari lässt min-width allein oft nicht in die scrollWidth einfließen —
+ * der Plot bleibt dann auf der Viewport-Breite und wird gequetscht.
+ */
 export function TaPlotScroll({
   minWidth,
   children,
   testId = "ta-plot-scroll",
+  widthScale = 1,
+  scrollToEnd = false,
+  overlay = null,
 }: {
   minWidth?: number;
   children: ReactNode;
   testId?: string;
+  /** Liegt auf dem sichtbaren Scrollport, nicht auf dem rechten Ende der Serie. */
+  overlay?: ReactNode;
+  /**
+   * 1 = bisherige Breite (Chart pixelgleich).
+   * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien.
+   * Der Szenario-Kegel übergibt 1: eine Verlängerung schiebt den Vorlauf aus dem sichtbaren Scrollport.
+   */
+  widthScale?: number;
+  /** true = rechte Kante (Kegelspitze) im Scrollport halten, wenn die Mindestbreite darüber hinausragt. */
+  scrollToEnd?: boolean;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const base = minWidth ? `max(100%, ${minWidth}px)` : "100%";
+  const width = widthScale > 1 ? `calc(${base} * ${widthScale})` : base;
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !scrollToEnd) return;
+    const pin = () => { el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth); };
+    pin();
+    if (typeof ResizeObserver === "undefined") return;
+    const obs = new ResizeObserver(pin);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [scrollToEnd, width, minWidth]);
   return (
     <div
-      className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+      ref={scroller}
+      className="relative w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+      style={{ WebkitOverflowScrolling: "touch" }}
       data-testid={testId}
       data-min-width={minWidth ?? undefined}
+      data-scroll-end={scrollToEnd ? "1" : undefined}
     >
-      <div className="w-full" style={minWidth ? { minWidth } : undefined}>
+      <div
+        data-testid={`${testId}-inner`}
+        data-width-scale={widthScale > 1 ? widthScale : undefined}
+        style={{ width, minWidth: minWidth || undefined }}
+      >
         {children}
       </div>
+      {overlay}
     </div>
   );
 }
@@ -55,7 +94,7 @@ export function TaVolumeBand<T extends { _volUp?: boolean }>({
   marginRight: number;
 }) {
   return (
-    <div className="w-full" style={{ height: TA_VOLUME_BAND_PX }} data-testid="ta-volume-band">
+    <div className="w-full shrink-0" style={{ height: TA_VOLUME_BAND_PX, minHeight: TA_VOLUME_BAND_PX }} data-testid="ta-volume-band">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 0, right: marginRight, left: 0, bottom: 0 }}>
           <XAxis dataKey="date" hide />

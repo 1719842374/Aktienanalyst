@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
 import { marginYoYAndZ } from "../shared/recession-market-charts";
@@ -16,9 +17,27 @@ import {
 import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
 import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
 import { diskBriefingUpdatedAt } from "./disk-cache";
+import {
+  acceptGoogleTrendsFetch,
+  freshGoogleTrends,
+  parseSerpApiGoogleTrends,
+  parseSerpApiTrendPoints,
+  readGoogleTrendsCache,
+  writeGoogleTrendsCache,
+} from "./cache/google-trends-cache";
+import {
+  GOOGLE_TRENDS_EMPTY_NA,
+  GOOGLE_TRENDS_RATE_LIMIT_NA,
+  PYTRENDS_TIMEOUT_MS,
+  PYTRENDS_USER_AGENT,
+  readPytrendsOutcome,
+  type TrendsHttpResponse,
+} from "./cache/google-trends-pytrends";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
+import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
 
 // ============================================================
 // Generic Data Helpers
@@ -41,18 +60,27 @@ function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string
   }
 }
 
-/** Generic FRED CSV fetcher — returns latest value or NaN */
+/** Same curl as fetchUrl, plus the HTTP status. A 429 body is not a market value. */
+function fetchUrlResult(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): { status: number; body: string } {
+  try {
+    const headerArgs = Object.entries(headers)
+      .map(([k, v]) => `-H "${k}: ${v.replace(/"/g, "\\\"")}"`)
+      .join(" ");
+    const raw = execSync(
+      `curl -sL --max-time ${Math.floor(timeoutMs / 1000)} -w "\\n__STATUS__%{http_code}" ${headerArgs} "${url}"`,
+      { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 50 * 1024 * 1024 },
+    );
+    const match = raw.match(/\n__STATUS__(\d{3})$/);
+    if (!match) return { status: 0, body: raw };
+    return { status: Number(match[1]), body: raw.slice(0, -match[0].length) };
+  } catch {
+    return { status: 0, body: "" };
+  }
+}
+
+/** Generic FRED CSV fetcher — returns latest value or NaN. Parse-Kern geteilt mit dem Credit-Overlay (server/fred-csv.ts). */
 function getLatestFredValue(seriesId: string): number {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${getDateNMonthsAgo(24)}`;
-  const csv = fetchUrl(url);
-  if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return NaN;
-  const lines = csv.trim().split("\n").slice(1);
-  const validLines = lines.filter(l => {
-    const val = l.split(",")[1]?.trim();
-    return val && val !== "." && !isNaN(parseFloat(val));
-  });
-  if (validLines.length === 0) return NaN;
-  return parseFloat(validLines[validLines.length - 1].split(",")[1].trim());
+  return latestFredCsvValue(fetchUrl(fredCsvUrl(seriesId, getDateNMonthsAgo(24))));
 }
 
 /** Generic FRED CSV fetcher — returns all observations */
@@ -80,6 +108,40 @@ function getDateYearsAgo(years: number): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - years);
   return d.toISOString().split("T")[0];
+}
+
+function readJson(text: string): unknown {
+  if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+const MONTH_ABBR: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+
+/** "Oct 2, 2026" → 2026-10-02. Anything else is not a date. */
+export function englishLongDate(text: string): string | null {
+  const match = text.trim().match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/);
+  if (!match) return null;
+  const month = MONTH_ABBR[match[1]];
+  const day = Number(match[2]);
+  if (!month || day < 1 || day > 31) return null;
+  return `${match[3]}-${month}-${String(day).padStart(2, "0")}`;
+}
+
+function htmlCell(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(Number(num)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** FRED CSV rows for one series, keeping gaps as null so the cleaner can drop them. */
@@ -152,6 +214,10 @@ export interface IndicatorResult {
   available?: boolean;
   /** Crypto Fear & Greed and the single VIX substitute are a flag, not a second CNN score. */
   proxy?: boolean;
+  /** Hours since the Google Trends print was stored. Other slots leave this unset. */
+  ageHours?: number;
+  /** True when the Google Trends print is over 24h. The zone weight stays ×1.7. */
+  isStale?: boolean;
 }
 
 // ============================================================
@@ -302,7 +368,7 @@ function scoreM2(): IndicatorResult {
 
 // 6. Credit Spreads (BAA - 10Y Treasury)
 function scoreCreditSpreads(): IndicatorResult {
-  let val = getLatestFredValue("BAA10Y");
+  let val = getLatestFredValue(BAA10Y_SERIES_ID);
   // Fallback
   if (isNaN(val)) {
     const baa = getLatestFredValue("BAA");
@@ -332,85 +398,247 @@ async function scoreConsumerConfidence(): Promise<IndicatorResult> {
 // CORRECTION INDICATORS
 // ============================================================
 
-// 8. Buffett Indicator. Spec prefers Wilshire/GDP over the World Bank annual
-// ratio, which lags. A print outside the Japan window is shown and not scored.
+// 8. Buffett Indicator. The live leg is the Wilshire 5000 chart over FRED GDP.
+// The discontinued FRED full-cap series is not requested. The World Bank annual
+// ratio is only the fallback, and a print outside the Japan window is shown and not scored.
+const WILSHIRE_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?range=10d&interval=1d";
+
 function scoreBuffett(): IndicatorResult {
   const today = recessionAsOf();
-  const computed = buffettFromMarketCapGdp(
-    latestFredPoint("WILL5000PR", 5),
-    latestFredPoint("GDP", 5),
-    today,
-  );
+  const close = latestYahooChartClose(readJson(fetchUrl(WILSHIRE_CHART, 20000, { "User-Agent": "Mozilla/5.0" })));
+  const market = close
+    ? { date: close.date, value: close.value * WILSHIRE_DOLLARS_PER_POINT_BN }
+    : null;
+  const gdp = latestFredPoint("GDP", 5);
+  const computed = buffettFromMarketCapGdp(market, gdp, today, {
+    source: "Yahoo ^W5000 / FRED GDP",
+    description: market && gdp
+      ? `Wilshire 5000 Total Market Index ${market.date} × ${WILSHIRE_DOLLARS_PER_POINT_BN} Mrd. $ je Punkt / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
+      : "Wilshire 5000 Total Market Index / FRED GDP.",
+  });
   if (computed) return computed;
   return buffettFromObservation(latestFredPoint("DDDM01USA156NWDB", 40), today);
 }
 
-// 9. Shiller CAPE. The ratio is only in ie_data.xls. That workbook is not parsed,
-// and this repo has no FRED series for it, so the US slot stays closed.
+// 9. Shiller CAPE. ie_data.xls is not parsed. The public monthly table is the series.
+const MULTPL_CAPE = "https://www.multpl.com/shiller-pe/table/by-month";
+
 function scoreCAPE(): IndicatorResult {
-  const closed = capeReading(Number.NaN);
-  return {
-    ...closed,
-    source: "Shiller ie_data.xls nicht gelesen",
-    description: "CAPE steht nur im Shiller-Workbook. Ohne .xls bleibt der Slot zu.",
-  };
+  const html = fetchUrl(MULTPL_CAPE, 20000, { "User-Agent": "Mozilla/5.0" });
+  return capeFromPoint(latestMultplCape(html), recessionAsOf());
 }
 
-// 10. Margin debt. FINRA publishes the debit only as an xlsx. That file is not parsed.
-// marginDebtReading still scores a numeric series when one is already in hand.
+// 10. Margin debt. FINRA Rule 4521 publishes the monthly debit series as xlsx.
+// The score is the year-over-year change against the 5-year z of that series.
+// A single CMV sentence is only the fallback and stays unscored.
+const CMV_MARGIN = "https://www.currentmarketvaluation.com/models/margin-debt.php";
+const FINRA_MARGIN_XLSX = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
+
 function scoreMarginDebt(): IndicatorResult {
-  const closed = marginDebtReading([]);
-  return {
-    ...closed,
-    source: "FINRA xlsx nicht gelesen",
-    description: "Debit steht nur in der FINRA-xlsx. Ohne die Datei bleibt der Slot zu.",
-  };
+  try {
+    const points = finraMarginPoints(fetchBinary(FINRA_MARGIN_XLSX));
+    const today = recessionAsOf();
+    const last = points[points.length - 1];
+    if (points.length >= 13 && last && !isStale(last.date, today)) {
+      const scored = marginDebtReading(points);
+      if (scored.available !== false) {
+        return {
+          ...scored,
+          source: "FINRA margin-statistics",
+          description: "Debit Balances in Customers' Securities Margin Accounts, Mio. $. Der Score ist das Jahreswachstum gegen den 5-Jahres-z derselben Reihe.",
+        };
+      }
+    }
+  } catch {
+    // A broken workbook falls through to the unscored spot reading.
+  }
+  const html = fetchUrl(CMV_MARGIN, 20000, { "User-Agent": "Mozilla/5.0" });
+  return marginSpotReading(marginDebitFromCmv(html));
+}
+
+function fetchBinary(url: string, timeoutMs = 20000): Buffer {
+  try {
+    return execSync(`curl -sL --max-time ${Math.floor(timeoutMs / 1000)} "${url}"`, {
+      timeout: timeoutMs + 5000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+/** One ZIP local-file entry. A data descriptor (flag bit 3) is refused. */
+export function zipEntry(buf: Buffer, entryName: string): Buffer | null {
+  let offset = 0;
+  while (offset + 30 <= buf.length) {
+    const sig = buf.readUInt32LE(offset);
+    if (sig !== 0x04034b50) return null;
+    const flags = buf.readUInt16LE(offset + 6);
+    const method = buf.readUInt16LE(offset + 8);
+    const compSize = buf.readUInt32LE(offset + 18);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    if (nameStart + nameLen > buf.length || dataStart > buf.length) return null;
+    const name = buf.toString("utf8", nameStart, nameStart + nameLen);
+    if (flags & 0x08) return null;
+    if (dataStart + compSize > buf.length) return null;
+    if (name === entryName) {
+      const payload = buf.subarray(dataStart, dataStart + compSize);
+      if (method === 0) return Buffer.from(payload);
+      if (method === 8) {
+        try {
+          return inflateRawSync(payload);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+    offset = dataStart + compSize;
+  }
+  return null;
+}
+
+/** Column A is YYYY-MM, column B is debit balances in millions of dollars. */
+export function finraMarginFromSheetXml(xml: string): { date: string; debitMillions: number }[] {
+  const points: { date: string; debitMillions: number }[] = [];
+  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  let rowMatch: RegExpExecArray | null;
+  while ((rowMatch = rowRe.exec(xml))) {
+    const row = rowMatch[1];
+    const month = row.match(/<c\b[^>]*\br="A\d+"[^>]*>[\s\S]*?<t>(\d{4}-\d{2})<\/t>/);
+    const debit = row.match(/<c\b[^>]*\br="B\d+"[^>]*>\s*<v>(\d+(?:\.\d+)?)<\/v>/);
+    if (!month || !debit) continue;
+    const debitMillions = Number(debit[1]);
+    if (!Number.isFinite(debitMillions) || debitMillions <= 0) continue;
+    points.push({ date: `${month[1]}-01`, debitMillions });
+  }
+  points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return points;
+}
+
+export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: number }[] {
+  if (!buf || buf.length < 30) return [];
+  const xml = zipEntry(buf, "xl/worksheets/sheet1.xml");
+  if (!xml) return [];
+  return finraMarginFromSheetXml(xml.toString("utf8"));
 }
 
 // 11. Google Trends "Recession"
-function scoreGoogleTrends(): IndicatorResult {
-  let trendValue = NaN;
-  let source = "Google Trends";
+// Order: fresh cache → SerpApi only when a key is set → pytrends → n/a with a reason.
+// A Google 429 is n/a and is not written into the cache. Other misses still keep
+// the last print inside 48h. One cache, no second route.
+export type GoogleTrendsTransport = (
+  url: string,
+  timeoutMs: number,
+  headers?: Record<string, string>,
+) => TrendsHttpResponse | string;
 
-  // Primary: SerpApi Google Trends (requires SERPAPI_KEY). Without a key we
-  // leave trendValue as NaN → indicator reports N/A (never a faked default).
+let trendsTransport: GoogleTrendsTransport | null = null;
+
+/** Tests inject a mock. Production uses curl. */
+export function setGoogleTrendsTransportForTests(transport: GoogleTrendsTransport | null): void {
+  trendsTransport = transport;
+}
+
+export function scoreGoogleTrendsForTests(): IndicatorResult {
+  return scoreGoogleTrends();
+}
+
+function trendsGet(url: string, timeoutMs: number, headers?: Record<string, string>): TrendsHttpResponse {
+  const raw = trendsTransport
+    ? trendsTransport(url, timeoutMs, headers)
+    : fetchUrlResult(url, timeoutMs, headers ?? {});
+  if (typeof raw === "string") return { status: 0, body: raw };
+  return raw;
+}
+
+function scoreGoogleTrends(): IndicatorResult {
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
+  const now = Date.now();
+  const cached = readGoogleTrendsCache();
+  const fresh = freshGoogleTrends(cached, now);
+  if (fresh) {
+    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h${fresh.naReason ? " reason" : ""})`);
+    if (fresh.naReason) return googleReading(null, fresh.source, fresh, fresh.naReason);
+    if (fresh.value == null) return googleReading(null, fresh.source, fresh, GOOGLE_TRENDS_EMPTY_NA);
+    return googleReading(fresh.value, fresh.source, fresh);
+  }
+
+  let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
   if (serpKey) {
     try {
       const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-      const raw = fetchUrl(url, 12000);
-      if (raw && !raw.includes("<html")) {
-        const parsed = JSON.parse(raw);
-        const timeline = parsed?.interest_over_time?.timeline_data;
-        if (Array.isArray(timeline) && timeline.length > 0) {
-          const values: number[] = [];
-          for (const point of timeline) {
-            const v = point?.values?.[0]?.extracted_value ?? point?.values?.[0]?.value;
-            const num = typeof v === "number" ? v : parseFloat(v);
-            if (!isNaN(num)) values.push(num);
-          }
-          if (values.length > 0) {
-            const avg = Math.round((values.reduce((s, n) => s + n, 0) / values.length) * 10) / 10;
-            const latest = values[values.length - 1];
-            const peak = Math.max(...values);
-            trendValue = avg;
-            source = `Google Trends via SerpApi (7d Ø=${avg}, Latest=${latest}, Peak=${peak})`;
-            console.log(`  Google Trends (SerpApi): avg=${avg}, latest=${latest}, peak=${peak}`);
-          }
+      const res = trendsGet(url, 12000);
+      if (res.status === 429) {
+        console.log("  Google Trends SerpApi: n/a — 429, weiter zu pytrends");
+      } else {
+        const parsed = parseSerpApiGoogleTrends(res.body);
+        if (parsed) {
+          const points = parseSerpApiTrendPoints(res.body) ?? undefined;
+          fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
+          console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
         }
       }
     } catch (err: any) {
       console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
     }
   } else {
-    console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
+    console.log("  Google Trends: kein SERPAPI_KEY, pytrends als Ersatz");
   }
 
-  return googleReading(Number.isFinite(trendValue) ? trendValue : null, source);
+  let googleRateLimited = false;
+  if (!fetched) {
+    const py = readPytrendsOutcome(url => trendsGet(url, PYTRENDS_TIMEOUT_MS, { "User-Agent": PYTRENDS_USER_AGENT }));
+    if (py.kind === "print") {
+      fetched = { value: py.print.value, source: py.print.source, ...(py.print.points.length ? { points: py.print.points } : {}) };
+      console.log(`  Google Trends pytrends: avg=${py.print.value}, latest=${py.print.latest}, peak=${py.print.peak}`);
+    } else if (py.kind === "rate_limited") {
+      googleRateLimited = true;
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_RATE_LIMIT_NA}`);
+    } else if (py.kind === "miss") {
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    } else {
+      const unreachable: never = py;
+      console.log(`  Google Trends pytrends: unbekannter Ausgang ${String(unreachable)}`);
+    }
+  }
+
+  if (googleRateLimited) {
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_RATE_LIMIT_NA,
+    });
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_RATE_LIMIT_NA);
+  }
+
+  const decided = acceptGoogleTrendsFetch(fetched, cached, now);
+  if (decided.store) writeGoogleTrendsCache(decided.store);
+  if (decided.value == null) {
+    console.log(`  Google Trends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_EMPTY_NA,
+    });
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_EMPTY_NA);
+  }
+  if (!fetched) {
+    console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale})`);
+  }
+  return googleReading(decided.value, decided.source, {
+    ageHours: decided.ageHours ?? 0,
+    isStale: decided.isStale,
+  });
 }
 
 // One crowd leg: live CNN, otherwise a single VIX proxy. Crypto is only the proxy flag.
-function scoreCrowdLeg(vix: number): IndicatorResult {
+function scoreCrowdLeg(vix: number, vixSource = "FRED VIXCLS"): IndicatorResult {
   let cnn: number | null = null;
   try {
     const json = fetchUrl(
@@ -429,7 +657,7 @@ function scoreCrowdLeg(vix: number): IndicatorResult {
   } catch (err: any) {
     console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
   }
-  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false);
+  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false, vixSource);
 }
 
 function scoreWei(): IndicatorResult {
@@ -902,6 +1130,7 @@ export function buffettFromMarketCapGdp(
   market: { date: string; value: number } | null,
   gdp: { date: string; value: number } | null,
   today: string,
+  meta: { source?: string; description?: string } = {},
 ): IndicatorResult | null {
   if (!market || !gdp) return null;
   if (isStale(market.date, today) || isStale(gdp.date, today)) return null;
@@ -912,10 +1141,102 @@ export function buffettFromMarketCapGdp(
     { date: asOf, value: ratio },
     today,
     {
-      source: "FRED WILL5000PR / GDP",
-      description: "Wilshire 5000 / BIP (FRED WILL5000PR / GDP).",
+      source: meta.source ?? "FRED WILL5000PR / GDP",
+      description: meta.description ?? "Wilshire 5000 / BIP (FRED WILL5000PR / GDP).",
     },
   );
+}
+
+/** Last finite daily close. A null bar (the session still printing) is skipped. */
+export function latestYahooChartClose(payload: unknown): { date: string; value: number } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const result = (payload as { chart?: { result?: Array<{ timestamp?: unknown; indicators?: { quote?: Array<{ close?: unknown }> } }> } }).chart?.result?.[0];
+  const stamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+  let found: { date: string; value: number } | null = null;
+  const n = Math.min(stamps.length, closes.length);
+  for (let i = 0; i < n; i++) {
+    const raw = closes[i];
+    if (raw == null || raw === "") continue;
+    const value = typeof raw === "number" ? raw : Number(raw);
+    const stamp = typeof stamps[i] === "number" ? stamps[i] : Number(stamps[i]);
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(stamp)) continue;
+    found = { date: new Date(stamp * 1000).toISOString().slice(0, 10), value };
+  }
+  return found;
+}
+
+/** Newest row of the public Shiller PE monthly table. The workbook is not read. */
+export function latestMultplCape(html: string): { date: string; value: number } | null {
+  if (!html || html.includes("Just a moment")) return null;
+  const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    if (cells.length < 2) continue;
+    const date = englishLongDate(cells[0]);
+    const value = Number(cells[1].replace(/,/g, ""));
+    if (!date || !Number.isFinite(value) || value < 5 || value > 80) continue;
+    return { date, value };
+  }
+  return null;
+}
+
+export function capeFromPoint(point: { date: string; value: number } | null, today: string): IndicatorResult {
+  const description = "Shiller CAPE (PE10) aus der öffentlichen Monatstabelle. ie_data.xls wird nicht gelesen.";
+  if (!point || !Number.isFinite(point.value) || point.value < 5 || point.value > 80 || !point.date) {
+    return {
+      ...capeReading(Number.NaN),
+      source: "Multpl Shiller-PE leer",
+      description: "Kein CAPE-Druck. ie_data.xls wird nicht gelesen.",
+    };
+  }
+  if (isStale(point.date, today)) {
+    return {
+      ...capeReading(Number.NaN),
+      value: `${point.value.toFixed(1)} (${point.date.slice(0, 7)})`,
+      source: "Multpl Shiller PE",
+      description,
+    };
+  }
+  return { ...capeReading(point.value), source: "Multpl Shiller PE", description };
+}
+
+/**
+ * One public debit sentence. The broken meta line ("$1,416%") does not match,
+ * because the level has to be named in billions.
+ */
+export function marginDebitFromCmv(html: string): { date: string; billions: number } | null {
+  if (!html) return null;
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const match = text.match(/As of ([A-Z][a-z]+ \d{1,2}, \d{4}) \(the latest data available\), total US margin debt was \$([0-9][0-9,]*(?:\.\d+)?) billion/i);
+  if (!match) return null;
+  const date = englishLongDate(match[1]);
+  const billions = Number(match[2].replace(/,/g, ""));
+  if (!date || !Number.isFinite(billions) || billions < 100 || billions > 5000) return null;
+  return { date, billions };
+}
+
+/** A single debit is shown. Without a monthly history there is no 5-year z and no score. */
+export function marginSpotReading(spot: { date: string; billions: number } | null): IndicatorResult {
+  const closed = {
+    name: "Margin Debt",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: "FINRA-Historie nur als xlsx",
+    description: "Die Debit-Historie steht nur in der FINRA-xlsx. Ohne Monatsreihe bleibt der Slot zu.",
+  };
+  if (!spot) return closedIndicator(closed);
+  return {
+    ...closedIndicator(
+      {
+        ...closed,
+        source: "Current Market Valuation (FINRA-Debit, ein Druck)",
+        description: "Ein öffentlicher Debit-Druck in Mrd. $. Ohne die Monatsreihe gibt es keinen 5J-z und keinen Score.",
+      },
+      `${spot.billions.toFixed(1)} Mrd. $ (${spot.date.slice(0, 7)})`,
+    ),
+    zone: "Ablesung, kein 5J-z",
+  };
 }
 
 /** Value string only when the slot is scored. A closed print is not the live level. */
@@ -926,12 +1247,48 @@ export function liveBuffettValue(indicator: Pick<IndicatorResult, "value" | "ava
   return indicator.value;
 }
 
-export function buffettFazitClause(indicator: Pick<IndicatorResult, "value" | "available"> | undefined): string {
+/** Half a displayed percent. The live slot is an integer, the chart series is one decimal. */
+const BUFFETT_PEAK_TOLERANCE = 0.5;
+
+function formatSeriesPct(ratio: number): string {
+  const rounded = Math.round(ratio * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+/**
+ * Rank of the live print against the chart series.
+ * At the maximum, name the first year of that series.
+ * Otherwise name the higher print and its date.
+ * An empty series makes no historical claim.
+ */
+export function buffettSeriesNote(
+  currentPct: number,
+  series: { date: string; ratio: number }[],
+): string | null {
+  const points = series
+    .filter(point => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.ratio))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (points.length === 0 || !Number.isFinite(currentPct)) return null;
+  const higher = points.filter(point => point.ratio > currentPct + BUFFETT_PEAK_TOLERANCE);
+  if (higher.length === 0) return `höchster Wert der Reihe seit ${points[0].date.slice(0, 4)}`;
+  let peak = higher[0];
+  for (const point of higher) {
+    if (point.ratio > peak.ratio || (point.ratio === peak.ratio && point.date > peak.date)) peak = point;
+  }
+  return `der vorherige höhere Wert lag am ${peak.date} bei ${formatSeriesPct(peak.ratio)}`;
+}
+
+export function buffettFazitClause(
+  indicator: Pick<IndicatorResult, "value" | "available"> | undefined,
+  series: { date: string; ratio: number }[] = [],
+): string {
   const value = liveBuffettValue(indicator);
   if (value == null) return "";
   const buffettVal = parseFloat(String(value).replace("%", ""));
   if (!Number.isFinite(buffettVal) || buffettVal <= 180) return "";
-  return `Der Buffett-Indikator steht bei ${value} — das höchste Niveau seit der Dotcom-Blase. `
+  const note = buffettSeriesNote(buffettVal, series);
+  const rank = note ? ` — ${note}` : "";
+  return `Der Buffett-Indikator steht bei ${value}${rank}. `
     + `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
 }
 
@@ -1013,7 +1370,12 @@ export function marginDebtReading(points: { date: string; debitMillions: number 
   };
 }
 
-export function googleReading(trend: number | null, source = "Google Trends"): IndicatorResult {
+export function googleReading(
+  trend: number | null,
+  source = "Google Trends",
+  freshness?: { ageHours: number; isStale: boolean },
+  naReason?: string,
+): IndicatorResult {
   const base = {
     name: "Google Trends \"Recession\"",
     group: "correction" as const,
@@ -1021,7 +1383,10 @@ export function googleReading(trend: number | null, source = "Google Trends"): I
     source: trend == null ? "Google Trends (N/A)" : source,
     description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
   };
-  if (trend == null || !Number.isFinite(trend)) return closedIndicator(base);
+  if (trend == null || !Number.isFinite(trend)) {
+    const value = naReason && naReason.startsWith("n/a —") ? naReason : "N/A";
+    return closedIndicator(base, value);
+  }
   let rawScore = -4;
   let zone = `Niedrig (${trend} <30) → Sorglosigkeit`;
   if (trend > 75) { rawScore = 7; zone = `Extrem hoch (${trend} >75) → Panik-Suchen`; }
@@ -1035,15 +1400,32 @@ export function googleReading(trend: number | null, source = "Google Trends"): I
     weightedScore: Math.round(rawScore * 1.7 * 10) / 10,
     maxWeighted: 11.9,
     zone,
+    ...(freshness ? { ageHours: freshness.ageHours, isStale: freshness.isStale } : {}),
   };
 }
 
-export function vixReading(vix: number): IndicatorResult {
+const VIX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=10d&interval=1d";
+
+/**
+ * VIX level for the score. FRED VIXCLS stays first. Yahoo ^VIX is read only when the
+ * FRED print is not finite (Future_2 / Offen_FUTURE_SOLL_IST PR 5). Both empty → NaN, slot stays closed.
+ */
+export function resolveVixLevel(
+  fredValue: number,
+  yahooPayload: () => unknown,
+): { value: number; source: string } {
+  if (Number.isFinite(fredValue)) return { value: fredValue, source: "FRED VIXCLS" };
+  const close = latestYahooChartClose(yahooPayload());
+  if (close) return { value: close.value, source: `Yahoo ^VIX ${close.date} (Fallback, FRED VIXCLS leer)` };
+  return { value: NaN, source: "FRED VIXCLS" };
+}
+
+export function vixReading(vix: number, source = "FRED VIXCLS"): IndicatorResult {
   const base = {
     name: "VIX",
     group: "correction" as const,
     subgroup: "sentiment",
-    source: "FRED VIXCLS",
+    source,
     description: "CBOE Volatility Index (Angstbarometer)",
   };
   if (!Number.isFinite(vix)) return closedIndicator(base);
@@ -1063,7 +1445,12 @@ export function vixReading(vix: number): IndicatorResult {
   };
 }
 
-export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy: boolean): IndicatorResult {
+export function crowdReading(
+  cnn: number | null,
+  vix: number | null,
+  cnnIsProxy: boolean,
+  vixSource = "FRED VIXCLS",
+): IndicatorResult {
   const cnnOk = cnn != null && Number.isFinite(cnn) && !cnnIsProxy;
   if (cnnOk) {
     const fgValue = cnn as number;
@@ -1104,7 +1491,7 @@ export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy:
       weightedScore: rawScore,
       maxWeighted: 4,
       zone,
-      source: "FRED VIXCLS",
+      source: vixSource,
       description: "Ein Crowd-Bein als VIX-Proxy. Nicht AAII, Put/Call und Investors Intelligence zugleich.",
       proxy: true,
     };
@@ -1160,11 +1547,20 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
   const bridgePromise = fetchBridge();
+  // Chart-Reihe für den Fazit-Satz, parallel zur Analyse. Der Import bleibt dynamisch,
+  // damit der statische Import oben nur die Wilshire-Konstante zieht (Score-Wächter).
+  const buffettSeriesPromise = import("./buffett-route")
+    .then(mod => mod.loadUsBuffettRatios())
+    .catch(() => [] as { date: string; ratio: number }[]);
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
 
-  const vixValue = getLatestFredValue("VIXCLS");
+  const vix = resolveVixLevel(
+    getLatestFredValue("VIXCLS"),
+    () => readJson(fetchUrl(VIX_YAHOO_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+  );
+  const vixValue = vix.value;
   const indicators: IndicatorResult[] = await Promise.all([
     Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
@@ -1177,8 +1573,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCAPE(),
     scoreMarginDebt(),
     scoreGoogleTrends(),
-    vixReading(vixValue),
-    scoreCrowdLeg(vixValue),
+    vixReading(vixValue, vix.source),
+    scoreCrowdLeg(vixValue, vix.source),
     scoreWei(),
   ]);
 
@@ -1187,7 +1583,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     console.log(`  ${ind.name}: ${ind.value} → Score ${ind.weightedScore} (max ${ind.maxWeighted})`);
   });
 
-  const googleAvailable = indicators.find(i => i.name.includes("Google"))?.value !== "N/A";
+  const googleHit = indicators.find(i => i.name.includes("Google"));
+  const googleAvailable = googleHit != null && googleHit.available !== false;
   const nyFedValue = getNYFedRecessionProb();
   console.log(`[RECESSION] NY Fed recession prob: ${nyFedValue}`);
 
@@ -1336,7 +1733,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     lines: driverAssessment.lines,
     cards: driverAssessment.cards,
   };
-  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers);
+  const buffettSeries = await buffettSeriesPromise;
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers, buffettSeries);
 
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
@@ -1399,6 +1797,7 @@ export function generateFazit(
   topDrivers: string[],
   bridge: RecessionBridge,
   drivers: DriverView,
+  buffettSeries: { date: string; ratio: number }[] = [],
 ): { summary: string; riskLevel: string; sections: FazitSection[] } {
   // Extract key indicator values
   const get = (name: string) => indicators.find(i => i.name.includes(name));
@@ -1444,7 +1843,7 @@ export function generateFazit(
 
   // Section 2: Valuation Risk — never an empty heading; closed slots get an honest hint.
   let valuationText = "";
-  valuationText += buffettFazitClause(buffett);
+  valuationText += buffettFazitClause(buffett, buffettSeries);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
   if (!isNaN(capeVal) && capeVal > 30) {
     valuationText += `Das Shiller CAPE-Ratio von ${capeVal} liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. `;

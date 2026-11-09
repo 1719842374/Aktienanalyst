@@ -1,30 +1,53 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { TAM_NA_SHARE_WARN, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
+import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaReason, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
+import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
+import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
-import PeerComparison from "./PeerComparison";
+import PeerComparison, { PeerOverrideResetNotice } from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
-interface Props { data: StockAnalysis; onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }
+interface Props {
+  data: StockAnalysis;
+  onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
+  /** True while the in-flight analyze carries peer overrides. */
+  peerBusy?: boolean;
+  /** #258: Ticker, dessen Peer-Overrides nach einem 400 verworfen wurden (Hinweis), sonst null. */
+  peerResetNotice?: string | null;
+  onDismissPeerResetNotice?: () => void;
+}
 
-export function Section7({ data, onPeerOverridesChange }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
-  const trailingPEPremium = data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
-  const fwdPEPremium = sectorFwdPE > 0 ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
+  // Tester #252-Prod (VOW3.DE „Discount −100 % · Fwd P/E 0.0“): KGV ≤ 0 oder fehlend (Yahoo null, Verlust) ergibt
+  // keinen Discount/keine Prämie. Bisher wurde 0/18 − 1 = −100 % als „Deep Value“ gezeigt → jetzt n/a.
+  const peValid = typeof data.peRatio === "number" && Number.isFinite(data.peRatio) && data.peRatio > 0;
+  const fwdPEValid = typeof data.forwardPE === "number" && Number.isFinite(data.forwardPE) && data.forwardPE > 0 && sectorFwdPE > 0;
+  const trailingPEPremium = peValid && data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
+  const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
   // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
   const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
+  // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
+  // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
+  // FMP-Analysen: false, Anzeige unverändert.
+  // Follow-up #271: Server liefert ohne Konzernumsatz companyDataMissing='no-revenue' und null statt 0/Default.
+  // companyNa deckt beides ab (Yahoo-Flag oder Server-Flag/null), damit Altdaten und neue Payloads gleich aussehen.
+  const yahooTamNa = isYahooOnly(data);
+  const companyNa = yahooTamNa || data.tamAnalysis?.companyDataMissing === 'no-revenue' || (data.tamAnalysis != null && data.tamAnalysis.companyGrowth == null);
 
   // Discount panel shows Forward P/E values → base decision on fwdPEPremium
-  const isDiscount = fwdPEPremium < 0;
+  const isDiscount = fwdPEValid && fwdPEPremium < 0;
   const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
   const moatJustified = isDiscount ? 0 : Math.min(trailingPEPremium, moatMaxPremium);
   const speculative = trailingPEPremium - moatJustified;
@@ -38,7 +61,9 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   ] as const;
 
   const tam = data.tamAnalysis;
+  const segmentGrowth = useSegmentGrowth(data.ticker, (tam?.segments?.length ?? 0) > 0);
   const [tamAiFills, setTamAiFills] = useState<Record<string, TamNaFill> | null>(null);
+  const [tamNaReasons, setTamNaReasons] = useState<TamNaReason[]>([]);
   const [tamAiLoading, setTamAiLoading] = useState(false);
   const [tamAiError, setTamAiError] = useState<string | null>(null);
   const tamAiRequest = useRef(0);
@@ -47,6 +72,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   const [peerKiError, setPeerKiError] = useState<string | null>(null);
   const peerKiRequest = useRef(0);
   const factPeerCount = data.peerSet?.peerCount ?? data.peerComparison?.peers?.length ?? 0;
+  // #258 FAIL 3: aktive Overrides (z.B. alle Peers entfernt → peerComparison null) brauchen den Weg zurück.
+  const hasActivePeerOverrides = (data.activePeerOverrides?.add?.length ?? 0) > 0 || (data.activePeerOverrides?.remove?.length ?? 0) > 0;
   const peerGap = peersNeeded(factPeerCount);
 
   const tamSegmentSig = useMemo(() => {
@@ -58,6 +85,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   useEffect(() => {
     tamAiRequest.current += 1;
     setTamAiFills(null);
+    setTamNaReasons([]);
     setTamAiError(null);
     setTamAiLoading(false);
   }, [data.ticker, tamSegmentSig]);
@@ -69,17 +97,27 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     setPeerKiLoading(false);
   }, [data.ticker, factPeerCount]);
 
+  const visibleTamSegments = useMemo(
+    () => (tam?.segments ?? []).filter((s) => hasPositiveSegmentRevenue(s.segmentRevenue)),
+    [tam],
+  );
+
+  const growthForSegment = (name: string, fact: number | null | undefined): number | null => {
+    if (typeof fact === "number" && Number.isFinite(fact)) return fact;
+    const calculated = calculatedGrowth(fact, annotationByName(segmentGrowth.data?.business, name));
+    return calculated?.growth ?? null;
+  };
   const tamNaRefs = useMemo(() => {
     const out: TamNaSegmentRef[] = [];
     const seen = new Set<string>();
-    for (const s of tam?.segments ?? []) {
-      const ref = toTamNaRef(s);
+    for (const s of visibleTamSegments) {
+      const ref = toTamNaRef({ ...s, segmentGrowth: growthForSegment(s.segmentName, s.segmentGrowth) });
       if (!ref || seen.has(ref.segmentName)) continue;
       seen.add(ref.segmentName);
       out.push(ref);
     }
     return out;
-  }, [tam]);
+  }, [visibleTamSegments, segmentGrowth.data]);
   const scopeNaCount = useMemo(() => countScopeRestNa(tamNaRefs, null), [tamNaRefs]);
   const kiCellCount = useMemo(
     () => (tamAiFills ? countKiFilledCells(tamNaRefs, Object.values(tamAiFills)) : 0),
@@ -92,44 +130,40 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     setTamAiLoading(true);
     setTamAiError(null);
     try {
-      const res = await apiRequest("POST", `/api/analyze/${encodeURIComponent(data.ticker)}/tam-na-fill`, {
+      const res = await apiRequest("POST", "/api/segment-tam-estimate", {
+        ticker: data.ticker,
         companyName: data.companyName,
         sector: data.sector,
         industry: data.industry,
         description: data.description,
         coveragePct: typeof tam.coveragePct === "number" ? tam.coveragePct : null,
-        segments: tam.segments.map((s) => ({
+        segments: visibleTamSegments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
           segmentShare: s.segmentShare,
-          segmentGrowth: typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null,
+          segmentGrowth: growthForSegment(s.segmentName, s.segmentGrowth),
           matched: s.matched === false ? false : true,
           tamSize: typeof s.tamSize === "number" && Number.isFinite(s.tamSize) ? s.tamSize : null,
           tamCAGR: typeof s.tamCAGR === "number" && Number.isFinite(s.tamCAGR) ? s.tamCAGR : null,
         })),
       });
-      let json: { fills?: TamNaFill[]; error?: string } | null = null;
+      let json: { fills?: TamNaFill[]; naReasons?: TamNaReason[]; error?: string } | null = null;
       try { json = await res.json(); } catch { json = null; }
       if (requestId !== tamAiRequest.current) return;
       const incomplete = "KI-Schätzung unvollständig — nichts übernommen";
-      if (!res.ok || !json || !Array.isArray(json.fills) || json.fills.length === 0) {
+      const reasons = Array.isArray(json?.naReasons) ? json.naReasons : [];
+      setTamNaReasons(reasons);
+      if (!res.ok || !json || !Array.isArray(json.fills)) {
         setTamAiError(json?.error || incomplete);
         return;
       }
-      if (countScopeRestNa(tamNaRefs, json.fills) !== 0) {
-        setTamAiError(json.error || incomplete);
+      const applied = applicableTamNaFills(tamNaRefs, json.fills);
+      if (applied.length === 0) {
+        if (reasons.length === 0) setTamAiError(json.error || incomplete);
         return;
       }
-      const known = new Set(tamNaRefs.map((s) => s.segmentName));
       const next: Record<string, TamNaFill> = {};
-      for (const fill of json.fills) {
-        if (!fill || !known.has(fill.segmentName)) continue;
-        next[fill.segmentName] = fill;
-      }
-      if (countScopeRestNa(tamNaRefs, Object.values(next)) !== 0) {
-        setTamAiError(incomplete);
-        return;
-      }
+      for (const fill of applied) next[fill.segmentName] = fill;
       setTamAiFills(next);
     } catch (err: unknown) {
       if (requestId !== tamAiRequest.current) return;
@@ -179,6 +213,21 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     }
   }
 
+  const calculatedWeighted = useMemo(() => {
+    const rows = visibleTamSegments.flatMap((s) => {
+      const fact = typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null;
+      const extra = calculatedGrowth(fact, annotationByName(segmentGrowth.data?.business, s.segmentName));
+      const growth = fact ?? extra?.growth ?? null;
+      const share = typeof s.segmentShare === "number" && Number.isFinite(s.segmentShare) ? s.segmentShare : 0;
+      if (growth == null || !(share > 0)) return [];
+      return [{ growth, share, calculated: extra != null }];
+    });
+    if (!rows.some((row) => row.calculated)) return null;
+    const weight = rows.reduce((sum, row) => sum + row.share, 0);
+    if (!(weight > 0)) return null;
+    return Math.round((rows.reduce((sum, row) => sum + row.growth * row.share, 0) / weight) * 10) / 10;
+  }, [visibleTamSegments, segmentGrowth.data]);
+
   return (
     <SectionCard number={9} title="RELATIVE BEWERTUNG">
       <div className="overflow-x-auto">
@@ -195,7 +244,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
             {metrics.map((m, i) => {
               const isGrowthRow = 'isGrowth' in m && m.isGrowth;
               // For valuation metrics with negative stock value (loss-making): premium meaningless
-              const stockInvalid = !isGrowthRow && m.stock <= 0;
+              const stockInvalid = isGrowthRow ? companyNa : m.stock <= 0;
               const premiumColor = isGrowthRow
                 ? (m.premium >= 0 ? 'text-emerald-500' : 'text-red-500')
                 : (m.premium > 0 ? 'text-amber-500' : 'text-emerald-500');
@@ -226,21 +275,21 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">P/E (TTM) vs. Sektor</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={data.peRatio} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
+            <BarRow label={data.ticker} value={peValid ? data.peRatio : null} max={Math.max(peValid ? data.peRatio : 0, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
             <BarRow label="Sektor" value={data.sectorAvgPE} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-muted-foreground/50" />
           </div>
         </div>
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
             <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
           </div>
         </div>
       </div>
 
       {/* TAM Analysis */}
-      {tam && (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0)) && (
+      {tam && (tam.companyDataMissing === 'no-revenue' || (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0))) && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
             <Globe className="w-3 h-3" />
@@ -249,7 +298,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
           {/* A1 Qualitaetstor: bei quality==='unreliable' (Coverage < 70% oder < 2
               unterschiedliche TAM-Labels) zeigen wir KEINE falsche Konzernzahl
               mehr (z.B. den $896B-Bug), sondern einen erklaerenden Banner. */}
-          {tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined ? (
+          {tam.companyDataMissing !== 'no-revenue' && (tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined) ? (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5 mb-3 text-[10.5px] text-amber-600 dark:text-amber-400 leading-relaxed">
               Segment-TAM nicht belastbar genug fuer eine Gesamtkennzahl
               {typeof tam.coveragePct === 'number' ? ` (nur ${formatNumber(tam.coveragePct, 0)}% des Umsatzes zuordenbar` : ''}
@@ -260,7 +309,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">${formatNumber(tam.tamTotal, 0)}B</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.tamTotal, 0)}B</>}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -270,8 +319,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
-                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${companyNa ? 'text-muted-foreground' : companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
               </div>
@@ -282,8 +331,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     <span title="Mindestens ein Segment-Marktanteil > 25% — Wert mit Vorsicht interpretieren" className="text-amber-500">⚠</span>
                   )}
                 </div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
-                <div className="text-[9px] text-muted-foreground mt-0.5">${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">{companyNa || tam.companyRevenue == null || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</>}</div>
               </div>
             </div>
           )}
@@ -325,7 +374,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 {tamAiFills && (
                   <button
                     type="button"
-                    onClick={() => { setTamAiFills(null); setTamAiError(null); }}
+                    onClick={() => { setTamAiFills(null); setTamAiError(null); setTamNaReasons([]); }}
                     className="inline-flex items-center rounded-md border border-border/60 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground hover:bg-muted/40"
                     title="KI-Schätzungen aus dieser Sitzung entfernen"
                     data-testid="button-tam-na-fill-clear"
@@ -334,8 +383,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   </button>
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
-                Violett/KI = Schätzung · Anteil am TAM & vs. TAM immer Formel
+                <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
+                Violett/KI = Schätzung · berechnet = Formel aus FMP · Anteil am TAM & vs. TAM immer Formel
               </div>
               {tamAiFills && (
                 <div className="text-[10px] text-violet-700 dark:text-violet-300" data-testid="text-tam-na-coverage-note">
@@ -362,8 +411,12 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {tam.segments.map((seg: any, i: number) => {
-                      const row = tamRowView(seg, tamAiFills?.[seg.segmentName]);
+                    {visibleTamSegments.map((seg: any, i: number) => {
+                      const growthNote = annotationByName(segmentGrowth.data?.business, seg.segmentName);
+                      const row = tamRowView(seg, tamAiFills?.[seg.segmentName], growthNote);
+                      const naGrowth = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "growth");
+                      const naTam = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "tam");
+                      const naCagr = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "cagr");
                       return (
                       <tr key={i} className="hover:bg-muted/10">
                         <td className="py-1.5 pr-2 font-medium">
@@ -380,33 +433,34 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                         {row.growth === null ? (
                           <td
                             className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60"
-                            title="Keine Vorjahreszahl fuer dieses Segment berichtet"
+                            title={naGrowth?.reason ?? growthNote?.reason ?? "Keine Vorjahreszahl fuer dieses Segment berichtet"}
                           >
                             n/a
                           </td>
                         ) : (
-                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? "N/A ersetzt durch KI" : undefined}>
+                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? kiEstimateTitle(tamAiFills?.[seg.segmentName]) : row.growthIsCalculated ? growthTitle(growthNote) : undefined}>
                             {row.growth >= 0 ? '+' : ''}{formatNumber(row.growth, 1)}%
-                            {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} />}
+                            {row.growthIsCalculated && <span className="ml-1 text-[8px] font-sans font-semibold uppercase tracking-wide text-sky-300">berechnet</span>}
+                            {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />}
                           </td>
                         )}
                         {row.tamIsKi && row.tamSize != null ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI" data-testid={`cell-tam-ki-size-${i}`}>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} data-testid={`cell-tam-ki-size-${i}`}>
                             ${formatNumber(row.tamSize, 0)}B
-                            <KiBadge testId={`badge-tam-ki-${i}`} />
+                            <KiBadge testId={`badge-tam-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
                           </td>
                         ) : row.tamSize === null ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title="Kein TAM-Markt zugeordnet">n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naTam?.reason ?? "Kein TAM-Markt zugeordnet"}>n/a</td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(row.tamSize, 0)}B</td>
                         )}
                         {row.cagrIsKi ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])}>
                             {row.tamCagr}%
-                            <KiBadge />
+                            <KiBadge title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
                           </td>
                         ) : row.unmatched ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naCagr?.reason}>n/a</td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
                         )}
@@ -448,7 +502,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                   <span className="font-medium">
                     Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
-                    {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
+                    {' '}({companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>} vs. {formatNumber(tam.tamCAGR, 1)}%)
                   </span>
                 </div>
               ) : (
@@ -458,6 +512,15 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               )}
               {/* QS: umsatzgewichtetes Wachstum aus den ECHTEN Segment-Raten —
                   muss plausibel zum oben gezeigten Revenue Growth passen. */}
+              {calculatedWeighted != null && (
+                <div className="text-[10px] text-muted-foreground">
+                  Anzeige inkl. berechnet:{" "}
+                  <span className={`font-mono tabular-nums font-medium ${calculatedWeighted >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                    {calculatedWeighted >= 0 ? "+" : ""}{formatNumber(calculatedWeighted, 1)}%
+                  </span>
+                  <span className="text-muted-foreground/60"> — nicht im Fact-gewichteten Wachstum und nicht im Score</span>
+                </div>
+              )}
               {typeof tam.segmentWeightedGrowth === 'number' && isFinite(tam.segmentWeightedGrowth) && (
                 <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
                   <span>
@@ -467,7 +530,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     </span>
                   </span>
                   <span className="text-muted-foreground/60">
-                    (vs. Revenue Growth {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                    (vs. Revenue Growth {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                     {typeof tam.segmentGrowthCoveragePct === 'number' && tam.segmentGrowthCoveragePct < 99.5
                       ? `, Abdeckung ${formatNumber(tam.segmentGrowthCoveragePct, 0)}% des Umsatzes`
                       : ''})
@@ -478,8 +541,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
           ) : (
             /* Fallback: single growth comparison bar — nur wenn tamCAGR/outperforming
                belastbar sind (Pfad A liefert quality:'weak', aber tamCAGR ist dort
-               immer eine Zahl, nie null; Guard bleibt trotzdem defensiv). */
-            tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
+               immer eine Zahl, nie null; Guard bleibt trotzdem defensiv).
+               Yahoo-only: kein Umsatz → kein Wachstumsvergleich (n/a statt „Wächst X Pkt. langsamer“). */
+            companyNa ? (
+              <div className="text-[10px] text-muted-foreground/70 italic" data-testid="s9-growth-vs-sector-na">Wachstum Unternehmen vs. Branche: n/a ({yahooTamNa ? 'Yahoo-Daten' : 'kein Umsatz'})</div>
+            ) : tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
             <div className="space-y-1.5">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
               <div className="flex items-center gap-2">
@@ -487,11 +553,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
                   <div
                     className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
-                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
                   />
                 </div>
-                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -510,8 +576,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                 <span className="font-medium">
                   {tam.outperforming
-                    ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
-                    : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche`
+                    ? `Wächst ${formatNumber(companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
+                    : `Wächst ${formatNumber(tam.tamCAGR - companyGrowth, 1)} Pkt. langsamer als die Branche`
                   }
                 </span>
               </div>
@@ -531,9 +597,14 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
       {/* Premium / Discount Breakdown */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-          {isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
+          {!fwdPEValid ? 'Discount / Premium' : isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
         </h3>
-        {isDiscount ? (
+        {!fwdPEValid ? (
+          <div className="bg-muted/20 rounded-md p-3 border border-border text-xs text-muted-foreground" data-testid="discount-na">
+            Discount zum Sektor: <span className="font-mono font-semibold">n/a</span> · Fwd P/E {typeof data.forwardPE === "number" && data.forwardPE < 0 ? "negativ" : "nicht verfügbar"}
+            {isYahooOnly(data) ? " (Yahoo-Daten)" : ""}
+          </div>
+        ) : isDiscount ? (
           /* DISCOUNT: Show discount assessment instead of moat/speculative split */
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
@@ -600,8 +671,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         </div>
       )}
 
+      {/* #258: Hinweis nach automatischem Verwerfen (400), unabhängig davon, ob der Peer-Block sichtbar ist. */}
+      {peerResetNotice && <PeerOverrideResetNotice ticker={peerResetNotice} onDismiss={onDismissPeerResetNotice} />}
+
       {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
-      {(data.peerSet?.banner || peerGap > 0 || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+      {(data.peerSet?.banner || peerGap > 0 || hasActivePeerOverrides || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
         <div className="mt-4 pt-4 border-t border-border">
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
@@ -665,8 +739,10 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               {data.peerSet.banner}
             </div>
           )}
-          {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
-            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} />
+          {/* #258 FAIL 3: mit Override-Callback immer rendern, auch bei peerComparison null / 0 Peers,
+              damit Eingabefeld und „Standard wiederherstellen“ (Empty-State in PeerComparison) erreichbar sind. */}
+          {(!!onPeerOverridesChange || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
           )}
         </div>
       )}
@@ -684,7 +760,7 @@ function toTamNaRef(s: {
 }): TamNaSegmentRef | null {
   const name = typeof s.segmentName === "string" ? s.segmentName.trim() : "";
   if (!name) return null;
-  if (!(typeof s.segmentRevenue === "number" && Number.isFinite(s.segmentRevenue) && s.segmentRevenue >= 0)) return null;
+  if (!hasPositiveSegmentRevenue(s.segmentRevenue)) return null;
   return {
     segmentName: name,
     segmentRevenue: s.segmentRevenue,
@@ -693,6 +769,13 @@ function toTamNaRef(s: {
     tamSize: typeof s.tamSize === "number" && Number.isFinite(s.tamSize) ? s.tamSize : null,
     tamCAGR: typeof s.tamCAGR === "number" && Number.isFinite(s.tamCAGR) ? s.tamCAGR : null,
   };
+}
+
+function kiEstimateTitle(fill: TamNaFill | undefined): string {
+  if (!fill) return "Schätzung";
+  const formula = fill.formula || fill.rationale || "Begründung fehlt";
+  const source = fill.tamSource ? `Quelle: ${fill.tamSource}` : "Quelle: siehe Begründung";
+  return `Schätzung · ${formula} · ${source}`;
 }
 
 function tamRowView(seg: {
@@ -705,14 +788,15 @@ function tamRowView(seg: {
   tamCAGR?: number | null;
   marketShare?: number | null;
   shareWarning?: boolean;
-}, fill: TamNaFill | undefined) {
+}, fill: TamNaFill | undefined, growthNote?: SegmentGrowthAnnotation | null) {
   const ref = toTamNaRef(seg);
   const unmatched = seg.matched === false;
   const factGrowth = typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth) ? seg.segmentGrowth : null;
-  const kiGrowth = factGrowth == null && fill && typeof fill.segmentGrowth === "number" && Number.isFinite(fill.segmentGrowth)
+  const calculated = calculatedGrowth(factGrowth, growthNote);
+  const kiGrowth = factGrowth == null && calculated == null && fill && typeof fill.segmentGrowth === "number" && Number.isFinite(fill.segmentGrowth)
     ? fill.segmentGrowth
     : null;
-  const growth = factGrowth ?? kiGrowth;
+  const growth = factGrowth ?? calculated?.growth ?? kiGrowth;
   const factTam = ref ? factTamSize(ref) : null;
   const factCagr = ref ? factTamCagr(ref) : null;
   const kiTam = unmatched && fill && typeof fill.tamSize === "number" && Number.isFinite(fill.tamSize) && fill.tamSize > 0
@@ -727,6 +811,7 @@ function tamRowView(seg: {
     unmatched,
     growth,
     growthIsKi: kiGrowth != null,
+    growthIsCalculated: calculated != null,
     tamSize,
     tamIsKi: kiTam != null,
     tamCagr,
@@ -739,12 +824,12 @@ function tamRowView(seg: {
   };
 }
 
-function KiBadge({ testId }: { testId?: string }) {
+function KiBadge({ testId, title = "Schätzung" }: { testId?: string; title?: string }) {
   return (
     <span
       className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-300"
-      title="N/A ersetzt durch KI"
-      aria-label="N/A ersetzt durch KI"
+      title={title}
+      aria-label={title}
       data-testid={testId}
     >
       KI
@@ -752,15 +837,16 @@ function KiBadge({ testId }: { testId?: string }) {
   );
 }
 
-function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number; max: number; color: string; suffix?: string }) {
-  const pct = Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
+function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number | null; max: number; color: string; suffix?: string }) {
+  // null = Wert fehlt (z. B. KGV bei Yahoo ohne quoteSummary) → leerer Balken + n/a statt 0.0
+  const pct = value == null ? 0 : Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
   return (
     <div className="flex items-center gap-3">
       <span className="text-xs text-muted-foreground w-20 flex-shrink-0">{label}</span>
       <div className="flex-1 h-5 bg-muted/30 rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</span>
+      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value == null ? 'n/a' : <>{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</>}</span>
     </div>
   );
 }

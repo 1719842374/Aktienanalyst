@@ -3,6 +3,7 @@
  * Run: npx tsx script/test-liquidity-index.ts
  */
 import express from "express";
+import { readFileSync } from "node:fs";
 import { CATALOG, type Region, type SeriesSpec } from "../server/liquidity-index-catalog";
 import {
   H_MIN,
@@ -74,6 +75,13 @@ ok("US MSPD key", keys("US").includes("liqidx_US__mspd"));
 ok("US buybacks key", keys("US").includes("liqidx_US__buybacks"));
 ok("US QRA key", keys("US").includes("fiscal__qra_2026Q3"));
 ok("QRA valid through 2026-11-04", spec("US", "fiscal__qra_2026Q3")?.validUntil === "2026-11-04");
+const usDff = spec("US", "liqidx_US__dff");
+ok("US DFF is channel B", usDff?.id === "DFF" && usDff.role === "rate" && usDff.book === "M" && usDff.unit === "pct" && usDff.sign === -1);
+const usM2 = spec("US", "liqidx_US__m2");
+ok("US M2SL is channel C from the level", usM2?.id === "M2SL" && usM2.role === "money" && usM2.book === "C" && usM2.unit === "bnUSD" && usM2.sign === 1);
+const fetchSrc = readFileSync(new URL("../server/liquidity-index.ts", import.meta.url), "utf8");
+ok("DFF fetch is the FRED series", /case "liqidx_US__dff":[\s\S]{0,180}fetchFred\("DFF"/.test(fetchSrc));
+ok("M2SL fetch is the FRED level", /case "liqidx_US__m2":[\s\S]{0,180}fetchFred\("M2SL"/.test(fetchSrc));
 ok("EU assets/app/df/rate/m3/gov/bonds/bund",
   ["liqidx_EU__assets", "liqidx_EU__app_pepp", "liqidx_EU__df", "liqidx_EU__ecbdfr", "liqidx_EU__m3", "liqidx_EU__govdep", "liqidx_EU__eubonds", "liqidx_EU__bund"]
     .every(k => keys("EU").includes(k)));
@@ -133,6 +141,25 @@ const tgaUp = scoreCatalog("US", { "liqidx_US__tga": { points: monthly(H_MIN + 8
 const tgaSlot = tgaUp.books.F.find(s => s.cacheKey === "liqidx_US__tga");
 ok("rising TGA scores tight", tgaSlot?.available === true && (tgaSlot.score ?? 100) < 50, String(tgaSlot?.score));
 
+const flatDff = scoreCatalog("US", { "liqidx_US__dff": { points: monthly(H_MIN + 8, 4) } });
+const cutDff = scoreCatalog("US", { "liqidx_US__dff": { points: monthly(H_MIN + 8, 4, 3) } });
+const dffFlatSlot = flatDff.books.M.find(s => s.id === "DFF");
+const dffCutSlot = cutDff.books.M.find(s => s.id === "DFF");
+ok("DFF with history is available", dffFlatSlot?.available === true, JSON.stringify(dffFlatSlot));
+ok("a DFF cut scores looser than a flat rate", (dffCutSlot?.score ?? 0) > (dffFlatSlot?.score ?? 100), `${dffFlatSlot?.score} → ${dffCutSlot?.score}`);
+const emptyDff = scoreCatalog("US", { "liqidx_US__dff": { points: [] } });
+const emptyDffSlot = emptyDff.books.M.find(s => s.id === "DFF");
+ok("DFF with no observations stays n/v", emptyDffSlot?.available === false && emptyDffSlot.x == null && emptyDffSlot.score == null);
+
+const m2Levels = monthly(36, 20000, 22000, "2023-01-01");
+const m2Up = scoreCatalog("US", { "liqidx_US__m2": { points: m2Levels } });
+const m2Slot = m2Up.money.find(s => s.id === "M2SL");
+ok("M2SL with history is available", m2Slot?.available === true, JSON.stringify(m2Slot));
+ok("M2SL scores YoY, not the dollar level", m2Slot?.x != null && Math.abs(m2Slot.x) < 100, String(m2Slot?.x));
+const emptyM2 = scoreCatalog("US", { "liqidx_US__m2": { points: [] } });
+const emptyM2Slot = emptyM2.money.find(s => s.id === "M2SL");
+ok("M2SL with no observations stays n/v", emptyM2Slot?.available === false && emptyM2Slot.x == null && emptyM2Slot.score == null);
+
 const bills = monthly(H_MIN + 8, 500, 580);
 const notes = monthly(H_MIN + 8, 4000, 4000);
 const soma = scoreCatalog("US", { "liqidx_US__soma": { points: notes, parts: { bills } } });
@@ -155,7 +182,8 @@ const indexed = await buildLiquidityIndex("US", {
   },
   fetchStocks: async () => ({}),
 });
-ok("builder does not fetch M2V", !seen.some(s => s.includes("M2V") || s.includes("M2SL")));
+ok("builder does not fetch M2V", !seen.some(s => s.includes("M2V")));
+ok("builder asks for DFF and M2SL", seen.includes("fetch:DFF") && seen.includes("fetch:M2SL"), seen.filter(s => s.startsWith("fetch:")).join(" "));
 ok("builder writes catalog cache keys only", indexed.books.M.some(s => s.cacheKey === "liqidx_US__WALCL" && s.available));
 ok("discover helper agrees on QT", discoverBooks({ policyZ: -1.4, policyDelta: -52, issuanceZ: 0.2 }).cbQT === true);
 

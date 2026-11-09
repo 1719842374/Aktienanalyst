@@ -3,9 +3,13 @@ import { SectionCard } from "../SectionCard";
 import { addTickerToManualPortfolio, addTickerToWatchlist } from "@/lib/portfolio/portfolioBridge";
 import { useLocation } from "wouter";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatTarget, statementCurrency, targetUpsidePct, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
+import { useDividendKpi } from "@/lib/useDividendHistory";
+import { listingFxWarning } from "@shared/listing-units";
+import { isYahooOnly, yahooValueMissing, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
+import { YahooNoValuationNotice } from "../YahooNoValuationCard";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -34,7 +38,20 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
     else if (r.reason === "duplicate") showFlash(`${data.ticker} ist bereits auf der Watchlist`);
   }
 
-  const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
+  // TTM from /api/dividends on the chart's last bar (same function + smoothing as the overlay's last point).
+  // JOB 20: shared with Section 4 (Financial Statements) via useDividendKpi, so both show the same value.
+  const divKpi = useDividendKpi(data);
+  // JOB 22: Symbol aus der Listing-Währung (SHEL.L → £). JOB 23: Statement-Werte (EPS, FCF) über statementCurrency —
+  // USD (Server rechnet nach USD um), nur Minor-Unit-Listings (.L) in Listing-Währung.
+  const priceCcy = data.currency;
+  // #252-Rest: Yahoo-Fallback liefert EPS/KGV unkonvertiert in der Listing-Währung (VOW3.DE EPS 10.44 €, keine USD-Umrechnung).
+  const yahoo = isYahooOnly(data);
+  const stmtCcy = yahoo ? (priceCcy || statementCurrency(data)) : statementCurrency(data);
+  // #252-Rest: Yahoo liefert Fwd P/E, EV/EBITDA, PEG, EPS adj./Konsens nicht; der Server füllt 0 → bei Yahoo n/a statt 0.0.
+  const yNum = (v: number | null | undefined, d = 2): string =>
+    yahoo && !(typeof v === "number" && Number.isFinite(v) && v !== 0) ? "n/a" : formatNumber(v as number, d);
+  // JOB 23: ohne Kursziel (Median n/a) PT Upside n/a statt „-100.0%“ (gleiche Regel wie Summary).
+  const ptUpside = targetUpsidePct(data.analystPT.median, data.currentPrice);
 
   function fmtAge(mins: number): string {
     if (mins < 1) return "gerade eben";
@@ -49,6 +66,13 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
 
   return (
     <SectionCard number={2} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {isYahooOnly(data) && <div className="mb-3"><YahooNoValuationNotice data={data} /></div>}
+      {listingFxWarning(data.currency) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3 text-xs text-amber-400 break-words" data-testid="fx-partial-warning">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>{listingFxWarning(data.currency)}</span>
+        </div>
+      )}
       {isStaleCache && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
@@ -56,7 +80,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-amber-400">Offline-Daten (Cache)</span>
               {onRefresh && (
-                <button onClick={onRefresh} className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">
+                <button onClick={onRefresh} title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)" className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">
                   <RefreshCw className="w-3 h-3" /> Aktualisieren
                 </button>
               )}
@@ -75,7 +99,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <Clock className="w-3 h-3" />
           <span>Gespeicherte Analyse — vor {fmtAge(data._cacheAge!)} erstellt{data._cachedAt ? ` (${new Date(data._cachedAt).toLocaleString("de-DE")})` : ""} · 0 Credits</span>
           {onRefresh && (
-            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Live-Daten neu laden (verbraucht Credits)">
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)">
               <RefreshCw className="w-3 h-3" /><span className="text-[10px]">Aktualisieren</span>
             </button>
           )}
@@ -87,7 +111,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <Clock className="w-3 h-3" />
           <span>Live-Daten vom {new Date(data.dataTimestamp).toLocaleString("de-DE")}</span>
           {onRefresh && (
-            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Daten neu laden">
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)">
               <RefreshCw className="w-3 h-3" />
             </button>
           )}
@@ -115,15 +139,17 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       )}
 
-      {data.currencyInfo?.converted && (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex items-start gap-2">
+      {data.currencyInfo && (
+        <div className={`${data.currencyInfo.converted ? "bg-blue-500/10 border-blue-500/20" : "bg-amber-500/10 border-amber-500/20"} border rounded-lg p-3 flex items-start gap-2`} data-testid="currency-info">
           <span className="text-base flex-shrink-0">💱</span>
           <div className="text-xs">
-            <span className="font-semibold text-blue-400">Währungsumrechnung aktiv</span>
+            <span className={`font-semibold ${data.currencyInfo.converted ? "text-blue-400" : "text-amber-400"}`}>
+              {data.currencyInfo.converted ? "Währungsumrechnung aktiv" : "Keine Währungsumrechnung"}
+            </span>
             <span className="text-foreground/70 ml-1">
-              — Finanzdaten in {data.currencyInfo.reportedCurrency} gemeldet, umgerechnet zu USD
-              ({data.currencyInfo.fxPair} = {data.currencyInfo.fxRate.toFixed(4)}).
-              Alle Bewertungen und DCF-Berechnungen in USD.
+              {/* DCF-FX: Server-Hinweis (shared/listing-units.ts currencyInfoFromListingFx) */}
+              — {data.currencyInfo.note ?? `${data.currencyInfo.fxPair} = ${data.currencyInfo.fxRate.toFixed(4)}`}
+              {data.currencyInfo.converted ? " Alle Bewertungen und DCF-Berechnungen in USD." : ""}
             </span>
           </div>
         </div>
@@ -148,12 +174,13 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         {flash && <span className="text-[10px] text-emerald-400 ml-auto">{flash}</span>}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KPI label="Price" value={formatCurrency(data.currentPrice)} sub={new Date(data.priceTimestamp).toLocaleString()} />
-        <KPI label="Market Cap" value={formatLargeNumber(data.marketCap)} />
-        <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
-        <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
-        <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+      <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
+        <KPI label="Price" value={formatCurrency(data.currentPrice, 2, priceCcy)} sub={new Date(data.priceTimestamp).toLocaleString()} />
+        <KPI label="Market Cap" value={yahooValueMissing(data, data.marketCap) ? "n/a" : formatLargeNumber(data.marketCap, priceCcy)} />
+        <KPI label="Beta" value={data.betaLive == null ? "n/a" : formatNumber(data.betaLive)} sub="aktuell · 1J vs. SPY" testId="kpi-beta" />
+        <KPI label="P/E" value={yNum(data.peRatio, 1)} sub={`Fwd: ${yNum(data.forwardPE, 1)}`} />
+        <KPI label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
+        {divKpi && <KPI label="Div. Yield" value={divKpi.value} sub={divKpi.sub} />}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">
@@ -186,29 +213,41 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <Row label="EPS TTM" value={`$${formatNumber(data.epsTTM)}`} />
-            <Row label="EPS adj. FY" value={`$${formatNumber(data.epsAdjFY)}`} />
-            <Row label="EPS Consensus Next FY" value={`$${formatNumber(data.epsConsensusNextFY)}`} />
-            <Row label="EPS Growth 5Y" value={formatPercentNoSign(data.epsGrowth5Y)} />
+            <Row label="EPS TTM" value={yahooValueMissing(data, data.epsTTM) ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM as number)}`} />
+            <Row label="EPS adj. FY" value={yNum(data.epsAdjFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
+            <Row label="EPS Consensus Next FY" value={yNum(data.epsConsensusNextFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
+            <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
+        <p className="text-[10px] text-muted-foreground mt-1" data-testid="eps-cagr-source">
+          {data.epsCagrFromIncome === false
+            ? "Keine EPS-CAGR aus der Income-Statement-Historie."
+            : "EPS-CAGR 5Y aus der Income-Statement-Historie. Nicht der Forward-Konsens und nicht das EPS-YoY."}
+        </p>
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Analyst Ratings</h3>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+          Analyst Ratings{data.ratings.basis === "grade-events" ? " (Grade-Events)" : ""}
+        </h3>
         <div className="flex items-center gap-4 mb-2">
           <RatingBadge label="Buy" count={data.ratings.buy} color="bg-emerald-500/15 text-emerald-500" />
           <RatingBadge label="Hold" count={data.ratings.hold} color="bg-amber-500/15 text-amber-500" />
           <RatingBadge label="Sell" count={data.ratings.sell} color="bg-red-500/15 text-red-500" />
         </div>
+        {data.ratings.basis === "grade-events" && (
+          <p className="text-[10px] text-muted-foreground mb-2" data-testid="grade-events-note">
+            Buy/Hold/Sell zählen Grade-Events, nicht eindeutige Analysten.
+          </p>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="Median PT" value={formatCurrency(data.analystPT.median)} />
-              <Row label="High PT" value={formatCurrency(data.analystPT.high)} />
-              <Row label="Low PT" value={formatCurrency(data.analystPT.low)} />
-              <Row label="PT Upside" value={`${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
-              <Row label="# Analysts" value={data.analystPT.count.toString()} />
+              <Row label="Median PT" value={formatTarget(data.analystPT.median, priceCcy)} />
+              <Row label="High PT" value={formatTarget(data.analystPT.high, priceCcy)} />
+              <Row label="Low PT" value={formatTarget(data.analystPT.low, priceCcy)} />
+              <Row label="PT Upside" value={ptUpside == null ? "n/a" : `${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside == null ? "text-muted-foreground" : ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
+              <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>
           </table>
         </div>
@@ -219,13 +258,13 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="P/E" value={formatNumber(data.peRatio, 1)} />
-              <Row label="Forward P/E" value={formatNumber(data.forwardPE, 1)} />
+              <Row label="P/E" value={yNum(data.peRatio, 1)} />
+              <Row label="Forward P/E" value={yNum(data.forwardPE, 1)} />
               <tr className="border-b border-border/50">
                 <td className="py-1.5 px-2 text-muted-foreground">PEG</td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  <span>{formatNumber(data.pegRatio)}</span>
-                  {data.lynchClass && (
+                  <span>{yNum(data.pegRatio)}</span>
+                  {data.lynchClass && !yahoo && (
                     <span title={data.lynchPEGBasis || data.lynchClass}
                       className={`ml-2 text-[9px] px-1.5 py-0.5 rounded font-medium cursor-help ${
                         data.lynchClass === "cyclical" ? "bg-orange-500/15 text-orange-400" :
@@ -236,8 +275,8 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
                   )}
                 </td>
               </tr>
-              <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
-              <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM)} />
+              <Row label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
+              <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM, stmtCcy)} />
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium text-foreground">
@@ -260,14 +299,16 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       </div>
 
-      <ThesisStrengthPanel data={data} onScore={onThesisScore} />
+      {isYahooOnly(data)
+        ? <p className="text-xs text-muted-foreground" data-testid="thesis-strength-yahoo-na">Thesis Strength Score: n/a ({YAHOO_NO_VALUATION_NOTICE})</p>
+        : <ThesisStrengthPanel data={data} onScore={onThesisScore} />}
     </SectionCard>
   );
 }
 
-function KPI({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KPI({ label, value, sub, testId }: { label: string; value: string; sub?: string; testId?: string }) {
   return (
-    <div className="bg-muted/30 rounded-md p-3 border border-border/50">
+    <div className="bg-muted/30 rounded-md p-3 border border-border/50" data-testid={testId}>
       <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{label}</div>
       <div className="text-base font-semibold tabular-nums mt-0.5">{value}</div>
       {sub && <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">{sub}</div>}

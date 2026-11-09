@@ -1,11 +1,12 @@
 /**
  * Quellenkatalog — reine Rechnung und Parser.
- * Spec: Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md
+ * Spec: fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md
  *
- * V = NGDP / M für EZ (M3) und JP (M2). US-Velocity bleibt M2V in
- * liquidity-regime.ts; dieses Modul fetcht M2V nicht.
+ * V = NGDP / M für EZ (M3) und JP (M2). US-Velocity ist FRED M2V,
+ * sonst GDP/M2SL. π = Alter × V/V̄ (Philip) und wartet nicht auf F.
  * Snapshot-Prints sind Testhaken, keine Laufzeitkonstanten.
  */
+import { PI_CAP_YEARS, pricedInFromAgeAndVelocity } from "./liquidity-stocks-velocity";
 
 export const PHI = 0.3;
 
@@ -18,8 +19,9 @@ export const DEAD_FRED_SERIES = [
 
 /**
  * FRED-Serien, die der Briefing-Fetch wirklich anfragt.
- * Kein M2V (der bleibt im C2-Pfad), kein DFII* außer DFII10,
- * und kein CN-10y: die Spec hat dafür keine robuste FRED-Serie.
+ * M2V/M2SL/GDP/GDPC1/CPIAUCSL füllen US V und EMG.
+ * IRLTLT01CNM156N und MYAGM2CNM* sind tot oder 2019 — nicht anfragen.
+ * CN 10y kommt aus Fisher (DFII10 + CHNCPIALLMINMEI), nicht aus einem toten OECD-Spiegel.
  */
 export const LIVE_FRED_SERIES = [
   "JPNNGDP",
@@ -42,7 +44,22 @@ export const LIVE_FRED_SERIES = [
   "WSHOBL",
   "WSHOTSL",
   "GFDEGDQ188S",
+  "M2V",
+  "M2SL",
+  "GDP",
+  "GDPC1",
+  "CPIAUCSL",
+  "CPHPTT01EZM659N",
 ] as const;
+
+export const BIS_CN_CBPOL_URL = "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.CN?format=csv";
+export const BIS_IN_CBPOL_URL = "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.IN?format=csv";
+export const OECD_IN_2Y_URL = "https://stats.oecd.org/SDMX-JSON/data/MEI_FIN/IRLTTE02.IND.M/all?startTime=2018";
+
+export const WORLD_BANK_CN_M2_URL =
+  "https://api.worldbank.org/v2/country/CHN/indicator/FM.LBL.BMNY.CN?format=json&mrnev=8";
+
+export type UsVelocitySource = "FRED M2V" | "NGDP/M2" | "liquidity-regime" | null;
 
 export const EM_INDEX_WEIGHT_CAP = 0.10;
 export const SPILLOVER_ABS_Z = 1;
@@ -109,6 +126,198 @@ export function isForbiddenFredSeries(id: string): boolean {
 export function velocity(ngdp: number, money: number): number | null {
   if (!Number.isFinite(ngdp) || !Number.isFinite(money) || money === 0) return null;
   return ngdp / money;
+}
+
+function lastFinite(points: DatedValue[]): DatedValue | null {
+  const sorted = [...points].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  return sorted.length ? sorted[sorted.length - 1] : null;
+}
+
+/**
+ * Official FRED M2V wins. Otherwise V = GDP / M2SL on the latest overlapping date.
+ * Median is the own series, not a global constant.
+ */
+export function officialOrRatioVelocity(
+  m2v: DatedValue[],
+  gdp: DatedValue[],
+  m2: DatedValue[],
+): { velocity: number | null; median: number | null; source: Exclude<UsVelocitySource, "liquidity-regime"> } {
+  const official = [...m2v].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  if (official.length) {
+    const tail = official.slice(-40).map(p => p.value);
+    return {
+      velocity: official[official.length - 1].value,
+      median: median(tail),
+      source: "FRED M2V",
+    };
+  }
+  const money = [...m2].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const income = [...gdp].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const ratios: DatedValue[] = [];
+  for (const row of income) {
+    const level = [...money].reverse().find(p => p.period.slice(0, 10) <= row.period.slice(0, 10));
+    if (!level || level.value === 0) continue;
+    ratios.push({ period: row.period, value: row.value / level.value });
+  }
+  const last = lastFinite(ratios);
+  if (!last) return { velocity: null, median: null, source: null };
+  return { velocity: last.value, median: median(ratios.slice(-40).map(p => p.value)), source: "NGDP/M2" };
+}
+
+/** i_CN ≈ r_US + π_CN. No live FRED CN-10y (IRLTLT01CNM156N is HTML). */
+export function cnNominalFisher(usRealPct: number | null, cnCpiYoyPct: number | null): number | null {
+  if (usRealPct == null || cnCpiYoyPct == null) return null;
+  if (!Number.isFinite(usRealPct) || !Number.isFinite(cnCpiYoyPct)) return null;
+  return usRealPct + cnCpiYoyPct;
+}
+
+/** World Bank v2 JSON: [meta, [{ date, value }, ...]]. */
+export function parseWorldBankLevels(jsonText: string): DatedValue[] {
+  if (!jsonText || jsonText.includes("<html") || jsonText.includes("<!DOCTYPE")) return [];
+  try {
+    const parsed = JSON.parse(jsonText);
+    const rows = Array.isArray(parsed) && Array.isArray(parsed[1]) ? parsed[1] : [];
+    const out: DatedValue[] = [];
+    for (const row of rows) {
+      const period = String(row?.date ?? "").trim();
+      const value = Number(row?.value);
+      if (!/^\d{4}$/.test(period) || !Number.isFinite(value)) continue;
+      out.push({ period, value });
+    }
+    return out.sort((a, b) => a.period.localeCompare(b.period));
+  } catch {
+    return [];
+  }
+}
+
+/** Sum of APP monthly nets in the official CSV window. */
+export function appCumulativeNetBn(rows: AppMonth[]): number | null {
+  if (!rows.length) return null;
+  const sum = rows.reduce((s, row) => s + row.netBn, 0);
+  return Number.isFinite(sum) ? sum : null;
+}
+
+/** BIS WS_CBPOL CSV. TIME_PERIOD is YYYY-MM or YYYY-MM-DD. */
+export function parseBisCbpol(csv: string): DatedValue[] {
+  const text = csv.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return [];
+  const lines = text.trim().split("\n").filter(Boolean);
+  if (lines.length < 2) return [];
+  const header = splitCsvLine(lines[0]).map(h => h.trim().toUpperCase());
+  const tIdx = header.indexOf("TIME_PERIOD");
+  const vIdx = header.indexOf("OBS_VALUE");
+  if (tIdx < 0 || vIdx < 0) return [];
+  const out: DatedValue[] = [];
+  for (const line of lines.slice(1)) {
+    const cols = splitCsvLine(line);
+    const value = parseNum(cols[vIdx]);
+    const period = (cols[tIdx] || "").trim();
+    if (!period || value == null) continue;
+    if (/^\d{4}-\d{2}(-\d{2})?$/.test(period)) out.push({ period, value });
+  }
+  return out.sort((a, b) => a.period.localeCompare(b.period));
+}
+
+/**
+ * OECD MEI_FIN SDMX-JSON. One series, observation dimension is time.
+ * Empty / HTML bodies stay empty.
+ */
+export function parseOecdMeiJson(jsonText: string): DatedValue[] {
+  if (!jsonText || jsonText.includes("<html") || jsonText.includes("<!DOCTYPE")) return [];
+  try {
+    const parsed = JSON.parse(jsonText) as {
+      data?: { dataSets?: { series?: Record<string, { observations?: Record<string, number[] | number> }> }[]; structures?: { dimensions?: { observation?: { values?: { id?: string }[] }[] } }[] };
+      structure?: { dimensions?: { observation?: { values?: { id?: string }[] }[] } };
+    };
+    const seriesMap = parsed.data?.dataSets?.[0]?.series;
+    if (!seriesMap) return [];
+    const times = parsed.data?.structures?.[0]?.dimensions?.observation?.[0]?.values
+      ?? parsed.structure?.dimensions?.observation?.[0]?.values
+      ?? [];
+    const out: DatedValue[] = [];
+    for (const series of Object.values(seriesMap)) {
+      const obs = series?.observations ?? {};
+      for (const [idx, raw] of Object.entries(obs)) {
+        const value = Array.isArray(raw) ? Number(raw[0]) : Number(raw);
+        const period = times[Number(idx)]?.id ?? "";
+        if (!period || !Number.isFinite(value)) continue;
+        if (/^\d{4}-\d{2}(-\d{2})?$/.test(period) || /^\d{4}$/.test(period)) out.push({ period, value });
+      }
+    }
+    return out.sort((a, b) => a.period.localeCompare(b.period));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Monthly carry in bp: DGS10 − (DFII10 + CN-CPI YoY).
+ * Same Fisher identity as the CN 10y print, so z has a real history.
+ */
+export function fisherCarrySeries(
+  us10y: DatedValue[],
+  usReal: DatedValue[],
+  cnCpiIndex: DatedValue[],
+): DatedValue[] {
+  const realM = lastInMonth(usReal);
+  const cpiYoyPts: DatedValue[] = [];
+  const cpiM = lastInMonth(cnCpiIndex);
+  for (let i = 0; i < cpiM.length; i++) {
+    const last = cpiM[i];
+    const prev = cpiM.find(p => p.period === `${Number(last.period.slice(0, 4)) - 1}-${last.period.slice(5, 7)}`);
+    if (!prev || prev.value === 0) continue;
+    cpiYoyPts.push({ period: last.period, value: ((last.value - prev.value) / prev.value) * 100 });
+  }
+  const realBy = new Map(realM.map(p => [p.period.slice(0, 7), p.value]));
+  const cpiBy = new Map(cpiYoyPts.map(p => [p.period.slice(0, 7), p.value]));
+  const out: DatedValue[] = [];
+  for (const row of lastInMonth(us10y)) {
+    const key = row.period.slice(0, 7);
+    const real = realBy.get(key);
+    const cpi = cpiBy.get(key);
+    if (real == null || cpi == null) continue;
+    out.push({ period: row.period, value: (row.value - (real + cpi)) * 100 });
+  }
+  return out;
+}
+
+export function worldBankYoy(levels: DatedValue[]): { latest: number; period: string } | null {
+  const sorted = [...levels].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  if (sorted.length < 2) return null;
+  const last = sorted[sorted.length - 1];
+  const prev = sorted[sorted.length - 2];
+  if (!(prev.value > 0)) return null;
+  return { latest: ((last.value - prev.value) / prev.value) * 100, period: last.period };
+}
+
+/** EMG = ΔM2 − ΔRGDP − π, latest YoY of each series. Same identity as C2. */
+export function usEmgFromSeries(m2: DatedValue[], rgdp: DatedValue[], cpi: DatedValue[]): number | null {
+  const m = yoyOnIndex(m2);
+  const g = yoyOnIndex(rgdp);
+  const p = yoyOnIndex(cpi);
+  if (!m || !g || !p) return null;
+  return m.latest - g.latest - p.latest;
+}
+
+/**
+ * π = time share × circulation. Missing F does not block.
+ * Unknown program start uses the 2y cap (Philip: after ≤2y the program is priced in).
+ */
+export function briefingPricedIn(
+  ageYears: number | null,
+  v: number | null,
+  vBar: number | null,
+): { pi: number | null; available: boolean; note: string; addedToLi: false } {
+  const age = ageYears != null && Number.isFinite(ageYears) ? ageYears : PI_CAP_YEARS;
+  const bar = vBar != null && Number.isFinite(vBar) && vBar > 0 ? vBar : v;
+  const pi = pricedInFromAgeAndVelocity(age, v, bar);
+  if (pi == null) {
+    return { pi: null, available: false, note: "velocity unknown — π needs V", addedToLi: false };
+  }
+  const note = ageYears == null
+    ? "π = 2y cap × V/V̄ (Philip; no F-rest, start unknown)"
+    : "π = age × V/V̄ (Philip; no F-rest)";
+  return { pi, available: true, note, addedToLi: false };
 }
 
 /**

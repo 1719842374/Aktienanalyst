@@ -2,10 +2,14 @@ import type { Express } from "express";
 import { fetchBTCMacroHistory } from "./btc-macro";
 import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
 import { buildFiscalFrontendResponse } from "./fiscal-frontend";
+import { emptyBtcLiquidity, getBtcLiquidity } from "./btc-liquidity";
 import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
+import { fetchReal10YHistory } from "./btc-macro";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL } from "../shared/btc-spot";
+import { fetchBtcSpotHistory } from "./btc-spot";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const cache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchBTCMacroHistory>> }>();
@@ -25,6 +29,21 @@ let stablecoinMemCache: { expiresAt: number; data: Awaited<ReturnType<typeof bui
  * FRED-Makro-Overlays.
  */
 export function registerBTCRoutes(app: Express): void {
+  // Tägliche Spot-Historie. Ein Fehlschlag bleibt 502 mit Quelle — kein kürzerer Ersatz.
+  app.get("/api/analyze-btc/spot-history", async (_req, res) => {
+    try {
+      res.json(await fetchBtcSpotHistory());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "BTC-Spot-Historie nicht verfügbar";
+      console.error("[GET /api/analyze-btc/spot-history]", message.substring(0, 200));
+      res.status(502).json({
+        error: message,
+        source: BTC_SPOT_SOURCE_LABEL,
+        sourceUrl: BTC_SPOT_SOURCE_URL,
+      });
+    }
+  });
+
   app.get("/api/analyze-btc/macro-history", async (req, res) => {
     const requestedStart = typeof req.query.startDate === "string" ? req.query.startDate : "2011-01-01";
     const startDate = DATE_PATTERN.test(requestedStart) ? requestedStart : "2011-01-01";
@@ -39,6 +58,24 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/macro-history]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "FRED-Makrodaten nicht verfügbar" });
+    }
+  });
+
+  // Real10Y-Overlay der Aktien-TA (#267): nur DFII10, damit ein M2SL-Ausfall Real10Y nicht n/a macht.
+  // Gleicher Fetcher und gleicher 5-min-Cache wie macro-history; die BTC-Route oben bleibt unverändert.
+  const real10yCache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchReal10YHistory>> }>();
+  app.get("/api/analyze-btc/real10y-history", async (req, res) => {
+    const requestedStart = typeof req.query.startDate === "string" ? req.query.startDate : "2011-01-01";
+    const startDate = DATE_PATTERN.test(requestedStart) ? requestedStart : "2011-01-01";
+    const cached = real10yCache.get(startDate);
+    if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+    try {
+      const data = await fetchReal10YHistory(startDate);
+      real10yCache.set(startDate, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      res.json(data);
+    } catch (err: any) {
+      console.error("[GET /api/analyze-btc/real10y-history]", err?.message?.substring(0, 200));
+      res.status(502).json({ error: "FRED DFII10 nicht verfügbar" });
     }
   });
 
@@ -86,6 +123,18 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/fiscal-frontend]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Fiscal-Frontend nicht verfügbar" });
+    }
+  });
+
+  // Liquiditaetsblock im BTC-Score (WALCL, T-Bill-Anteil Z.1, DGS10) + WALCL-Overlay.
+  // FRED ueber server/fred-csv.ts. Fehler → 200 mit Block n/a (GIS dann wie ohne Block).
+  app.get("/api/analyze-btc/liquidity", async (_req, res) => {
+    try {
+      res.json(await getBtcLiquidity());
+    } catch (err: any) {
+      // getBtcLiquidity wirft nicht; letzte Sicherung gegen Unhandled Rejection.
+      console.error("[GET /api/analyze-btc/liquidity]", err?.message?.substring(0, 200));
+      if (!res.headersSent) res.json(emptyBtcLiquidity("Liquiditätsblock n/a (Serverfehler)"));
     }
   });
 

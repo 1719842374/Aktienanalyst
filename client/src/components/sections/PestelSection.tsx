@@ -3,8 +3,11 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus, ArrowUpRight, ArrowDownRight, Scale, RefreshCw, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { PolicyContextPanel } from "./PolicyContextPanel";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { pestelDampeningFactor } from "../../../../shared/bias-fixes";
+import { creditLevelReading, pestelCreditLine } from "../../../../shared/credit";
+import { useMarketCreditSpread } from "../../lib/useMarketCreditSpread";
+import { currencySymbol, statementCurrency } from "../../lib/formatters";
 
 interface Props { data: StockAnalysis }
 
@@ -47,6 +50,8 @@ function StockCorrIcon({ corr }: { corr: string }) {
 export function PestelSection({ data }: Props) {
   const pestel = data.pestelAnalysis;
   const [expandedCategory, setExpandedCategory] = useState<number | null>(null);
+  const spreadQuery = useMarketCreditSpread(true);
+  const creditLine = pestelCreditLine(creditLevelReading(spreadQuery.data?.points));
 
   if (!pestel) {
     return (
@@ -161,6 +166,12 @@ export function PestelSection({ data }: Props) {
                     <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                   )}
                 </button>
+
+                {category.category === "Economic" && (
+                  <p className="px-3 pb-3 text-[11px] text-foreground/80 leading-relaxed" data-testid="pestel-credit-line">
+                    {creditLine}
+                  </p>
+                )}
 
                 {isExpanded && (
                   <div className="border-t border-border/50 px-3 pb-3">
@@ -346,7 +357,11 @@ function RegulatoryExposurePanel({ data }: { data: StockAnalysis }) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      setAssessment(await res.json());
+      const json = await res.json();
+      setAssessment(json);
+      // Moat- und PESTEL-Panel teilen ['regulatory-cached', ticker]. Die Response ist
+      // bereits um pestelRisks angereichert und auf die Disk geschrieben (Hook an res.json).
+      queryClient.setQueryData(["regulatory-cached", data.ticker], json);
     } catch (err: any) {
       setError(err?.message || "Analyse fehlgeschlagen");
     } finally {
@@ -438,7 +453,7 @@ function RegulatoryExposurePanel({ data }: { data: StockAnalysis }) {
                     <span className="text-muted-foreground">p: <span className="text-foreground">{(e.probability * 100).toFixed(0)} %</span></span>
                     <span className="text-muted-foreground">Horizont: <span className="text-foreground">{e.timeHorizon}</span></span>
                     {e.epsImpact != null && (
-                      <span className="text-muted-foreground">EPS-Impact: <span className={e.epsImpact < 0 ? "text-red-400 font-bold" : "text-emerald-400 font-bold"}>{e.epsImpact >= 0 ? "+" : ""}{e.epsImpact.toFixed(2)} $</span></span>
+                      <span className="text-muted-foreground">EPS-Impact: <span className={e.epsImpact < 0 ? "text-red-400 font-bold" : "text-emerald-400 font-bold"}>{e.epsImpact >= 0 ? "+" : ""}{e.epsImpact.toFixed(2)} {currencySymbol(statementCurrency(data)).trim()}</span></span>
                     )}
                   </div>
                   {e.source?.url && (

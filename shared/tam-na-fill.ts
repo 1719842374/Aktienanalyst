@@ -7,6 +7,9 @@
  *
  * marketShare (Anteil am TAM) and vs-TAM (outperforming) are formula-only.
  * They are never taken from the model.
+ *
+ * Rows with revenue null or 0 are outside the table and the fill scope.
+ * A fill is applied when it closes at least one in-scope cell. Other cells stay n/a.
  */
 
 export const TAM_NA_SHARE_WARN = 25; // display badge only; mirrors TAM_SHARE_WARN, not a quality input
@@ -56,6 +59,8 @@ export interface TamNaFill {
   shareWarning?: boolean;
   confidence: "low" | "med" | "high";
   rationale: string;
+  /** Relative Formel oder Begründung. Leer lassen heißt: nicht belegt. */
+  formula?: string;
 }
 
 export interface ScopeNaCells {
@@ -75,6 +80,11 @@ export interface TamNaMatrixCells {
   cagr: string;
   anteilAmTam: string;
   vsTam: string;
+}
+
+/** Known revenue above zero. null, NaN and 0 stay out of the table and the fill scope. */
+export function hasPositiveSegmentRevenue(revenue: unknown): revenue is number {
+  return typeof revenue === "number" && Number.isFinite(revenue) && revenue > 0;
 }
 
 export function deriveTamShare(segmentRevenueB: number, tamSizeB: number): number {
@@ -98,7 +108,7 @@ export function catalogCoverageNote(coveragePct: number | null | undefined): str
   return `Catalog-Coverage unverändert ${Math.round(coveragePct)}%`;
 }
 
-/** Meta line after a full-scope success. KI growth is not mixed into the fact weighted figure. */
+/** Meta line after applied KI cells. KI growth is not mixed into the fact weighted figure. */
 export function kiFillMetaLine(cellCount: number, coveragePct: number | null | undefined): string {
   return `KI-Schätzung: ${cellCount} Zellen · ${catalogCoverageNote(coveragePct)} · Wachstum-KI zählt nicht in Segment-gew. Wachstum`;
 }
@@ -203,11 +213,12 @@ export function countScopeCells(cells: ScopeNaCells): number {
   return Number(cells.growth) + Number(cells.tam) + Number(cells.cagr) + Number(cells.share) + Number(cells.vs);
 }
 
-/** Rest-n/a across every segment row. Success requires this to be 0. */
+/** Open scope cells on rows with revenue > 0. Revenue null or 0 is not counted. */
 export function countScopeRestNa(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): number {
   const byName = fillByName(fills);
   let n = 0;
   for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
     n += countScopeCells(scopeNaCells(seg, byName.get(seg.segmentName) ?? null));
   }
   return n;
@@ -218,6 +229,7 @@ export function countKiFilledCells(segments: TamNaSegmentRef[], fills: TamNaFill
   const byName = fillByName(fills);
   let n = 0;
   for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
     const before = scopeNaCells(seg, null);
     const after = scopeNaCells(seg, byName.get(seg.segmentName) ?? null);
     if (before.growth && !after.growth) n++;
@@ -229,7 +241,22 @@ export function countKiFilledCells(segments: TamNaSegmentRef[], fills: TamNaFill
   return n;
 }
 
+/** Fills that close at least one cell on a row with revenue > 0. Empty when nothing usable remains. */
+export function applicableTamNaFills(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): TamNaFill[] {
+  const byName = fillByName(fills);
+  const out: TamNaFill[] = [];
+  for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
+    const fill = byName.get(seg.segmentName);
+    if (!fill) continue;
+    if (countKiFilledCells([seg], [fill]) === 0) continue;
+    out.push(fill);
+  }
+  return out;
+}
+
 export function segmentNeedsLlm(seg: TamNaSegmentRef): boolean {
+  if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) return false;
   const cells = scopeNaCells(seg, null);
   return cells.growth || cells.tam || cells.cagr;
 }
@@ -270,8 +297,8 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
   for (const seg of requested) {
     const name = typeof seg.segmentName === "string" ? seg.segmentName.trim() : "";
     if (!name || byName.has(name)) continue;
-    const revenue = finite(seg.segmentRevenue);
-    if (revenue === null || revenue < 0) continue;
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
+    const revenue = seg.segmentRevenue;
     byName.set(name, {
       segmentName: name,
       segmentRevenue: revenue,
@@ -334,6 +361,8 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
       rationale: cleanText(rec.rationale, 140) ?? "",
       outperforming: deriveOutperforming(effectiveGrowth, effectiveCagr),
     };
+    const formula = cleanText(rec.formula, 180);
+    if (formula) fill.formula = formula;
     if (estimatedGrowth !== null) fill.segmentGrowth = estimatedGrowth;
     if (tamSize !== undefined && tamCAGR !== undefined) {
       const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
@@ -348,4 +377,47 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     out.push(fill);
   }
   return out;
+}
+
+export interface TamNaReason {
+  segmentName: string;
+  field: "growth" | "tam" | "cagr";
+  reason: string;
+}
+
+function hasEstimateText(fill: TamNaFill): boolean {
+  return Boolean((fill.rationale && fill.rationale.trim()) || (fill.formula && fill.formula.trim()));
+}
+
+/**
+ * Schätzungen ohne Formel/Begründung oder ohne TAM-Quelle bleiben draußen.
+ * Der Aufrufer zeigt den Grund an der n/a-Zelle.
+ */
+export function retainSourcedTamNaFills(fills: TamNaFill[]): { fills: TamNaFill[]; naReasons: TamNaReason[] } {
+  const naReasons: TamNaReason[] = [];
+  const kept: TamNaFill[] = [];
+  for (const fill of fills) {
+    if (!fill || typeof fill.segmentName !== "string") continue;
+    const next: TamNaFill = { ...fill };
+    if (fill.segmentGrowth != null && !hasEstimateText(fill)) {
+      delete next.segmentGrowth;
+      naReasons.push({
+        segmentName: fill.segmentName,
+        field: "growth",
+        reason: "n/a — Schätzung ohne Formel oder Begründung",
+      });
+    }
+    if (fill.tamSize != null && !(fill.tamSource && fill.tamSource.trim())) {
+      delete next.tamSize;
+      delete next.tamCAGR;
+      delete next.tamLabel;
+      delete next.marketShare;
+      delete next.shareWarning;
+      naReasons.push({ segmentName: fill.segmentName, field: "tam", reason: "n/a — TAM ohne Quelle" });
+      naReasons.push({ segmentName: fill.segmentName, field: "cagr", reason: "n/a — CAGR ohne Quelle" });
+    }
+    if (next.segmentGrowth == null && next.tamSize == null) continue;
+    kept.push(next);
+  }
+  return { fills: kept, naReasons };
 }

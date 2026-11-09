@@ -5,8 +5,9 @@ import {
   fmpSegments, fmpPeers, fmpRatios, fmpBatchQuote,
   isFmpAvailable,
 } from "./fmp";
-import { computeFcfTTM, highCapexFcfHint } from "./analyze-helpers";
+import { computeFcfTTM, highCapexFcfHint, tallyAnalystGrades } from "./analyze-helpers";
 import { indicatorWarmupFromDate } from "./history-fallback";
+import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
 
 /** Annual cash-flow rows. More than one period so a zero latest row can fall through to a signed older GAAP FCF. */
 export const FMP_ANALYSIS_CASHFLOW_LIMIT = 4;
@@ -120,14 +121,16 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
     // PEG = P/E ÷ forward EPS growth (%). null when growth ≤ 0.
     const pegRatio: number | null = (pe > 0 && epsGrowthFwd > 0) ? pe / epsGrowthFwd : null;
 
-    // Dividend yield %: FMP ratios return decimal (e.g. 0.0044 = 0.44%) → ×100
+    // Dividend yield in PERCENT — same normalization as analyze-route (#215):
+    // unit per FMP field, verified against DPS / price, unclear → 0. See server/dividend-yield-normalize.ts.
     const ratiosLatest = (ratios || [])[0] || {} as any;
-    const dividendYield =
-      (ratiosLatest.dividendYield != null && ratiosLatest.dividendYield > 0)
-        ? ratiosLatest.dividendYield * 100
-        : (profile.lastAnnualDividend && profile.price > 0)
-          ? (profile.lastAnnualDividend / profile.price) * 100
-          : 0;
+    const dividendYield = normalizeDividendYieldPct({
+      price: profile.price,
+      ratioDividendYield: ratiosLatest.dividendYield,
+      ratioDividendYieldPercentage: ratiosLatest.dividendYieldPercentage,
+      ratioDividendPerShare: ratiosLatest.dividendPerShare,
+      profileLastDividend: profile.lastDividend ?? profile.lastAnnualDividend,
+    }).pct;
 
     console.log(`[FMP] ${ticker} EPS — TTM: ${ttmEps.toFixed(2)}, FY: ${fyEps.toFixed(2)}, Fwd: ${fwdEpsConsensus.toFixed(2)} | hist5Y: ${epsGrowth5Y.toFixed(1)}%, fwd: ${epsGrowthFwd.toFixed(1)}% | P/E: ${pe.toFixed(1)}, FwdPE: ${forwardPE.toFixed(1)} | PEG: ${pegRatio?.toFixed(2) ?? 'n/a'} | DivYld: ${dividendYield.toFixed(2)}%`);
 
@@ -137,14 +140,11 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
     // Only a run of empty periods becomes 0 here, because this snapshot type is a number.
     const fcfResolved = computeFcfTTM(Array.isArray(cashflow) ? cashflow : []);
 
-    // Analyst grades
-    let analystBuy = 0, analystHold = 0, analystSell = 0;
-    for (const g of (grades || []).slice(0, 30)) {
-      const gr = (g.newGrade || "").toLowerCase();
-      if (gr.includes("buy") || gr.includes("outperform") || gr.includes("overweight")) analystBuy++;
-      else if (gr.includes("sell") || gr.includes("underperform") || gr.includes("underweight")) analystSell++;
-      else analystHold++;
-    }
+    // One row per firm when every grade names a firm. Event rows are not an analyst count.
+    const gradeTally = tallyAnalystGrades(grades);
+    const analystBuy = gradeTally.buy;
+    const analystHold = gradeTally.hold;
+    const analystSell = gradeTally.sell;
 
     // Segments
     const parsedSegments: { name: string; revenue: number }[] = [];
@@ -204,7 +204,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       epsGrowthFwd, pegRatio, forwardPE, dividendYield,
       analystBuy, analystHold, analystSell,
       ptMedian: pt?.targetConsensus || 0, ptHigh: pt?.targetHigh || 0, ptLow: pt?.targetLow || 0,
-      numAnalysts: analystBuy + analystHold + analystSell,
+      numAnalysts: gradeTally.basis === "analysts" ? analystBuy + analystHold + analystSell : 0,
       ohlcv: ohlcvData, segments: parsedSegments, peerTickers, ratios: parsedRatios, estimates: parsedEstimatesRaw,
     };
     console.log(`[FMP] ✅ ${ticker}: $${result.price} ${result.companyName} (${result.sector}) Rev=${(revenue/1e9).toFixed(1)}B`);

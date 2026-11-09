@@ -61,12 +61,12 @@ console.log("Liquidity briefing — tote Serien");
 for (const id of DEAD_FRED_SERIES) ok(`tot: ${id}`, isForbiddenFredSeries(id));
 ok("DFII5 verboten", isForbiddenFredSeries("DFII5"));
 ok("DFII10 erlaubt", !isForbiddenFredSeries("DFII10"));
-ok("Live-FRED ohne M2V", !LIVE_FRED_SERIES.includes("M2V" as never));
+ok("Live-FRED holt M2V für US V", LIVE_FRED_SERIES.includes("M2V" as never));
 ok("Live-FRED schneidet §0 nicht", LIVE_FRED_SERIES.every(id => !isForbiddenFredSeries(id)));
 const urls = briefingSourceUrls(new Date("2026-09-04T12:00:00Z"));
 const urlBlob = urls.map(u => u.url).join("\n");
 ok("kein Fetch der toten IDs", DEAD_FRED_SERIES.every(id => !urlBlob.includes(id)));
-ok("kein M2V in den Briefing-URLs", !urlBlob.includes("M2V") && !urlBlob.includes("M2SL"));
+ok("M2V und M2SL stehen in den Briefing-URLs", urlBlob.includes("M2V") && urlBlob.includes("M2SL"));
 ok("EZ-M3 kommt von der EZB", urls.some(u => u.id === "ECB_M3" && u.url.includes("data-api.ecb.europa.eu")));
 ok("JP-M2 kommt von der BoJ", urls.some(u => u.id === "BOJ_M2" && u.url.includes("stat-search.boj.or.jp")));
 ok("EZ-M1 kommt von der EZB", urls.some(u => u.id === "ECB_M1" && u.url.includes("M10.X.1.")));
@@ -270,7 +270,7 @@ const briefing = await fetchLiquidityBriefing({
   now: new Date("2026-09-04T16:00:00Z"),
   readUsLiquidity: () => ({ velocity: 1.415, emg: null }),
 });
-ok("Quellen ohne M2V und ohne tote IDs", calls > 7 && seen.every(u => !u.includes("M2V") && !u.includes("M2SL") && !DEAD_FRED_SERIES.some(id => u.includes(id))), `${calls}`);
+ok("Quellen holen M2V/M2SL und keine toten IDs", calls > 7 && seen.some(u => u.includes("M2V")) && seen.every(u => !DEAD_FRED_SERIES.some(id => u.includes(id))), `${calls}`);
 ok("DFII10 wird live geholt", seen.some(u => u.includes("id=DFII10")));
 ok("MoF-CSV ist angefragt", seen.some(u => u.includes("jgbcm.csv")));
 ok("MSPD ist angefragt", seen.some(u => u.includes("fiscaldata.treasury.gov")));
@@ -290,7 +290,7 @@ ok("Fetch-PEPP ist Juli-Netto aus der Tabelle", briefing.pepp.netBn === -24.821,
 ok("US-Realzins aus DFII10", briefing.rates.usReal.value === 2.42, String(briefing.rates.usReal.value));
 ok("T½ US aus 2.42 %", briefing.halfLife.usYears != null && briefing.halfLife.usYears >= 28.9 && briefing.halfLife.usYears <= 29.1, String(briefing.halfLife.usYears));
 ok("JP-Nominal ist der FRED-Monat", briefing.rates.jp10y.value === 2.67 && briefing.rates.jp10y.source.includes("IRLTLT01"), String(briefing.rates.jp10y.value));
-ok("π ohne Capex-F ist nicht verfügbar", briefing.pricedIn.available === false && briefing.pricedIn.pi == null && briefing.pricedIn.addedToLi === false);
+ok("π ohne Capex-F nutzt die 2y-Kappe und wartet nicht auf F", briefing.pricedIn.available === true && briefing.pricedIn.pi != null && briefing.pricedIn.addedToLi === false);
 ok("EM-Gewicht bleibt 0.10", briefing.em.weightCap === 0.1);
 ok("IN 2y ist kein T½-Anker", briefing.rates.in2y.value == null && briefing.halfLife.ezYears == null);
 ok("QT aus APP+PEPP", briefing.books.eu.qtNetBn === -52, String(briefing.books.eu.qtNetBn));

@@ -1,19 +1,28 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 05.10.2026  
+> **Stand Audit:** 11.10.2026 · Kopf-Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f`  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `6e125cdff07f0f334193435d8432c7be3bfaf0fb` (Docs-Basis; Kette `b43bc7a694582e1708feb3a2c4bc3a9c415b45c1` #177 → `83e630ab` Sources `Fertig_` → `3fd864a7` LI `Fertig_` → `6e125cdf` Section4 `Fertig_`)  
+> **HEAD:** `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445 `feat(chart): Kurslinie nach der gemeinsamen TA-Ampel färben`, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`). Index-Stand davor `a0979593fe13792fd13aa7eaf183cb808b396791` (#209 Gold-Chart im BTC-Design, parent `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2` #206 Ampel Gold MA50; Feature-Tip Gold `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` #201; Index davor Tip `8add9ed1e6d599283368896127711486955855f3` #200). Dieser Nachzug setzt nur den Kopf. Kein App-Code, kein Rename.  
 > **Keep-Alive:** `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ist kein Deploy und benennt keine Spec um.  
-> **Regel:** Ist nur aus Code + UI auf diesem Tip. Draft-PRs zählen nicht. 🟢 auf main und Tester PASS (Soft-Notes blockieren `fertig_` nicht) · ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
+> **Regel:** Ist-Stand der Inventur nur aus Code + UI auf dem Index-Stand `a0979593`. Der Kopf nennt Tip `4286b44f`, ohne die Tabellen neu zu prüfen. Draft-PRs zählen nicht. 🟢 auf main und Tester PASS (Soft-Notes blockieren `fertig_` nicht) · ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
+> **Delta 11.10.2026, Tip `8add9ed1`:** Google Trends Cache 🟢 (#200, parent `cc683e96` #195, Feature-Dateien 6, +392/−41, Tester PASS Soft Production, Doublecheck GO Soft). Kein neues `Offen_`/`fertig_`/`Fertig_` Spec-File. `Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md` und `Future_5_Google_Trends_Cache_Implementation.md` bleiben unter diesen Namen. Soll = Cache 6–12h (Future_5: 12h, Key `google-trends-recession`); 429/leer/Timeout halten den letzten Wert; UI-Alter; ohne Wert in 48h Slot geschlossen, nicht Score 0; Zonen und ×1,7 bleiben. Datenkette `#/recession` → `client/src/pages/RecessionDashboard.tsx` → `POST /api/analyze-recession` → `server/recession.ts` `scoreGoogleTrends` → `server/cache/google-trends-cache.ts` oder SerpApi. Ist = Tip `8add9ed1`, live PASS Soft — Zeile `vor 0.0h`, Satz „61.2“ entfernt, Korrektur 12M bleibt 80 %, `ageHours`/`isStale` im POST-Body. Softs blockieren nicht: „veraltet“ nur nach >24h prüfbar; Cache-Hits nur im Render-Log; Cache nur In-Memory; Anzeige `0.0h` kosmetisch. Liquidity Index Panel, TAM Partial-Apply, Section4, Recession Sources, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. #180 HOLD — nicht anfassen. Keine Feature-Lane bleibt offen in Abschnitt 18. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `99feff6f`:** Researcher Liquidity Index Panel 🟢 `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` (#150, parent `e3c94d11` #189, Feature-Dateien 8, +457/−7, Tester PASS Soft, Bundle `index-xA_h1JP9.js`, Shots `/workspace/dod-150-li/`). Dateiname bleibt `Fertig_` seit `3fd864a7` (großes F; dieser Nachzug benennt nicht um). analyze-route und `researcher.ts` unberührt. Fertig_ Spec im Feature-Commit unberührt. Doublecheck Integrity GO Soft. Soll = LiquidityIndexPanel({ region }) auf Macro; Region-Toggle ändert Serie/asOf; `GET /api/researcher/liquidity?region=US|EU|ASIA`; US DFF+M2SL; C2 nur nach Analyse einmal; Briefing/RegionalStocks bleiben. Datenkette `#/researcher` Macro → LiquidityIndexPanel → `GET /api/researcher/liquidity?region=` → `server/liquidity-index*`. Ist = Tip `99feff6f`, live PASS Soft — Panel einmal zwischen Briefing und Country Macro Pulse; US LI 47.2 DFF+M2SL available; EU LI 42.6; ASIA Softs. Bundle `index-xA_h1JP9.js`. Softs blockieren nicht: Fiskal Spec-Klarstellung (Spec wollte „Fiskal-Angebot n/v“ wenn keine Quelle; Ist: BUYBACK_OPS n/v, Fiskalzeile zeigt MSPD_BILLS/QRA_IMPLIED_BILLS wenn Slot da); ASIA (BOJ_GOVDEP n/v, keine DRAIN-Karte, Kopf-Stand asOf 2024-01-01 wegen stale CN_M2); Performance (Doppel-Fetch 2×/Region; EU Erstload 15–20s). TAM Partial-Apply, Section4, Recession Sources, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. #180 HOLD — nicht anfassen. Keine Feature-Lane bleibt offen in Abschnitt 17. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `31d9f367`:** TAM Partial-Apply + hide 0-Rev in Section7 (Rel. Bewertung / Sektion 9) 🟢 (#176, parent `39d1afd6` #188, Feature-Dateien 5, +214/−48, Tester PASS Soft AMZN, Bundle `index-BcyRdipm.js`). Kein neues `Offen_`/`fertig_` Spec-File; Lane im Index geschlossen. Soll = Partial-Apply: gültige KI-Fills behalten (violet KI-Badge); offene Zellen bleiben n/a; kein all-or-nothing 422 wenn mindestens ein Fill brauchbar. Rev null/0 aus Tabelle, Prompt und Fill-Scope (`hasPositiveSegmentRevenue`); Beispielzeile `Other / nicht segmentiert` $0. Facts (Rev, Anteil, Coverage, tamTotal, quality) nicht überschreiben/neu berechnen; Anteil am TAM / vs. TAM lokale Formeln; Peer-N/A unberührt; analyze-route Handler nur Kommentar. Datenkette Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill`. Ist = Tip `31d9f367`, Doublecheck GO Soft — 5 Dateien +214/−48; analyze-route comment only. Live PASS Soft AMZN: 7 Zeilen statt 8, KI ✓, coverage 75%, API 200. `npx tsx script/test-tam-na-fill.ts` 125 passed. Soft blockiert nicht: Partial-Lückenfall live nicht gesehen (Modell füllte alles); Unit-Tests decken Partial-Apply / offene Rest-Zellen ab. Section4, Recession Sources, Researcher-LI, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. #180 HOLD — nicht anfassen. Keine Feature-Lane bleibt offen in Abschnitt 16. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `1124c6f5`:** Section4 🟢 `Fertig_WORK_SECTION4_DATA_BUGS.md` (#168, parent `e045080c` #187, Feature-Dateien 10, +599/−41, Tester PASS Soft, Bundle `index-wIPUcskT.js`, Shots `/workspace/dod-168-section4/`). Soll = Section4 last quarter, unique grades, one EPS CAGR per `Fertig_WORK_SECTION4_DATA_BUGS.md` / #168 DoD. Ist = Doublecheck GO Soft — 10 Dateien +599/−41; analyze-route 22/22 Deletes verified; researcher unberührt. Tester PASS Soft. Bundle `index-wIPUcskT.js`. Shots `/workspace/dod-168-section4/`. Dateiname bleibt `Fertig_` seit `6e125cdf` (großes F; dieser Nachzug benennt nicht um). Softs blockieren nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label. Recession Sources, Researcher-LI, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Keine Feature-Lane bleibt offen in Abschnitt 15. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `8acf0e46`:** Recession Sources / STOXX PE Soft-Fix 🟢 `Fertig_WORK_RECESSION_SOURCES.md` (#186, parent `ba476e0e` #185, Feature-Dateien `server/recession-regions.ts` und `script/test-recession-regions.ts`, +128/−16, Tester PASS Soft ~16:21 CEST, Shots `/workspace/dod-186-stoxx-pe/`, Bundle `index-Ubb-bF_f.js` unverändert, server-only). Soll = EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist). Ist = live PASS Soft ~16:21 CEST: `#/recession` EZ-Katalog STOXX 600 PE 18.4, Quelle iShares EXSA KGV 2026-10-02, Zone Normal (15-30), scored available:true. Vorheriges Soft N/A („FMP leer, iShares ohne KGV“) ist für den live EXSA-KGV-Pfad zu. Dateiname bleibt `Fertig_` seit `83e630ab` (großes F; dieser Nachzug benennt nicht um). analyze-route und researcher unberührt. Doublecheck GO Soft. Softs blockieren nicht und bleiben aus #184: Margin Wert unscored; TOPIX/JNVI/JGB. `Fertig_WORK_SECTION4_DATA_BUGS.md`: Filename `Fertig_`, Feature-Lane noch offen (Draft #168, kein Tester PASS, nicht Ampel 🟢). Researcher-LI, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Eine Feature-Lane bleibt offen in Abschnitt 14. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `37a188ef`:** Recession Sources / N/A fills 🟢 `Fertig_WORK_RECESSION_SOURCES.md` (#184, parent `11e0e617` #183, Feature-Dateien 6, +370/−55, Tester PASS Soft, Shots `/workspace/dod-184-recession-na/`). Soll = CAPE/Buffett/STOXX/JP-Aktivität mit Wert+Score wo möglich. Ist = live PASS Soft: CAPE 41.4 Multpl; Buffett 236% Yahoo/GDP; JP YoY +2.1% OECD; Margin Wert unscored Soft; STOXX live weiter N/A Soft (VM hatte 18.4); TOPIX/JNVI/JGB Soft. Dateiname bleibt `Fertig_` seit `83e630ab` (großes F; dieser Nachzug benennt nicht um). Softs blockieren nicht: Margin Wert unscored; STOXX live N/A (VM 18.4); TOPIX/JNVI/JGB. `Fertig_WORK_SECTION4_DATA_BUGS.md`: Filename `Fertig_`, Feature-Lane noch offen (Draft #168, kein Tester PASS, nicht Ampel 🟢). Researcher-LI, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Eine Feature-Lane bleibt offen in Abschnitt 13. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `88f4ee92`:** Researcher / Liquidity Index / Briefing N/A fill 🟢 `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` (#182, parent `17847752` #181, Feature-Dateien 14, +696/−79, Tester PASS Soft, Shots `/workspace/dod-182-researcher-na/`). Soll = zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf. Ist = live PASS Soft: 18/20 Briefing-Nulls gefüllt; US/EU regional 0 Nulls; ASIA nur `BOJ_GOVDEP` Soft. Dateiname bleibt `Fertig_` seit `3fd864a7` (großes F; dieser Nachzug benennt nicht um). Softs blockieren nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null. `Fertig_WORK_SECTION4_DATA_BUGS.md`: Filename `Fertig_`, Feature-Lane noch offen (Draft #168, kein Tester PASS, nicht Ampel 🟢). Recession Sources, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Eine Feature-Lane bleibt offen in Abschnitt 12. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `860ff710`:** Fazit-Soft PASS, Recession Sources bleibt 🟢 `Fertig_WORK_RECESSION_SOURCES.md` (#179, parent `71254a45` #178, Feature-Dateien `server/recession.ts` und `script/test-recession-sources.ts` +74/−4, Tester PASS 2026-10-05 ~14:52 Europe/Berlin, live `#/recession`, kein Bundle-Hash). Soll (Philip Soft) = kein Bewertungs-Wording, wenn keine Bewertung gewertet ist; Bewertungsrisiko darf nicht leer sein. Ist = Treiber Google Trends / CSI / Aktivität; Bewertungsrisiko „nicht gewertet“; Buffett 195%(2020-01) N/A (Stale-Gate). Dateiname bleibt `Fertig_` seit `83e630ab` (großes F; dieser Nachzug benennt nicht um). analyze-route und researcher unberührt. Softs blockieren nicht: negative Scores in der Treiberliste; News-Titel-Prefix in den Driver-Karten; Regeltabelle ×2 kosmetisch; `WILL5000PR` FRED HTML/404 → Buffett dauerhaft N/A bis andere Cap-Quelle. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` und `Fertig_WORK_SECTION4_DATA_BUGS.md`: Filename `Fertig_`, Feature-Lane noch offen (Drafts #150 / #168, kein Tester PASS, nicht Ampel 🟢). Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Zwei Feature-Lanes bleiben offen in Abschnitt 11. Kein App-Code in diesem Nachzug.  
 > **Delta 05.10.2026, Basis `6e125cdf`:** Recession Sources 🟢 `Fertig_WORK_RECESSION_SOURCES.md` (Feature-Tip `b43bc7a6` #177 über #167 `0c31b896`, Tester PASS HARD Buffett Re-Check 2026-10-05 ~14:35 Europe/Berlin, live Render, Doublecheck über #177). Soll = neun Punkte, EZ/JP-Raster, Buffett Wilshire/GDP oder World Bank. Ist = Feature-Tip `b43bc7a6`. Dateiname seit `83e630ab` `Fertig_` (großes F; dieser Nachzug benennt nicht um). Feature-Dateien des #177-Commits: `server/recession.ts`, `script/test-recession-sources.ts`, `script/test-recession-regions.ts`. analyze-route und researcher unberührt. Buffett-Stale-Gate: `DDDM01USA156NWDB` endet 2020-01-01 und zählt nicht als live (+10 / P_korr12 75%); Wilshire/GDP nur wenn beide Drucke im 18-Monats-Fenster liegen, sonst schließt dasselbe Stale-Gate den Slot. CAPE / FINRA N/A by design (kein xlsx). Softs blockieren nicht: Fazit-Vorlage „extreme Bewertungsniveaus“ bei Trends-getriebenem ≥65%; leerer Bewertungsrisiko-Block; Regeltabelle ×2 kosmetisch; `WILL5000PR` FRED HTML/404 → Buffett dauerhaft N/A bis andere Cap-Quelle. Keine Root-`Offen_` mehr. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` (`3fd864a7`) und `Fertig_WORK_SECTION4_DATA_BUGS.md` (`6e125cdf`): Filename `Fertig_`, Feature-Lane noch offen (Drafts #150 / #168, kein Tester PASS, nicht Ampel 🟢). Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Zwei Feature-Lanes bleiben offen in Abschnitt 10. Kein App-Code in diesem Nachzug.  
 > **Delta 05.10.2026, Tip `edbec6e6`:** Sahm 🟢 `fertig_WORK_RECESSION_FRED_SAHM.md` (main + Tester PASS, Doublecheck GO, Bundle `index-BMeEs2YH.js`). Soll = Spec `Offen_WORK_RECESSION_FRED_SAHM` (US `SAHMREALTIME` s(z), 0,50-pp-Label, regional Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`, EZ/JP nicht in der 17er-Summe, fehlende Monate leer). Ist = Tip `edbec6e6` + live `#/recession` Abschnitt 5. Softs blockieren `fertig_` nicht: `controlOk` false, 2025-11 Δ=0.08 (Tester soft, kein FAIL); fehlende Monate leer (2025-10 fehlt in der US-Kontrolle, erwartet); Hinweis „nicht in der 17er-Summe“ für EZ/JP bestätigt (API: EZ/JP nur unter `sahmRegions`). Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. Drei `Offen_`-Specs bleiben in Abschnitt 9. Kein App-Code in diesem Nachzug.  
 > **Delta 05.10.2026, Tip `1937d389`:** Velocity Stocks 🟢 `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (main + Tester PASS, Bundle `index-0g2LG3IP.js`). Soll = Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest) laut der Spec. Ist = Tip `1937d389` + live `#/researcher` `panel-regional-stocks` US/EU/ASIA / `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. T½/V/V̄ konsistent. Debt/GDP bewegt `li` nicht. Softs blockieren `fertig_` nicht: π-Zelle im Strip nicht gelb trotz `available.pi=false` (Spec sagt Gelb; Briefing-Panel ist gelb); US V 1.418 vs Briefing M2V n/a; ASIA `li` 0.1; JP T½ 683 J durch 0.1%-Boden; Capex-Cache fehlt → π „start unknown“ (kein Hardcode). Fiscal und Liquidity Briefing bleiben 🟢. Vier `Offen_`-Specs bleiben in Abschnitt 8. Kein App-Code in diesem Nachzug.  
 > **Delta 05.10.2026, Tip `d59541f5`:** Liquidity Briefing 🟢 `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (main + Tester PASS, Bundle `index-BGJ8ARaM.js`). Soll = Katalogquellen/Serien im Briefing. Ist = Tip `d59541f5` + live `#/researcher` `panel-liquidity-briefing` / `GET /api/researcher/liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Softs blockieren `fertig_` nicht: n/a CN 10y, π, US M2V/EMG, veraltete CPI; Japan Halbwertszeit T½ ~683 Jahre (ehrlich); Inflationszahlen JP/CN von 2025 (veraltet); API Cold-Start ~37s beim ersten Aufruf. Fiscal bleibt 🟢. Fünf `Offen_`-Specs bleiben in Abschnitt 7. Kein App-Code in diesem Nachzug.  
-> **Delta 05.10.2026, Tip `e8171961`:** Fiscal 🟢 `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (main + Tester PASS). Adaptives `s(z)` für Bills, TGA und SOMA; GIS `macroFiscal` (GIS `S 55.6` = API); Stablecoin-Kanal/`D_30`/GENIUS-Karten entfernt. Softs blockieren `fertig_` nicht. Sechs `Offen_`-Specs bleiben in Abschnitt 6. Abschnitt 7 war der Stand auf Tip `d59541f5`. Abschnitt 8 war der Stand auf Tip `1937d389`. Abschnitt 9 war der Stand auf Tip `edbec6e6`. Aktueller Stand ist Abschnitt 10 (Basis `6e125cdf`). Kein App-Code in diesem Nachzug.  
-> **Delta 05.10.2026, Tip `191792c5`:** Dateinamen `fertig_` für Value-Chain, Researcher-Briefing regional und Stablecoin/T-Bill liegen schon auf dem Tip. Sahm bleibt `Offen_`. Damals sieben Soll-Ist-Blöcke, Fiscal noch `Offen_` 🟡; Abschnitt 6 war der Stand auf Tip `e8171961`; Abschnitt 7 war der Stand auf Tip `d59541f5`; Abschnitt 8 war der Stand auf Tip `1937d389`; Abschnitt 9 war der Stand auf Tip `edbec6e6`; aktueller Stand ist Abschnitt 10 (Basis `6e125cdf`). Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `e8171961`:** Fiscal 🟢 `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (main + Tester PASS). Adaptives `s(z)` für Bills, TGA und SOMA; GIS `macroFiscal` (GIS `S 55.6` = API); Stablecoin-Kanal/`D_30`/GENIUS-Karten entfernt. Softs blockieren `fertig_` nicht. Sechs `Offen_`-Specs bleiben in Abschnitt 6. Abschnitt 7 war der Stand auf Tip `d59541f5`. Abschnitt 8 war der Stand auf Tip `1937d389`. Abschnitt 9 war der Stand auf Tip `edbec6e6`. Abschnitt 10 war der Stand auf Basis `6e125cdf`. Abschnitt 11 war der Stand auf Tip `860ff710`. Abschnitt 12 war der Stand auf Tip `88f4ee92`. Abschnitt 13 war der Stand auf Tip `37a188ef`. Abschnitt 14 war der Stand auf Tip `8acf0e46`. Abschnitt 15 war der Stand auf Tip `1124c6f5`. Abschnitt 16 war der Stand auf Tip `31d9f367`. Abschnitt 17 war der Stand auf Tip `99feff6f`. Aktueller Stand ist Abschnitt 18 (Tip `8add9ed1`). Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `191792c5`:** Dateinamen `fertig_` für Value-Chain, Researcher-Briefing regional und Stablecoin/T-Bill liegen schon auf dem Tip. Sahm bleibt `Offen_`. Damals sieben Soll-Ist-Blöcke, Fiscal noch `Offen_` 🟡; Abschnitt 6 war der Stand auf Tip `e8171961`; Abschnitt 7 war der Stand auf Tip `d59541f5`; Abschnitt 8 war der Stand auf Tip `1937d389`; Abschnitt 9 war der Stand auf Tip `edbec6e6`; Abschnitt 10 war der Stand auf Basis `6e125cdf`; Abschnitt 11 war der Stand auf Tip `860ff710`; Abschnitt 12 war der Stand auf Tip `88f4ee92`; Abschnitt 13 war der Stand auf Tip `37a188ef`; Abschnitt 14 war der Stand auf Tip `8acf0e46`; Abschnitt 15 war der Stand auf Tip `1124c6f5`; Abschnitt 16 war der Stand auf Tip `31d9f367`; Abschnitt 17 war der Stand auf Tip `99feff6f`. Aktueller Stand ist Abschnitt 18 (Tip `8add9ed1`). Kein App-Code in diesem Nachzug.  
 > **Delta 30.09. Vormittag, nach #103 Miner Observability Live PASS:** #103 Miner Observability Live ✅ (tip `e2bc69a2` = `e2bc69a233166a3242d13e9ddc78373adc19f68c`; parent `58bec00c` #101 Docs ← `c365c945` #100 ← `4c615eb3` #99; Bundle `index-MIF1Ml5X.js` unverändert — Client unverändert, #103 server-only). Error-Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient (400ms); Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien: `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = **Render→mempool Egress**, kein Code-Delete/Stub. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99✅ #100✅ #93 Label✅ #97✅ #92✅ bleiben. #96 closed ohne Merge — nicht reopen, nicht grün. **Delta 30.09. Morgen, nach #99+#100 Live PASS:** #99 TA Spec v3.2 Live ✅ (SHA `4c615eb3` → stack tip `c365c945`; Bundle `index-MIF1Ml5X.js`; Default nur Kurs A; A+B gestapelte Bänder/Y; MACD/RSI unter A und B; Desktop-Controls ok, Mobile soft-skip; Shots `/workspace/dod-99-ta-v32/`). #100 KI-N/A matrix (Relativ Bewertung / Section7) Live ✅ (tip `c365c945`; Spalten Segment|Rev.|Anteil|Wachstum|TAM|CAGR|Anteil am TAM|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert; Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt; Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet, keine Segments/keine N/A; 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0; Shots+Probe `/workspace/dod-100-ki-na/`). #93 KI-N/A-Fill Segment-TAM Label Soft → ✅ (Idle-Label jetzt Spec „N/A mit KI schätzen“ via #100 Live; Behavior+API war schon PASS @ `7574b12d`; Soft: violet KI-Badge Success-Pfad nicht in Dual-DoD geübt). #97 bleibt ✅ (superseded by v3.2 live on same chart stack). #92 bleibt ✅. #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün. **Delta 29.09. Abend, nach #97 Live PASS:** #97 TA Kurs A/B/C Spec v3.1 Live ✅ (SHA `249841ab`; parent `1dc82683`; Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #92 TA Zwei-Fenster Live ✅ (SHA `c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; DoD: A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK). #93 KI-N/A-Fill Segment-TAM Live 🟡 PARTIAL (`7574b12d`; Behavior+API PASS — MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`; Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 bleibt Draft Merge-Gate — nicht grün (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO). #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`); danach Abend #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡, noch offen); Tip `249841ab`.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
+> **Delta 11.10.2026, Tip `98ccc928`:** Gold-Chart 🟡 Teil, nicht vollständig 🟢. Live-Slice #201: 50-DMA, Golden/Death-Marker, B2 FV-Labels, ohne Score-Änderung (#201, parent `8add9ed1` #200, Feature-Dateien 6, +474/−58, Tester PASS Soft vor dem Merge, Doublecheck Integrity GO). Kein neues `Offen_`/`fertig_`/`Fertig_` Spec-File. `Future_10_Gold_Adaptive_Scoring_Framework.md` bleibt unter diesem Namen. `Offen_FUTURE_SOLL_IST.md` und `Future_Work.md` bleiben liegen. Soll = Mini-PR 3: MA50 aus vorhandenen Closes, Golden/Death als Marker, Volumen nicht mit Nullen, `getTechnicalScore` unverändert; B2-Nachzug an den Korridor-Labels. Datenkette `#/gold` → `client/src/pages/GoldDashboard.tsx` `useQuery` → `GET /api/analyze-gold` → `server/gold-routes.ts`. Ist = Tip `98ccc928`, Client `goldChartMa.ts` / `GoldPriceChart.tsx` / `GoldFairValueSection.tsx`. Softs blockieren nicht: Gold-Zeile im Cross-Tooltip doppelt; echter Touch nicht verifiziert. Adaptive Schicht bleibt offen. #209 Gold-Chart im BTC-Design gemergt auf Tip `a0979593` (parent `f0943dd5` #206). Doublecheck Integrity GO Soft: 7 Dateien byte-gleich mit dem gebauten Stand `9d14901a`, in BTC nur die JA/NEIN-Karte ausgelagert, #201-Marker erhalten, Overlays aus echten FRED-/FMP-Daten ohne Ersatzwerte. Status: live-Check ausstehend (Tester). Softs: 4 zusätzliche FRED-Abrufe pro Gold-Request, noch kein Build gelaufen. OFFEN: Volumen-Spike, relativer RSI, AISC, Future_10 Scoring-Rest (#208; 7 Layer mit Gewichtung/Habitat, adaptive Signale, Volumen-Signale, Gates Policy-Mismatch und Death Cross aktiv, Gold-News-Karte mit LLM-Flag). Dateiname `Future_10` bleibt, kein Rename. Liquidity Index Panel, TAM Partial-Apply, Section4, Recession Sources, Sahm, Fiscal, Liquidity Briefing und Velocity Stocks bleiben 🟢. #180 HOLD — nicht anfassen. Abschnitt 18 (Google Trends, #205) bleibt unangetastet. Die Kopfzeile nannte in diesem Delta Index-Tip `a0979593`. Kopf-Tip jetzt `4286b44f48532e2d501fb8cbf3ae2122c7456b4f`. Detail in Abschnitt 19.
 
 ---
 
@@ -43,16 +52,18 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`; Ampel nach Doc-Hub + Code-Check):
 | Methode | Pfad | Cache |
 |---------|------|-------|
 | POST | `/api/analyze` | L1 20 min + L2 7 d, inkl. Fiscal-Overlay (D3) |
+| POST | `/api/analyze/:ticker/tam-na-fill` | Section7 → `requestTamNaFills` → `shared/tam-na-fill` (#176; Facts nicht neu berechnet) |
 | POST | `/api/catalyst-enrich` | L1+L2 |
 | POST | `/api/researcher/*` | 6 h File / 1 d SQLite |
 | GET | `/api/researcher/sector-rotation` | 6 h (C1 P0–P3, additiv) |
-| GET | `/api/researcher/liquidity` | 6 h (C2, `macro_v2__US`) |
+| GET | `/api/researcher/liquidity` | 6 h (C2, `macro_v2__US`); #150 LiquidityIndexPanel `?region=US|EU|ASIA` → `server/liquidity-index*` |
 | GET | `/api/analyze-btc/stablecoin-liquidity` | 5 min RAM + Disk (D4) |
 | GET | `/api/analyze-btc/fiscal-frontend` | Serien-TTL 6–24 h (`fiscal__*`), Request-Cache |
 | GET | `/api/analyze-gold` | 1-Faktor + optionales Multi-Faktor (D5) |
 | GET | `/api/valuechain` | 18-24h Disk (D6a + Phase 1–2) |
 | POST | `/api/valuechain/enrich` | 7 d Disk, LLM (D6c) |
 | GET | `/api/analyze-recession/markets` | RAM 6h (RSI/MACD + Vol-Pane; EU VSTOXX live `#66`) |
+| POST | `/api/analyze-recession` | Analyse-Hülle 1h RAM (`recessionCache`) unverändert. Google-Trends-Druck separat: In-Memory, frisch 12h / Last-Good 48h, `server/cache/google-trends-cache.ts` (#200). Keine neue Route |
 | GET | `/api/ohlcv` | 24h Cache, max 12 Tickers (`#61` portfolio §6) |
 | GET | `/api/health` | unberührt |
 
@@ -85,13 +96,13 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 16 | fertig_WORK_RESEARCHER_SECTOR_ADD.md | Add-Buttons | ja | ✅ | |
 | 17 | fertig_WORK_REVERSE_DCF_BRIDGE.md | Fiscal in DCF | Hook live | ✅ | fiscal-bridge · inverted Kern **nicht anfassen** |
 | 18 | fertig_WORK_SCORING_VORLAGE.md | Gates + Lookahead | Pipeline + Fixture | ✅ | `9215cee` |
-| 19 | Fertig_WORK_SECTION4_DATA_BUGS.md | PEG + FCF + Dedup + Rest | Filename `Fertig_` (`6e125cdf`), Feature-Lane noch offen (Draft #168, kein Tester PASS, nicht Ampel 🟢). Trailing-PEG, signed FCF, Geo-Dedup auf dem Tip; Earnings, Analysten, Growth, Moat offen. PEG-Formel und inverted DCF nicht angefasst | 🟡 | Section4.tsx · analyze-helpers · analyze-route |
+| 19 | Fertig_WORK_SECTION4_DATA_BUGS.md | Section4 last quarter, unique grades, one EPS CAGR per `Fertig_WORK_SECTION4_DATA_BUGS.md` / #168 DoD | Tip `1124c6f5` (#168 über #187 `e045080c`). Dateiname bleibt `Fertig_` seit `6e125cdf` (großes F, dieser Nachzug benennt nicht um). Doublecheck GO Soft: 10 Dateien +599/−41; analyze-route 22/22 Deletes verified; researcher unberührt. Tester PASS Soft. Bundle `index-wIPUcskT.js`. Shots `/workspace/dod-168-section4/`. Softs blockieren nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label. Siehe Abschnitt 15 | 🟢 | Section4.tsx · analyze-helpers · analyze-route · fmp.ts · fmp-fetcher.ts |
 | 20 | fertig_WORK_SEGMENT_DEDUP.md | Cross-Dedup | ja | ✅ | |
 | 21 | fertig_WORK_SEKTORROTATIONS_RAT.md | Radar P0–P3 | live inkl. Layout #49–#51 | ✅ | |
 | 22 | fertig_WORK_SIGNAL_BACKTEST.md | PIT | Phase 0–6 | ✅ | |
 | 23 | fertig_WORK_STABLECOIN_TBILL_GENIUS.md | Stablecoin | `fertig_` auf dem Tip seit #165. Dieser Nachzug öffnet die Spec nicht wieder und behauptet kein neues Live-Deploy | ✅ | |
 | 24 | fertig_WORK_TAM_RESIDUAL_XBOX.md | Residuum | ja | ✅ | |
-| 25 | fertig_WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | ja | ✅ | |
+| 25 | fertig_WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | Quality-Tor bleibt ✅. #176 Partial-Apply + hide 0-Rev 🟢 im Index (Tip `31d9f367`, kein neues Spec-File). Datenkette Section7 → POST /api/analyze/:ticker/tam-na-fill → requestTamNaFills → shared/tam-na-fill. Siehe Abschnitt 16 | ✅ | |
 | 26 | WORK_TEIL0-6.md | Platform/BTC/FMP | Kern | ✅ | |
 | 27 | fertig_WORK_TEIL7_SCORING.md | Gold + WALCL | Multi-OLS | ✅ | |
 
@@ -104,9 +115,9 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`). #74: Fake-OK `bars=[]` source:fmp fixed (Live ✅); Code §6 nicht gelöscht. Chart #71 oft weiter leer | ✅ |
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
-| 32 | fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalogquellen/Serien im Briefing | Tip `d59541f5` + live `#/researcher` `panel-liquidity-briefing` / `GET /api/researcher/liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Soft-n/a CN 10y, π, US M2V/EMG, veraltete CPI; T½ JP ~683 Jahre; Inflation JP/CN von 2025; Cold-Start ~37s. Siehe Abschnitt 7 | 🟢 |
+| 32 | fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalogquellen/Serien im Briefing | Tip `d59541f5` + live `#/researcher` `panel-liquidity-briefing` / `GET /api/researcher/liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. #182 Tip `88f4ee92`: zuvor n/a-Zellen 18/20 mit Wert+Quelle+asOf (Tester PASS Soft). Ältere Softs T½ JP ~683 Jahre, Inflation JP/CN von 2025, Cold-Start ~37s bleiben aus Abschnitt 7 und blockieren nicht. Siehe Abschnitt 12 | 🟢 |
 | 33 | fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | adaptives `s(z)` für Bills, TGA und SOMA auf main; GIS `macroFiscal`; Stablecoin-Kanal/`D_30`/GENIUS-Karten entfernt; Softs blockieren nicht. Siehe Abschnitt 6 | 🟢 |
-| 34 | Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | Filename `Fertig_` (`3fd864a7`), Feature-Lane noch offen (Draft #150, kein Tester PASS, nicht Ampel 🟢). `?region=` liefert `li` + Bücher; `LiquidityPanel` ohne Region. Siehe Abschnitt 10 | 🟡 |
+| 34 | Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md | LiquidityIndexPanel({ region }) auf Macro; Region-Toggle ändert Serie/asOf; GET /api/researcher/liquidity?region=; US DFF+M2SL; C2 nur nach Analyse einmal; Briefing/RegionalStocks bleiben. #182 N/A-Fill (Wert+Quelle+asOf) bleibt | Tip `99feff6f` (#150 über #189 `e3c94d11`). Dateiname bleibt `Fertig_` seit `3fd864a7` (großes F, dieser Nachzug benennt nicht um). Tester PASS Soft: Panel einmal zwischen Briefing und Country Macro Pulse; US LI 47.2 DFF+M2SL available; EU LI 42.6. Bundle `index-xA_h1JP9.js`. Shots `/workspace/dod-150-li/`. #182 bleibt: 18/20 Briefing-Nulls; US/EU regional 0 Nulls; Shots `/workspace/dod-182-researcher-na/`. Softs blockieren nicht. Siehe Abschnitt 17 | 🟢 |
 | 35 | fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | `CATALOG` + `GET ?region=` `books.M`/`books.F`; Panel bleibt offen | 🟡 |
 | 36 | fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest) | Tip `1937d389` + live `#/researcher` `panel-regional-stocks` US/EU/ASIA / `GET /api/researcher/liquidity?region=`. π „start unknown“; T½/V/V̄ konsistent; Debt/GDP bewegt `li` nicht. Softs blockieren nicht. Siehe Abschnitt 8 | 🟢 |
 | 37 | fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md | 3 Regionen + Spillover | Dateiname `fertig_` auf Tip #169 (Docs-Rename). Kein Live-Deploy aus diesem Commit | ✅ |
@@ -114,7 +125,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 39 | fertig_WORK_RECESSION_2008_DRIVERS_LLM.md | s(z)+OpenRouter-Driver | Ziel+z auf main, LLM nur wenn Menge A nicht leer | ✅ |
 | 40 | fertig_WORK_RECESSION_FRED_SAHM.md | US `SAHMREALTIME` s(z), 0,50-pp-Label, regional Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`, EZ/JP nicht in der 17er-Summe, fehlende Monate leer | Tip `edbec6e6` + live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs: `controlOk` false, 2025-11 Δ=0.08; 2025-10 fehlt in der US-Kontrolle; Hinweis „nicht in der 17er-Summe“ (EZ/JP nur unter `sahmRegions`). Siehe Abschnitt 9 | 🟢 |
 | 41 | fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md | Zins-Brücke + Öl | `recession-bridge.ts`, nicht in der 17er-Summe | ✅ |
-| 42 | Fertig_WORK_RECESSION_SOURCES.md | Quellenkatalog | Feature-Tip `b43bc7a6` (#177 über #167). Dateiname `Fertig_` seit `83e630ab` (großes F, dieser Nachzug benennt nicht um). Buffett-Stale-Gate: `DDDM01USA156NWDB` 2020-01-01 nicht live (+10 / P_korr12 75%); Wilshire/GDP nur im 18-Monats-Fenster. CAPE/FINRA N/A (kein xlsx). Tester PASS HARD, live Render. Siehe Abschnitt 10 | 🟢 |
+| 42 | Fertig_WORK_RECESSION_SOURCES.md | EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist) | Tip `8acf0e46` (#186 STOXX PE Soft-Fix, parent `ba476e0e` #185, über #184 `37a188ef`). Dateiname bleibt `Fertig_` seit `83e630ab` (großes F, dieser Nachzug benennt nicht um). Soll: EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score. Ist: live PASS Soft ~16:21 CEST — `#/recession` STOXX 600 PE 18.4, Quelle iShares EXSA KGV 2026-10-02, Zone Normal (15-30), available:true. Soft „STOXX live N/A“ („FMP leer, iShares ohne KGV“) ist für den live EXSA-KGV-Pfad zu. Softs blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB. Bundle `index-Ubb-bF_f.js` unverändert. Shots `/workspace/dod-186-stoxx-pe/`. Siehe Abschnitt 14 | 🟢 |
 | 43 | fertig_WORK_PEER_ADAPTIVE.md | 2-Hop+Industry | `peers2hop`, Map nur wenn F leer | ✅ |
 | 44 | fertig_WORK_PEER_PRICING_POWER.md | Relativ nur Low-Moat | `peerMaterial`-Gate und Banner | ✅ |
 | 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Hook+UI live `#57` | ✅ |
@@ -149,6 +160,9 @@ Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war 
 | #100 | KI-N/A matrix (Relativ Bewertung / Section7) | volle Spaltenlabels; Idle „N/A mit KI schätzen“; fail-closed UI | Code ✅ `c365c945` · Live ✅ PASS Bundle `index-MIF1Ml5X.js`. Spalten Segment\|Rev.\|Anteil\|Wachstum\|TAM\|CAGR\|Anteil am TAM\|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert. Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt. Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet (keine Segments/keine N/A); 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0. Shots+Probe `/workspace/dod-100-ki-na/`. | ✅ |
 | #101 | Docs Ampel Nachzug #99/#100 | MD-only Ampel auf tip nach #99+#100 | Docs ✅ `58bec00c` (MD-only; parent `c365c945`) · merged | ✅ |
 | #103 | Miner Observability | Error-Body / 1× Retry / Stale-Cache; Kernformeln unberührt | Code ✅ `e2bc69a2` · Live ✅ PASS (server-only; Bundle `index-MIF1Ml5X.js` unverändert). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. | ✅ |
+| #176 | TAM Partial-Apply + hide 0-Rev (Section7 / Rel. Bewertung / Sektion 9) | Partial-Apply gültige KI-Fills (violet KI-Badge), offene Zellen n/a, kein all-or-nothing 422 wenn mindestens ein Fill brauchbar; Rev null/0 aus Tabelle, Prompt und Fill-Scope (`hasPositiveSegmentRevenue`); Facts nicht neu berechnen | Code ✅ `31d9f367` (#176 über #188 `39d1afd6`) · Live PASS Soft AMZN: 7 Zeilen statt 8, KI ✓, coverage 75%, API 200, Bundle `index-BcyRdipm.js`. 5 Dateien +214/−48 (`shared/tam-na-fill.ts`, `server/tam-na-fill.ts`, `client/src/components/sections/Section7.tsx`, `script/test-tam-na-fill.ts`, `server/analyze-route.ts` comment only). Datenkette Section7 → POST /api/analyze/:ticker/tam-na-fill → requestTamNaFills → shared/tam-na-fill. `npx tsx script/test-tam-na-fill.ts` 125 passed. Doublecheck GO Soft. Kein neues Spec-File. Soft: Partial-Lückenfall live nicht gesehen (Modell füllte alles); Unit-Tests decken Partial-Apply / offene Rest-Zellen ab. Siehe Abschnitt 16. #180 HOLD. | 🟢 |
+| #150 | Liquidity Index Panel auf `#/researcher` Macro | LiquidityIndexPanel({ region }); Region-Toggle ändert Serie/asOf; GET /api/researcher/liquidity?region=US\|EU\|ASIA; US DFF+M2SL; C2 nur nach Analyse einmal; Briefing/RegionalStocks bleiben | Code ✅ `99feff6f` (#150 über #189 `e3c94d11`) · Live PASS Soft: Panel einmal zwischen Briefing und Country Macro Pulse; US LI 47.2 DFF+M2SL available; EU LI 42.6; ASIA Softs. Bundle `index-xA_h1JP9.js`. Shots `/workspace/dod-150-li/`. 8 Dateien +457/−7 (`LiquidityIndexPanel.tsx`, `MacroPanel.tsx`, `liquidity-index-panel.ts`, `Researcher.tsx`, `script/test-liquidity-index-panel.ts`, `script/test-liquidity-index.ts`, `server/liquidity-index-catalog.ts`, `server/liquidity-index.ts`). analyze-route und researcher.ts unberührt. Fertig_ Spec unberührt. Doublecheck Integrity GO Soft. Datenkette `#/researcher` Macro → LiquidityIndexPanel → GET /api/researcher/liquidity?region= → server/liquidity-index*. Softs: Fiskal-Klarstellung (BUYBACK_OPS n/v, Fiskalzeile MSPD_BILLS/QRA_IMPLIED_BILLS wenn Slot da); ASIA BOJ_GOVDEP n/v, keine DRAIN-Karte, asOf 2024-01-01 stale CN_M2; Doppel-Fetch 2×/Region, EU Erstload 15–20s. Siehe Abschnitt 17. #180 HOLD. | 🟢 |
+| #200 | Google Trends Cache (`Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md`, `Future_5_Google_Trends_Cache_Implementation.md`) | Cache 6–12h (Future_5: 12h, Key `google-trends-recession`); 429/leer/Timeout halten den letzten Wert; UI-Alter; ohne Wert in 48h Slot geschlossen, nicht Score 0; Zonen und ×1,7 bleiben | Code ✅ `8add9ed1` (#200, parent `cc683e96` #195) · Live PASS Soft Production: Zeile `vor 0.0h`, Satz „61.2“ entfernt, Korrektur 12M bleibt 80 %, `ageHours`/`isStale` in `POST /api/analyze-recession`. 6 Dateien +392/−41 (`server/cache/google-trends-cache.ts`, `server/recession.ts`, `client/src/components/recession/recessionDashboardShared.tsx`, `recessionDashboardPartsB1.tsx`, `recessionDashboardPartsB2.tsx`, `script/test-google-trends-cache.ts`). Datenkette `#/recession` → `RecessionDashboard` → POST → `scoreGoogleTrends` → Cache oder SerpApi. Doublecheck GO Soft. Dateinamen bleiben `Future_`. Softs: „veraltet“ erst nach >24h; Cache-Hits nur Render-Log; nur In-Memory; `0.0h` kosmetisch. Siehe Abschnitt 18. #180 HOLD. | 🟢 |
 
 FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live ✅. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 Ticker.
 
@@ -175,11 +189,11 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 ## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 nicht neu bauen)
 
-**🟢 Fertig (Softs blockieren nicht):** Recession Sources (`Fertig_WORK_RECESSION_SOURCES.md`, Feature-Tip `b43bc7a6` #177 über #167 `0c31b896`, Dateiname `Fertig_` seit `83e630ab`, Tester PASS HARD Buffett Re-Check 2026-10-05 ~14:35 Europe/Berlin, live Render, Doublecheck über #177: `DDDM01USA156NWDB` 2020-01-01 nicht live (+10 / P_korr12 75%); Wilshire/GDP nur im 18-Monats-Fenster; CAPE/FINRA N/A kein xlsx. Softs: Fazit-Vorlage „extreme Bewertungsniveaus“ bei Trends-getriebenem ≥65%; leerer Bewertungsrisiko-Block; Regeltabelle ×2 kosmetisch; `WILL5000PR` FRED HTML/404 → Buffett dauerhaft N/A bis andere Cap-Quelle). Fiscal-Frontend (`fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`, #145, Tester PASS: GIS `S 55.6` = API `macroFiscal`; Score-Badge ungerundet; FFR-Fallback nicht live reproduziert; BTC-News-RSS Nebenbefund). Liquidity-Briefing (`fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md`, #166, Tester PASS: 40 Kacheln, 0 PLACEHOLDER; Soft-n/a CN 10y, π, US M2V/EMG, veraltete CPI; Japan T½ ~683 Jahre; Inflation JP/CN von 2025; API Cold-Start ~37s). Velocity-Stocks (`fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md`, #149, Tester PASS: `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`; π ehrlich „start unknown“; T½/V/V̄ konsistent; Debt/GDP bewegt `li` nicht. Softs: π-Zelle im Strip nicht gelb trotz `available.pi=false` (Spec sagt Gelb; Briefing-Panel ist gelb); US V 1.418 vs Briefing M2V n/a; ASIA `li` 0.1; JP T½ 683 J durch 0.1%-Boden; Capex-Cache fehlt → π „start unknown“, kein Hardcode). Sahm (`fertig_WORK_RECESSION_FRED_SAHM.md`, #170, Tester PASS, Doublecheck GO: `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`; US `SAHMREALTIME` s(z); 0,50-pp nur Label; regional US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`; EZ/JP nicht in der 17er-Summe; fehlende Monate leer. Softs: `controlOk` false, 2025-11 Δ=0.08; 2025-10 fehlt in der US-Kontrolle; Hinweis „nicht in der 17er-Summe“, EZ/JP nur unter `sahmRegions`).
+**🟢 Fertig (Softs blockieren nicht):** Recession Sources (`Fertig_WORK_RECESSION_SOURCES.md`, Tip `8acf0e46` #186 STOXX PE Soft-Fix über #185 `ba476e0e`, Dateiname bleibt `Fertig_` seit `83e630ab`, Tester PASS Soft ~16:21 CEST, Shots `/workspace/dod-186-stoxx-pe/`, Bundle `index-Ubb-bF_f.js` unverändert: EZ-Katalog STOXX 600 PE 18.4, Quelle iShares EXSA KGV 2026-10-02, Zone Normal (15-30), available:true. #184 bleibt: CAPE 41.4 Multpl; Buffett 236% Yahoo/GDP; JP YoY +2.1% OECD. Softs, blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB. STOXX-Soft „live N/A“ ist für den live EXSA-KGV-Pfad zu). Fiscal-Frontend (`fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`, #145, Tester PASS: GIS `S 55.6` = API `macroFiscal`; Score-Badge ungerundet; FFR-Fallback nicht live reproduziert; BTC-News-RSS Nebenbefund). Liquidity-Briefing (`fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md`, #166, Tester PASS: 40 Kacheln, 0 PLACEHOLDER; Soft-n/a CN 10y, π, US M2V/EMG, veraltete CPI; Japan T½ ~683 Jahre; Inflation JP/CN von 2025; API Cold-Start ~37s). Velocity-Stocks (`fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md`, #149, Tester PASS: `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`; π ehrlich „start unknown“; T½/V/V̄ konsistent; Debt/GDP bewegt `li` nicht. Softs: π-Zelle im Strip nicht gelb trotz `available.pi=false` (Spec sagt Gelb; Briefing-Panel ist gelb); US V 1.418 vs Briefing M2V n/a; ASIA `li` 0.1; JP T½ 683 J durch 0.1%-Boden; Capex-Cache fehlt → π „start unknown“, kein Hardcode). Sahm (`fertig_WORK_RECESSION_FRED_SAHM.md`, #170, Tester PASS, Doublecheck GO: `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`; US `SAHMREALTIME` s(z); 0,50-pp nur Label; regional US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`; EZ/JP nicht in der 17er-Summe; fehlende Monate leer. Softs: `controlOk` false, 2025-11 Δ=0.08; 2025-10 fehlt in der US-Kontrolle; Hinweis „nicht in der 17er-Summe“, EZ/JP nur unter `sahmRegions`). Researcher-LI (`Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md`, #182 Tip `88f4ee92`, Tester PASS Soft: 18/20 Briefing-Nulls gefüllt; US/EU regional 0 Nulls; Soft nur ASIA `BOJ_GOVDEP` N/A/null, blockiert nicht; Dateiname bleibt `Fertig_` seit `3fd864a7`). Section4 (`Fertig_WORK_SECTION4_DATA_BUGS.md`, #168 Tip `1124c6f5` über #187 `e045080c`, Tester PASS Soft, Bundle `index-wIPUcskT.js`, Shots `/workspace/dod-168-section4/`: last quarter, unique grades, one EPS CAGR. Doublecheck GO Soft, 10 Dateien +599/−41; analyze-route 22/22 Deletes verified; researcher unberührt. Softs: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label, blockieren nicht; Dateiname bleibt `Fertig_` seit `6e125cdf`). TAM Partial-Apply (#176 Tip `31d9f367` über #188 `39d1afd6`, Tester PASS Soft AMZN, Bundle `index-BcyRdipm.js`: Section7 Rel. Bewertung / Sektion 9, Partial-Apply, hide 0-Rev, 7 Zeilen statt 8, KI ✓, coverage 75%, API 200, 125 Unit-Tests, Doublecheck GO Soft. Datenkette Section7 → POST /api/analyze/:ticker/tam-na-fill → requestTamNaFills → shared/tam-na-fill. Kein neues Spec-File. Soft: Partial-Lückenfall live nicht gesehen, Unit-Tests decken Partial-Apply / offene Rest-Zellen ab, blockiert nicht). Liquidity Index Panel (`Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md`, #150 Tip `99feff6f` über #189 `e3c94d11`, Tester PASS Soft, Bundle `index-xA_h1JP9.js`, Shots `/workspace/dod-150-li/`: Panel einmal zwischen Briefing und Country Macro Pulse; Region-Toggle US/EU/ASIA; US LI 47.2 DFF+M2SL available; EU LI 42.6; C2 nur nach Analyse einmal. Dateiname bleibt `Fertig_` seit `3fd864a7`. Softs: Fiskal-Klarstellung BUYBACK_OPS n/v statt „Fiskal-Angebot n/v“; ASIA BOJ_GOVDEP n/v, keine DRAIN-Karte, asOf 2024-01-01 stale CN_M2; Doppel-Fetch 2×/Region, EU Erstload 15–20s, blockieren nicht). Google Trends Cache (`Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md`, `Future_5_Google_Trends_Cache_Implementation.md`, #200 Tip `8add9ed1`, Tester PASS Soft Production, Doublecheck GO Soft: Zeile `vor 0.0h`, Satz „61.2“ entfernt, Korrektur 12M bleibt 80 %, `ageHours`/`isStale` in `POST /api/analyze-recession`. Dateinamen bleiben `Future_`. Softs: „veraltet“ erst nach >24h prüfbar; Cache-Hits nur im Render-Log; Cache nur In-Memory; Anzeige `0.0h` kosmetisch). #180 HOLD — nicht anfassen.
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · Researcher-LI (Filename `Fertig_`, Feature-Lane noch offen, Draft #150, kein Tester PASS, nicht Ampel 🟢) · Section4 (Filename `Fertig_`, Feature-Lane noch offen, Draft #168, kein Tester PASS, nicht Ampel 🟢). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün. Sahm ist 🟢 `fertig_` (#170). Recession-Sources ist 🟢 `Fertig_` (#177).
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün. Sahm ist 🟢 `fertig_` (#170). Recession-Sources ist 🟢 `Fertig_` (#186, Tester PASS Soft Tip `8acf0e46`; STOXX-Soft für den live EXSA-KGV-Pfad zu; Softs Margin unscored, TOPIX/JNVI/JGB). Researcher-LI ist 🟢 `Fertig_` (#182, Tester PASS Soft Tip `88f4ee92`; Soft nur ASIA `BOJ_GOVDEP`). Section4 ist 🟢 `Fertig_` (#168, Tester PASS Soft Tip `1124c6f5`; Softs Quartal nur Datum, BN Moat None vs Narrow-Inkonsistenz, PEG-Label). TAM Partial-Apply ist 🟢 im Index (#176, Tester PASS Soft Tip `31d9f367`; Soft Partial-Lückenfall live nicht gesehen). Researcher-LI Panel ist 🟢 `Fertig_` (#150, Tester PASS Soft Tip `99feff6f` über #189 `e3c94d11`; #182 N/A-Fill bleibt; Softs Fiskal-Klarstellung, ASIA BOJ_GOVDEP/keine DRAIN/asOf 2024-01-01, Doppel-Fetch). Google Trends Cache ist 🟢 im Index (#200, Tester PASS Soft Tip `8add9ed1`; `Future_3`/`Future_4`/`Future_5` bleiben diese Namen; Softs „veraltet“ erst >24h, Cache-Hits nur Render-Log, nur In-Memory, `0.0h` kosmetisch). #180 HOLD.
 
-**⬜ Spec:** Keine offene Root-Spec mehr auf ⬜. Keine Root-`Offen_` mehr auf Basis `6e125cdf`. Velocity-Stocks ist `fertig_` 🟢 (#149). Value-Chain und Briefing regional sind auf dem Tip `fertig_` (#169), kein Live-Deploy aus dem Rename. Liquidity-Briefing-Quellen sind `fertig_` 🟢 (#166). Sahm ist `fertig_` 🟢 (#170). Recession-Sources ist `Fertig_` 🟢 (#177). Researcher-LI und Section4 sind Filename `Fertig_`, Feature-Lane noch offen (nicht Ampel 🟢).
+**⬜ Spec:** Keine offene Root-Spec mehr auf ⬜. Keine Root-`Offen_` mehr auf Basis `6e125cdf`. Velocity-Stocks ist `fertig_` 🟢 (#149). Value-Chain und Briefing regional sind auf dem Tip `fertig_` (#169), kein Live-Deploy aus dem Rename. Liquidity-Briefing-Quellen sind `fertig_` 🟢 (#166). Sahm ist `fertig_` 🟢 (#170). Recession-Sources ist `Fertig_` 🟢 (#186, Tester PASS Soft Tip `8acf0e46`, Nachzug STOXX PE). Researcher-LI ist `Fertig_` 🟢 (#182, Tester PASS Soft Tip `88f4ee92`). Section4 ist `Fertig_` 🟢 (#168, Tester PASS Soft Tip `1124c6f5`, parent `e045080c`). TAM Partial-Apply #176 ist 🟢 im Index (Tip `31d9f367`, kein neues Spec-File). Researcher-LI Panel ist `Fertig_` 🟢 (#150, Tester PASS Soft Tip `99feff6f` über #189 `e3c94d11`). Google Trends Cache #200 ist 🟢 im Index (Tip `8add9ed1`); `Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md` und `Future_5_Google_Trends_Cache_Implementation.md` bleiben unter diesen Namen (kein Rename nach `Fertig_`/`fertig_`). #180 HOLD — nicht anfassen.
 
 **Kein Gap:** Black-Litterman §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter/Chart-Soll. Efficient Frontier ≥3 Ticker.
 
@@ -203,7 +217,7 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleib
 
 ## 4. Blockiert
 
-- **D6 Rang 7–9** — Dateiname `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` auf Tip `1937d389` (#169 Docs-Rename). Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet. Sahm ist 🟢 `fertig_` (#170, Tester PASS, Doublecheck GO), kein Blocker. Recession-Sources ist 🟢 `Fertig_` (#177, Tester PASS HARD), kein Blocker. Fiscal-Frontend ist 🟢 `fertig_` (#145), kein Blocker. Liquidity-Briefing ist 🟢 `fertig_` (#166, Tester PASS), kein Blocker. Velocity-Stocks ist 🟢 `fertig_` (#149, Tester PASS), kein Blocker. Researcher-LI und Section4: Filename `Fertig_`, Feature-Lane noch offen (Drafts #150 / #168, nicht Ampel 🟢). Softs (π-Strip nicht gelb, US V 1.418 vs M2V n/a, ASIA `li` 0.1, JP T½ 683 J, Capex-Cache → „start unknown“) blockieren nicht.
+- **D6 Rang 7–9** — Dateiname `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` auf Tip `1937d389` (#169 Docs-Rename). Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet. Sahm ist 🟢 `fertig_` (#170, Tester PASS, Doublecheck GO), kein Blocker. Recession-Sources ist 🟢 `Fertig_` (#186, Tester PASS Soft Tip `8acf0e46`), kein Blocker. STOXX-Soft „live N/A“ ist für den live EXSA-KGV-Pfad zu (18.4, iShares EXSA KGV 2026-10-02). Sources-Softs (Margin Wert unscored, TOPIX/JNVI/JGB) blockieren nicht. Fiscal-Frontend ist 🟢 `fertig_` (#145), kein Blocker. Liquidity-Briefing ist 🟢 `fertig_` (#166, Tester PASS), kein Blocker. Velocity-Stocks ist 🟢 `fertig_` (#149, Tester PASS), kein Blocker. Researcher-LI ist 🟢 `Fertig_` (#182, Tester PASS Soft Tip `88f4ee92`), kein Blocker. Soft nur ASIA `BOJ_GOVDEP` N/A/null blockiert nicht. Section4 ist 🟢 `Fertig_` (#168, Tester PASS Soft Tip `1124c6f5`), kein Blocker. Softs (Quartal nur Datum, BN Moat None vs Narrow-Inkonsistenz, PEG-Label) blockieren nicht. Softs (π-Strip nicht gelb, US V 1.418 vs M2V n/a, ASIA `li` 0.1, JP T½ 683 J, Capex-Cache → „start unknown“) blockieren nicht. TAM Partial-Apply ist 🟢 im Index (#176, Tester PASS Soft Tip `31d9f367`), kein Blocker. Soft (Partial-Lückenfall live nicht gesehen) blockiert nicht. Liquidity Index Panel ist 🟢 `Fertig_` (#150, Tester PASS Soft Tip `99feff6f`), kein Blocker. Softs (Fiskal-Klarstellung, ASIA BOJ_GOVDEP n/v / keine DRAIN-Karte / asOf 2024-01-01 stale CN_M2, Doppel-Fetch 2×/Region, EU Erstload 15–20s) blockieren nicht. Google Trends Cache ist 🟢 im Index (#200, Tester PASS Soft Tip `8add9ed1`), kein Blocker. Softs („veraltet“ erst nach >24h, Cache-Hits nur im Render-Log, Cache nur In-Memory, Anzeige `0.0h` kosmetisch) blockieren nicht. #180 HOLD — nicht anfassen.
 
 `Future_Work.md` = Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `docs/Doc_Soll_vs_Ist/`.
 
@@ -211,7 +225,7 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleib
 
 ## 5. Dateinamen 2026-10-03 (tip `839d954`)
 
-Historischer Snapshot. Dateinamen auf Basis `6e125cdf` stehen in Abschnitt 10. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`. Abschnitt 7 ist der Stand auf Tip `d59541f5`. Abschnitt 6 ist der Stand auf Tip `e8171961`. Diese Liste nicht als aktuellen Stand lesen.
+Historischer Snapshot. Dateinamen auf Tip `8add9ed1` stehen in Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`. Abschnitt 10 ist der Stand auf Basis `6e125cdf`. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`. Abschnitt 7 ist der Stand auf Tip `d59541f5`. Abschnitt 6 ist der Stand auf Tip `e8171961`. Diese Liste nicht als aktuellen Stand lesen.
 
 Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben ohne Präfix: `WORK.md`, `WORK_IST_VS_SOLL.md`, `WORK_IMPLEMENTIERUNG_OFFEN.md`. Bestehende `fertig_*`-Namen sind unverändert.
 
@@ -249,7 +263,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 
 ## 6. 05.10.2026 Tip e8171961
 
-Gelesen am Tip `e817196142c408cc90005afd24407251d793ce73` (#145, parent `f0e3b499`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-CDLHYWlv.js`. Tester PASS. Aktueller Stand seit Basis `6e125cdf`: Abschnitt 10. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`. Abschnitt 7 ist der Stand auf Tip `d59541f5`.
+Gelesen am Tip `e817196142c408cc90005afd24407251d793ce73` (#145, parent `f0e3b499`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-CDLHYWlv.js`. Tester PASS. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`. Abschnitt 10 ist der Stand auf Basis `6e125cdf`. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`. Abschnitt 7 ist der Stand auf Tip `d59541f5`.
 
 Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS). Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
 
@@ -299,7 +313,7 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 ## 7. 05.10.2026 Tip d59541f5
 
-Gelesen am Tip `d59541f56271adbd805c614e6d2117f5cb253452` (#166, parent `bafdba8b`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-BGJ8ARaM.js`. Tester PASS. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Basis `6e125cdf`: Abschnitt 10. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`.
+Gelesen am Tip `d59541f56271adbd805c614e6d2117f5cb253452` (#166, parent `bafdba8b`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-BGJ8ARaM.js`. Tester PASS. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`. Abschnitt 10 ist der Stand auf Basis `6e125cdf`. Abschnitt 9 ist der Stand auf Tip `edbec6e6`. Abschnitt 8 ist der Stand auf Tip `1937d389`.
 
 Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS). Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
 
@@ -349,7 +363,7 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 ## 8. 05.10.2026 Tip 1937d389
 
-Gelesen am Tip `1937d3898ab299336e9639c8c0a86ab4bdb137d6` (#149, parent `87151cb3`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-0g2LG3IP.js`. Tester PASS. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Basis `6e125cdf`: Abschnitt 10. Abschnitt 9 ist der Stand auf Tip `edbec6e6`.
+Gelesen am Tip `1937d3898ab299336e9639c8c0a86ab4bdb137d6` (#149, parent `87151cb3`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-0g2LG3IP.js`. Tester PASS. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`. Abschnitt 10 ist der Stand auf Basis `6e125cdf`. Abschnitt 9 ist der Stand auf Tip `edbec6e6`.
 
 Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS). Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
 
@@ -397,7 +411,7 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 ## 9. 05.10.2026 Tip edbec6e6
 
-Gelesen am Tip `edbec6e6a3319997746422d40b4e1f2f506d6d0a` (#170, parent `17d08326`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Basis `6e125cdf`: Abschnitt 10.
+Gelesen am Tip `edbec6e6a3319997746422d40b4e1f2f506d6d0a` (#170, parent `17d08326`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen; der Index notiert sie schon in `WORK.md`. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`. Abschnitt 10 ist der Stand auf Basis `6e125cdf`.
 
 Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO).
 
@@ -445,7 +459,7 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 ## 10. 05.10.2026 Basis 6e125cdf
 
-Gelesen auf Basis `6e125cdff07f0f334193435d8432c7be3bfaf0fb`. Kette: `b43bc7a694582e1708feb3a2c4bc3a9c415b45c1` (#177) → `83e630ab` Sources `Fertig_` → `3fd864a7` LI `Fertig_` → `6e125cdf` Section4 `Fertig_`. Drafts #150 / #168 bleiben Feature-offen und zählen nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route und researcher unberührt. Live Render, kein Bundle-Hash. Tester PASS (HARD) Buffett Re-Check 2026-10-05 ~14:35 Europe/Berlin. Doublecheck-Pfad über #177. Dublette `docs/work-offen/` bleibt liegen. Keine Root-`Offen_` mehr.
+Gelesen auf Basis `6e125cdff07f0f334193435d8432c7be3bfaf0fb`. Kette: `b43bc7a694582e1708feb3a2c4bc3a9c415b45c1` (#177) → `83e630ab` Sources `Fertig_` → `3fd864a7` LI `Fertig_` → `6e125cdf` Section4 `Fertig_`. Drafts #150 / #168 bleiben Feature-offen und zählen nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route und researcher unberührt. Live Render, kein Bundle-Hash. Tester PASS (HARD) Buffett Re-Check 2026-10-05 ~14:35 Europe/Berlin. Doublecheck-Pfad über #177. Dublette `docs/work-offen/` bleibt liegen. Keine Root-`Offen_` mehr. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`. Abschnitt 11 ist der Stand auf Tip `860ff710`.
 
 Feature-Dateien des #177-Commits: `server/recession.ts`, `script/test-recession-sources.ts`, `script/test-recession-regions.ts`.
 
@@ -493,3 +507,586 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 **Ist:** Dateiname seit `6e125cdf` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #168, kein Tester PASS, nicht Ampel 🟢. Trailing-PEG, signed FCF und Geo-Dedup liegen auf dem Tip; Earnings, Analysten, Growth und Moat bleiben offen. Die Datei wird nicht zurück nach `Offen_` benannt.
 
+## 11. 05.10.2026 Tip 860ff710
+
+Gelesen am Tip `860ff710b0a04e219be50ed34fb25b7b3f56a919` (#179 Fazit-Soft, parent `71254a459cded2582bb8b7b19b7b71d36ee358b3` #178 Ampel Sources). Feature-Dateien des #179-Commits: `server/recession.ts`, `script/test-recession-sources.ts` (+74/−4). Spec-Dateiname bleibt `Fertig_WORK_RECESSION_SOURCES.md` (bereits `Fertig_` seit `83e630ab`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Drafts #150 / #168 bleiben Feature-offen und zählen nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route und researcher unberührt. Live `#/recession`, kein Bundle-Hash. Tester PASS 2026-10-05 ~14:52 Europe/Berlin. Dublette `docs/work-offen/` bleibt liegen. Keine Root-`Offen_` mehr. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`. Abschnitt 12 ist der Stand auf Tip `88f4ee92`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` und `Fertig_WORK_SECTION4_DATA_BUGS.md` sind Filename `Fertig_`, Feature-Lane noch offen (Drafts #150 / #168).
+
+### 1. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** Neun Punkte der Spec plus EZ/JP-Raster und Buffett Wilshire/GDP oder World Bank, unverändert gegenüber Abschnitt 10. Dazu Philip Soft auf diesem Tip: kein Bewertungs-Wording, wenn keine Bewertung gewertet ist; Bewertungsrisiko darf nicht leer sein.
+
+**Ist:** Tip `860ff710` (#179 über #178 `71254a45`, Feature davor `b43bc7a6` #177 über #167 `0c31b896`). Dateiname bleibt `Fertig_` seit `83e630ab` (großes F). Dieser Nachzug lässt die Datei liegen. Dateien des #179-Commits: `server/recession.ts`, `script/test-recession-sources.ts` (+74/−4). analyze-route und researcher unberührt. Tester PASS 2026-10-05 ~14:52 Europe/Berlin, live `#/recession`, kein Bundle-Hash. Treiber = Google Trends / CSI / Aktivität. Bewertungsrisiko zeigt „nicht gewertet“. Buffett 195%(2020-01) N/A (Stale-Gate: `DDDM01USA156NWDB` endet 2020-01-01 und zählt nicht als live, +10 / P_korr12 75%). Wilshire/GDP nur wenn beide Drucke im 18-Monats-Fenster liegen; sonst schließt dasselbe Stale-Gate den Slot. CAPE und FINRA bleiben N/A by design (kein xlsx) und blockieren nicht. Die Fazit-Vorlage „extreme Bewertungsniveaus“ bei Trends-getriebenem ≥65% und der leere Bewertungsrisiko-Block aus Abschnitt 10 sind auf diesem Tip zu. `generateFazit` nennt extreme Bewertungsniveaus nur, wenn ein Valuation-Slot gewertet ist und `weightedScore > 0`; sonst nennt der Quant-Text die echten Treiber. Ist der Bewertungs-Text leer, bleibt der Abschnitt stehen und sagt, dass Buffett, Shiller CAPE und Margin Debt nicht gewertet sind. Soft, blockieren die Ampel nicht: negative Scores in der Treiberliste; News-Titel-Prefix in den Driver-Karten. Weiterhin nicht Gegenstand von #179: Regeltabelle ×2 kosmetisch; `WILL5000PR` FRED HTML/404 → Buffett dauerhaft N/A bis eine andere Cap-Quelle da ist.
+
+### 2. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 3. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 4. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing` / `GET /api/researcher/liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 5. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟡
+
+**Soll:** `LiquidityIndexPanel({ region })` mit `GET /api/researcher/liquidity?region=US|EU|ASIA`, Slots A–D, `s(z)`, verfügbare Maske. `LiquidityPanel` darf die Region nicht ignorieren.
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Dateiname seit `3fd864a7` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #150, kein Tester PASS, nicht Ampel 🟢. `?region=` liefert `li` + Bücher; `LiquidityPanel` holt weiter ohne Region. Das Stocks-Strip (`panel-regional-stocks`) ist die Velocity-Spec, nicht dieser Index. Die Datei wird nicht zurück nach `Offen_` benannt und nicht nach `fertig_` normalisiert.
+
+### 7. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟡
+
+**Soll:** Trailing-PEG = `peRatio / epsGrowth5Y`. FCF mehrperiodig mit Vorzeichen, nie stilles $0. Geo-Dedup über Name+Revenue und `NON_GEO_PATTERN`. Earnings, Analysten, Growth-Labels und Moat bleiben in der Spec offen, bis ihr DoD zu ist. PEG-Formel und inverted DCF nicht neu schreiben.
+
+**Ist:** Unverändert gegenüber Abschnitt 10. Dateiname seit `6e125cdf` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #168, kein Tester PASS, nicht Ampel 🟢. Trailing-PEG, signed FCF und Geo-Dedup liegen auf dem Tip; Earnings, Analysten, Growth und Moat bleiben offen. Die Datei wird nicht zurück nach `Offen_` benannt und nicht nach `fertig_` normalisiert.
+
+## 12. 05.10.2026 Tip 88f4ee92
+
+Gelesen am Tip `88f4ee92c5d8a313ebe266851e8408794a149df5` (#182 Researcher N/A fill, parent `1784775299b5f711308193225007213370a80949` #181 Ampel Fazit-Soft). Feature-Dateien des #182-Commits: `client/src/components/researcher/LiquidityBriefingPanel.tsx`, `script/test-liquidity-briefing-na.ts`, `script/test-liquidity-briefing.ts`, `script/test-liquidity-stocks-velocity.ts`, `server/eu-bonds-snapshot.ts`, `server/liquidity-briefing-catalog.ts`, `server/liquidity-briefing-math.ts`, `server/liquidity-briefing.ts`, `server/liquidity-index-catalog.ts`, `server/liquidity-index-math.ts`, `server/liquidity-index.ts`, `server/liquidity-stocks-series.ts`, `server/liquidity-stocks-velocity.ts`, `shared/schema.ts` (+696/−79). Spec-Dateiname bleibt `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` (bereits `Fertig_` seit `3fd864a7`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Draft #168 bleibt Feature-offen und zählt nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Shots `/workspace/dod-182-researcher-na/`. Tester PASS Soft #182. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`. Abschnitt 13 ist der Stand auf Tip `37a188ef`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` ist Ampel 🟢 (#182, Tester PASS Soft). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Filename `Fertig_`, Feature-Lane noch offen (Draft #168).
+
+### 1. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** Zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf.
+
+**Ist:** Tip `88f4ee92` (#182 über #181 `17847752`). Dateiname bleibt `Fertig_` seit `3fd864a7` (großes F). Dieser Nachzug lässt die Datei liegen. Dateien des #182-Commits: die 14 Dateien oben, +696/−79. Tester PASS Soft. Live: 18/20 Briefing-Nulls gefüllt; US/EU regional 0 Nulls; ASIA nur `BOJ_GOVDEP` Soft. Shots `/workspace/dod-182-researcher-na/`. Soft, blockiert die Ampel nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null. Die Datei wird nicht nach `fertig_` normalisiert und nicht zurück nach `Offen_` benannt.
+
+### 2. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** Neun Punkte der Spec plus EZ/JP-Raster und Buffett Wilshire/GDP oder World Bank. Philip Soft: kein Bewertungs-Wording, wenn keine Bewertung gewertet ist; Bewertungsrisiko darf nicht leer sein.
+
+**Ist:** Unverändert gegenüber Abschnitt 11. Tip `860ff710` (#179). Dateiname bleibt `Fertig_` seit `83e630ab`. Softs blockieren nicht.
+
+### 3. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 11. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 4. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 11. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 5. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing. Die zuvor n/a-Zellen dieses Briefings gehören zum selben #182-Soll (Wert+Quelle+asOf) und sind in Punkt 1 mitgezählt.
+
+**Ist:** Dateiname bleibt `fertig_` (#166). Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Der N/A-Fill desselben Tips `88f4ee92` füllt 18/20 Briefing-Nulls; der Rest-Soft der Lane ist ASIA `BOJ_GOVDEP` am regionalen Index, nicht ein Rename dieser Datei. Ältere Softs aus Abschnitt 7 (T½ JP ~683 Jahre, Inflation JP/CN von 2025, Cold-Start ~37s) blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 11. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟡
+
+**Soll:** Trailing-PEG = `peRatio / epsGrowth5Y`. FCF mehrperiodig mit Vorzeichen, nie stilles $0. Geo-Dedup über Name+Revenue und `NON_GEO_PATTERN`. Earnings, Analysten, Growth-Labels und Moat bleiben in der Spec offen, bis ihr DoD zu ist. PEG-Formel und inverted DCF nicht neu schreiben.
+
+**Ist:** Unverändert gegenüber Abschnitt 11. Dateiname seit `6e125cdf` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #168, kein Tester PASS, nicht Ampel 🟢. Trailing-PEG, signed FCF und Geo-Dedup liegen auf dem Tip; Earnings, Analysten, Growth und Moat bleiben offen. Die Datei wird nicht zurück nach `Offen_` benannt und nicht nach `fertig_` normalisiert.
+
+## 13. 05.10.2026 Tip 37a188ef
+
+Gelesen am Tip `37a188efdb5f61438f92ae9920766bc71fe7ae16` (#184 Recession N/A fills, parent `11e0e617afb13167fc882048c280063b76525e6f` #183 Ampel Researcher N/A). Feature-Dateien des #184-Commits: `client/src/components/recession/recessionDashboardPartsA1.tsx`, `client/src/components/recession/recessionDashboardPartsA2.tsx`, `script/test-recession-regions.ts`, `script/test-recession-sources.ts`, `server/recession-regions.ts`, `server/recession.ts` (+370/−55). Spec-Dateiname bleibt `Fertig_WORK_RECESSION_SOURCES.md` (bereits `Fertig_` seit `83e630ab`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Draft #168 bleibt Feature-offen und zählt nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Shots `/workspace/dod-184-recession-na/`. Tester PASS Soft #184. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`. Abschnitt 14 ist der Stand auf Tip `8acf0e46`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#184, Tester PASS Soft). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt Ampel 🟢 (#182, Tester PASS Soft). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Filename `Fertig_`, Feature-Lane noch offen (Draft #168).
+
+### 1. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** CAPE, Buffett, STOXX und JP-Aktivität mit Wert+Score wo möglich.
+
+**Ist:** Tip `37a188ef` (#184 über #183 `11e0e617`). Dateiname bleibt `Fertig_` seit `83e630ab` (großes F). Dieser Nachzug lässt die Datei liegen. Dateien des #184-Commits: die 6 Dateien oben, +370/−55. Tester PASS Soft. Live: CAPE 41.4 Multpl; Buffett 236% Yahoo/GDP; JP YoY +2.1% OECD. Shots `/workspace/dod-184-recession-na/`. Soft, blockieren die Ampel nicht: Margin Wert unscored; STOXX live weiter N/A (VM hatte 18.4); TOPIX/JNVI/JGB. Die Datei wird nicht nach `fertig_` normalisiert und nicht zurück nach `Offen_` benannt.
+
+### 2. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** Zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf.
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Tip `88f4ee92` (#182). Dateiname bleibt `Fertig_` seit `3fd864a7`. Soft, blockiert nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null.
+
+### 3. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 4. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 5. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Der N/A-Fill des Tips `88f4ee92` bleibt in Abschnitt 12. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟡
+
+**Soll:** Trailing-PEG = `peRatio / epsGrowth5Y`. FCF mehrperiodig mit Vorzeichen, nie stilles $0. Geo-Dedup über Name+Revenue und `NON_GEO_PATTERN`. Earnings, Analysten, Growth-Labels und Moat bleiben in der Spec offen, bis ihr DoD zu ist. PEG-Formel und inverted DCF nicht neu schreiben.
+
+**Ist:** Unverändert gegenüber Abschnitt 12. Dateiname seit `6e125cdf` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #168, kein Tester PASS, nicht Ampel 🟢. Trailing-PEG, signed FCF und Geo-Dedup liegen auf dem Tip; Earnings, Analysten, Growth und Moat bleiben offen. Die Datei wird nicht zurück nach `Offen_` benannt und nicht nach `fertig_` normalisiert.
+
+## 14. 05.10.2026 Tip 8acf0e46
+
+Gelesen am Tip `8acf0e46d80ed81391ef8929ce715f0ad300d87d` (#186 STOXX PE Soft-Fix, parent `ba476e0ef50b6b47403fdcb72c871626c6042832` #185 Ampel Recession N/A). Feature-Dateien des #186-Commits: `server/recession-regions.ts`, `script/test-recession-regions.ts` (+128/−16). Spec-Dateiname bleibt `Fertig_WORK_RECESSION_SOURCES.md` (bereits `Fertig_` seit `83e630ab`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Draft #168 bleibt Feature-offen und zählt nicht als Ampel 🟢. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route und researcher unberührt. Doublecheck GO Soft. Shots `/workspace/dod-186-stoxx-pe/`. Bundle `index-Ubb-bF_f.js` unverändert (server-only). Tester PASS Soft #186 ~16:21 CEST. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`. Abschnitt 15 ist der Stand auf Tip `1124c6f5`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#186 Nachzug, Tester PASS Soft; STOXX-Soft des #184 ist für den live EXSA-KGV-Pfad zu). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt Ampel 🟢 (#182, Tester PASS Soft). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Filename `Fertig_`, Feature-Lane noch offen (Draft #168).
+
+### 1. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist).
+
+**Ist:** Tip `8acf0e46` (#186 über #185 `ba476e0e`). Dateiname bleibt `Fertig_` seit `83e630ab` (großes F). Dieser Nachzug lässt die Datei liegen. Dateien des #186-Commits: `server/recession-regions.ts`, `script/test-recession-regions.ts`, +128/−16. analyze-route und researcher unberührt. Doublecheck GO Soft. Tester PASS Soft ~16:21 CEST. Live `#/recession` EZ-Katalog STOXX 600 PE 18.4, Quelle iShares EXSA KGV 2026-10-02, Zone Normal (15-30), scored available:true. Vorheriges Soft N/A („FMP leer, iShares ohne KGV“) ist für den live EXSA-KGV-Pfad zu. Bundle `index-Ubb-bF_f.js` unverändert (server-only). Shots `/workspace/dod-186-stoxx-pe/`. #184 bleibt daneben: CAPE 41.4 Multpl; Buffett 236% Yahoo/GDP; JP YoY +2.1% OECD. Soft, blockieren die Ampel nicht und sind auf diesem Tip nicht freigegeben: Margin Wert unscored; TOPIX/JNVI/JGB. Die Datei wird nicht nach `fertig_` normalisiert und nicht zurück nach `Offen_` benannt.
+
+### 2. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** Zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf.
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Tip `88f4ee92` (#182). Dateiname bleibt `Fertig_` seit `3fd864a7`. Soft, blockiert nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null.
+
+### 3. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 4. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 5. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Der N/A-Fill des Tips `88f4ee92` bleibt in Abschnitt 12. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟡
+
+**Soll:** Trailing-PEG = `peRatio / epsGrowth5Y`. FCF mehrperiodig mit Vorzeichen, nie stilles $0. Geo-Dedup über Name+Revenue und `NON_GEO_PATTERN`. Earnings, Analysten, Growth-Labels und Moat bleiben in der Spec offen, bis ihr DoD zu ist. PEG-Formel und inverted DCF nicht neu schreiben.
+
+**Ist:** Unverändert gegenüber Abschnitt 13. Dateiname seit `6e125cdf` `Fertig_` (großes F). Filename `Fertig_`, Feature-Lane noch offen: Draft #168, kein Tester PASS, nicht Ampel 🟢. Trailing-PEG, signed FCF und Geo-Dedup liegen auf dem Tip; Earnings, Analysten, Growth und Moat bleiben offen. Die Datei wird nicht zurück nach `Offen_` benannt und nicht nach `fertig_` normalisiert.
+
+## 15. 05.10.2026 Tip 1124c6f5
+
+Gelesen am Tip `1124c6f5a238e0e023bfc3e6f4e69be7320c5b9e` (#168 Section4 Data Bugs, parent `e045080c97013c1ad7a0db15c2b5f0afa639251c` #187 Ampel STOXX PE). Feature-Dateien des #168-Commits: `client/src/components/sections/EpsGrowthChart.tsx`, `client/src/components/sections/FinancialStatements.tsx`, `client/src/components/sections/Section1.tsx`, `client/src/components/sections/Section2.tsx`, `script/test-section4-labels-moat.ts`, `server/analyze-helpers.ts`, `server/analyze-route.ts`, `server/fmp-fetcher.ts`, `server/fmp.ts`, `shared/schema.ts` (10 Dateien, +599/−41). Spec-Dateiname bleibt `Fertig_WORK_SECTION4_DATA_BUGS.md` (bereits `Fertig_` seit `6e125cdf`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route 22/22 Deletes verified. researcher unberührt. Doublecheck GO Soft. Shots `/workspace/dod-168-section4/`. Bundle `index-wIPUcskT.js`. Tester PASS Soft #168. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`. Abschnitt 16 ist der Stand auf Tip `31d9f367`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#186, Tester PASS Soft). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt Ampel 🟢 (#182, Tester PASS Soft). `Fertig_WORK_SECTION4_DATA_BUGS.md` ist Ampel 🟢 (#168, Tester PASS Soft; Dateiname bleibt `Fertig_`).
+
+### 1. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟢
+
+**Soll:** Section4 last quarter, unique grades, one EPS CAGR per `Fertig_WORK_SECTION4_DATA_BUGS.md` / #168 DoD.
+
+**Ist:** Tip `1124c6f5` (#168 über #187 `e045080c`). Dateiname bleibt `Fertig_` seit `6e125cdf` (großes F). Dieser Nachzug lässt die Datei liegen. Doublecheck GO Soft — 10 Dateien +599/−41; analyze-route 22/22 Deletes verified; researcher unberührt. Tester PASS Soft. Bundle `index-wIPUcskT.js`. Shots `/workspace/dod-168-section4/`. Softs blockieren die Ampel nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label. Die Datei wird nicht nach `fertig_` normalisiert und nicht zurück nach `Offen_` benannt.
+
+### 2. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist).
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Tip `8acf0e46` (#186 über #185 `ba476e0e`). Dateiname bleibt `Fertig_` seit `83e630ab`. Softs blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB.
+
+### 3. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** Zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf.
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Tip `88f4ee92` (#182). Dateiname bleibt `Fertig_` seit `3fd864a7`. Soft, blockiert nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null.
+
+### 4. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 5. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 14. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+## 16. 05.10.2026 Tip 31d9f367
+
+Gelesen am Tip `31d9f3672fc19eee584befe80dbe318953f2a868` (#176 TAM Partial-Apply, parent `39d1afd65aeee017213bb629cada43e389a1b905` #188 Ampel Section4). Feature-Dateien des #176-Commits: `shared/tam-na-fill.ts`, `server/tam-na-fill.ts`, `client/src/components/sections/Section7.tsx`, `script/test-tam-na-fill.ts`, `server/analyze-route.ts` (comment only) — 5 Dateien, +214/−48. Kein neues `Offen_`/`fertig_`/`Fertig_` Spec-File; die Lane ist im Index geschlossen (kein Rename, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Datenkette: Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill`. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. analyze-route Handler nur Kommentar. Doublecheck GO Soft. Bundle `index-BcyRdipm.js`. Tester PASS Soft AMZN. `npx tsx script/test-tam-na-fill.ts` 125 passed. #180 HOLD — nicht anfassen. Aktueller Stand seit Tip `8add9ed1`: Abschnitt 18. Abschnitt 17 ist der Stand auf Tip `99feff6f`.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#186, Tester PASS Soft). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt Ampel 🟢 (#182, Tester PASS Soft). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Ampel 🟢 (#168, Tester PASS Soft; Dateiname bleibt `Fertig_`).
+
+### Soll vs. Ist — TAM Partial-Apply #176
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| Partial-Apply | Gültige KI-Fills behalten (violet KI-Badge); offene Zellen bleiben n/a; kein all-or-nothing 422, wenn mindestens ein Fill brauchbar | Tip `31d9f367` (#176 über #188 `39d1afd6`). Doublecheck GO Soft. 5 Dateien +214/−48. `server/analyze-route.ts` nur Kommentar. Live PASS Soft AMZN: KI ✓, API 200 | 🟢 |
+| 0-Rev | Rev null/0 aus Tabelle, Prompt und Fill-Scope (`hasPositiveSegmentRevenue`); Beispielzeile `Other / nicht segmentiert` $0 | Live PASS Soft AMZN: 7 Zeilen statt 8 (0-Rev weg). coverage 75%. Bundle `index-BcyRdipm.js` | 🟢 |
+| Facts | Rev, Anteil, Coverage, tamTotal, quality nicht überschreiben und nicht neu berechnen; Anteil am TAM / vs. TAM lokale Formeln; Peer-N/A unberührt | Handler-Kommentar in `server/analyze-route.ts`; Formeln in `shared/tam-na-fill`. Peer-N/A unberührt | 🟢 |
+| Datenkette | Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill` | Dieselbe Kette auf dem Tip | 🟢 |
+| Tests | `npx tsx script/test-tam-na-fill.ts` | 125 passed. Unit-Tests decken Partial-Apply und offene Rest-Zellen ab | 🟢 |
+| Spec-Datei | Kein neues `Offen_`/`fertig_`/`Fertig_` | Lane im Index geschlossen. Bestehende `Fertig_`/`fertig_` unberührt | 🟢 |
+| #180 | HOLD | Nicht angefasst | HOLD |
+
+**Soft, blockiert die Ampel nicht:** Partial-Lückenfall live nicht gesehen (Modell füllte alles). Unit-Tests decken Partial-Apply und offene Rest-Zellen ab.
+
+### 1. TAM Partial-Apply #176 — 🟢
+
+**Soll:** Segment-TAM KI Partial-Apply + hide 0-Rev in Section7 (Rel. Bewertung / Sektion 9). Partial-Apply: gültige KI-Fills behalten (violet KI-Badge); offene Zellen bleiben n/a; kein all-or-nothing 422, wenn mindestens ein Fill brauchbar. Rev null/0 aus Tabelle, Prompt und Fill-Scope (`hasPositiveSegmentRevenue`); Beispielzeile `Other / nicht segmentiert` $0. Facts (Rev, Anteil, Coverage, tamTotal, quality) nicht überschreiben und nicht neu berechnen. Anteil am TAM / vs. TAM lokale Formeln. Peer-N/A unberührt. analyze-route Handler nur Kommentar. Datenkette: Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill`.
+
+**Ist:** Tip `31d9f367` (#176 über #188 `39d1afd6`). Kein neues Spec-File; dieser Nachzug lässt die bestehenden Dateinamen liegen. Dateien des #176-Commits: `shared/tam-na-fill.ts`, `server/tam-na-fill.ts`, `client/src/components/sections/Section7.tsx`, `script/test-tam-na-fill.ts`, `server/analyze-route.ts` (comment only), +214/−48. Doublecheck GO Soft. Tester PASS Soft AMZN: 7 Zeilen statt 8, KI ✓, coverage 75%, API 200. Bundle `index-BcyRdipm.js`. `npx tsx script/test-tam-na-fill.ts` 125 passed. Soft, blockiert die Ampel nicht: Partial-Lückenfall live nicht gesehen (Modell füllte alles); Unit-Tests decken Partial-Apply und offene Rest-Zellen ab. #180 HOLD — nicht anfassen.
+
+### 2. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟢
+
+**Soll:** Section4 last quarter, unique grades, one EPS CAGR per `Fertig_WORK_SECTION4_DATA_BUGS.md` / #168 DoD.
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `1124c6f5` (#168 über #187 `e045080c`). Dateiname bleibt `Fertig_` seit `6e125cdf`. Softs blockieren nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label.
+
+### 3. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist).
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `8acf0e46` (#186 über #185 `ba476e0e`). Dateiname bleibt `Fertig_` seit `83e630ab`. Softs blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB.
+
+### 4. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** Zuvor n/a-Zellen in Briefing und regionaler Liquidität mit Wert+Quelle+asOf.
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `88f4ee92` (#182). Dateiname bleibt `Fertig_` seit `3fd864a7`. Soft, blockiert nicht: ASIA `BOJ_GOVDEP` bleibt N/A/null.
+
+### 5. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 8. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 15. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+## 19. 11.10.2026 Tip 98ccc928
+
+Eigener Nachzug für #201. Er steht vor Abschnitt 17, weil Draft #205 (`cursor/ampel-google-trends-cache-8add9ed1-2ebb`) denselben Dateikopf, die Statusabsätze in Abschnitt 3, die „Aktueller Stand“-Sätze und das Dateiende schon belegt. Dort entsteht Abschnitt 18. Diese Zeilen bleiben hier liegen. Kein App-Code in diesem Nachzug. Kein Rename, kein Rückbau von `Fertig_`/`fertig_` nach `Offen_`.
+
+Korrektur auf Index-Tip `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2`: Philip — #201 ist ein Teil-Slice. Der Gold-Chart ist 🟡 Teil, nicht vollständig 🟢. Live auf Feature-Tip `98ccc928`: 50-DMA, Golden/Death-Marker, B2 FV-Labels.
+
+Gelesen am Tip `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` (#201 Gold-Chart: MA50 und Cross-Marker, Fair-Value-Label-Nachzug, parent `8add9ed1e6d599283368896127711486955855f3` #200). Feature-Dateien: `client/src/components/gold/goldChartMa.ts` (added), `client/src/components/gold/GoldPriceChart.tsx`, `client/src/components/gold/GoldFairValueSection.tsx`, `client/src/pages/GoldDashboard.tsx`, `script/test-gold-ma-cross.ts` (added), `script/test-gold-fv-label-layout.ts` — 6 Dateien, +474/−58. `server/gold-routes.ts` und `shared/gold-schema.ts` sind im #201-Diff nicht enthalten; der Ist-Stand unten ist der Handler und das Schema auf diesem Tip. Spec-Dateien `Future_10_Gold_Adaptive_Scoring_Framework.md`, `Offen_FUTURE_SOLL_IST.md` und `Future_Work.md` bleiben unter diesen Namen. Tester PASS Soft vor dem Merge. Doublecheck Integrity GO. #180 HOLD — nicht anfassen.
+
+Datenkette, gelesen auf diesem Tip: `#/gold` ist die Route in `client/src/App.tsx` (`path="/gold"` → `GoldDashboard`). `client/src/pages/GoldDashboard.tsx` holt die Analyse mit `useQuery` (`queryKey` `["/api/analyze-gold"]`, `apiRequest("GET", "/api/analyze-gold")`). Es gibt keinen eigenen Gold-Hook. `apiRequest` wirft bei HTTP-Fehlern nicht; die Page prüft `res.ok` und nimmt sonst `GOLD_FALLBACK_DATA` aus `client/src/lib/goldFallbackData.ts` (`historicalPrices: []`). Der Mount ist `server/routes.ts` `registerGoldRoutes` → `server/gold-routes.ts` `app.get("/api/analyze-gold")`. Der Handler schreibt `historicalPrices.push({ date: dateStr, close })`, hängt `ma200` (Fenster 200, Cent-Rundung) und optional `real10y` (FRED `DFII10`) an. `GoldPricePoint` in `shared/gold-schema.ts` hat `date`, `close`, optionales `ma200`, optionales `real10y`. Kein `ma50`, kein `volume`. MA50 und die Crosses rechnet der Client in `client/src/components/gold/goldChartMa.ts` aus der Close-Reihe und dem schon gelieferten `ma200`, bevor `GoldPriceChart` das Zeitfenster schneidet. Kein zweiter Fetch, kein neues Response-Feld.
+
+### Soll vs. Ist — Gold MA50 #201 und Future_10
+
+Soll aus `Future_10_Gold_Adaptive_Scoring_Framework.md` (Stand 2026-10-09, §4 und §7 für den Chart, §2–§3 und §8–§9 für den Rest), aus `Offen_FUTURE_SOLL_IST.md` Mini-PR 3 / Mini-PR 12, und aus `Future_Work.md` §5 (Gold-Dashboard, Overlays). Ist aus dem Code auf Tip `98ccc928`.
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| MA50 | Future_10 §4/§7: 50-MA neben 200-MA, aus den Preisdaten berechnet, Priorität hoch. Mini-PR 3: aus den Closes, die schon auf dem Chart liegen | `trailingSma` / `withClientMa50` in `client/src/components/gold/goldChartMa.ts`. Fenster 50, Cent-Rundung wie die Server-MA200. Die Rechnung läuft über die volle Reihe, der Chart filtert danach. Linie `#84cc16` in `GoldPriceChart.tsx`, Legende `data-testid="gold-ma50-legend"` | 🟢 |
+| Cross-Marker | Golden: 50-MA kreuzt 200-MA von unten. Death: von oben. Mini-PR 3: Marker, nicht der Score | `detectMaCrosses`. Marker `GC` / `DC` auf der Kreuzungs-MA50, nur auf Punkten im sichtbaren Fenster. Tooltip am Close hängt „ · Golden Cross“ oder „ · Death Cross“ an | 🟢 |
+| Score | Mini-PR 3: `getTechnicalScore` nicht ändern. Future_10 §4 will für denselben Cross zusätzlich +1 / −1; das ist Mini-PR 12 | `getTechnicalScore` in `server/gold-routes.ts` liest nur RSI und die Betragsabweichung von der 200-DMA. Indikator „Technisch (RSI+200DMA)“, Gewicht 0.10. GIS bleibt die Summe `score × weight`. Kein Cross-Term, kein Volumen-Term | 🟢 für den Schnitt #201. Der ±1-Score bleibt offen |
+| Volumen | Mini-PR 3: zeichnen, sobald der Preis-Fetch Volumen liefert. Nicht mit Nullen füllen. Future_10 §4: Spike > 1,5× des 20-Tage-Schnitts | `historicalPrices.push({ date, close })`. `GoldPricePoint` ohne `volume`. Der Chart zeichnet kein Volumen. `script/test-gold-ma-cross.ts` sperrt Null-Volumen und ein Volumen-Feld am Punkt | 🟢 für die Sperre. Das Overlay bleibt offen |
+| Weitere Overlays | Future_10 §7 und Future_Work §5: M2 YoY, DXY, Breakeven, WALCL, AISC-Linie, optional `log(WALCL)` | Im Preis-Chart: `close`, Client-`ma50`, Server-`ma200`, optionales Real10Y (`data-testid="toggle-real10y"`), gestrichelte Fair-Value-Referenz. M2, DXY, WALCL, Breakeven und AISC sind keine Chart-Serien. Der Multi-Faktor-Vergleich bleibt in `GoldFairValueSection` | offen, nicht Teil von #201 |
+| Adaptive Schicht | Future_10 §2–§3: Layer-Gewichte Real Yield 1,8, Policy 1,3, Liquidity 1,2, Inflation 0,8, Supply 0,9, Technical 1,0, Macro 0,9, Habitat, `effectiveWeight` | Kein `baseWeights` im Gold-Pfad. Die acht Indikatoren in `server/gold-routes.ts` behalten ihre festen Gewichte. GIS-Formel unverändert | offen (Mini-PR 12) |
+| Gates | Bestehend: `GOLD_REAL_YIELD_REGIME`, `GOLD_AISC_STRESS`, Decoupling. Neu: Policy-Mismatch, „Death Cross aktiv“ (50-MA < 200-MA) | `server/gold-realyield-model.ts`: `buildGoldRealYieldRegimeGate`, `buildGoldAiscStressGate` (ohne AISC-Argument aus der Route inaktiv, „kein Fake-Default“), Decoupling über `DECOUPLING_GATE_CORR` −0,25. Policy-Mismatch und Death-Cross-Gate fehlen. Der Cross-Marker setzt kein Gate | bestehend bleibt. Die neuen Gates bleiben offen |
+| News | Future_10 §9: Gold-News, OpenRouter-Flag −1…+1, Cache 6–12 h, Anzeige Flag + Summary + Zeit | Kein `getGoldNewsImpact`, keine Gold-News-Sektion unter `client/src` | offen |
+| Basis-Modell | Future_10 §1: Real-Yield-OLS, Multi-Faktor, Monte Carlo, Chart Gold vs Real10Y | Unverändert durch #201. `runRealYieldGoldModel` und `runMultiFactorGoldModel` in `server/gold-routes.ts`. Chart-Toggle Real10Y bleibt | 🟢 als Bestand, nicht Gegenstand dieses Nachzugs |
+| B2 Pile | Nachzug zu #194: im Stapel nur preislich benachbarte Levels, Zeilen in Preisreihenfolge, günstigeres Label näher an der Leiste | `mergePriceAdjacentGroups` in `GoldFairValueSection.tsx` mergt das Paar mit der kleinsten Preislücke unter den Nachbarn der Preisordnung. `packGroups` sortiert nach `groupMinPrice`. Lanes bis 3 | 🟢 |
+| B2 Spot | Spot-Pill bleibt unter der Überschrift „Fair-Value-Korridor“, auch bei schmaler Breite | `corridorSpotTopPadPx()` = `CORRIDOR_SPOT_PILL_OVERHANG_PX` 20 + `CORRIDOR_SPOT_HEADING_CLEARANCE_PX` 4. Track-`paddingTop` 24. Pill `top: -20`. `data-testid="gold-fv-corridor-pad"` | 🟢 |
+| B2 Tap | Tooltip des Kombi-Labels auch per Tap. Zweiter Tap schließt. Hover-out lässt einen Pin stehen | `reduceComboTooltip`. Der Kombi-Button hängt `onClick` an `"tap"`. `onOpenChange` mappt Hover. Outside-Pointer und Escape schließen. Kein eigenes Touch-Event | 🟢, Soft siehe unten |
+| B2 FV-Linie | Die FV-Markerlinie läuft nicht durch den Lane-0-Text | `fvMarkerBottomInsetPx`: Lane 0 und Tooltip-Zeile `FV:` und Marker über dem Label → Inset `CORRIDOR_LABEL_LINE_PX` (12). Sonst 0. `data-testid="gold-fv-marker-fv"` | 🟢 |
+| Leere Reihe | Keine MA erfunden, wenn keine Closes da sind | `chartData.length === 0` → „Keine Preisdaten verfügbar“. Fallback `historicalPrices: []` | 🟢 |
+| Spec-Dateien | `Future_10`, `Offen_FUTURE_SOLL_IST`, `Future_Work` bleiben die Soll-Dateien | Dateinamen unverändert. Kein neues `Fertig_`/`fertig_`. `fertig_WORK_TEIL7_SCORING.md` bleibt `fertig_` | 🟢 |
+| BTC-Design 1:1 (#209) | Gold-Chart Technische Analyse im BTC-Design 1:1: JA/NEIN-Karten, Kaufsignal, Cross-Banner, Zeitfenster 3M–5Y, MA/EMA-Chips, Overlays Real10Y/M2 YoY/DXY/Breakeven/WALCL, Volumen, MACD, RSI | #209 gemergt auf Tip `a0979593` (parent `f0943dd5`). Doublecheck Integrity GO Soft: 7 Dateien byte-gleich mit `9d14901a`, BTC nur JA/NEIN-Karte ausgelagert, #201-Marker erhalten, Overlays aus echten FRED-/FMP-Daten. Softs: 4 zusätzliche FRED-Abrufe pro Gold-Request, noch kein Build | 🟡 live-Check ausstehend (Tester) |
+| Volumen-Spike | Future_10 §4: Spike > 1,5× des 20-Tage-Schnitts als Signal | Nicht live bestätigt | OFFEN |
+| Relativer RSI | Future_10: relativer RSI | Nicht live bestätigt | OFFEN |
+| AISC | Future_10 §7/§8: AISC-Linie und AISC-Stress-Gate mit echten Daten | Gate ohne AISC-Argument inaktiv | OFFEN |
+| Future_10 Scoring-Rest (#208) | 7 Layer mit Gewichtung/Habitat, adaptive Signale, Volumen-Signale, Gates Policy-Mismatch und Death Cross aktiv, Gold-News-Karte mit LLM-Flag | Nicht auf main. #208 wird nach #209 auf `a0979593` nachgezogen. Dateiname bleibt `Future_10_Gold_Adaptive_Scoring_Framework.md`, kein Rename | OFFEN |
+
+**Softs, blockieren die Ampel nicht:**
+
+1. Gold-Zeile im Cross-Tooltip doppelt. `GoldPriceChart.tsx` zeichnet `Area` und `Line` mit demselben `dataKey="close"`. Der Formatter setzt bei `name === "close"` das Label „Gold“ und, wenn `payload.cross` gesetzt ist, die Cross-Notiz. Beide Serien laufen durch diesen Zweig.
+2. Echter Touch-Input ist nicht verifiziert. `script/test-gold-fv-label-layout.ts` prüft den Reducer (`tap` öffnet und pinnt, zweiter `tap` schließt, Hover-out lässt den Pin). Der Button im DOM hängt an `onClick`. **Verifiziert 25.10.2026 (B2 Gold-Nachzug, Docs-Nachtrag, kein neuer Code):** Playwright auf Prod-Build bei 375 px (echter Touch) und 1440 px; Screenshots `/workspace/goldb2/shots/`, Messungen `/workspace/goldb2/before.json`. Punkte auf main: #194 `e4e0e1e0`, #201 `98ccc928`, #216 `b1fcf05e`. Spec bleibt `fertig_`, nicht auf `Offen_`.
+
+**Lane:** 🟡 Teil. Nicht vollständig 🟢. Live-Slice #201 auf Tip `98ccc928`: 50-DMA, Golden/Death-Marker, B2 FV-Labels. Dazu #209 Gold-Chart im BTC-Design gemergt auf Tip `a0979593` (parent `f0943dd5` #206). Doublecheck Integrity GO Soft: 7 Dateien byte-gleich mit dem gebauten Stand `9d14901a`, in BTC nur die JA/NEIN-Karte ausgelagert, #201-Marker erhalten, Overlays aus echten FRED-/FMP-Daten ohne Ersatzwerte. Status: live-Check ausstehend (Tester). Softs: 4 zusätzliche FRED-Abrufe pro Gold-Request, noch kein Build gelaufen.
+
+**OFFEN:**
+
+1. Volumen-Spike.
+2. Relativer RSI.
+3. AISC.
+4. Future_10 Scoring-Rest (#208): 7 Layer mit Gewichtung/Habitat, adaptive Signale, Volumen-Signale, Gates Policy-Mismatch und Death Cross aktiv, Gold-News-Karte mit LLM-Flag. Dateiname bleibt `Future_10_Gold_Adaptive_Scoring_Framework.md`. Kein Rename.
+
+**Offen, und damit nicht grün:** Volumen-Overlay, M2/DXY/WALCL/Breakeven/AISC im Preis-Chart, Layer-Gewichte, Cross als ±1 im Technical Score, Policy-Mismatch, Gate „Death Cross aktiv“, Gold-News-Flag. Das ist Mini-PR 12 in `Offen_FUTURE_SOLL_IST.md`. #201 lässt `getTechnicalScore` liegen.
+
+### 1. `Future_10_Gold_Adaptive_Scoring_Framework.md` — 🟡 Teil, Dateiname bleibt `Future_10`
+
+**Soll:** §4 MA-Crosses mit 50/200-Overlay und, als spätere Score-Zeile, Golden +1 / Death −1. §7 50-MA/200-MA Priorität hoch. Volumen, weitere Makro-Overlays, Layer-Gewichte (§3), neue Gates (§8) und die News-Sektion (§9) stehen in derselben Datei und sind nicht der Mini-PR-3-Schnitt.
+
+**Ist:** Tip `98ccc928`. Der Overlay-Schnitt aus §4/§7 ist im Client. Der Score-Schnitt aus §4 ist nicht im Server. Die Datei heißt weiter `Future_10_Gold_Adaptive_Scoring_Framework.md`. Dieser Nachzug benennt sie nicht um und setzt sie nicht auf `Offen_` zurück.
+
+### 2. `Offen_FUTURE_SOLL_IST.md` — Mini-PR 3 ist der Live-Slice, Datei bleibt 🟡 Teil und `Offen_`
+
+**Soll:** PR 3 nur Chart. MA50 aus vorhandenen Closes. Golden/Death als Marker. Volumen erst, wenn der Preis-Fetch es liefert. Score-Funktion nicht ändern. PR 12 danach: Layer-Gewichte, Policy-Gate, News-Flag. Die Inventur ist gegen `5849ed15` geschrieben; der Chart-Absatz dort nennt noch „Kein MA50“.
+
+**Ist:** Tip `98ccc928` hat den MA50-Overlay und die Marker. `getTechnicalScore` ist derselbe RSI-/Abweichungsbaum. PR 12 ist nicht in #201. Die Datei heißt weiter `Offen_FUTURE_SOLL_IST.md`.
+
+### 3. `Future_Work.md` §5 — Chart 🟡 Teil, Roadmap bleibt `Future_Work`
+
+**Soll:** Gold-Dashboard-Erweiterungen, darunter technische Overlays. §5.1 Multi-Faktor `log(WALCL)` + DXY und QE/QT-Bänder im `GoldPriceChart`. Fair-Value-Anzeige standardmäßig 1-Faktor.
+
+**Ist:** MA50 und die Cross-Marker liegen auf der bestehenden 200-DMA. Real10Y-Toggle und der 1-Faktor-/Multi-Faktor-Block sind der Bestand aus `server/gold-routes.ts` und `GoldFairValueSection.tsx`. `log(WALCL)`, DXY-Linie und QE/QT-Bänder im Preis-Chart sind nicht in #201. Die Datei heißt weiter `Future_Work.md`.
+
+### 4. B2 Fair-Value-Label-Nachzug — 🟢
+
+**Soll:** #194 hält S2/S1/FV/R1/R2 lesbar, wenn die Preise zusammenrücken, und lässt die Zonenbänder auf dem `h-12`-Track. #201 zieht nach: Merge nur entlang der Preisnachbarschaft, Spot-Pill frei von der Überschrift, Tap für das Kombi-Label, FV-Linie endet über dem Text.
+
+**Ist:** Dieselben Funktionen in `client/src/components/gold/GoldFairValueSection.tsx`. Zonen-`div`s und Track-Höhe `h-12` bleiben. Fair-Value-Rechnung in `server/gold-routes.ts` (10-Schritte-Block `fv1980` / `fv2011` / `fvAdj`) ist nicht Teil des Label-Diffs. `script/test-gold-fv-label-layout.ts` prüft Packung, 375-px-Pad, Tap-Reducer und FV-Inset.
+
+### 5. Übrige Lanes
+
+Liquidity Index Panel, TAM Partial-Apply, Section4, Recession Sources, Sahm, Velocity, Briefing und Fiscal bleiben 🟢, wie Abschnitt 17 sie führt. Dieser Abschnitt schreibt jene Absätze nicht um. #180 HOLD — nicht anfassen.
+
+## 17. 05.10.2026 Tip 99feff6f
+
+Gelesen am Tip `99feff6f755a26e8eaa3c4114f69f3ddac1e002c` (#150 Liquidity Index Panel, parent `e3c94d11fae4ded88f313bb04b4c9ab7817aeaa3` #189 Ampel TAM). Feature-Dateien des #150-Commits: `client/src/components/researcher/LiquidityIndexPanel.tsx` (added), `client/src/components/researcher/MacroPanel.tsx`, `client/src/components/researcher/liquidity-index-panel.ts` (added), `client/src/pages/Researcher.tsx`, `script/test-liquidity-index-panel.ts` (added), `script/test-liquidity-index.ts`, `server/liquidity-index-catalog.ts`, `server/liquidity-index.ts` — 8 Dateien, +457/−7. Spec-Dateiname bleibt `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` (bereits `Fertig_` seit `3fd864a7`, großes F; dieser Nachzug benennt nicht um, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Fertig_ Spec im Feature-Commit unberührt. analyze-route und `researcher.ts` unberührt. Datenkette: `#/researcher` Macro → LiquidityIndexPanel → `GET /api/researcher/liquidity?region=US|EU|ASIA` → `server/liquidity-index*`. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Doublecheck Integrity GO Soft. Shots `/workspace/dod-150-li/`. Bundle `index-xA_h1JP9.js`. Tester PASS Soft #150. #180 HOLD — nicht anfassen.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#186, Tester PASS Soft). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` ist Ampel 🟢 (#150 Panel, Tester PASS Soft; #182 N/A-Fill bleibt; Dateiname bleibt `Fertig_`). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Ampel 🟢 (#168, Tester PASS Soft; Dateiname bleibt `Fertig_`). TAM Partial-Apply bleibt 🟢 im Index (#176, kein neues Spec-File).
+
+### Soll vs. Ist — Liquidity Index Panel #150
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| Panel | LiquidityIndexPanel({ region }) auf Macro, einmal zwischen Briefing und Country Macro Pulse | Tip `99feff6f` (#150 über #189 `e3c94d11`). Live PASS Soft: Panel einmal zwischen Briefing und Country Macro Pulse. Bundle `index-xA_h1JP9.js`. Shots `/workspace/dod-150-li/` | 🟢 |
+| Region | Toggle ändert Serie und asOf; `GET /api/researcher/liquidity?region=US\|EU\|ASIA` (200) | Region-Toggle live; US LI 47.2; EU LI 42.6; ASIA Softs | 🟢 |
+| US Katalog | DFF+M2SL | DFF+M2SL available | 🟢 |
+| C2 | LiquidityPanel nur nach Analyse, einmal; ohne Analyse kein zweites LI | Live PASS Soft: C2 nur nach Analyse; ohne Analyse kein zweites LI | 🟢 |
+| Briefing / RegionalStocks | bleiben | bleiben | 🟢 |
+| Datenkette | `#/researcher` Macro → LiquidityIndexPanel → GET `?region=` → `server/liquidity-index*` | Dieselbe Kette auf dem Tip. analyze-route und `researcher.ts` unberührt | 🟢 |
+| Spec-Datei | `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt `Fertig_` (großes F) | Kein Rename, kein Rückbau nach `Offen_`, kein `fertig_`-Normalize. Feature-Commit lässt die Spec liegen | 🟢 |
+| #180 | HOLD | Nicht angefasst | HOLD |
+
+**Softs, blockieren die Ampel nicht:**
+
+1. Fiskal Spec-Klarstellung: Spec wollte „Fiskal-Angebot n/v“, wenn keine Quelle. Ist: BUYBACK_OPS n/v; Fiskalzeile zeigt MSPD_BILLS/QRA_IMPLIED_BILLS, wenn der Slot da ist.
+2. ASIA: BOJ_GOVDEP n/v, keine DRAIN-Karte, Kopf-Stand asOf 2024-01-01 wegen stale CN_M2.
+3. Performance: Doppel-Fetch 2×/Region; EU Erstload 15–20s.
+
+### 1. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** LiquidityIndexPanel({ region }) auf Macro. Region-Toggle ändert Serie und asOf. `GET /api/researcher/liquidity?region=US|EU|ASIA`. US DFF+M2SL. C2 LiquidityPanel nur nach Analyse, einmal; ohne Analyse kein zweites LI. Briefing und RegionalStocks bleiben. Dateiname bleibt `Fertig_` (Philip, großes F).
+
+**Ist:** Tip `99feff6f` (#150 über #189 `e3c94d11`). Dateiname bleibt `Fertig_` seit `3fd864a7` (großes F). Dieser Nachzug lässt die Datei liegen. Feature-Dateien: 8 Dateien, +457/−7. analyze-route und `researcher.ts` unberührt. Fertig_ Spec im Feature-Commit unberührt. Doublecheck Integrity GO Soft. Tester PASS Soft: Panel einmal zwischen Briefing und Country Macro Pulse; US LI 47.2, DFF+M2SL available; EU LI 42.6. Bundle `index-xA_h1JP9.js`. Shots `/workspace/dod-150-li/`. #182 N/A-Fill bleibt aus Abschnitt 12: 18/20 Briefing-Nulls gefüllt; US/EU regional 0 Nulls. Softs blockieren die Ampel nicht: Fiskal Spec-Klarstellung (BUYBACK_OPS n/v, Fiskalzeile MSPD_BILLS/QRA_IMPLIED_BILLS wenn Slot da); ASIA (BOJ_GOVDEP n/v, keine DRAIN-Karte, Kopf-Stand asOf 2024-01-01 wegen stale CN_M2); Performance (Doppel-Fetch 2×/Region; EU Erstload 15–20s). Die Datei wird nicht nach `fertig_` normalisiert und nicht zurück nach `Offen_` benannt. #180 HOLD — nicht anfassen.
+
+### 2. TAM Partial-Apply #176 — 🟢
+
+**Soll:** Segment-TAM KI Partial-Apply + hide 0-Rev in Section7 (Rel. Bewertung / Sektion 9). Partial-Apply: gültige KI-Fills behalten (violet KI-Badge); offene Zellen bleiben n/a; kein all-or-nothing 422, wenn mindestens ein Fill brauchbar. Rev null/0 aus Tabelle, Prompt und Fill-Scope (`hasPositiveSegmentRevenue`); Beispielzeile `Other / nicht segmentiert` $0. Facts nicht neu berechnen. Datenkette: Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill`.
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `31d9f367` (#176 über #188 `39d1afd6`). Kein neues Spec-File. Live PASS Soft AMZN: 7 Zeilen statt 8, KI ✓, coverage 75%, API 200. Bundle `index-BcyRdipm.js`. Soft, blockiert nicht: Partial-Lückenfall live nicht gesehen.
+
+### 3. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟢
+
+**Soll:** Section4 last quarter, unique grades, one EPS CAGR per `Fertig_WORK_SECTION4_DATA_BUGS.md` / #168 DoD.
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `1124c6f5` (#168 über #187 `e045080c`). Dateiname bleibt `Fertig_` seit `6e125cdf`. Softs blockieren nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label.
+
+### 4. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score (nicht N/A, wenn EXSA KGV da ist).
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `8acf0e46` (#186 über #185 `ba476e0e`). Dateiname bleibt `Fertig_` seit `83e630ab`. Softs blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB.
+
+### 5. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm: US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 6. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Tip `d59541f5` plus live `#/researcher` `panel-liquidity-briefing`, 40 Kacheln, 0 PLACEHOLDER. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 8. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 16. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+## 18. 11.10.2026 Tip 8add9ed1
+
+Gelesen am Tip `8add9ed1e6d599283368896127711486955855f3` (#200 Google Trends Cache, parent `cc683e96805f1732c5eecf3abec6226c69b9e30c` #195; Feature-PR-Basis `d7b5a2ad6b4b5f4334f995da7297aa04dd29015e` #197). Feature-Dateien des #200-Commits: `server/cache/google-trends-cache.ts` (added), `server/recession.ts`, `client/src/components/recession/recessionDashboardShared.tsx`, `client/src/components/recession/recessionDashboardPartsB1.tsx`, `client/src/components/recession/recessionDashboardPartsB2.tsx`, `script/test-google-trends-cache.ts` (added) — 6 Dateien, +392/−41. Kein neues `Offen_`/`fertig_`/`Fertig_` Spec-File. `Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md` und `Future_5_Google_Trends_Cache_Implementation.md` bleiben unter diesen Namen (kein Rename, kein `fertig_`-Normalize, kein Rückbau nach `Offen_`). Bestehende `Fertig_`/`fertig_` unberührt. Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Doublecheck GO Soft. Tester PASS Soft auf Production. Kein Bundle-Hash in diesem Auftrag. #180 HOLD — nicht anfassen.
+
+Datenkette, gelesen auf diesem Tip: `#/recession` (`client/src/App.tsx` Route `/recession`) → `client/src/pages/RecessionDashboard.tsx` (`useMutation`, `apiRequest("POST", "/api/analyze-recession", {})`) → `client/src/hooks/useRecessionCatalog.ts` liest nur `data.regions` aus demselben Payload, kein eigener Trends-Hook → `server/routes.ts` ruft `registerRecessionRoutes` → `server/recession.ts` `app.post("/api/analyze-recession")` → `runRecessionAnalysis` → `scoreGoogleTrends` → `server/cache/google-trends-cache.ts` (`freshGoogleTrends` unter 12h ohne SerpApi) oder `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES` (Timeout 12s, `parseSerpApiGoogleTrends`) → `acceptGoogleTrendsFetch` → `googleReading` → `indicators[]` mit `ageHours`/`isStale` → `client/src/components/recession/recessionDashboardPartsB1.tsx` (`IndicatorTable`) und `recessionDashboardPartsB2.tsx` (`Summary`). Die 1h-Hülle `recessionCache` (`RECESSION_CACHE_TTL`) in `server/recession.ts` ist nicht der Trends-Cache und ist in #200 nicht geändert.
+
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS), `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` (#166, Tester PASS), `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` (#149, Tester PASS), `fertig_WORK_RECESSION_FRED_SAHM.md` (#170, Tester PASS, Doublecheck GO). `Fertig_WORK_RECESSION_SOURCES.md` bleibt Ampel 🟢 (#186, Tester PASS Soft). `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` bleibt Ampel 🟢 (#150 Panel, Tester PASS Soft; #182 N/A-Fill bleibt; Dateiname bleibt `Fertig_`). `Fertig_WORK_SECTION4_DATA_BUGS.md` bleibt Ampel 🟢 (#168, Tester PASS Soft; Dateiname bleibt `Fertig_`). TAM Partial-Apply bleibt 🟢 im Index (#176, kein neues Spec-File).
+
+### Soll vs. Ist — Future_3, Future_4, Future_5 (#200)
+
+Soll aus den drei Dateien (Stand 2026-10-09). Ist aus dem Code auf Tip `8add9ed1`.
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| Cache-Fenster | Future_3/4: 6–12h. Future_5: 12h. Key sinngemäß `google-trends-recession` | `GOOGLE_TRENDS_CACHE_KEY = "google-trends-recession"`, `GOOGLE_TRENDS_FRESH_MS` = 12h in `server/cache/google-trends-cache.ts`. Frischer Treffer ruft SerpApi nicht (`freshGoogleTrends` vor dem Fetch in `scoreGoogleTrends`) | 🟢 |
+| Last-Good | Future_3 Sofort 2 und Future_4 Lösung A: letzten gültigen Wert halten, nicht als Score 0 | `acceptGoogleTrendsFetch`: 429, leere Timeline, Timeout oder Body ohne Druck behält den Eintrag bis einschließlich 48h (`GOOGLE_TRENDS_LAST_GOOD_MS`). Der Zeitstempel wird dabei nicht erneuert (`store: null`) | 🟢 |
+| Kein Wert in 48h | Future_4 Lösung A Punkt 3: nicht verfügbar, nicht als 0 | `googleReading(null)` → `closedIndicator`: `available: false`, weight 0, `maxWeighted` 0, Zone `N/A`. Ohne `SERPAPI_KEY` / `SERPAPI_API_KEY` dieselbe Schließung | 🟢 |
+| UI-Alter | Future_3/4: „Google Trends: letzter Wert von vor X Stunden“. Future_5: Stunden plus „(veraltet)“. Den festen Satz „61.2“ streichen | `recessionDashboardPartsB2.tsx`: „Google Trends: letzter Wert von vor {ageHours.toFixed(1)} Stunden“ und bei `isStale` „ (veraltet)“. `recessionDashboardPartsB1.tsx`: `vor ${ageHours.toFixed(1)}h` in der Zeile und im Heatmap-Titel. Production: Zeile `vor 0.0h`. Der Satz „61.2“ steht in `client/src/components/recession/` nicht mehr. Geschlossener Slot: „Der Slot bleibt geschlossen und zählt nicht in Netto oder Max.“ | 🟢 |
+| Response-Felder | Future_5: `value`, `score`, `ageHours`, `isStale` | Am Indikator (`IndicatorResult` in `recessionDashboardShared.tsx`, gesetzt in `googleReading`). Tester: `ageHours`/`isStale` im Body von `POST /api/analyze-recession` | 🟢 |
+| `isStale`-Schwelle | Future_5-Skizze `> 6` h. Future_4: Kennzeichnung; Gewicht senken erst als Lösung B, niedrige Priorität, ab >24h | `GOOGLE_TRENDS_STALE_AFTER_HOURS = 24`. `isStale` wenn das auf eine Dezimalstelle gerundete `ageHours` > 24 ist. Genau 24h ist nicht veraltet. Gewicht bleibt ×1,7, Max 11,9. Live „(veraltet)“ auf Production nicht gesehen, weil der Druck 0,0h alt war | 🟢 Soft |
+| Zonen | >75 → +7, 60–75 → +4, 30–60 → 0, <30 → −4, Gewicht ×1,7, Max 11,9. Future_3: ein Fehler darf die Korrektur-P nicht als frisches 0 verbiegen | `googleReading` in `server/recession.ts` behält diese Zonen. Tester: Korrektur 12M bleibt 80 % | 🟢 |
+| Datenkette | Scoring-Pipeline plus Frontend, eine Stelle, kein zweiter Store | Dieselbe Kette wie oben. Keine neue Route. `useRecessionCatalog` unberührt | 🟢 |
+| Redis | Future_5 §5, Priorität niedrig | Nicht gebaut. Nur `let memory` im Prozess. Neustart leert den Trends-Cache | Soft |
+| Später | Future_3/4 mittel und lang: Retry mit Backoff, pytrends, SerpApi-Plan, offizielle Trends-API, andere Anbieter | Nicht in #200 | nicht blockierend |
+| Spec-Dateien | Die drei `Future_`-Dateien sind das Soll | Dateinamen unverändert. Kein neues `Fertig_`/`fertig_`. Bestehende `Fertig_`/`fertig_` unberührt | 🟢 |
+| Nachweis | Tester und Doublecheck | Doublecheck GO Soft. Tester PASS Soft auf Production | 🟢 |
+
+**Softs, blockieren die Ampel nicht:**
+
+1. „veraltet“ ist im Code an `ageHours` > 24 gebunden und auf Production nur nach einem Druck älter als 24h prüfbar. Der gesehene Lauf war 0,0h.
+2. Cache-Hits stehen nur im Render-Log (`Google Trends cache hit (age=…h)` in `scoreGoogleTrends`), nicht als eigene UI-Zeile.
+3. Der Cache ist nur In-Memory. Kein Redis, kein Disk-Eintrag für den Trends-Druck.
+4. Die Anzeige `0.0h` ist kosmetisch: ein frischer SerpApi-Treffer setzt `ageHours` auf 0, `toFixed(1)` zeigt `0.0`.
+
+### 1. `Future_3_SerpApi_Rate_Limits.md`, `Future_4_Google_Trends_Conflict_and_Fixes.md`, `Future_5_Google_Trends_Cache_Implementation.md` — 🟢
+
+**Soll:** Ein SerpApi-Fehler (429, leer, Timeout) darf den Google-Trends-„Recession“-Score nicht als 0 in die Korrektur-Wahrscheinlichkeit schreiben. Minimal: letzten gültigen Wert 6–12 Stunden cachen (Future_5: 12 Stunden, Key `google-trends-recession`) und bei Fehler weiterverwenden. UI: „Google Trends: letzter Wert von vor X Stunden“, plus Veraltet-Hinweis. Nur wenn kein gültiger Wert in 48 Stunden liegt: Slot nicht verfügbar. Zonen und Gewicht ×1,7 bleiben. Redis, Retry-Backoff, pytrends und ein Plan-Wechsel sind später und niedrige Priorität. Future_5-Skizze setzt `isStale` ab 6 Stunden; Future_4 bindet die sichtbare Veraltet-Marke und eine optionale Gewichtssenkung an 24 Stunden.
+
+**Ist:** Tip `8add9ed1` (#200, parent `cc683e96` #195). Dieser Nachzug lässt die drei Dateinamen liegen. Dateien des #200-Commits: die 6 Dateien oben, +392/−41. `server/cache/google-trends-cache.ts` hält einen Prozess-Eintrag. Unter 12 Stunden kein SerpApi-Call. Danach ein Versuch. Erfolg ersetzt den Eintrag mit Alter 0. Miss behält ihn bis 48 Stunden. Darüber oder ohne Key: `closedIndicator`. `isStale` ab über 24 Stunden, Gewicht unverändert. UI in `client/src/components/recession/recessionDashboardPartsB1.tsx` und `recessionDashboardPartsB2.tsx`. Typen in `recessionDashboardShared.tsx`. Doublecheck GO Soft. Tester PASS Soft Production: Zeile `vor 0.0h`, Satz „61.2“ entfernt, Korrektur 12M bleibt 80 %, `ageHours` und `isStale` im POST-Body. Softs blockieren nicht, siehe die Liste über diesem Punkt. Die Dateien werden nicht nach `Fertig_` oder `fertig_` umbenannt und nicht nach `Offen_` zurückbenannt. #180 HOLD — nicht anfassen.
+
+### 2. `Fertig_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — 🟢
+
+**Soll:** LiquidityIndexPanel({ region }) auf Macro. Region-Toggle ändert Serie und asOf. `GET /api/researcher/liquidity?region=US|EU|ASIA`. US DFF+M2SL. C2 nur nach Analyse einmal. Briefing und RegionalStocks bleiben. Dateiname bleibt `Fertig_`.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `99feff6f` (#150 über #189 `e3c94d11`). Dateiname bleibt `Fertig_` seit `3fd864a7`. Softs blockieren nicht: Fiskal-Klarstellung; ASIA BOJ_GOVDEP / keine DRAIN-Karte / asOf 2024-01-01; Doppel-Fetch.
+
+### 3. TAM Partial-Apply #176 — 🟢
+
+**Soll:** Partial-Apply und hide 0-Rev in Section7. Datenkette Section7 → `POST /api/analyze/:ticker/tam-na-fill` → `requestTamNaFills` → `shared/tam-na-fill`.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `31d9f367` (#176 über #188 `39d1afd6`). Kein neues Spec-File. Live PASS Soft AMZN: 7 Zeilen statt 8, KI ✓, coverage 75%, API 200. Soft, blockiert nicht: Partial-Lückenfall live nicht gesehen.
+
+### 4. `Fertig_WORK_SECTION4_DATA_BUGS.md` — 🟢
+
+**Soll:** Section4 last quarter, unique grades, one EPS CAGR.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `1124c6f5` (#168 über #187 `e045080c`). Dateiname bleibt `Fertig_` seit `6e125cdf`. Softs blockieren nicht: Quartal nur Datum; BN Moat None vs Narrow-Inkonsistenz; PEG-Label.
+
+### 5. `Fertig_WORK_RECESSION_SOURCES.md` — 🟢
+
+**Soll:** EZ-Katalog STOXX 600 PE mit live Wert+Quelle+Zone+Score.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `8acf0e46` (#186 über #185 `ba476e0e`). Dateiname bleibt `Fertig_` seit `83e630ab`. Softs blockieren nicht: Margin Wert unscored; TOPIX/JNVI/JGB.
+
+### 6. `fertig_WORK_RECESSION_FRED_SAHM.md` — 🟢
+
+**Soll:** US `SAHMREALTIME` s(z). Die 0,50-pp-Marke ist nur das UI-Label. Regionaler Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`. EZ/JP nicht in der 17er-Summe. Fehlende Monate leer.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `edbec6e6` plus live `#/recession` Abschnitt 5. Tester PASS. Doublecheck GO. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 7. `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — 🟢
+
+**Soll:** Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest).
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `1937d389`. π ehrlich „start unknown“. Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 8. `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟢
+
+**Soll:** Katalogquellen/Serien im Briefing.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Tip `d59541f5`. 40 Kacheln, 0 PLACEHOLDER. Ältere Softs aus Abschnitt 7 blockieren nicht. Dateiname bleibt `fertig_`.
+
+### 9. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
+
+**Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
+
+**Ist:** Unverändert gegenüber Abschnitt 17. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+## 20. 25.10.2026 Tip 2c955018
+
+Gelesen am Tip `2c955018` (#291 Peer-Varianten A/B, parent `73eff97e`). Ampel-Einträge von Work.MD, 25.10.2026 16:24 Europe/Madrid. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Kein Rückbau von `Fertig_`/`fertig_` nach `Offen_`. #180 HOLD — nicht anfassen.
+
+### Soll vs. Ist — #291 Peer A/B und B2 Gold-Nachzug
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| #291 Peer A/B | `WORK_PEER_SELECTION_DETAILED.md` Z. 107–108 (sinngemäß; wörtlich dort: „Same PE \| Forward PE ±30 %“ und „Same Industry \| GICS Sub-Industry“): beide Varianten bauen, Gruppe entscheidet; keine Score-Änderung ohne Vorher/Nachher-Tabelle an Philip | Squash `2c955018` über `73eff97e`, Tree `2299b618`. 8 Dateien: `PeerComparison.tsx` (+36/−4) → `lib/peerViewFilter.ts` → `server/news-peers.ts` (+7/−2) → `shared/peer-forward-pe.ts` (neu) + `shared/schema.ts` (+3). Neuer Test `script/test-peer-variants-ab.ts`. Nur Ansicht, kein Score-Effekt | 🟢 Soft |
+| B2 Gold-Nachzug | Alle 4 Punkte des Designs B2 auf main | #194 `e4e0e1e0`, #201 `98ccc928`, #216 `b1fcf05e` (`GoldFairValueSection.tsx` / `GoldPriceChart.tsx`, Tests `script/test-gold-fv-label-layout.ts`, `test-gold-ma-cross.ts`). Docs-Nachtrag, kein neuer Code | 🟢 |
+| Spec-Dateien | `fertig_`/`Fertig_` bleiben | Kein Rename, kein Rückbau nach `Offen_` | 🟢 |
+
+**Softs, blockieren die Ampel nicht:**
+
+1. #291: Default-Tab Forward-KGV ist nicht von Philip bestätigt (nur Anzeige).
+2. #291: Prod-Stichprobe der Fwd-Abdeckung nach dem Deploy.
+
+### 1. #291 Peer-Varianten A/B (Forward- vs. Trailing-KGV ±30 %, GICS (n/a) vs. FMP-Industrie; nur Ansicht, kein Score) — 🟢 Soft
+
+**Soll:** `WORK_PEER_SELECTION_DETAILED.md` Z. 107–108 (sinngemäß; wörtlich dort: „Same PE | Forward PE ±30 %“ und „Same Industry | GICS Sub-Industry“): beide Varianten bauen, Gruppe entscheidet; keine Score-Änderung ohne Vorher/Nachher-Tabelle an Philip.
+
+**Ist:** Squash `2c955018` über `73eff97e`, Tree `2299b618` — feat(peers): Varianten A/B umschaltbar – Forward- vs. Trailing-KGV ±30 %, GICS (n/a) vs. FMP-Industrie (Ansicht, kein Score) (#291). Doublecheck: Diff-GO Soft und Post-Merge GO. Tester PASS Soft (`/workspace/dod-291/REPORT.md`). Nur Ansicht, kein Score-Effekt, daher keine Vorher/Nachher-Tabelle nötig. OFFEN (Soft): Default-Tab Forward-KGV ist nicht von Philip bestätigt (nur Anzeige); Prod-Stichprobe der Fwd-Abdeckung nach dem Deploy.
+
+### 2. Design B2 Gold-Nachzug (Docs-Nachtrag, kein neuer Code) — 🟢
+
+**Soll:** Alle 4 Punkte des Designs B2 liegen auf main.
+
+**Ist:** Alle 4 Punkte liegen schon auf main:
+- `e4e0e1e0` fix(gold): B2 Fair-Value label collision avoidance (#194)
+- `98ccc928` Gold-Chart: MA50 und Cross-Marker, Fair-Value-Label-Nachzug (#201)
+- `b1fcf05e` Gold FV-Korridor: Stapel nur bei nahen Preisen, Spot-Abstand 375px, Tap-Tooltip fuer Kuerzel/Stapel (#216)
+
+Der Soft-Punkt 2 in Abschnitt 19 „Echter Touch-Input ist nicht verifiziert“ ist verifiziert. §19 Z.858 trägt den Nachweis seit #317 (832fc225). Spec bleibt `fertig_`, nicht auf `Offen_`.

@@ -1,0 +1,103 @@
+/**
+ * Gold-Offline-Hinweis: Fällt /api/analyze-gold aus, zeigt GoldDashboard die gebündelten
+ * GOLD_FALLBACK_DATA. Soll: sichtbarer Hinweis „Offline-Daten vom <Datum>“, Werte/Scores unverändert.
+ * Live-Pfad (andere timestamp): kein Hinweis. Echter SSR-Render der ganzen Seite mit vorbefülltem Query-Cache.
+ */
+import * as esbuild from "esbuild";
+import path from "node:path";
+import os from "node:os";
+import { createRequire } from "node:module";
+
+const root = path.resolve(import.meta.dirname, "..");
+let failed = 0;
+const check = (name: string, ok: boolean, info?: unknown) => {
+  console.log(`  ${ok ? "✅" : "❌"} ${name}${ok || info === undefined ? "" : ` → ${JSON.stringify(info)}`}`);
+  if (!ok) failed++;
+};
+
+const outfile = path.join(os.tmpdir(), `gold-offline-note-${process.pid}.cjs`);
+await esbuild.build({
+  absWorkingDir: root,
+  stdin: {
+    contents: `export { default as GoldDashboard } from "./client/src/pages/GoldDashboard";
+export { ThemeProvider } from "./client/src/components/ThemeProvider";
+export { GOLD_FALLBACK_DATA } from "./client/src/lib/goldFallbackData";
+export { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+export { createElement } from "react";
+export { Router } from "wouter";
+export { renderToStaticMarkup } from "react-dom/server";`,
+    resolveDir: root,
+    loader: "ts",
+  },
+  bundle: true, format: "cjs", platform: "node", jsx: "automatic", loader: { ".css": "empty" },
+  alias: { "@": path.join(root, "client/src"), "@shared": path.join(root, "shared") },
+  outfile, logLevel: "silent",
+});
+const mod = createRequire(import.meta.url)(outfile);
+const render = (data: any) => {
+  const client = new mod.QueryClient();
+  client.setQueryData(["/api/analyze-gold"], data);
+  const h = mod.createElement;
+  return mod.renderToStaticMarkup(h(mod.QueryClientProvider, { client }, h(mod.Router, { ssrPath: "/gold" }, h(mod.ThemeProvider, null, h(mod.GoldDashboard)))));
+};
+const strip = (html: string) => html.replace(/<[^>]+>/g, "|").replace(/data-testid="gold-offline-note"/g, "");
+const F = mod.GOLD_FALLBACK_DATA;
+const snapshot = JSON.stringify(F);
+
+console.log("Fallback-Pfad (GOLD_FALLBACK_DATA)");
+const off = render(F);
+const noteBlock = (() => {
+  const at = off.indexOf('data-testid="gold-offline-note"');
+  if (at < 0) return null;
+  const start = off.lastIndexOf("<div", at);
+  const re = /<div\b|<\/div>/g; re.lastIndex = start; let depth = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(off))) { depth += m[0] === "</div>" ? -1 : 1; if (depth === 0) break; }
+  return m ? off.slice(start, m.index + 6) : null;
+})();
+const noteText = (noteBlock ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+check("Hinweis gerendert", noteBlock != null);
+check("Text „Offline-Daten vom 27.03.2026 …“", noteText.includes("Offline-Daten vom 27.03.2026") && noteText.includes("Live-API nicht erreichbar"), noteText);
+check("Knopf „Neu laden“", !!noteBlock && noteBlock.includes('data-testid="gold-offline-reload"') && noteBlock.includes("Neu laden"));
+check("ohne konkreten Fehlergrund bleibt der Chart bei „Keine Preisdaten“", off.includes("Keine Preisdaten") && !off.includes("gold-chart-load-error"));
+check("Fallback-Objekt nicht verändert (Scores/Werte identisch)", JSON.stringify(F) === snapshot);
+
+console.log("Live-Pfad (andere timestamp, sonst gleiche Werte)");
+const live = render({ ...F, timestamp: "2026-10-25T12:00:00.000Z", analysisDate: "25.10.2026, 13:00" });
+check("kein Offline-Hinweis", !live.includes("gold-offline-note") && !live.includes("Offline-Daten vom"));
+// #328: Konfliktmatrix zeigt im Offline-Fallback gewollt n/a (zählt nicht), live echte Signale. Genau dieser
+// Block wird für den Seitenvergleich ausgeschnitten und separat streng geprüft; der Rest bleibt bytegleich.
+const cutBlock = (html: string, testid: string) => {
+  const at = html.indexOf(`data-testid="${testid}"`);
+  if (at < 0) return { rest: html, block: null as string | null };
+  const start = html.lastIndexOf("<div", at);
+  const re = /<div\b|<\/div>/g; re.lastIndex = start; let depth = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(html))) { depth += m[0] === "</div>" ? -1 : 1; if (depth === 0) break; }
+  const end = m ? m.index + 6 : html.length;
+  return { rest: html.slice(0, start) + html.slice(end), block: html.slice(start, end) };
+};
+const offCut = cutBlock(off, "asset-conflict-summary");
+const liveCut = cutBlock(live, "asset-conflict-summary");
+
+check("Konfliktmatrix in beiden Pfaden genau einmal vorhanden", !!offCut.block && !!liveCut.block &&
+  !offCut.rest.includes("asset-conflict-summary") && !liveCut.rest.includes("asset-conflict-summary"));
+const FB = "Offline-Fallback (gebündelte Daten, Live-API nicht erreichbar)";
+check("Offline-Matrix: jede Zeile n/a mit Fallback-Grund (#328)", !!offCut.block &&
+  (offCut.block.match(/<tr/g)?.length ?? 0) - 1 === 5 &&
+  strip(offCut.block).split("|").filter(t => t === `n/a · ${FB} → n/a, zählt nicht`).length === 5);
+check("Live-Matrix: kein Fallback-Grund", !!liveCut.block && !liveCut.block.includes(FB));
+const offNote = cutBlock(offCut.rest, "gold-offline-note");
+check("Offline-Hinweis genau einmal und sonst nicht mehr im Rest", !!offNote.block && !offNote.rest.includes("gold-offline-note") && !liveCut.rest.includes("gold-offline-note"));
+check("übriger Seiteninhalt identisch (nur Hinweis, Datum/Zeitstempel und #328-Konfliktmatrix unterscheiden sich)",
+  strip(offNote.rest).replaceAll("27.03.2026, 20:18", "D") ===
+  strip(liveCut.rest).replaceAll("25.10.2026, 13:00", "D"));
+
+console.log("Fallback mit echtem Grund (HTTP 503)");
+const withReason = render({ ...F, fallbackReason: "HTTP 503" });
+check("Banner nennt HTTP 503 und das Datum", withReason.includes("Offline-Daten vom 27.03.2026") && withReason.includes("HTTP 503"));
+check("Neu laden bleibt im Banner", withReason.includes('data-testid="gold-offline-reload"'));
+check("Chart: Ladefehler statt „Keine Preisdaten“", withReason.includes('data-testid="gold-chart-load-error"') && withReason.includes("Preisdaten nicht geladen: HTTP 503") && !withReason.includes("Keine Preisdaten"));
+check("Gold/Silber-Ratio bleibt eine eigene Zeile (nicht durch den Fallback ersetzt)", withReason.includes('data-testid="gold-silver-ratio"') && off.includes('data-testid="gold-silver-ratio"'));
+check("Fallback-Objekt trotz Grund-Kopie unverändert", JSON.stringify(F) === snapshot);
+
+console.log(failed === 0 ? "\nAlle Offline-Hinweis-Tests grün." : `\n${failed} Test(s) fehlgeschlagen.`);
+process.exit(failed === 0 ? 0 : 1);

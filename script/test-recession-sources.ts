@@ -5,6 +5,7 @@
  * Run: npx tsx script/test-recession-sources.ts
  */
 import { readFileSync } from "node:fs";
+import { deflateRawSync } from "node:zlib";
 import {
   ACTIVITY_SLOT_NAME,
   NY_FED_ANCHOR_WEIGHT,
@@ -14,13 +15,20 @@ import {
   blendWithNyFedAnchor,
   briefingEssayAllowed,
   buffettFazitClause,
+  buffettSeriesNote,
   buffettFromMarketCapGdp,
   buffettFromObservation,
   buffettMarketCapGdpPercent,
   buffettReading,
   liveBuffettValue,
+  capeFromPoint,
   capeReading,
+  englishLongDate,
+  latestMultplCape,
   latestShillerCape,
+  latestYahooChartClose,
+  marginDebitFromCmv,
+  marginSpotReading,
   correctionAction,
   creditReading,
   crowdReading,
@@ -30,6 +38,9 @@ import {
   googleReading,
   m2Reading,
   marginDebtReading,
+  finraMarginFromSheetXml,
+  finraMarginPoints,
+  zipEntry,
   nyFedAnchorPct,
   oilShockFromZ,
   privateCreditEssay,
@@ -221,6 +232,15 @@ console.log("\n=== Fallback snapshot follows the same rules ===");
   const action = fb.fazit?.sections.find(s => s.title === "Handlungsempfehlung")?.text ?? "";
   check("fallback action is the two-book branch", action.includes("Beta/Duration runter") && !action.includes("Goldallokation"));
   check("fallback summary still says Hohes Risiko", String(fb.fazit?.summary).includes("Hohes Risiko"));
+  const valuation = fb.fazit?.sections.find(s => s.title === "Bewertungsrisiko")?.text ?? "";
+  check("fallback fazit does not name a fixed market peak", !valuation.includes("Dotcom") && valuation.includes("230%"));
+  const panel = readFileSync(new URL("../client/src/components/recession/BuffettRatioPanel.tsx", import.meta.url), "utf8");
+  check(
+    "buffett chart uses theme tokens instead of a white slab",
+    panel.includes("hsl(var(--card))") && panel.includes("hsl(var(--border))") && panel.includes("hsl(var(--foreground))") && panel.includes("bg-card") && !panel.includes("bg-white"),
+  );
+  const snapshot = readFileSync(new URL("../client/public/recession-data.json", import.meta.url), "utf8");
+  check("public recession snapshot does not name a fixed market peak", !snapshot.includes("Dotcom"));
 }
 
 console.log("\n=== Kurve: s(z) über 20J, 0 ist nur das Label ===");
@@ -302,8 +322,38 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   const staleText = [stale.value, stale.zone, stale.source, stale.description].join(" ");
   check("stale Buffett does not say aktuell", !staleText.toLowerCase().includes("aktuell"));
   check("the stale clause is empty", buffettFazitClause(stale) === "" && liveBuffettValue(stale) === null);
-  check("a live ratio above 180 still names the dotcom high", buffettFazitClause(buffettReading(230)).includes("230%") && buffettFazitClause(buffettReading(230)).includes("Dotcom"));
-  check("the live clause does not say aktuell", !buffettFazitClause(buffettReading(230)).toLowerCase().includes("aktuell"));
+  const atMax = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 150 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
+  const atMaxClause = buffettFazitClause(buffettReading(230), atMax);
+  check(
+    "a live ratio at the series max names that max since the series start",
+    atMaxClause.includes("230%") && atMaxClause.includes("höchster Wert der Reihe seit 1950") && !atMaxClause.includes("Dotcom"),
+    atMaxClause,
+  );
+  const underPrior = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 151.4 },
+    { date: "2021-11-08", ratio: 260 },
+    { date: "2021-12-01", ratio: 260 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
+  const priorClause = buffettFazitClause(buffettReading(230), underPrior);
+  check(
+    "a live ratio under a prior print names the later of the tied highs and its date",
+    priorClause.includes("230%") && priorClause.includes("2021-12-01") && priorClause.includes("260%") && !priorClause.includes("höchster Wert") && !priorClause.includes("Dotcom"),
+    priorClause,
+  );
+  check(
+    "without a series the clause states the level and does not invent a peak",
+    buffettFazitClause(buffettReading(230)).includes("230%")
+      && !buffettFazitClause(buffettReading(230)).includes("höchster Wert")
+      && !buffettFazitClause(buffettReading(230)).includes("Dotcom")
+      && buffettSeriesNote(230, []) === null,
+  );
+  check("the live clause does not say aktuell", !buffettFazitClause(buffettReading(230), atMax).toLowerCase().includes("aktuell"));
 
   const justInside = buffettFromObservation({ date: "2025-04-01", value: 150 }, today);
   check(
@@ -349,12 +399,47 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   const scoreFn = server.slice(server.indexOf("function scoreBuffett"), server.indexOf("function scoreCAPE"));
   check(
-    "scoreBuffett tries Wilshire/GDP before the World Bank series",
-    scoreFn.indexOf("WILL5000PR") !== -1 && scoreFn.indexOf("WILL5000PR") < scoreFn.indexOf("DDDM01USA156NWDB"),
+    "scoreBuffett tries the live Wilshire chart before the World Bank series",
+    scoreFn.indexOf("^W5000") !== -1 && scoreFn.indexOf("^W5000") < scoreFn.indexOf("DDDM01USA156NWDB") && !scoreFn.includes("WILL5000PR"),
+    scoreFn.slice(0, 240),
   );
   check("scoreBuffett goes through the observation gate", scoreFn.includes("buffettFromMarketCapGdp") && scoreFn.includes("buffettFromObservation"));
+  check(
+    "scoreBuffett scales the index by the listed-cap dollars per point",
+    scoreFn.includes("WILSHIRE_DOLLARS_PER_POINT_BN"),
+  );
+  const chart = latestYahooChartClose({
+    chart: { result: [{ timestamp: [1760000000, 1760086400], indicators: { quote: [{ close: [76000, null] }] } }] },
+  });
+  check("a trailing null bar is not the close", chart?.date === "2025-10-09" && chart.value === 76000, JSON.stringify(chart));
+  const liveRatio = buffettFromMarketCapGdp(
+    { date: "2026-10-02", value: 76776.84375 },
+    { date: "2026-04-01", value: 32563.03 },
+    today,
+    { source: "Yahoo ^W5000 / FRED GDP", description: "Wilshire chart / GDP" },
+  )!;
+  check(
+    "an unscaled index over GDP is 236 percent",
+    liveRatio.available !== false && liveRatio.rawScore === 8 && liveRatio.weightedScore === 16 && liveRatio.value === "236%" && liveRatio.source === "Yahoo ^W5000 / FRED GDP",
+    `${liveRatio.value} ${liveRatio.source} raw=${liveRatio.rawScore}`,
+  );
+  const scaledRatio = buffettFromMarketCapGdp(
+    { date: "2026-10-02", value: 76776.84375 * 1.05 },
+    { date: "2026-04-01", value: 32563.03 },
+    today,
+    { source: "Yahoo ^W5000 / FRED GDP", description: "Wilshire × 1.05" },
+  )!;
+  check(
+    "the listed-cap scale prints 248 percent and stays in the >200 zone",
+    scaledRatio.available !== false && scaledRatio.rawScore === 8 && scaledRatio.weightedScore === 16 && scaledRatio.value === "248%",
+    scaledRatio.value,
+  );
   const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
   check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
+  check(
+    "the fazit source has no fixed peak sentence",
+    !server.includes("Dotcom-Blase") && !server.includes("höchste Niveau seit der") && fazitFn.includes("buffettSeries"),
+  );
 }
 
 console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation book ===");
@@ -389,6 +474,11 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
   );
 
   const liveBuffett = buffettReading(230);
+  const seriesHigh = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 150 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
   const valuationFazit = generateFazit(
     [liveBuffett, closedCape, closedMargin],
     [],
@@ -396,6 +486,7 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
     [driverLine(liveBuffett)],
     emptyBridge(),
     quiet,
+    seriesHigh,
   );
   const valuationQuant = valuationFazit.sections.find(s => s.title === "Quantitative Bewertung")?.text ?? "";
   const valuationSection = valuationFazit.sections.find(s => s.title === "Bewertungsrisiko");
@@ -405,8 +496,10 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
     valuationQuant,
   );
   check(
-    "Bewertungsrisiko still quotes the live Dotcom clause",
-    (valuationSection?.text ?? "").includes("230%") && (valuationSection?.text ?? "").includes("Dotcom"),
+    "Bewertungsrisiko quotes the series high and not a fixed peak name",
+    (valuationSection?.text ?? "").includes("230%")
+      && (valuationSection?.text ?? "").includes("höchster Wert der Reihe seit 1950")
+      && !(valuationSection?.text ?? "").includes("Dotcom"),
     valuationSection?.text,
   );
 }
@@ -446,21 +539,67 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
   check("YoY without a 5Y z is shown and not scored", partial.available === false && partial.maxWeighted === 0 && partial.value.includes("Mrd. $") && !/\$\d{4}T/i.test(partial.value));
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   check(
-    "Buffett names Wilshire/GDP and the World Bank series, and does not scrape a page",
-    server.includes("WILL5000PR") && server.includes("DDDM01USA156NWDB") && server.includes("isStale") && !server.includes('content.includes("overvalued")'),
+    "Buffett keeps the World Bank fallback and does not request the dead FRED id or scrape a valuation page",
+    server.includes("DDDM01USA156NWDB")
+      && server.includes("^W5000")
+      && server.includes("isStale")
+      && server.includes("FRED WILL5000PR / GDP")
+      && !server.includes("latestFredPoint(\"WILL5000PR\"")
+      && !server.includes('content.includes("overvalued")'),
   );
   const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
   const lock = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
   check(
-    "xlsx is not a dependency and the scorer does not parse a workbook",
+    "xlsx is not an npm dependency; the debit workbook is inflated with zlib",
     !/"xlsx"\s*:/.test(pkg)
       && !lock.includes("node_modules/xlsx")
       && !server.includes('from "xlsx"')
       && !server.includes("XLSX.read")
-      && !server.includes("margin-statistics.xlsx")
+      && server.includes("margin-statistics.xlsx")
+      && server.includes("inflateRawSync")
+      && server.includes("finraMarginPoints")
       && !server.includes("fetchShillerCape")
       && !server.includes("fetchFinraDebitPoints"),
   );
+  const sheetRows = Array.from({ length: 36 }, (_, i) => {
+    const year = 2023 + Math.floor(i / 12);
+    const month = (i % 12) + 1;
+    const ym = `${year}-${String(month).padStart(2, "0")}`;
+    const debit = 1_000_000 + i * 10_000;
+    return `<row r="${i + 2}"><c r="A${i + 2}" t="inlineStr"><is><t>${ym}</t></is></c><c r="B${i + 2}"><v>${debit}</v></c></row>`;
+  }).join("");
+  const sheetXml = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Year-Month</t></is></c></row>${sheetRows}</sheetData></worksheet>`;
+  const parsedSheet = finraMarginFromSheetXml(sheetXml);
+  check(
+    "the debit sheet keeps month and millions",
+    parsedSheet.length === 36 && parsedSheet[0].date === "2023-01-01" && parsedSheet[35].debitMillions === 1_350_000,
+    `${parsedSheet.length} ${parsedSheet[0]?.date} ${parsedSheet.at(-1)?.debitMillions}`,
+  );
+  const sheetScore = marginDebtReading(parsedSheet);
+  check(
+    "thirty-six debit months score with a finite 5-year z",
+    sheetScore.available !== false && sheetScore.maxWeighted === 4 && sheetScore.value.includes("Mrd. $") && sheetScore.value.includes("z5y"),
+    `${sheetScore.value} max=${sheetScore.maxWeighted}`,
+  );
+  const name = Buffer.from("xl/worksheets/sheet1.xml");
+  const compressed = deflateRawSync(Buffer.from(sheetXml));
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(8, 8);
+  header.writeUInt32LE(compressed.length, 18);
+  header.writeUInt32LE(Buffer.byteLength(sheetXml), 22);
+  header.writeUInt16LE(name.length, 26);
+  const zipped = Buffer.concat([header, name, compressed]);
+  const unpacked = zipEntry(zipped, "xl/worksheets/sheet1.xml");
+  check("a deflated sheet entry inflates back to the xml", unpacked?.toString("utf8") === sheetXml);
+  check(
+    "the workbook reader returns the same debit points",
+    finraMarginPoints(zipped).length === 36 && finraMarginPoints(zipped)[35].debitMillions === 1_350_000,
+  );
+  const described = Buffer.from(header);
+  described.writeUInt16LE(0x08, 6);
+  check("a data-descriptor entry is refused", zipEntry(Buffer.concat([described, name, compressed]), "xl/worksheets/sheet1.xml") === null);
   check(
     "closed CAPE and margin add neither net nor max",
     capeReading(Number.NaN).available === false
@@ -468,6 +607,36 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
       && marginDebtReading([]).available === false
       && marginDebtReading([]).maxWeighted === 0,
   );
+  const capeTable = `<table><tr><th>Date</th><th>Value</th></tr><tr><td>Oct 2, 2026</td><td>&#x2002; 41.38</td></tr><tr><td>Sep 1, 2026</td><td>40.90</td></tr></table>`;
+  const capePoint = latestMultplCape(capeTable);
+  check("the monthly table's first row is the CAPE print", capePoint?.date === "2026-10-02" && capePoint.value === 41.38, JSON.stringify(capePoint));
+  check("english dates parse", englishLongDate("May 31, 2026") === "2026-05-31");
+  const liveCape = capeFromPoint(capePoint, "2026-10-05");
+  check(
+    "a fresh CAPE above 35 scores and names Multpl",
+    liveCape.available !== false && liveCape.rawScore === 7 && liveCape.weightedScore === 12.6 && liveCape.value === "41.4" && liveCape.source === "Multpl Shiller PE" && liveCape.zone.includes("Extrem hoch"),
+    `${liveCape.value} ${liveCape.zone} raw=${liveCape.rawScore}`,
+  );
+  const staleCape = capeFromPoint({ date: "2024-03-01", value: 32.2 }, "2026-10-05");
+  check(
+    "a CAPE print outside 18 months is shown and not scored",
+    staleCape.available === false && staleCape.maxWeighted === 0 && staleCape.value === "32.2 (2024-03)" && staleCape.zone === "N/A",
+    staleCape.value,
+  );
+  check("an empty CAPE page stays closed", capeFromPoint(null, "2026-10-05").value === "N/A" && capeFromPoint(null, "2026-10-05").source === "Multpl Shiller-PE leer");
+  const cmv = `meta $1,416% should not count. As of May 31, 2026 (the latest data available), total US margin debt was $1,416 billion, which represents a increase of $455 billion year-over-year.`;
+  const debit = marginDebitFromCmv(cmv);
+  check("the billion sentence is the debit, not the percent meta", debit?.date === "2026-05-31" && debit.billions === 1416, JSON.stringify(debit));
+  check("a percent-only line is not a debit", marginDebitFromCmv("As of May 31, 2026 total margin debt is $1,416%.") === null);
+  const spot = marginSpotReading(debit);
+  check(
+    "one debit print is shown and stays out of net and max",
+    spot.value === "1416.0 Mrd. $ (2026-05)" && spot.zone === "Ablesung, kein 5J-z" && spot.available === false && spot.maxWeighted === 0 && spot.weightedScore === 0 && !/\$\d{4}T/i.test(spot.value),
+    `${spot.value} ${spot.zone}`,
+  );
+  const spotTotals = scoredTotals([spot, vixReading(16)]);
+  check("the spot debit adds neither net nor max", spotTotals.net === 0 && spotTotals.max === vixReading(16).maxWeighted, `${spotTotals.net}/${spotTotals.max}`);
+  check("a missing debit page stays N/A", marginSpotReading(null).value === "N/A" && marginSpotReading(null).source === "FINRA-Historie nur als xlsx");
   const csiFn = server.slice(server.indexOf("function scoreConsumerConfidence"), server.indexOf("function scoreBuffett"));
   check("CSI asks UMCSENT before the macro fallback", csiFn.indexOf("UMCSENT") !== -1 && csiFn.indexOf("UMCSENT") < csiFn.indexOf("getMacroValue"));
 }

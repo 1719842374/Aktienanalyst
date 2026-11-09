@@ -6,8 +6,13 @@
 import { useMemo } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import type { StockAnalysis } from "../../../shared/schema";
+import { execEntryLinesFromFazit } from "@/lib/execEntryFromFazit";
 import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
 import { buildBiasDecision } from "../../../shared/bias-fixes";
+import { usePublishChatSection } from "@/lib/chatSectionData";
+import type { GBMMonteCarloResult } from "@/lib/calculations";
+import { execLageFromFazit } from "@/lib/execLageFromFazit";
+import { DividendNotableHint } from "@/components/sections/DividendYieldContext";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -27,7 +32,9 @@ export type ExecSummaryView = {
   redFlags?: string[];
 };
 
-export function ExecSummaryCard({ data }: {
+export function ExecSummaryCard({ data, sharedMonteCarlo }: {
+  /** Derselbe Monte-Carlo-Lauf wie S18/S20 – sonst eigener Zufallslauf, der an Schwellen kippen kann. */
+  sharedMonteCarlo?: GBMMonteCarloResult | null;
   data: StockAnalysis & {
     execSummary?: ExecSummaryView | null;
     growthThesis?: string | null;
@@ -35,6 +42,8 @@ export function ExecSummaryCard({ data }: {
   };
 }) {
   const s = data?.execSummary;
+  // Lage-Satz: DCF wie S6 (Fazit-Quelle), Währung DCF=statementCurrency, Kurs=Listing.
+  const lage = useMemo(() => (data ? execLageFromFazit(data) : null), [data]);
 
   const bias = useMemo(() => {
     try { return buildBiasDecision(data); } catch { return null; }
@@ -43,12 +52,12 @@ export function ExecSummaryCard({ data }: {
   const fazit = useMemo(() => {
     if (!data) return null;
     try {
-      const metrics = prepareFazitMetrics(data);
+      const metrics = prepareFazitMetrics(data, sharedMonteCarlo);
       return buildFazitSignal({ data, ...metrics });
     } catch {
       return null;
     }
-  }, [data]);
+  }, [data, sharedMonteCarlo]);
 
   const downsideRisks = useMemo(() => {
     const risks = Array.isArray(data?.risks) ? [...data.risks] : [];
@@ -62,6 +71,25 @@ export function ExecSummaryCard({ data }: {
       .slice(0, 3);
   }, [data?.risks]);
 
+  // Entry-Sätze (Nachkaufen unter …, CRV 3:1) aus derselben Quelle wie S17-Fazit/PDF/Chat (shared/fazit-entry).
+  const entryLines = useMemo(() => (data ? execEntryLinesFromFazit(data) : null), [data]);
+
+  // Chat-Kontext (S1): genau die hier angezeigten Werte — Ampel, Signal-Score, Bewertungsbasis/Upside.
+  const r2 = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  usePublishChatSection("stock", "1", s && fazit ? {
+    ampel: fazit.rating, // = Kopf-Ampel (Fazit-Signal); Gesamtscore separat als gesamtscore_0bis10
+    fazitAmpel: fazit.rating,
+    signalScore: `${fazit.positive.length} positiv / ${fazit.negative.length} negativ / ${fazit.neutral.length} neutral = ${fazit.rating}`,
+    bewertungsBasis: bias ? bias.valuationBaseLabel : null,
+    bewertungsBasisProAktie: bias ? r2(bias.decisionPerShare) : null,
+    upsidePct: bias ? r2(bias.decisionUpsidePct) : null,
+    positiveGbSummePct: bias ? r2(bias.positiveGbSum) : null,
+    gesamtscore_0bis10: bias ? r2(bias.overallScore) : null,
+    redFlags: (bias?.redFlags ?? s.redFlags ?? []).join(" · ") || null,
+    negativeFaktoren: fazit.negative.join(" | ") || null,
+    positiveFaktoren: fazit.positive.join(" | ") || null,
+  } : null);
+
   if (!s || !fazit) return null;
 
   const thesis = (typeof data.growthThesis === "string" && data.growthThesis.trim().length >= 80)
@@ -71,9 +99,13 @@ export function ExecSummaryCard({ data }: {
   return (
     <SectionCard number={1} title="Executive Summary" defaultOpen>
       <div className="space-y-3 text-sm" data-testid="exec-summary-card">
+        <DividendNotableHint data={data} />
         <div className={`rounded-md border px-3 py-2 flex items-center justify-between gap-2 ${fazit.ratingBg}`}>
+          {/* Ampel = Fazit-Signal-Score (buildFazitSignal, identisch S20-Fazit / Kasten unten).
+              Nicht bias.overallRating: der Gesamtscore haengt an spaet nachgeladenen
+              Management-/Thesis-Scores und kippte je nach Ladezeitpunkt (375 vs. 1440 px). */}
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Ampel (S17)</span>
-          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{bias?.overallRating ?? fazit.rating}</span>
+          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{fazit.rating}</span>
         </div>
 
         {s.headline && (
@@ -215,11 +247,11 @@ export function ExecSummaryCard({ data }: {
 
         <div className="space-y-2 border-t border-border/60 pt-3">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Lage / Bruch / Handlung</div>
-          {s.fazit?.lage && <p className="leading-relaxed text-foreground/90">{s.fazit.lage}</p>}
+          {(lage ?? s.fazit?.lage) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-lage">{lage ?? s.fazit?.lage}</p>}
           {s.fazit?.bruch && <p className="leading-relaxed text-foreground/90">{s.fazit.bruch}</p>}
-          {s.fazit?.handlung && <p className="leading-relaxed text-foreground/90">{s.fazit.handlung}</p>}
+          {(entryLines?.handlung ?? s.fazit?.handlung) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-handlung">{entryLines?.handlung ?? s.fazit?.handlung}</p>}
           {s.posLine && <p className="leading-relaxed text-foreground/90">{s.posLine}</p>}
-          {s.crvLine && <p className="leading-relaxed text-foreground/90">{s.crvLine}</p>}
+          {(entryLines?.crvLine ?? s.crvLine) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-crv">{entryLines?.crvLine ?? s.crvLine}</p>}
           {s.crossLine ? <p className="leading-relaxed text-foreground/90">{s.crossLine}</p> : null}
           {s.callLine && <p className="leading-relaxed text-muted-foreground">{s.callLine}</p>}
         </div>

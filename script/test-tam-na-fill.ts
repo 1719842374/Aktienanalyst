@@ -2,17 +2,21 @@
 //
 // KI-N/A-Fill v2 für Segment-TAM. Prüft die Section7-Matrix im Prompt,
 // lokale Formeln (Anteil am TAM / vs. TAM), Wachstum-Fill nur bei Fact-n/a,
-// fail-closed INCOMPLETE_FILL ohne Partial-Overlay, und dass der
-// MSFT-Faktenpfad (Coverage ~59%, Katalog, quality, tamTotal) nur geechot
-// wird.
+// Partial-Apply (gültige Fills bleiben, offene Zellen bleiben n/a),
+// Revenue null/0 ausserhalb von Tabelle und Scope, LLM leer/fail als Fehler,
+// und dass der MSFT-Faktenpfad (Coverage ~59%, Katalog, quality, tamTotal)
+// nur geechot wird.
 // Lauf: `npx tsx script/test-tam-na-fill.ts`
 
 import { generateTAMAnalysis } from "../server/sector-data";
 import { requestTamNaFills } from "../server/tam-na-fill";
 import {
+  applicableTamNaFills,
   catalogCoverageNote,
+  countScopeRestNa,
   deriveOutperforming,
   deriveTamShare,
+  hasPositiveSegmentRevenue,
   validateTamNaFills,
 } from "../shared/tam-na-fill";
 
@@ -306,30 +310,130 @@ console.log("\n=== matrix prompt + formulas + incomplete fill ===");
 }
 
 {
+  let prompt = "";
   const result = await requestTamNaFills({
-    ticker: "XOM",
+    ticker: "AMZN",
     coveragePct: 40,
     segments: [
-      { segmentName: "Upstream", segmentRevenue: 100, segmentShare: 60, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
-      { segmentName: "Other / nicht segmentiert", segmentRevenue: 10, segmentShare: 5, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+      { segmentName: "Third-Party Seller Services", segmentRevenue: 172.2, segmentShare: 24, segmentGrowth: 10.3, matched: false, tamSize: null, tamCAGR: null },
+      { segmentName: "Other Services", segmentRevenue: 5.9, segmentShare: 0.8, segmentGrowth: 9.4, matched: false, tamSize: null, tamCAGR: null },
+      { segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentShare: 0, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async (opts) => {
+      prompt = opts.prompt;
+      return {
+        modelUsed: "test-model",
+        data: {
+          fills: [
+            { segmentName: "Third-Party Seller Services", tamSize: 800, tamCAGR: 11, tamLabel: "3P Marketplace", tamSource: "eMarketer", marketShare: 99, outperforming: false, confidence: "med", rationale: "Markt" },
+            { segmentName: "Other / nicht segmentiert", segmentGrowth: 1, tamSize: 10, tamCAGR: 2, tamLabel: "Rest", tamSource: "n/a", confidence: "low", rationale: "leer" },
+          ],
+        },
+      };
+    },
+  });
+  expectTrue(!prompt.includes("Other / nicht segmentiert"), "0-Rev-Zeile steht nicht im Prompt");
+  expectTrue(!prompt.includes("Rest-Zeile"), "0-Rev-Restzeile ist nicht als sichtbar markiert");
+  expectTrue(prompt.includes("Third-Party Seller Services"), "Zeile mit Rev. > 0 steht im Prompt");
+  expectTrue(prompt.includes("Other Services"), "offene Zeile mit Rev. > 0 steht im Prompt");
+  expectTrue(!prompt.includes("Teilliste wird verworfen"), "Prompt verwirft keine Teilliste mehr");
+  expect(result.ok, true, "Partial-Apply mit offenem Rest ist Success");
+  if (result.ok) {
+    expect(result.fills.length, 1, "nur der valide Fill wird übernommen");
+    const tp = result.fills.find((f) => f.segmentName === "Third-Party Seller Services");
+    expect(tp?.marketShare, deriveTamShare(172.2, 800), "Anteil am TAM lokal, LLM-99 verworfen");
+    expect(tp?.outperforming, deriveOutperforming(10.3, 11), "vs. TAM aus Fact-Wachstum 10.3 gegen KI-CAGR 11");
+    expectTrue(!tp || !("segmentGrowth" in tp), "Fact-Wachstum 10.3 wird nicht überschrieben");
+    expectTrue(!result.fills.some((f) => f.segmentName === "Other Services"), "fehlende Zelle bleibt ohne Fill");
+    expectTrue(!result.fills.some((f) => f.segmentName === "Other / nicht segmentiert"), "0-Rev-Fill wird nicht übernommen");
+    expect(result.coveragePct, 40, "coveragePct wird geechot, nicht neu berechnet");
+    expectTrue(!("tamTotal" in result), "Response enthält kein tamTotal");
+  }
+}
+
+{
+  const result = await requestTamNaFills({
+    ticker: "AMZN",
+    coveragePct: 12,
+    segments: [
+      { segmentName: "Other Services", segmentRevenue: 5.9, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
     ],
   }, {
     isLLMAvailable: () => true,
     callLLMJson: async () => ({
       modelUsed: "test-model",
       data: {
-        fills: [
-          { segmentName: "Upstream", segmentGrowth: 5, tamSize: 200, tamCAGR: 4, tamLabel: "Oil", tamSource: "IEA", confidence: "med", rationale: "teilweise" },
-        ],
+        fills: [{ segmentName: "Other Services", segmentGrowth: 9.4, tamSize: -1, confidence: "low", rationale: "nur Wachstum", outperforming: true, marketShare: 50 }],
       },
     }),
   });
-  expect(result.ok, false, "Teilliste ist kein Success");
+  expect(result.ok, true, "Wachstum ohne gültiges TAM ist Partial-Success");
+  if (result.ok) {
+    const row = result.fills[0];
+    expect(row?.segmentGrowth, 9.4, "Wachstum-n/a übernommen");
+    expectTrue(row?.tamSize === undefined, "ungültiges TAM nicht übernommen");
+    expect(row?.outperforming, null, "vs. TAM bleibt null ohne CAGR");
+    expectTrue(row?.marketShare === undefined, "Anteil am TAM ohne TAM nicht gesetzt");
+    expect(result.coveragePct, 12, "coveragePct bleibt der Faktwert");
+  }
+}
+
+{
+  let calls = 0;
+  const result = await requestTamNaFills({
+    ticker: "AMZN",
+    segments: [
+      { segmentName: "Online Stores", segmentRevenue: 269.3, segmentGrowth: 9, matched: true, tamSize: 6300, tamCAGR: 11 },
+      { segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async () => { calls++; return { data: { fills: [] }, modelUsed: "x" }; },
+  });
+  expect(calls, 0, "0-Rev-Zeile allein öffnet keinen LLM-Call");
+  expect(result.ok, false, "keine positive N/A-Zeile");
+  if (!result.ok) expect(result.status, 400, "400 wenn nur die 0-Rev-Zeile n/a wäre");
+}
+
+{
+  const result = await requestTamNaFills({
+    ticker: "AMZN",
+    segments: [
+      { segmentName: "Other Services", segmentRevenue: 5.9, segmentGrowth: null, matched: true, tamSize: 100, tamCAGR: 4 },
+      { segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentGrowth: null, matched: false },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async () => ({
+      modelUsed: "test-model",
+      data: { fills: [{ segmentName: "Other / nicht segmentiert", segmentGrowth: 3, tamSize: 20, tamCAGR: 2, confidence: "low", rationale: "nur nullzeile" }] },
+    }),
+  });
+  expect(result.ok, false, "Fill nur für 0-Rev ist kein Success");
   if (!result.ok) {
-    expect(result.status, 422, "unvollständiger Fill → 422");
-    expect(result.code, "INCOMPLETE_FILL", "Code INCOMPLETE_FILL");
-    expect(result.error, "KI-Schätzung unvollständig — nichts übernommen", "kein Partial-Overlay-Text");
-    expectTrue(!("fills" in result), "Failure trägt keine fills");
+    expect(result.status, 422, "nichts Brauchbares → 422");
+    expect(result.code, "INCOMPLETE_FILL", "nichts Brauchbares → INCOMPLETE_FILL");
+    expect(result.error, "KI-Schätzung unvollständig — nichts übernommen", "Fehlertext wenn nichts übernommen");
+    expectTrue(!("fills" in result), "Fehler trägt keine fills");
+  }
+}
+
+{
+  const result = await requestTamNaFills({
+    ticker: "AMZN",
+    segments: [
+      { segmentName: "Other Services", segmentRevenue: 5.9, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async () => ({ modelUsed: "test-model", data: { fills: [] } }),
+  });
+  expect(result.ok, false, "leeres fills-Array ist kein Success");
+  if (!result.ok) {
+    expect(result.code, "INCOMPLETE_FILL", "leeres fills-Array → INCOMPLETE_FILL");
+    expectTrue(!("fills" in result), "leeres Success gibt es nicht");
   }
 }
 
@@ -365,6 +469,42 @@ console.log("\n=== matrix prompt + formulas + incomplete fill ===");
   expect(deriveOutperforming(12, 3), true, "Formel vs. TAM: Wachstum > CAGR");
   expect(deriveOutperforming(null, 3), null, "Formel vs. TAM ohne Wachstum ist null");
   expect(deriveTamShare(8.3, 80), Math.round((8.3 / 80) * 10000) / 100, "Formel Anteil am TAM");
+}
+
+console.log("\n=== zero revenue stays out of scope ===");
+{
+  expect(hasPositiveSegmentRevenue(0), false, "Revenue 0 ist nicht positiv");
+  expect(hasPositiveSegmentRevenue(null), false, "Revenue null ist nicht positiv");
+  expect(hasPositiveSegmentRevenue(0.1), true, "Revenue > 0 bleibt im Scope");
+  const droppedZero = validateTamNaFills(
+    [{ segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentGrowth: null, matched: false }],
+    { fills: [{ segmentName: "Other / nicht segmentiert", tamSize: 10, tamCAGR: 2, tamLabel: "R", tamSource: "S", confidence: "low", rationale: "x" }] },
+  );
+  expect(droppedZero.length, 0, "Revenue 0 ist kein Fill-Ziel");
+  const droppedNull = validateTamNaFills(
+    [{ segmentName: "Leer", segmentRevenue: null as unknown as number, segmentGrowth: null, matched: false }],
+    { fills: [{ segmentName: "Leer", segmentGrowth: 3, confidence: "low", rationale: "x" }] },
+  );
+  expect(droppedNull.length, 0, "Revenue null ist kein Fill-Ziel");
+  expect(countScopeRestNa([
+    { segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentGrowth: null, matched: false },
+  ], null), 0, "0-Rev zählt nicht als offene Scope-Zelle");
+  const rows = [
+    { segmentName: "Third-Party Seller Services", segmentRevenue: 172.2, segmentGrowth: 10.3, matched: false as const, tamSize: null, tamCAGR: null },
+    { segmentName: "Other Services", segmentRevenue: 5.9, segmentGrowth: 9.4, matched: false as const, tamSize: null, tamCAGR: null },
+    { segmentName: "Other / nicht segmentiert", segmentRevenue: 0, segmentGrowth: null, matched: false as const, tamSize: null, tamCAGR: null },
+  ];
+  const validated = validateTamNaFills(rows, {
+    fills: [
+      { segmentName: "Third-Party Seller Services", tamSize: 800, tamCAGR: 11, tamLabel: "3P", tamSource: "eMarketer", marketShare: 99, outperforming: false, confidence: "med", rationale: "Markt" },
+      { segmentName: "Other / nicht segmentiert", segmentGrowth: 1, tamSize: 10, tamCAGR: 2, confidence: "low", rationale: "leer" },
+    ],
+  });
+  const applied = applicableTamNaFills(rows, validated);
+  expect(applied.map((f) => f.segmentName), ["Third-Party Seller Services"], "Apply übernimmt nur Revenue > 0 mit geschlossener Zelle");
+  expect(applied[0]?.marketShare, deriveTamShare(172.2, 800), "übernommener Anteil am TAM ist die lokale Formel");
+  expect(applied[0]?.outperforming, deriveOutperforming(10.3, 11), "übernommenes vs. TAM ist die lokale Formel");
+  expect(countScopeRestNa(rows, applied) > 0, true, "Other Services bleibt n/a, 0-Rev zählt nicht mit");
 }
 
 {

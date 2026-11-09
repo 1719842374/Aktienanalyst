@@ -2,10 +2,12 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, formatTarget } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Settings2, RotateCcw, Play, AlertTriangle } from "lucide-react";
+import { isYahooOnly } from "../../../../shared/data-source";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 
 interface Props { data: StockAnalysis; sharedResult?: GBMMonteCarloResult | null }
 
@@ -136,6 +138,26 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
     return () => clearTimeout(timer);
   }, [data, inputs.mu, inputs.sigma, inputs.iterations, inputs.tradingDays, runCount, isModified, sharedResult]);
 
+  // PR 3 (Chat-Kontext): das angezeigte Ergebnis veröffentlichen (Default-Ansicht = sharedResult,
+  // derselbe Lauf wie Sektion 20) — keine eigene Simulation.
+  const shownMc = result ?? (!isModified && runCount === 0 && sharedResult ? sharedResult : null);
+  const mcFin = (v: number) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+  usePublishChatSection("stock", "18", shownMc ? {
+    iterationen: inputs.iterations, handelstage: inputs.tradingDays, muJahr: mcFin(inputs.mu), sigmaJahr: mcFin(inputs.sigma),
+    parameterAngepasst: isModified,
+    mittelwert: mcFin(shownMc.mean), p5: mcFin(shownMc.p5), p10: mcFin(shownMc.p10), p25: mcFin(shownMc.p25), p50: mcFin(shownMc.p50),
+    p75: mcFin(shownMc.p75), p90: mcFin(shownMc.p90), p95: mcFin(shownMc.p95),
+    wVerlust: mcFin(shownMc.downsideProb), wVerlustUeber10Pct: mcFin(shownMc.downsideProb10), wVerlustUeber20Pct: mcFin(shownMc.downsideProb20),
+    erwarteteRendite: mcFin(shownMc.expectedReturn), mittlererMaxDrawdown: mcFin(shownMc.maxDrawdownMean),
+    wAnalystenZiel: isYahooOnly(data) ? null : mcFin(shownMc.analystPTProb),
+    _auffaelligkeiten: [
+      shownMc.downsideProb > 0.5 ? "Verlustwahrscheinlichkeit > 50%" : "",
+      shownMc.downsideProb20 > 0.2 ? "W(Verlust > 20%) > 20%" : "",
+      shownMc.expectedReturn < 0 ? "negative erwartete Rendite" : "",
+      isModified ? "Parameter vom Nutzer angepasst" : "",
+    ].filter(Boolean).join("; ") || null,
+  } : null);
+
   const horizonLabel = inputs.tradingDays === 252 ? "1 Jahr" : inputs.tradingDays === 126 ? "6 Monate" : `${inputs.tradingDays} Tage`;
 
   return (
@@ -237,7 +259,7 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
 
       {/* Current Parameters Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-        <ParamCard label="Startkurs" value={formatCurrency(data.currentPrice)} />
+        <ParamCard label="Startkurs" value={formatCurrency(data.currentPrice, 2, data.currency)} />
         <ParamCard label="μ (Drift)" value={formatNumber(inputs.mu, 4)} />
         <ParamCard label="σ (Vol.)" value={formatNumber(inputs.sigma, 4)} />
         <ParamCard label="Iterationen" value={inputs.iterations.toLocaleString()} />
@@ -308,18 +330,18 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
 
           {/* Results KPIs */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <ResultCard label="Mean" value={formatCurrency(result.mean)} sub={`${result.expectedReturn >= 0 ? '+' : ''}${formatNumber(result.expectedReturn * 100, 1)}%`} />
-            <ResultCard label="P10 (Bearish)" value={formatCurrency(result.p10)} color="text-red-500" />
-            <ResultCard label="P50 (Median)" value={formatCurrency(result.p50)} color="text-primary" />
-            <ResultCard label="P90 (Bullish)" value={formatCurrency(result.p90)} color="text-emerald-500" />
+            <ResultCard label="Mean" value={formatCurrency(result.mean, 2, data.currency)} sub={`${result.expectedReturn >= 0 ? '+' : ''}${formatNumber(result.expectedReturn * 100, 1)}%`} />
+            <ResultCard label="P10 (Bearish)" value={formatCurrency(result.p10, 2, data.currency)} color="text-red-500" />
+            <ResultCard label="P50 (Median)" value={formatCurrency(result.p50, 2, data.currency)} color="text-primary" />
+            <ResultCard label="P90 (Bullish)" value={formatCurrency(result.p90, 2, data.currency)} color="text-emerald-500" />
           </div>
 
           {/* Extended percentiles */}
           <div className="grid grid-cols-4 gap-2 text-xs">
-            <PercentileCard label="P5" value={formatCurrency(result.p5)} pct={((result.p5 / data.currentPrice - 1) * 100)} />
-            <PercentileCard label="P25" value={formatCurrency(result.p25)} pct={((result.p25 / data.currentPrice - 1) * 100)} />
-            <PercentileCard label="P75" value={formatCurrency(result.p75)} pct={((result.p75 / data.currentPrice - 1) * 100)} />
-            <PercentileCard label="P95" value={formatCurrency(result.p95)} pct={((result.p95 / data.currentPrice - 1) * 100)} />
+            <PercentileCard label="P5" value={formatCurrency(result.p5, 2, data.currency)} pct={((result.p5 / data.currentPrice - 1) * 100)} />
+            <PercentileCard label="P25" value={formatCurrency(result.p25, 2, data.currency)} pct={((result.p25 / data.currentPrice - 1) * 100)} />
+            <PercentileCard label="P75" value={formatCurrency(result.p75, 2, data.currency)} pct={((result.p75 / data.currentPrice - 1) * 100)} />
+            <PercentileCard label="P95" value={formatCurrency(result.p95, 2, data.currency)} pct={((result.p95 / data.currentPrice - 1) * 100)} />
           </div>
 
           {/* Histogram */}
@@ -328,6 +350,8 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
               <BarChart data={result.histogram} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                 <XAxis
                   dataKey="bin"
+                  // JOB 23: Bin-Labels kommen aus gbmMonteCarlo als "$<start>" (dort fürs Parsen genutzt) — nur die Anzeige auf die Listing-Währung umstellen.
+                  tickFormatter={(b: string) => String(b).replace(/^\$/, currencySymbol(data.currency))}
                   tick={{ fontSize: 9, fill: 'hsl(215 20% 65%)' }}
                   interval={Math.floor(result.histogram.length / 6)}
                   axisLine={{ stroke: 'hsl(215 20% 25%)' }}
@@ -381,8 +405,8 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="bg-muted/30 rounded-md p-3 border border-border/50">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">P(reach Analyst PT)</div>
-              <div className="text-[10px] text-muted-foreground">≥ {formatCurrency(data.analystPT.median)}</div>
-              <div className="text-sm font-bold font-mono tabular-nums mt-1">{formatPercentNoSign(result.analystPTProb * 100, 1)}</div>
+              <div className="text-[10px] text-muted-foreground">≥ {formatTarget(data.analystPT.median, data.currency)}</div>
+              <div className="text-sm font-bold font-mono tabular-nums mt-1">{isYahooOnly(data) ? "n/a" : formatPercentNoSign(result.analystPTProb * 100, 1)}</div>
             </div>
             <div className="bg-muted/30 rounded-md p-3 border border-border/50">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg. Max Drawdown</div>

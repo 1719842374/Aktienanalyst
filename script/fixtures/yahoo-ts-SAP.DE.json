@@ -1,0 +1,346 @@
+{
+ "_fixture": {
+  "chart": {
+   "source": "/workspace/mcap-research/chart_SAP.DE.json (MCap-Recherche, live vom Box 18.10.2026 21:55 MESZ, v8 chart range=5d ohne Crumb), unverändert",
+   "sha256": "74e4eea928f7c135cb300e2ad5072a17f1c435ca411373eae6ea70af29aa92ce"
+  },
+  "timeseries": {
+   "url": "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/SAP.DE?type=quarterlyOrdinarySharesNumber,annualOrdinarySharesNumber,trailingDilutedEPS&period1=<jetzt-2J>&period2=<jetzt>",
+   "fetchedAt": "2026-10-18T22:05+02:00",
+   "http": 200,
+   "auth": "kein Cookie, kein Crumb, Browser-UA wie server/yahoo-fetcher.ts",
+   "sha256": "c201d0a0a1e7ae940466a951624390d241b854dd614e4e5ed58d26ed28984735"
+  },
+  "quoteSummaryRef": {
+   "source": "/workspace/mcap-research/app-yahoo-client-box.log (App-Client server/yahoo-fetcher.ts auf main 122762b mit Crumb, Box, 18.10.2026 21:56 MESZ), RESULT-Zeile unverändert"
+  }
+ },
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "EUR",
+     "symbol": "SAP.DE",
+     "exchangeName": "GER",
+     "fullExchangeName": "XETRA",
+     "instrumentType": "EQUITY",
+     "firstTradeDate": 892105200,
+     "regularMarketTime": 1792164929,
+     "hasPrePostMarketData": false,
+     "gmtoffset": 7200,
+     "timezone": "CEST",
+     "exchangeTimezoneName": "Europe/Berlin",
+     "regularMarketPrice": 199.22,
+     "regularMarketChangePercent": -1.009,
+     "fulldayPrice": 199.22,
+     "fulldayChange": -2.03,
+     "fulldayChangePercent": -1.009,
+     "fiftyTwoWeekHigh": 244.3,
+     "fiftyTwoWeekLow": 127.5,
+     "regularMarketDayHigh": 204.2,
+     "regularMarketDayLow": 198.68,
+     "regularMarketVolume": 2546811,
+     "longName": "SAP SE",
+     "shortName": "SAP SE                        I",
+     "chartPreviousClose": 191.46,
+     "priceHint": 2,
+     "currentTradingPeriod": {
+      "pre": {
+       "timezone": "CEST",
+       "end": 1792134000,
+       "start": 1792126800,
+       "gmtoffset": 7200
+      },
+      "regular": {
+       "timezone": "CEST",
+       "end": 1792164600,
+       "start": 1792134000,
+       "gmtoffset": 7200
+      },
+      "post": {
+       "timezone": "CEST",
+       "end": 1792175400,
+       "start": 1792164600,
+       "gmtoffset": 7200
+      }
+     },
+     "dataGranularity": "1d",
+     "range": "5d",
+     "validRanges": [
+      "1d",
+      "5d",
+      "1mo",
+      "3mo",
+      "6mo",
+      "1y",
+      "2y",
+      "5y",
+      "10y",
+      "ytd",
+      "max"
+     ]
+    },
+    "timestamp": [
+     1791788400,
+     1791874800,
+     1791961200,
+     1792047600,
+     1792134000
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "low": [
+        189.77999877929688,
+        194.02000427246094,
+        195.25999450683594,
+        196.97999572753906,
+        198.67999267578125
+       ],
+       "open": [
+        190.5800018310547,
+        196.0,
+        196.60000610351562,
+        199.47999572753906,
+        200.60000610351562
+       ],
+       "high": [
+        197.8800048828125,
+        198.17999267578125,
+        199.36000061035156,
+        203.0,
+        204.1999969482422
+       ],
+       "volume": [
+        1894384,
+        1961267,
+        1900721,
+        2846911,
+        2546811
+       ],
+       "close": [
+        194.4600067138672,
+        197.27999877929688,
+        196.94000244140625,
+        201.25,
+        199.22000122070312
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        194.4600067138672,
+        197.27999877929688,
+        196.94000244140625,
+        201.25,
+        199.22000122070312
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ },
+ "timeseries": {
+  "result": [
+   {
+    "meta": {
+     "symbol": [
+      "SAP.DE"
+     ],
+     "type": [
+      "annualOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1767139200
+    ],
+    "annualOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2024-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1166589461.0,
+       "fmt": "1.17B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1167559048.0,
+       "fmt": "1.17B"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "SAP.DE"
+     ],
+     "type": [
+      "trailingDilutedEPS"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1743379200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "trailingDilutedEPS": [
+     {
+      "dataId": 29009,
+      "asOfDate": "2024-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 2.65,
+       "fmt": "2.65"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 4.87,
+       "fmt": "4.87"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 5.56,
+       "fmt": "5.56"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 6.1,
+       "fmt": "6.10"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 6.24,
+       "fmt": "6.24"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 6.68,
+       "fmt": "6.68"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "SAP.DE"
+     ],
+     "type": [
+      "quarterlyOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1751241600,
+     1759190400,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "quarterlyOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1164604232.0,
+       "fmt": "1.16B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-09-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1164604232.0,
+       "fmt": "1.16B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1167559048.0,
+       "fmt": "1.17B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-03-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1167559048.0,
+       "fmt": "1.17B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 1154204232.0,
+       "fmt": "1.15B"
+      }
+     }
+    ]
+   }
+  ],
+  "error": null
+ },
+ "quoteSummaryRef": {
+  "price": 199.22,
+  "currency": "EUR",
+  "marketCap": 229940576256,
+  "pe": 29.823355,
+  "eps": 6.68,
+  "name": "SAP SE",
+  "bars": 2794,
+  "fa": true
+ }
+}

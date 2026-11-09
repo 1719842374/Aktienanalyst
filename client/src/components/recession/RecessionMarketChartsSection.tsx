@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
+import { usePublishChatSection } from "@/lib/chatSectionData";
+import { VIX_SOURCE_NA } from "@/lib/vixSourceLabel";
 import {
   Drawer,
   DrawerContent,
@@ -16,6 +18,7 @@ import {
   CHART_BOOKS,
   MARKET_WINDOWS,
   VOL_Y_MAX,
+  displayNa,
   pegDisplaySuffix,
   volBandLabel,
   type ChartMarketId,
@@ -37,6 +40,101 @@ import {
   Bar,
   Cell,
 } from "recharts";
+import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
+import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
+import { REAL10Y_OVERLAY, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
+import { oldestOhlcvDate, real10yOverlaySeries, type Real10YOverlayPoint } from "@/components/sections/TechnicalChart";
+import { creditOverlaySeries, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
+import {
+  BUFFETT_REGION_LABEL,
+  REST_OVERLAYS,
+  REST_OVERLAY_PARAMS,
+  marketBuffettRegion,
+  overlayZOnBars,
+  restOverlayStatusText,
+  zAxisDomain,
+  type RestOverlayId,
+  type RestOverlaySpec,
+} from "@shared/recession-rest-overlays";
+import { buffettSourceIds, useRecessionBuffettOverlay, useRecessionCapeOverlay, useRecessionFredHistory, useRecessionGoogleTrends, type BuffettOverlayBody, type CapeOverlayBody, type FredHistoryBody, type GoogleTrendsOverlayBody } from "@/hooks/useRecessionRestOverlays";
+
+// F1-43/F1-45 (ohne F1-41): Overlays Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y) im Preis-Pane.
+// Bestehende Endpoints /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
+const CREDIT_COLOR = "#f43f5e";
+// Eigene Farbe statt REAL10Y_OVERLAY.color (#38bdf8): die ist hier schon die SPY-Close-Linie.
+const T10Y_COLOR = "#6366f1";
+export const RECESSION_CREDIT_LABEL = "Markt-Spread Baa (FRED BAA10Y, US)";
+export const RECESSION_T10Y_LABEL = "Real 10J (DFII10)";
+
+/** F1-45: welche Rest-Overlays der Schalterleiste schon verdrahtet sind. Ein Eintrag pro Overlay. */
+const REST_WIRED: RestOverlayId[] = ["buffett", "cape", "curve", "m2", "trends"];
+
+export interface RestOverlayToggle {
+  spec: RestOverlaySpec;
+  on: boolean;
+  loading: boolean;
+  failed: boolean;
+  raw: { date: string; value: number }[] | null;
+  source: string;
+  note: string | null;
+  label: string;
+}
+
+export interface MacroOverlayState<T> {
+  on: boolean;
+  data: T | null | undefined;
+  loading: boolean;
+  failed: boolean;
+}
+
+/**
+ * Hängt je Kurstag `_credit` (as-of-Join aus shared/credit, max. 7 Tage) und `_t10y` = Real 10J DFII10
+ * (exakter Datums-Treffer wie #267/BTC-Chart, real10yOverlaySeries) an. Overlay aus → Feld fehlt.
+ */
+export function withRecessionMacroOverlays<T extends { date: string }>(
+  bars: T[],
+  credit: CreditSpreadResponse | null | undefined,
+  t10y: Real10YMacroHistory | null | undefined,
+): Array<T & { _credit?: number | null; _t10y?: number | null }> {
+  const c = credit && credit.points.length > 0 ? creditOverlaySeries(bars, credit.points) : null;
+  const t = real10yOverlaySeries(bars, t10y);
+  if (!c && !t) return bars;
+  return bars.map((b, i) => ({
+    ...b,
+    ...(c ? { _credit: c[i].spreadPct } : {}),
+    ...(t ? { _t10y: t[i].real10y } : {}),
+  }));
+}
+
+/** Statuszeile je Overlay: lädt / n/a mit Grund / aktueller Wert im Fenster. */
+export function macroOverlayStatusText(
+  label: string,
+  state: MacroOverlayState<{ points: unknown[]; note: string | null; source: string }>,
+  series: CreditOverlayPoint[] | null,
+): string {
+  if (state.loading) return `${label}: FRED wird geladen …`;
+  if (state.failed || !state.data || state.data.points.length === 0) {
+    return `${label}: n/a — ${state.data?.note ?? "FRED nicht erreichbar"}`;
+  }
+  const last = [...(series ?? [])].reverse().find(p => p.spreadPct != null);
+  if (!last) return `${label}: n/a — FRED-Historie deckt dieses Fenster nicht ab`;
+  return `${label} (rechte Achse, %): aktuell ${last.spreadPct!.toFixed(2)} % per ${last.spreadDate} · Quelle ${state.data.source} · kein Score-Einfluss`;
+}
+
+/** Statuszeile Real 10J (DFII10, Route #267): lädt / n/a (Route 502, leer, Fenster ohne Treffer) / letzter Wert im Fenster. */
+export function real10yStatusText(
+  state: MacroOverlayState<Real10YMacroHistory>,
+  series: Real10YOverlayPoint[] | null,
+): string {
+  const label = RECESSION_T10Y_LABEL;
+  if (state.loading) return `${label}: FRED wird geladen …`;
+  if (state.failed || !state.data?.real10yByDate || Object.keys(state.data.real10yByDate).length === 0) {
+    return `${label}: n/a — ${REAL10Y_OVERLAY.sourceLabel} nicht erreichbar`;
+  }
+  const last = [...(series ?? [])].reverse().find(p => p.real10y != null);
+  if (!last) return `${label}: n/a — FRED-Historie deckt dieses Fenster nicht ab`;
+  return `${label} (rechte Achse, %): aktuell ${last.real10y!.toFixed(2)} % per ${last.date} · Quelle ${REAL10Y_OVERLAY.sourceLabel} (Realzins) · kein Score-Einfluss`;
+}
 
 function fmt(n: number | null | undefined, digits: number): string {
   if (n == null || !Number.isFinite(n)) return "n/a";
@@ -106,7 +204,7 @@ function SnapshotRow({ market }: { market: MarketChart }) {
   return (
     <>
       <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-        {market.valuationLabel} · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+        {market.valuationLabel} · PE {displayNa(s.pe, fmt(s.pe, 1), s.missing, "PE")} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
         {pegDisplaySuffix(s.pegKind)}
         {pegNote} · PEG fwd {fmt(s.pegFwd, 2)}
         {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
@@ -125,7 +223,7 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
   if (error) return <p className="text-xs text-red-500">{error instanceof Error ? error.message : "Factpack fehlgeschlagen"}</p>;
   if (!pack) return null;
   const rows: { label: string; value: string; warn?: boolean }[] = [
-    { label: "PE ttm", value: fmt(pack.pe, 2) },
+    { label: "PE ttm", value: displayNa(pack.pe, fmt(pack.pe, 2), pack.note, "PE") },
     { label: "PE fwd", value: fmt(pack.peFwd, 2) },
     { label: "EPS YoY", value: pack.epsYoy == null ? "n/a" : `${fmt(pack.epsYoy, 2)} %` },
     { label: "PEG ttm", value: `${fmt(pack.peg, 2)}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
@@ -164,12 +262,36 @@ function MarketPanes({
   market,
   logScale,
   onPickDate,
+  credit,
+  t10y,
+  rest = [],
 }: {
   market: MarketChart;
   logScale: boolean;
   onPickDate: (date: string) => void;
+  credit?: MacroOverlayState<CreditSpreadResponse>;
+  t10y?: MacroOverlayState<Real10YMacroHistory>;
+  rest?: RestOverlayToggle[];
 }) {
   const price = market.ohlcv;
+  const creditOn = !!credit?.on;
+  const t10yOn = !!t10y?.on;
+  const restDrawn = rest.map(t => {
+    const placed = t.on ? overlayZOnBars(price, t.raw, t.spec.frequency) : { window: null, zByIndex: price.map(() => null) };
+    const show = t.on && !!placed.window && placed.zByIndex.some(v => v != null);
+    return { t, ...placed, show };
+  });
+  let priceData: Array<(typeof price)[number] & { _credit?: number | null; _t10y?: number | null; [key: string]: unknown }> =
+    withRecessionMacroOverlays(price, creditOn ? credit?.data : null, t10yOn ? t10y?.data : null);
+  for (const d of restDrawn) {
+    if (!d.show) continue;
+    priceData = priceData.map((b, i) => ({ ...b, [d.t.spec.field]: d.zByIndex[i] }));
+  }
+  const anyRestLine = restDrawn.some(d => d.show);
+  const creditSeries = creditOn && credit?.data && credit.data.points.length > 0 ? creditOverlaySeries(price, credit.data.points) : null;
+  const t10ySeries = t10yOn ? real10yOverlaySeries(price, t10y?.data) : null;
+  const showCreditLine = !!creditSeries?.some(p => p.spreadPct != null);
+  const showT10yLine = !!t10ySeries?.some(p => p.real10y != null);
   const rsi = price.filter((p) => p.rsi != null);
   const macd = price.filter((p) => p.macd != null && p.signal != null);
   const yMax = market.volYMax ?? VOL_Y_MAX;
@@ -178,7 +300,7 @@ function MarketPanes({
     <div className="space-y-3">
       <div>
         <p className="text-[11px] text-muted-foreground mb-1">
-          {market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
+          {market.volSource === null ? VIX_SOURCE_NA : market.volSource ?? market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
           {market.bandsAnalog ? " · Bänder analog, nicht identisch" : " · US-kalibriert"}
         </p>
         {market.volNote && (
@@ -229,8 +351,8 @@ function MarketPanes({
           <div className="h-[220px] w-full" data-testid="price-chart">
             <ResponsiveContainer>
               <LineChart
-                data={price}
-                margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+                data={priceData}
+                margin={{ top: 8, right: showCreditLine || showT10yLine || anyRestLine ? 0 : 12, left: 0, bottom: 0 }}
                 onClick={(state) => {
                   const date = chartClickDate(state);
                   if (date) onPickDate(date);
@@ -239,27 +361,81 @@ function MarketPanes({
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis
+                  yAxisId="price"
                   scale={logScale ? "log" : "linear"}
                   domain={["auto", "auto"]}
                   tick={{ fontSize: 10 }}
                   width={48}
                 />
+                {showCreditLine && (
+                  <YAxis yAxisId="credit" orientation="right" domain={[0, "auto"]} width={36} tick={{ fontSize: 9, fill: CREDIT_COLOR }} axisLine={{ stroke: CREDIT_COLOR }} tickLine={false} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                )}
+                {showT10yLine && (
+                  <YAxis yAxisId="t10y" orientation="right" domain={real10yDomain(t10ySeries ? t10ySeries.map(p => p.real10y) : [])} width={36} tick={{ fontSize: 9, fill: T10Y_COLOR }} axisLine={{ stroke: T10Y_COLOR }} tickLine={false} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                )}
+                {restDrawn.filter(d => d.show && d.window).map(d => (
+                  <YAxis key={d.t.spec.axisId} yAxisId={d.t.spec.axisId} orientation="right" domain={zAxisDomain(d.window!)} width={REST_OVERLAY_PARAMS.axisWidth} tick={{ fontSize: 9, fill: d.t.spec.color }} axisLine={{ stroke: d.t.spec.color }} tickLine={false} tickFormatter={(v: number) => v.toFixed(1)} />
+                ))}
                 <Tooltip
-                  content={({ active, label, payload }) => (
-                    <DayTooltip
-                      active={active}
-                      label={typeof label === "string" ? label : undefined}
-                      rows={[{ name: "Close", value: fmt(payload?.[0]?.value as number | undefined, 2) }]}
-                    />
-                  )}
+                  content={({ active, label, payload }) => {
+                    const row = payload?.[0]?.payload as { close?: number; _credit?: number | null; _t10y?: number | null; [key: string]: unknown } | undefined;
+                    const rows = [{ name: "Close", value: fmt(row?.close, 2) }];
+                    if (creditOn) rows.push({ name: "Baa-Spread", value: row?._credit == null ? "n/a" : `${fmt(row._credit, 2)} %` });
+                    if (t10yOn) rows.push({ name: RECESSION_T10Y_LABEL, value: row?._t10y == null ? "n/a" : `${fmt(row._t10y, 2)} %` });
+                    for (const d of restDrawn) {
+                      if (!d.t.on) continue;
+                      const v = row?.[d.t.spec.field];
+                      rows.push({ name: d.t.label, value: typeof v === "number" ? fmt(v, 2) : "n/a" });
+                    }
+                    return (
+                      <DayTooltip
+                        active={active}
+                        label={typeof label === "string" ? label : undefined}
+                        rows={rows}
+                      />
+                    );
+                  }}
                 />
-                <Line type="monotone" dataKey="close" stroke="#38bdf8" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                <Line yAxisId="price" type="monotone" dataKey="close" stroke="#38bdf8" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                {showCreditLine && (
+                  <Line yAxisId="credit" type="stepAfter" dataKey="_credit" name={RECESSION_CREDIT_LABEL} stroke={CREDIT_COLOR} strokeDasharray="5 2" dot={false} strokeWidth={1.3} connectNulls={false} isAnimationActive={false} />
+                )}
+                {showT10yLine && (
+                  <Line yAxisId="t10y" type="monotone" dataKey="_t10y" name={RECESSION_T10Y_LABEL} stroke={T10Y_COLOR} strokeDasharray="2 2" dot={false} strokeWidth={1.3} connectNulls={false} isAnimationActive={false} />
+                )}
+                {restDrawn.filter(d => d.show && d.window).map(d => (
+                  <Line key={d.t.spec.field} yAxisId={d.t.spec.axisId} type={d.t.spec.frequency === "monthly" ? "stepAfter" : "monotone"} dataKey={d.t.spec.field} name={d.t.label} stroke={d.t.spec.color} strokeDasharray={d.t.spec.dash} dot={false} strokeWidth={REST_OVERLAY_PARAMS.strokeWidth} connectNulls={false} isAnimationActive={false} />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">Keine Kurse für dieses Fenster.</p>
         )}
+        {creditOn && credit && (
+          <p className="text-[10px] text-muted-foreground break-words mt-1" data-testid="recession-credit-status">
+            <span style={{ color: CREDIT_COLOR }}>■</span> {macroOverlayStatusText(RECESSION_CREDIT_LABEL, credit, creditSeries)}
+          </p>
+        )}
+        {t10yOn && t10y && (
+          <p className="text-[10px] text-muted-foreground break-words mt-1" data-testid="recession-t10y-status">
+            <span style={{ color: T10Y_COLOR }}>■</span> {real10yStatusText(t10y, t10ySeries)}
+          </p>
+        )}
+        {restDrawn.filter(d => d.t.on).map(d => (
+          <p key={d.t.spec.statusTestId} className="text-[10px] text-muted-foreground break-words mt-1" data-testid={d.t.spec.statusTestId}>
+            <span style={{ color: d.t.spec.color }}>■</span>{" "}
+            {restOverlayStatusText({
+              label: d.t.label,
+              loading: d.t.loading,
+              failed: d.t.failed,
+              source: d.t.source,
+              note: d.t.note,
+              window: d.window,
+              rawUnit: d.t.spec.rawUnit,
+            })}
+          </p>
+        ))}
       </div>
 
       {price.length > 0 && (
@@ -371,8 +547,8 @@ function MarketPanes({
           <p className="text-[10px] text-muted-foreground">z(YoY) &gt; 1 = Hebel hoch. Nur SPY — nicht unter ASHR, kein EU-Klon.</p>
         </div>
       )}
-      {market.id === "SPY" && !market.leverage && market.leverageNote && (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="leverage-note">{market.leverageNote}</p>
+      {!market.leverage && market.leverageNote && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400 break-words" data-testid={market.id === "SPY" ? "leverage-note" : `leverage-note-${market.id}`}>{market.leverageNote}</p>
       )}
     </div>
   );
@@ -410,14 +586,123 @@ function BarChartSafe({
   );
 }
 
+function restOverlayToggles(input: {
+  buffettOn: boolean;
+  buffettRegion: "US" | "EU" | "CN";
+  buffett: { data?: BuffettOverlayBody | null; isLoading: boolean; isError: boolean };
+  capeOn: boolean;
+  cape: { data?: CapeOverlayBody | null; isLoading: boolean; isError: boolean };
+  curveOn: boolean;
+  curve: { data?: FredHistoryBody | null; isLoading: boolean; isError: boolean };
+  m2On: boolean;
+  m2: { data?: FredHistoryBody | null; isLoading: boolean; isError: boolean };
+  trendsOn: boolean;
+  trends: { data?: GoogleTrendsOverlayBody | null; isLoading: boolean; isError: boolean };
+}): RestOverlayToggle[] {
+  const body = input.buffett.data;
+  const ids = buffettSourceIds(body);
+  const where = BUFFETT_REGION_LABEL[input.buffettRegion];
+  const cape = input.cape.data;
+  return [
+    {
+      spec: REST_OVERLAYS.buffett,
+      on: input.buffettOn,
+      loading: input.buffettOn && input.buffett.isLoading,
+      failed: input.buffett.isError || !!body?.error,
+      raw: (body?.points ?? []).flatMap(p => Number.isFinite(p.ratio) ? [{ date: p.date, value: p.ratio }] : []),
+      source: ids ? `${ids} (${where})` : where,
+      note: body?.error ?? body?.note ?? null,
+      label: `Buffett (${where})`,
+    },
+    {
+      spec: REST_OVERLAYS.cape,
+      on: input.capeOn,
+      loading: input.capeOn && input.cape.isLoading,
+      failed: input.cape.isError,
+      raw: (cape?.points ?? []).flatMap(p => Number.isFinite(p.value) ? [{ date: p.date, value: p.value }] : []),
+      source: cape?.source ?? "Multpl Shiller PE (US)",
+      note: cape?.note ?? null,
+      label: "CAPE (US)",
+    },
+    fredToggle(REST_OVERLAYS.curve, input.curveOn, input.curve, "Zinskurve (US)", "FRED T10Y2Y (US)"),
+    fredToggle(REST_OVERLAYS.m2, input.m2On, input.m2, "M2 (US)", "FRED M2SL YoY (US)"),
+    {
+      spec: REST_OVERLAYS.trends,
+      on: input.trendsOn,
+      loading: input.trendsOn && input.trends.isLoading,
+      failed: input.trends.isError,
+      raw: (input.trends.data?.points ?? []).flatMap(p => Number.isFinite(p.value) ? [{ date: p.date, value: p.value }] : []),
+      source: input.trends.data?.source ?? "Google-Trends-Cache (US)",
+      note: input.trends.data?.note ?? null,
+      label: "Trends (US)",
+    },
+  ];
+}
+
+function fredToggle(
+  spec: RestOverlaySpec,
+  on: boolean,
+  query: { data?: FredHistoryBody | null; isLoading: boolean; isError: boolean },
+  label: string,
+  fallbackSource: string,
+): RestOverlayToggle {
+  const body = query.data;
+  return {
+    spec,
+    on,
+    loading: on && query.isLoading,
+    failed: query.isError,
+    raw: (body?.points ?? []).flatMap(p => Number.isFinite(p.value) ? [{ date: p.date, value: p.value }] : []),
+    source: body?.source || fallbackSource,
+    note: body?.note ?? null,
+    label,
+  };
+}
+
 function ChartsBody() {
   const [tab, setTab] = useState<ChartMarketId>("SPY");
   const [window, setWindow] = useState<MarketWindow>("5Y");
   const [logScale, setLogScale] = useState(false);
   const [clickDate, setClickDate] = useState<string | null>(null);
+  // F1-43/F1-45: Overlay-Schalter, Default aus (Anzeige wie bisher). Abruf nur, solange der Schalter an ist.
+  const [showCredit, setShowCredit] = useState(false);
+  const [showT10y, setShowT10y] = useState(false);
+  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false, cape: false, curve: false, m2: false, trends: false });
+  const creditQ = useMarketCreditSpread(showCredit);
   const q = useRecessionMarketCharts(window);
+  // Real 10J: bestehende DFII10-Route aus #267 (useMarketReal10Y), Start = ältester Kurstag des aktiven Markts.
+  const real10yStart = oldestOhlcvDate(q.data?.markets.find((m) => m.id === tab)?.ohlcv);
+  const t10yQ = useMarketReal10Y(real10yStart, showT10y);
+  const buffettRegion = marketBuffettRegion(tab);
+  const buffettQ = useRecessionBuffettOverlay(buffettRegion, restOn.buffett);
+  const capeQ = useRecessionCapeOverlay(restOn.cape);
+  const curveQ = useRecessionFredHistory("T10Y2Y", restOn.curve);
+  const m2Q = useRecessionFredHistory("M2SL", restOn.m2);
+  const trendsQ = useRecessionGoogleTrends(restOn.trends);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
+  const restToggles = restOverlayToggles({
+    buffettOn: restOn.buffett, buffettRegion, buffett: buffettQ,
+    capeOn: restOn.cape, cape: capeQ,
+    curveOn: restOn.curve, curve: curveQ,
+    m2On: restOn.m2, m2: m2Q,
+    trendsOn: restOn.trends, trends: trendsQ,
+  });
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
+
+  // PR 3 (Chat-Kontext): Snapshot-Zeilen aller vier bereits geladenen Märkte veröffentlichen.
+  const snapFacts: Record<string, string> = {};
+  for (const m of q.data?.markets ?? []) {
+    const s = m.snapshot;
+    snapFacts[m.id] = `${m.valuationLabel} · PE ${fmt(s.pe, 1)} · fwd ${fmt(s.peFwd, 1)} · EPS YoY ${fmt(s.epsYoy, 1)}% · PEG ${fmt(s.peg, 2)}${pegDisplaySuffix(s.pegKind)} · PEG fwd ${fmt(s.pegFwd, 2)}${pegDisplaySuffix(s.pegFwdKind)} · RSI ${fmt(s.rsi, 1)} · MACD H ${fmt(s.macdHist, 2)}`;
+  }
+  usePublishChatSection("recession", "markt", q.data ? {
+    stand: q.data.asOf, fenster: q.data.window, aktiverTab: tab, ...snapFacts,
+    _auffaelligkeiten: (q.data.markets ?? []).flatMap(m => [
+      m.snapshot.pegKind === "formula" && m.snapshot.peg != null && m.snapshot.peg > 3 ? `${m.id}: PEG > 3 (teuer je Wachstumseinheit)` : "",
+      m.snapshot.missing ? `${m.id}: fehlend ${m.snapshot.missing}` : "",
+      m.volNote ? `${m.id}: ${m.volNote}` : "",
+    ]).filter(Boolean).join("; ") || null,
+  } : null);
 
   return (
     <div className="space-y-3">
@@ -469,6 +754,49 @@ function ChartsBody() {
         >
           log
         </button>
+        <button
+          type="button"
+          data-testid="toggle-recession-credit"
+          aria-pressed={showCredit}
+          title={`${RECESSION_CREDIT_LABEL}. Nur Anzeige, kein Score-Einfluss.`}
+          onClick={() => setShowCredit((v) => !v)}
+          className={`px-2 py-1 text-[11px] rounded-md border ${
+            showCredit ? "border-rose-500 text-rose-500" : "border-border text-muted-foreground hover:bg-muted/40"
+          }`}
+        >
+          Baa-Spread
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-recession-t10y"
+          aria-pressed={showT10y}
+          title={`${RECESSION_T10Y_LABEL}. Nur Anzeige, kein Score-Einfluss.`}
+          onClick={() => setShowT10y((v) => !v)}
+          className={`px-2 py-1 text-[11px] rounded-md border ${
+            showT10y ? "border-indigo-500 text-indigo-500" : "border-border text-muted-foreground hover:bg-muted/40"
+          }`}
+        >
+          Real 10J
+        </button>
+        {REST_WIRED.map((id) => {
+          const spec = REST_OVERLAYS[id];
+          const on = restOn[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              data-testid={spec.testId}
+              aria-pressed={on}
+              title={`${spec.label}. Nur Anzeige, kein Score-Einfluss.`}
+              onClick={() => setRestOn((s) => ({ ...s, [id]: !s[id] }))}
+              className={`px-2 py-1 text-[11px] rounded-md border ${
+                on ? spec.onClass : "border-border text-muted-foreground hover:bg-muted/40"
+              }`}
+            >
+              {spec.chip}
+            </button>
+          );
+        })}
       </div>
 
       {q.isLoading && <p className="text-xs text-muted-foreground">Vier Märkte, Vol und OHLCV …</p>}
@@ -491,7 +819,14 @@ function ChartsBody() {
             <span className="text-xs text-muted-foreground">Fenster {q.data?.window}</span>
           </div>
           <SnapshotRow market={market} />
-          <MarketPanes market={market} logScale={logScale} onPickDate={setClickDate} />
+          <MarketPanes
+            market={market}
+            logScale={logScale}
+            onPickDate={setClickDate}
+            credit={{ on: showCredit, data: creditQ.data, loading: creditQ.isLoading, failed: creditQ.isError }}
+            t10y={{ on: showT10y, data: t10yQ.data, loading: t10yQ.isLoading, failed: t10yQ.isError }}
+            rest={restToggles}
+          />
         </>
       )}
 

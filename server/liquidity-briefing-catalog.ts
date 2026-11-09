@@ -18,29 +18,42 @@ import {
   type AppMonth,
   type DatedValue,
   type PeppMonth,
+  BIS_CN_CBPOL_URL,
+  BIS_IN_CBPOL_URL,
+  OECD_IN_2Y_URL,
+  WORLD_BANK_CN_M2_URL,
+  briefingPricedIn,
   carryBp,
+  cnNominalFisher,
   deltaOverDays,
   deltaSeries,
   exPostRealPercent,
+  fisherCarrySeries,
   halfLifeYears,
   japanCpiYoy,
   lastInMonth,
   latestOnOrBefore,
   monthStockDiff,
+  officialOrRatioVelocity,
+  parseBisCbpol,
   parseEcbCsv,
   parseFredCsv,
   parseMofJgb10,
   parseMspdBillStockBn,
+  parseOecdMeiJson,
+  parseWorldBankLevels,
   percentToDecimal,
   preferNominal,
-  pricedInPi,
   qtNetBn,
   qtNetSeries,
   roundTo,
   somaNotesBn,
   spilloverEvent,
+  usEmgFromSeries,
+  worldBankYoy,
   yoyOnIndex,
   zOfLatest,
+  type UsVelocitySource,
 } from "./liquidity-briefing-math";
 
 export const MOF_JGB_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv";
@@ -56,6 +69,10 @@ export interface CatalogTexts {
   mof: string;
   mspd: string;
   wfs: string;
+  worldBank?: string;
+  bisCn?: string;
+  bisIn?: string;
+  oecdIn2y?: string;
 }
 
 export interface CatalogContext {
@@ -68,6 +85,7 @@ export interface CatalogContext {
   jpMoneyBn: number | null;
   fRestBn: number | null;
   deltaMBn: number | null;
+  programAgeYears?: number | null;
   app: AppMonth[];
   pepp: PeppMonth[];
   nowIso: string;
@@ -76,7 +94,14 @@ export interface CatalogContext {
 export type BriefingCatalog = Pick<
   LiquidityBriefing,
   "rates" | "halfLife" | "pricedIn" | "spillover" | "em" | "books" | "qra" | "nakajima"
->;
+> & {
+  usFill: {
+    velocity: number | null;
+    emg: number | null;
+    velocityMedian10y: number | null;
+    source: UsVelocitySource;
+  };
+};
 
 function yearsAgo(now: Date, years: number): string {
   const d = new Date(now.getTime());
@@ -99,6 +124,10 @@ export function catalogSourceUrls(now = new Date()): { id: string; url: string }
       id: "ECB_WFS",
       url: `https://data-api.ecb.europa.eu/service/data/ILM/W.U2.C.L050100.U2.EUR?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
     },
+    { id: "WB_CN_M2", url: WORLD_BANK_CN_M2_URL },
+    { id: "BIS_CN_CBPOL", url: BIS_CN_CBPOL_URL },
+    { id: "BIS_IN_CBPOL", url: BIS_IN_CBPOL_URL },
+    { id: "OECD_IN_2Y", url: OECD_IN_2Y_URL },
   ];
 }
 
@@ -149,35 +178,77 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
   const jpReal = jpNominal && jpCpi ? exPostRealPercent(jpNominal.value, jpCpi.latest) : null;
   const usReal = rateOf(fred.DFII10, "FRED DFII10");
   const us10y = rateOf(fred.DGS10, "FRED DGS10");
-  const cn10y: LiquidityBriefingRate = {
-    value: null,
-    asOf: null,
-    source: "Markt/Bloomberg — kein robustes FRED",
-  };
   const cnCpi = yoyOnIndex(fred.CHNCPIALLMINMEI || []);
+  const cnFisher = cnNominalFisher(usReal.value, cnCpi?.latest ?? null);
+  const cn10y: LiquidityBriefingRate = cnFisher != null && cnCpi
+    ? {
+      value: roundTo(cnFisher, 3),
+      asOf: cnCpi.period,
+      source: "Fisher DFII10 + FRED CHNCPIALLMINMEI (kein live FRED-CN-10y)",
+    }
+    : {
+      value: null,
+      asOf: null,
+      source: "kein live FRED-CN-10y (IRLTLT01CNM156N HTML) — Fisher needs DFII10 and CN CPI",
+    };
   const de10y = rateOf(fred.IRLTLT01DEM156N, "FRED IRLTLT01DEM156N");
 
+  const usFillRaw = officialOrRatioVelocity(fred.M2V || [], fred.GDP || [], fred.M2SL || []);
+  const usEmg = usEmgFromSeries(fred.M2SL || [], fred.GDPC1 || [], fred.CPIAUCSL || []);
+  const usFill = {
+    velocity: usFillRaw.velocity == null ? null : roundTo(usFillRaw.velocity, 3),
+    emg: usEmg == null ? null : roundTo(usEmg, 2),
+    velocityMedian10y: usFillRaw.median == null ? null : roundTo(usFillRaw.median, 3),
+    source: usFillRaw.source,
+  };
+  const velForPi = ctx.usVelocity ?? usFill.velocity;
+  const vBarForPi = ctx.usVelocityMedian ?? usFill.velocityMedian10y;
   const usDecimal = usReal.value == null ? null : percentToDecimal(usReal.value);
   const jpDecimal = jpReal == null ? null : percentToDecimal(jpReal);
+  const ezHicpLast = latestPoint(fred.CPHPTT01EZM659N);
+  const ezHicpPct = ezHicpLast ? { latest: ezHicpLast.value, period: ezHicpLast.period } : null;
+  const ezRealPct = de10y.value != null && ezHicpPct != null
+    ? exPostRealPercent(de10y.value, ezHicpPct.latest)
+    : null;
+  const ezDecimal = ezRealPct == null ? null : percentToDecimal(ezRealPct);
   const halfLife = {
-    usYears: usDecimal == null ? null : roundTo(halfLifeYears(usDecimal, ctx.usVelocity, ctx.usVelocityMedian) ?? NaN, 2),
+    usYears: usDecimal == null ? null : roundTo(halfLifeYears(usDecimal, velForPi, vBarForPi) ?? NaN, 2),
     jpYears: jpDecimal == null ? null : roundTo(halfLifeYears(jpDecimal, ctx.jpVelocity, ctx.jpVelocityMedian) ?? NaN, 2),
-    ezYears: null,
+    ezYears: ezDecimal == null ? null : roundTo(halfLifeYears(ezDecimal, ctx.ezVelocity, ctx.ezVelocityMedian) ?? NaN, 2),
   };
   if (halfLife.usYears != null && !Number.isFinite(halfLife.usYears)) halfLife.usYears = null;
   if (halfLife.jpYears != null && !Number.isFinite(halfLife.jpYears)) halfLife.jpYears = null;
+  if (halfLife.ezYears != null && !Number.isFinite(halfLife.ezYears)) halfLife.ezYears = null;
 
-  const realMonthly = lastInMonth(fred.DFII10 || []);
-  const zReal = zOfLatest(deltaSeries(realMonthly, 1));
-  const pi = pricedInPi(zReal?.z ?? null, ctx.deltaMBn, ctx.fRestBn, ctx.jpMoneyBn);
+  const priced = briefingPricedIn(ctx.programAgeYears ?? null, velForPi, vBarForPi);
   const pricedIn: BriefingCatalog["pricedIn"] = {
-    pi: pi == null ? null : roundTo(pi, 3),
-    available: pi != null,
+    pi: priced.pi == null ? null : roundTo(priced.pi, 3),
+    available: priced.available,
     phi: PHI,
     addedToLi: false,
+    note: priced.note,
   };
 
-  const carry: DatedValue[] = [];
+  const wbM2 = worldBankYoy(parseWorldBankLevels(texts.worldBank || ""));
+  const wbM2Levels = parseWorldBankLevels(texts.worldBank || "");
+  const wbM2Last = wbM2Levels.length ? wbM2Levels[wbM2Levels.length - 1] : null;
+
+  const oecdIn2y = parseOecdMeiJson(texts.oecdIn2y || "");
+  const bisIn = parseBisCbpol(texts.bisIn || "");
+  const bisCn = parseBisCbpol(texts.bisCn || "");
+  const in2ySeries = oecdIn2y.length ? oecdIn2y : bisIn;
+  const in2y: LiquidityBriefingRate = in2ySeries.length
+    ? {
+      value: roundTo(in2ySeries[in2ySeries.length - 1].value, 3),
+      asOf: in2ySeries[in2ySeries.length - 1].period,
+      source: oecdIn2y.length
+        ? "OECD MEI_FIN IRLTTE02 IND (2y G-Sec)"
+        : "BIS WS_CBPOL IN (RBI repo; kein stabiles 2y-CSV)",
+    }
+    : { value: null, asOf: null, source: "OECD IRLTTE02 / BIS WS_CBPOL IN — beide leer" };
+  const cnRrLast = bisCn.length ? bisCn[bisCn.length - 1] : null;
+
+  const carry = fisherCarrySeries(fred.DGS10 || [], fred.DFII10 || [], fred.CHNCPIALLMINMEI || []);
   const usEz = spreadSeriesPoints(fred.DFII10 || [], fred.IRLTLT01DEM156N || [], 1);
   const qt = qtNetSeries(ctx.app, ctx.pepp);
   const latestCarry = us10y.value != null && cn10y.value != null ? carryBp(us10y.value, cn10y.value) : null;
@@ -227,19 +298,26 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
         ? { value: roundTo(cnCpi.latest, 2), asOf: cnCpi.period, source: "FRED CHNCPIALLMINMEI" }
         : { value: null, asOf: null, source: "FRED CHNCPIALLMINMEI" },
       de10y,
-      in2y: { value: null, asOf: null, source: "RBI DBIE / CCIL — kein stabiles CSV" },
+      in2y,
     },
     halfLife,
     pricedIn,
     spillover,
     em: {
       weightCap: EM_INDEX_WEIGHT_CAP,
-      cnM2Yoy: null,
-      cnRr7d: null,
-      cn10y: null,
-      in2y: null,
+      cnM2Yoy: wbM2 ? roundTo(wbM2.latest, 2) : null,
+      cnM2AsOf: wbM2?.period ?? wbM2Last?.period ?? null,
+      cnM2Source: "World Bank FM.LBL.BMNY.CN annual YoY",
+      cnRr7d: cnRrLast ? roundTo(cnRrLast.value, 2) : null,
+      cnRrAsOf: cnRrLast?.period ?? null,
+      cnRrSource: "BIS WS_CBPOL CN (PBoC policy / LPR; kein separates 7d-RR CSV)",
+      cn10y: cn10y.value,
+      in2y: in2y.value,
+      in2yAsOf: in2y.asOf,
+      in2ySource: in2y.source,
       tradeNote: "KR/TW Semi und Exportregeln sind ein Handel-Filter, keine Serie.",
     },
+    usFill,
     books: {
       us: {
         walclBn: walcl ? roundTo(walcl.value / 1000, 1) : null,
@@ -299,12 +377,16 @@ export async function loadBriefingCatalog(
   fetchText: (url: string) => Promise<string>,
 ): Promise<BriefingCatalog> {
   const urls = catalogSourceUrls(now);
-  const texts: CatalogTexts = { fred: {}, mof: "", mspd: "", wfs: "" };
+  const texts: CatalogTexts = { fred: {}, mof: "", mspd: "", wfs: "", worldBank: "", bisCn: "", bisIn: "", oecdIn2y: "" };
   await Promise.all(urls.map(async entry => {
     const body = await fetchText(entry.url).catch(() => "");
     if (entry.id === "MOF_JGB") texts.mof = body;
     else if (entry.id === "MSPD") texts.mspd = body;
     else if (entry.id === "ECB_WFS") texts.wfs = body;
+    else if (entry.id === "WB_CN_M2") texts.worldBank = body;
+    else if (entry.id === "BIS_CN_CBPOL") texts.bisCn = body;
+    else if (entry.id === "BIS_IN_CBPOL") texts.bisIn = body;
+    else if (entry.id === "OECD_IN_2Y") texts.oecdIn2y = body;
     else texts.fred[entry.id] = body;
   }));
   return assembleCatalog(texts, { ...ctx, nowIso: now.toISOString().slice(0, 10) });

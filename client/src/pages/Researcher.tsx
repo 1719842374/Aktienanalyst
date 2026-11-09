@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
+import { guardModule, invalidateCrossModuleQueries, useCrossModuleHandler, writeResearcherScope } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
-  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus
+  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus, Mic
 } from "lucide-react";
+import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
+import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { MacroPanel } from "@/components/researcher/MacroPanel";
 import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
@@ -14,6 +19,7 @@ import { RegionalStocksStrip } from "@/components/researcher/RegionalStocksStrip
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
 import { ScreenerPanel } from "@/components/researcher/ScreenerPanel";
 import { CapexPanel } from "@/components/researcher/CapexPanel";
+import { GeoMapPanel } from "@/components/researcher/GeoMapPanel";
 
 type Region = "US" | "EU" | "ASIA";
 type Tab = "macro" | "sectors" | "screener" | "capex";
@@ -49,6 +55,43 @@ const IMPACT_COLORS: Record<string, string> = {
   low: "bg-foreground/10 text-foreground/60",
 };
 
+/** Symbole, die die Researcher-Ansicht schon zeigt. Der Podcast-Knopf bleibt, wo er ist. */
+function symbolsInResearcherView(data: Record<string, unknown>, briefing: unknown): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const symbol = value.trim().toUpperCase();
+    if (!/^[A-Z0-9.\-]{1,24}$/.test(symbol) || seen.has(symbol)) return;
+    seen.add(symbol);
+    found.push(symbol);
+  };
+  const walk = (node: unknown, key: string | null, depth: number) => {
+    if (found.length >= 12 || depth > 8 || node == null) return;
+    if (typeof node === "string") {
+      if (key === "ticker" || key === "symbol") push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      if (key === "topPlayers" || key === "affectedTickers" || key === "tickers") {
+        for (const item of node) push(item);
+        return;
+      }
+      for (const item of node) walk(item, key, depth + 1);
+      return;
+    }
+    if (typeof node !== "object") return;
+    for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      if (childKey.startsWith("_")) continue;
+      if (childKey === "ticker" || childKey === "symbol") push(child);
+      else walk(child, childKey, depth + 1);
+    }
+  };
+  walk(data, null, 0);
+  walk(briefing, null, 0);
+  return found;
+}
+
 export default function Researcher() {
   const [activeTab, setActiveTab] = useState<Tab>("macro");
   const [region, setRegion] = useState<Region>("US");
@@ -58,6 +101,33 @@ export default function Researcher() {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [fiscalBridgeCount, setFiscalBridgeCount] = useState<number | null>(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const regionRef = useRef(region);
+  regionRef.current = region;
+  const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
+  const [podcastError, setPodcastError] = useState<string | null>(null);
+
+  async function runPodcast() {
+    setPodcastPhase("loading");
+    setPodcastError(null);
+    try {
+      const res = await apiRequest("POST", "/api/podcast/brief", { symbols: symbolsInResearcherView(data, briefingData) }, PODCAST_REQUEST_TIMEOUT_MS);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || typeof body !== "object") {
+        setPodcastPhase("error");
+        setPodcastError(`n/a — Podcast-Abruf HTTP ${res.status}`);
+        return;
+      }
+      setPodcastResult(body as PodcastProbeResult);
+      setPodcastPhase("done");
+    } catch (err: unknown) {
+      setPodcastPhase("error");
+      setPodcastError(err instanceof Error ? err.message : "n/a — Podcast-Abruf fehlgeschlagen");
+    }
+  }
 
   async function runBriefing(force = false) {
     setBriefingOpen(true);
@@ -99,6 +169,10 @@ export default function Researcher() {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+          }
           const json = await res.json();
           if (json?.__error) throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           return json;
@@ -129,6 +203,36 @@ export default function Researcher() {
       }
       setError(friendly);
     },
+  });
+
+  useEffect(() => {
+    writeResearcherScope(activeTab, region);
+  }, [activeTab, region]);
+
+  useCrossModuleHandler("researcher", async () => {
+    const tab = activeTabRef.current;
+    const reg = regionRef.current;
+    await guardModule(tab, () => mutation.mutateAsync({ tab, force: true, region: reg }));
+    if (tab !== "capex") {
+      await guardModule("capex", async () => {
+        const res = await apiRequest("POST", "/api/researcher/capex", { region: reg, force: true }, 120000);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+        }
+        const json = await res.json();
+        setData((prev) => ({ ...prev, [`capex_${reg}`]: json }));
+      });
+    }
+    await guardModule("fiscal", async () => {
+      const fiscalRes = await apiRequest("GET", "/api/researcher/fiscal-programs");
+      if (!fiscalRes.ok) {
+        const text = await fiscalRes.text();
+          throw new Error(`HTTP ${fiscalRes.status}: ${text.slice(0, 180)}`);
+        }
+        const body = await fiscalRes.json();
+      setFiscalBridgeCount(typeof body?.count === "number" ? body.count : null);
+    });
   });
 
   const cacheKey = `${activeTab}_${region}`;
@@ -196,6 +300,7 @@ export default function Researcher() {
               <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
               <span className="text-[10px] text-foreground/40 hidden md:inline truncate">Hedge-Fund-Style Macro & Stock Discovery</span>
             </div>
+            <CrossModuleRefreshButton className="h-8 px-2 text-[11px] font-medium text-foreground/70 hover:bg-muted/40 rounded-md transition-colors flex items-center gap-1 border border-border/40 shrink-0" label="Refresh" />
             <button
               onClick={() => runBriefing(false)}
               className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30 shrink-0"
@@ -204,6 +309,15 @@ export default function Researcher() {
             >
               <Flame className="w-3 h-3" />
               <span className="hidden xs:inline sm:inline">Briefing</span>
+            </button>
+            <button
+              onClick={() => { void runPodcast(); }}
+              className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-violet-300 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30 shrink-0"
+              title="Key Driver für Börse, Wirtschaft und Finanzen, danach ein Podcast-Skript"
+              data-testid="button-podcast"
+            >
+              <Mic className="w-3 h-3" />
+              <span className="hidden sm:inline">Podcast</span>
             </button>
             <div className="hidden sm:flex items-center gap-1 bg-muted/30 rounded-md p-0.5 shrink-0">
               {REGION_OPTIONS.map(r => (
@@ -258,10 +372,16 @@ export default function Researcher() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-3 sm:p-4">
+      <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
+        {podcastPhase !== "idle" && (
+          <div className="mb-4 min-w-0">
+            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+          </div>
+        )}
         {activeTab === "macro" && (
-          <div className="mb-4">
+          <div className="mb-4 space-y-4">
             <LiquidityBriefingPanel />
+            <MacroPanel data={null} region={region} />
           </div>
         )}
         <div className="flex items-start justify-between gap-3 mb-4 p-3 rounded-lg bg-muted/20 border border-border/30">
@@ -289,8 +409,14 @@ export default function Researcher() {
                 Gecachte Analyse ohne KI-Inhalt — bitte „Aktualisieren“ klicken
               </div>
             )}
+            {fiscalBridgeCount != null && (
+              <div className="text-[10px] text-foreground/50 mt-1" data-testid="fiscal-bridge-count">
+                Fiskal-Bridge: {fiscalBridgeCount} Programme aus der Discovery (kein Score)
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
             {!currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(false)}
@@ -302,13 +428,13 @@ export default function Researcher() {
             )}
             {currentData && !loadingForCurrentView && (
               <button
-                onClick={() => runAnalysis(true)}
+                onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
                 className={
                   isStale
                     ? "px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-400/60 text-amber-200 text-[11px] font-semibold flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(251,191,36,0.35)] hover:bg-amber-500/25"
                     : "px-2 py-1.5 rounded-md text-foreground/50 hover:text-foreground hover:bg-muted/40 text-[10px] flex items-center gap-1 transition-colors"
                 }
-                title={isStale ? "KI-Inhalt fehlt — neu generieren" : "Neue Analyse erzwingen (verbraucht Credits)"}
+                title={isStale ? "KI-Inhalt fehlt — Analyse, Researcher und Portfolio neu laden" : "Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)"}
                 data-testid="button-refresh-analysis"
               >
                 <RefreshCw className={isStale ? "w-3.5 h-3.5" : "w-3 h-3"} /> Aktualisieren
@@ -319,6 +445,8 @@ export default function Researcher() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysiere…
               </div>
             )}
+            </div>
+            <CrossModuleRefreshNotice />
           </div>
         </div>
 
@@ -334,6 +462,8 @@ export default function Researcher() {
             <span>{error}</span>
           </div>
         )}
+
+        {activeTab === "capex" && <GeoMapPanel onOpenSectorOpportunity={() => setActiveTab("sectors")} />}
 
         {!currentData && !loadingForCurrentView && !error && activeTab !== "sectors" && (
           <EmptyState />
@@ -351,7 +481,9 @@ export default function Researcher() {
         )}
 
         <div className={loadingForCurrentView && currentData ? "relative opacity-60 transition-opacity" : "relative"}>
-          {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
+          {currentData && activeTab === "macro" && (
+            <MacroPanel data={currentData} region={region} showIndex={false} />
+          )}
           {activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
           {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} region={region} />}
           {currentData && activeTab === "capex" && <CapexPanel data={currentData} region={region} />}

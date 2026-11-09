@@ -12,6 +12,11 @@ import {
   fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
 import { indicatorWarmupFromDate } from "./history-fallback";
+import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
+import { minorUnitInfo, listingCurrencyOf, normalizeListingToUsd } from "../shared/listing-units";
+import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
+// #265 v2: SAP.DE/VOW3.DE (FMP 402) über das US-/ADR-Symbol; Bausteine in fmp-adr-map.ts.
+import { adrCandidatesFor, checkAdrPlausibility, detectPerShareUnit, adrBundleHasData, adrBundleToLocalListing, type AdrSourceInfo } from "./fmp-adr-map";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -227,6 +232,205 @@ export function highCapexFcfHint(
   return HIGH_CAPEX_FCF_HINT;
 }
 
+/**
+ * Offen_WORK_SECTION4_DATA_BUGS.md §9. Scale or permanent-capital language
+ * lifts a None moat to Narrow. No ticker list. Wide and Narrow stay as scored.
+ */
+export const SCALE_PERMANENT_CAPITAL_SOURCE = "Scale oder Permanent Capital";
+
+const PERMANENT_CAPITAL_PATTERN =
+  /permanent capital|perpetual capital|fee-related earnings|fee related earnings/i;
+const SCALE_PHRASE_PATTERN = /economies of scale/i;
+const ALTERNATIVES_LINE_PATTERN =
+  /asset management|alternative asset|private equity|infrastructure fund|\binfrastructure\b/i;
+const SCALE_WORD_PATTERN = /\b(scale|scaled|franchise|assets under management|\baum\b)\b/i;
+
+export function hasScaleOrPermanentCapital(
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): boolean {
+  const blob = `${description ?? ""} ${sector ?? ""} ${industry ?? ""}`;
+  if (PERMANENT_CAPITAL_PATTERN.test(blob) || SCALE_PHRASE_PATTERN.test(blob)) return true;
+  return ALTERNATIVES_LINE_PATTERN.test(blob) && SCALE_WORD_PATTERN.test(blob);
+}
+
+export function applyScalePermanentCapitalMoat<
+  T extends { moatStrength: "Wide" | "Narrow" | "None"; sources?: string[] },
+>(
+  assessment: T,
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): T {
+  if (assessment.moatStrength !== "None") return assessment;
+  if (!hasScaleOrPermanentCapital(description, sector, industry)) return assessment;
+  const sources = Array.isArray(assessment.sources) ? assessment.sources : [];
+  if (sources.includes(SCALE_PERMANENT_CAPITAL_SOURCE)) {
+    return { ...assessment, moatStrength: "Narrow", sources };
+  }
+  return {
+    ...assessment,
+    moatStrength: "Narrow",
+    sources: [...sources, SCALE_PERMANENT_CAPITAL_SOURCE],
+  };
+}
+
+/** §6. Interpretation order for alternatives managers. Not a GAAP-FCF replacement figure. */
+export const ALTERNATIVES_METRICS_NOTE =
+  "Für Alternatives zählen FRE, DE, FBC, Fundraising und Deployable Capital vor GAAP-FCF und GAAP-P/E.";
+
+export function alternativesMetricsNote(
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): string | null {
+  const blob = `${sector ?? ""} ${industry ?? ""} ${description ?? ""}`;
+  if (!/asset management|alternative asset|\balternatives\b|permanent capital|private equity/i.test(blob)) {
+    return null;
+  }
+  return ALTERNATIVES_METRICS_NOTE;
+}
+
+export interface AnalystGradeTally {
+  buy: number;
+  hold: number;
+  sell: number;
+  /** "analysts" after one row per firm. "grade-events" when a row has no firm key. */
+  basis: "analysts" | "grade-events";
+}
+
+function classifyAnalystGrade(text: string): "buy" | "hold" | "sell" {
+  const grade = text.toLowerCase();
+  if (grade.includes("buy") || grade.includes("outperform") || grade.includes("overweight")) return "buy";
+  if (grade.includes("sell") || grade.includes("underperform") || grade.includes("underweight")) return "sell";
+  return "hold";
+}
+
+/**
+ * §9 Analyst Grades. Same firm on two dates counts once (latest grade).
+ * Rows without an analyst or firm name stay events and must be labeled as such.
+ */
+export function tallyAnalystGrades(grades: unknown): AnalystGradeTally {
+  const rows = Array.isArray(grades) ? grades : [];
+  const parsed: { grade: string; analyst: string | null; date: string }[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const gradeRaw = record.newGrade ?? record.grade;
+    const grade = typeof gradeRaw === "string" ? gradeRaw : "";
+    const nameRaw = record.analystName ?? record.analyst ?? record.gradingCompany ?? record.gradingCompanyName;
+    const analyst = typeof nameRaw === "string" && nameRaw.trim() ? nameRaw.trim().toLowerCase() : null;
+    const date = typeof record.date === "string" ? record.date.slice(0, 10) : "";
+    parsed.push({ grade, analyst, date });
+  }
+
+  const canUnique = parsed.length > 0 && parsed.every((row) => row.analyst != null);
+  const byAnalyst = new Map<string, { grade: string; analyst: string | null; date: string }>();
+  if (canUnique) {
+    for (const row of parsed) {
+      const key = row.analyst as string;
+      const prev = byAnalyst.get(key);
+      if (!prev || row.date >= prev.date) byAnalyst.set(key, row);
+    }
+  }
+  const chosen: { grade: string; analyst: string | null; date: string }[] = [];
+  if (canUnique) byAnalyst.forEach((row) => chosen.push(row));
+  else parsed.forEach((row) => chosen.push(row));
+
+  let buy = 0;
+  let hold = 0;
+  let sell = 0;
+  for (const row of chosen) {
+    const bucket = classifyAnalystGrade(row.grade);
+    if (bucket === "buy") buy++;
+    else if (bucket === "sell") sell++;
+    else hold++;
+  }
+  return {
+    buy,
+    hold,
+    sell,
+    basis: parsed.length === 0 || canUnique ? "analysts" : "grade-events",
+  };
+}
+
+function isoDatePrefix(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+function quarterToken(period: unknown): string | null {
+  const token = String(period ?? "").trim().toUpperCase();
+  return /^Q[1-4]$/.test(token) ? token : null;
+}
+
+function fiscalYearToken(row: Record<string, unknown>): string | null {
+  const year = String(row.fiscalYear ?? row.calendarYear ?? "").trim();
+  if (/^\d{4}$/.test(year)) return year;
+  const date = isoDatePrefix(row.date);
+  return date ? date.slice(0, 4) : null;
+}
+
+/**
+ * §9 Earnings-Datum. Latest reported quarter from quarterly statements, then
+ * a past /stable/earnings row that has actuals. An annual FY row is not
+ * relabeled Q4 — that showed "Q4 FY2025" after Q1/Q2 of the next year.
+ */
+export function lastReportedQuarterLabel(input: {
+  todayIso: string;
+  quarterlyRows?: unknown[] | null;
+  earningsRows?: unknown[] | null;
+  annualPeriod?: string | null;
+  annualFiscalYear?: string | null;
+}): string | null {
+  const today = isoDatePrefix(input.todayIso) ?? String(input.todayIso ?? "").slice(0, 10);
+  const quarterly = Array.isArray(input.quarterlyRows) ? input.quarterlyRows : [];
+  let bestQuarter: { date: string; label: string } | null = null;
+  let firstUndatedQuarter: string | null = null;
+  for (const row of quarterly) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = quarterToken(record.period);
+    const year = fiscalYearToken(record);
+    if (!period || !year) continue;
+    const label = `${period} FY${year}`;
+    const date = isoDatePrefix(record.date);
+    if (!date) {
+      if (!firstUndatedQuarter) firstUndatedQuarter = label;
+      continue;
+    }
+    if (today && date > today) continue;
+    if (!bestQuarter || date > bestQuarter.date) bestQuarter = { date, label };
+  }
+  const earnings = Array.isArray(input.earningsRows) ? input.earningsRows : [];
+  let bestEarnings: { date: string; label: string } | null = null;
+  for (const row of earnings) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const date = isoDatePrefix(record.date);
+    if (!date || (today && date > today)) continue;
+    if (record.epsActual == null && record.revenueActual == null) continue;
+    const period = quarterToken(record.period);
+    const year = fiscalYearToken(record);
+    const label = period && year ? `${period} FY${year}` : date;
+    if (!bestEarnings || date > bestEarnings.date) bestEarnings = { date, label };
+  }
+  if (bestQuarter && bestEarnings) {
+    return bestEarnings.date > bestQuarter.date ? bestEarnings.label : bestQuarter.label;
+  }
+  if (bestQuarter) return bestQuarter.label;
+  if (bestEarnings) return bestEarnings.label;
+  if (firstUndatedQuarter) return firstUndatedQuarter;
+
+  const year = String(input.annualFiscalYear ?? "").trim();
+  if (!/^\d{4}$/.test(year)) return null;
+  const period = quarterToken(input.annualPeriod);
+  if (period) return `${period} FY${year}`;
+  return `FY${year}`;
+}
+
 export function parseNumber(s: string | undefined): number {
   if (!s) return 0;
   let cleaned = s.replace(/,/g, "").replace(/\$/g, "").replace(/%/g, "").trim();
@@ -291,6 +495,10 @@ export function fmpFallbackFailureResponse(ticker: string, failure: FmpFailure):
     case "FMP_NOT_CONFIGURED":
       return { status: 503, body: { error: "FMP nicht konfiguriert (FMP_API_KEY fehlt).", errorCode, fmpStatus } };
     case "FMP_UPSTREAM_ERROR":
+      // C1 (§7): 402 = Plan deckt das Symbol nicht ab. Hier kommt man nur an, wenn auch Yahoo nichts lieferte.
+      if (fmpStatus === 402) {
+        return { status: 502, body: { error: `Dein FMP-Plan deckt ${ticker} nicht ab (HTTP 402), und der Yahoo-Ersatz liefert für dieses Symbol keinen Kurs.`, errorCode, fmpStatus } };
+      }
       return { status: 502, body: { error: `FMP-Fehler HTTP ${fmpStatus} für ${ticker}.`, errorCode, fmpStatus } };
     case "FMP_UNREACHABLE":
       return { status: 503, body: { error: `Keine Daten für ${ticker} verfügbar. FMP API nicht erreichbar.`, errorCode, fmpStatus } };
@@ -299,12 +507,12 @@ export function fmpFallbackFailureResponse(ticker: string, failure: FmpFailure):
   }
 }
 
-export async function getFmpFallbackData(ticker: string): Promise<{
+export async function getFmpFallbackData(ticker: string, opts: { yahooOn402?: boolean } = {}): Promise<{
   quote: any; profile: any;
   financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
   analyst: { priceTarget: any; grades: any[]; estimates: any[] };
   ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
-  source: 'fmp';
+  source: 'fmp' | 'yahoo';
 } | { failure: FmpFailure }> {
   if (!isFmpAvailable()) {
     console.warn(`[FMP-FALLBACK] FMP_API_KEY not set for ${ticker}`);
@@ -343,6 +551,15 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     if (!quote?.price) {
       const failure = describeFmpFallbackFailure(ticker, quoteRes, settledAll.slice(1));
       console.warn(`[FMP-FALLBACK] No quote data for ${ticker}: ${failure.errorCode} fmpStatus=${failure.fmpStatus ?? "-"} ${failure.message}`);
+      // C1: nur bei 402 (Plan deckt Symbol nicht ab) auf Yahoo ausweichen. Andere Fehler bleiben wie bisher.
+      // opts.yahooOn402=false: innerer ADR-Abruf (fmpViaAdrData), kein Ersatz für das ADR-Symbol selbst.
+      if (failure.fmpStatus === 402 && opts.yahooOn402 !== false) {
+        // #265 v2: erst FMP über das ADR (SAP.DE → SAP, VOW3.DE → VWAPY, sonst VWAGY als Proxy), sonst Yahoo wie bisher.
+        const viaAdr = await fmpViaAdrData(ticker);
+        if (viaAdr) return viaAdr;
+        const yahoo = await yahooFallbackData(ticker);
+        if (yahoo) return yahoo;
+      }
       return { failure };
     }
     console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -370,17 +587,144 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       convertFmpRowsToUsd(get(balanceSheetRes) || []),
       convertFmpRowsToUsd(estimatesTagged),
     ]);
-    return {
+    const out = {
       quote, profile: get(profileRes),
       financials: { income: incomeUsd, cashflow: cashflowUsd, balanceSheet: balanceSheetUsd },
       analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: estimatesUsd },
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
-      source: 'fmp',
+      source: 'fmp' as const,
     };
+    // DCF-FX (Philip 18.10.2026 „alles in dollar … umrechnen“): Nicht-USD-Listings (EUR, CAD, GBp …) →
+    // Marktseite (Kurs, Market Cap, OHLCV, Kursziel) in USD, Statements sind schon USD (convertFmpRowsToUsd).
+    // Damit teilen Kurs, Market Cap, DCF und Bilanz eine Währung. USD-Listings (inkl. ADRs wie NVO) unverändert.
+    // Ohne FX: Minor Units wie bisher nach #244 (Pence → Pfund), Major-Währungen bleiben stehen und werden markiert.
+    return await listingToUsd(ticker, out);
   } catch (err: any) {
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };
   }
+}
+
+/** Abhängigkeiten von fmpViaAdrData (für Tests mit Mocks austauschbar). */
+export type FmpViaAdrDeps = {
+  snapshot: typeof getYahooSnapshot;
+  fetchAdr: (symbol: string) => ReturnType<typeof getFmpFallbackData>;
+  fxToUsd: (currency: string) => Promise<number>;
+  toUsd: (ticker: string, data: any) => Promise<any>;
+};
+const defaultAdrDeps: FmpViaAdrDeps = {
+  snapshot: getYahooSnapshot,
+  fetchAdr: (symbol) => getFmpFallbackData(symbol, { yahooOn402: false }),
+  fxToUsd: async (cur) => {
+    let fx = await getFxRateToUsd(cur).catch(() => 1);
+    if (!(fx > 0) || fx === 1) fx = (await fetchYahooFxToUsd(cur).catch(() => null)) ?? fx;
+    return fx;
+  },
+  toUsd: (ticker, data) => listingToUsd(ticker, data, { barsInMajor: true }),
+};
+
+/**
+ * #265 v2 (Philip 25.10.2026): SAP.DE → SAP, VOW3.DE → VWAPY (Vorzug) zuerst; liefert FMP für VWAPY nichts
+ * (leer/402) oder ist der Datensatz unplausibel → VWAGY (Stammaktie) mit Hinweis „Proxy: Stammaktie“.
+ * Kurs und Chart vom lokalen Listing (Yahoo), danach dieselbe USD-Normalisierung wie main (listingToUsd).
+ * Plausibilität je Abruf: Kursverhältnis zum ADR-Ratio, MCap ±3 % zu Yahoo. Jeder Fehlschlag → null
+ * (Aufrufer nimmt den Yahoo-Fallback; nie gemischte Werte). Andere Ticker: sofort null (unverändert).
+ */
+export async function fmpViaAdrData(ticker: string, deps: FmpViaAdrDeps = defaultAdrDeps): Promise<(any & { fmpSymbol: string; adr: AdrSourceInfo }) | null> {
+  const candidates = adrCandidatesFor(ticker);
+  if (!candidates.length) return null;
+  const snap = await deps.snapshot(ticker);
+  if (!snap || !(snap.price > 0)) { console.warn(`[FMP-ADR] ${ticker}: kein lokaler Yahoo-Kurs → Yahoo-Fallback`); return null; }
+  const cur = snap.currency ? snap.currency.trim().toUpperCase() : "";
+  if (!cur || minorUnitInfo(snap.currency as string)) { console.warn(`[FMP-ADR] ${ticker}: Listing-Währung ${cur || "fehlt"} nicht nutzbar → Yahoo-Fallback`); return null; }
+  const fx = cur === "USD" ? 1 : await deps.fxToUsd(cur).catch(() => 1);
+  if (cur !== "USD" && !(fx > 0 && fx !== 1)) { console.warn(`[FMP-ADR] ${ticker}: FX ${cur}USD fehlt → Yahoo-Fallback`); return null; }
+  for (const c of candidates) {
+    const res: any = await deps.fetchAdr(c.symbol).catch((e: any) => ({ failure: { errorCode: "FMP_UNREACHABLE", fmpStatus: null, message: String(e?.message ?? e) } }));
+    if ("failure" in res || !adrBundleHasData(res)) {
+      console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: FMP liefert keine Daten (${"failure" in res ? `${res.failure.errorCode} ${res.failure.fmpStatus ?? "-"}` : "leer"})`);
+      continue;
+    }
+    const adrPrice = Number(res.quote?.price ?? res.profile?.price);
+    const adrMcap = Number(res.profile?.marketCap ?? res.profile?.mktCap ?? res.quote?.marketCap);
+    const plaus = checkAdrPlausibility({ localPrice: snap.price, fxToUsd: fx, adrPrice, sharesPerAdr: c.sharesPerAdr, proxy: c.proxy, adrMarketCapUsd: adrMcap, yahooMarketCapLocal: snap.marketCap });
+    if (!plaus.ok) { console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: unplausibel – ${plaus.reason}`); continue; }
+    const inc0 = res.financials.income[0] ?? {};
+    const unit = detectPerShareUnit({ netIncome: inc0.netIncome, eps: inc0.epsDiluted ?? inc0.eps, marketCap: adrMcap, price: adrPrice, sharesPerAdr: c.sharesPerAdr });
+    if (!unit) { console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: Per-Share-Einheit unklar → nicht verwendet`); continue; }
+    const bars = [...(snap.bars ?? [])].reverse().map(({ source: _s, ...bar }: any) => bar); // neueste zuerst
+    const local = adrBundleToLocalListing(res, {
+      localSymbol: ticker.toUpperCase(), localPrice: snap.price, localCurrency: cur, fxToUsd: fx,
+      localBarsNewestFirst: bars, localExchange: snap.exchange ?? null, localName: snap.name ?? null,
+      candidate: c, plaus, perShareUnit: unit,
+    });
+    const usd = await deps.toUsd(ticker, local);
+    const lfx = usd?.profile?._listingFx;
+    if (usd?.profile) usd.profile = { ...usd.profile, _listingFx: lfx ? { ...lfx, sourceNote: local.adr.note } : lfx };
+    console.log(`[FMP-ADR] ${ticker} → ${c.symbol}${c.proxy ? " (Proxy Stammaktie)" : ""}: Ratio impl. ${plaus.impliedSharesPerAdr?.toFixed(4)} (${plaus.ratioDeviationPct?.toFixed(1)} %), MCap ${plaus.mcapDeviationPct?.toFixed(1)} % zu Yahoo, EPS-Einheit ${unit}, ${cur}USD ${fx}`);
+    return { ...usd, fmpSymbol: local.fmpSymbol, adr: local.adr };
+  }
+  return null;
+}
+
+/**
+ * C1 (Future_2_NA_Fixes_Research.md §6/§7/§10): FMP 402 → Yahoo liefert Kurs,
+ * Market Cap, PE, EPS und Historie im selben Shape wie der FMP-Pfad. Statements,
+ * Analystendaten, Segmente und Peers bleiben leer (keine erfundenen Werte).
+ * Quelle steht in source='yahoo' und quote/profile._dataSource.
+ */
+export async function yahooFallbackData(ticker: string): Promise<{
+  quote: any; profile: any;
+  financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
+  analyst: { priceTarget: any; grades: any[]; estimates: any[] };
+  ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
+  source: 'yahoo';
+} | null> {
+  const snap = await getYahooSnapshot(ticker);
+  if (!snap) {
+    console.warn(`[YAHOO-402] ${ticker}: Yahoo liefert keinen Kurs`);
+    return null;
+  }
+  console.log(`[YAHOO-402] ${ticker}: FMP 402 → Yahoo (Kurs ${snap.price} ${snap.currency ?? "?"}, ${snap.bars.length} Bars)`);
+  const marker = { _dataSource: "yahoo" as const, _dataSourceNote: YAHOO_402_NOTICE, _partialCoverage: true };
+  const quote = {
+    symbol: ticker, price: snap.price, marketCap: snap.marketCap, pe: snap.pe, eps: snap.eps,
+    name: snap.name, currency: snap.currency, exchange: snap.exchange, ...marker,
+  };
+  const profile = {
+    symbol: ticker, companyName: snap.name ?? ticker, currency: snap.currency ?? undefined,
+    exchange: snap.exchange ?? "", marketCap: snap.marketCap, price: snap.price, ...marker,
+  };
+  const ohlcv = [...snap.bars].reverse().map(({ source: _s, ...bar }) => bar); // FMP-Reihenfolge: neueste zuerst
+  const data = {
+    quote, profile,
+    financials: { income: [], cashflow: [], balanceSheet: [] },
+    analyst: { priceTarget: null, grades: [], estimates: [] },
+    ohlcv, segments: [], geoSegments: [], peers: [], ratios: [],
+    source: 'yahoo' as const,
+  };
+  // DCF-FX: Yahoo-Bars kommen über history-fallback schon in der Major-Einheit (yahooBarsToMajor).
+  return await listingToUsd(ticker, data, { barsInMajor: true });
+}
+
+/** DCF-FX: gemeinsame USD-Normalisierung für FMP- und Yahoo-Shape (shared/listing-units.ts normalizeListingToUsd). */
+async function listingToUsd<T extends Parameters<typeof normalizeListingToUsd>[0]>(ticker: string, data: T, opts: { barsInMajor?: boolean } = {}): Promise<T> {
+  const code = listingCurrencyOf(data);
+  if (!code || code === "USD") return data;
+  const minor = minorUnitInfo(code);
+  const major = minor?.major ?? code.toUpperCase();
+  let majorToUsd = await getFxRateToUsd(major).catch(() => 1);
+  if (!(majorToUsd > 0) || majorToUsd === 1) {
+    // FMP ohne FX-Kurs (getFxRateToUsd → 1) → Yahoo-FX als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
+    const y = await fetchYahooFxToUsd(major).catch(() => null);
+    if (y != null) { console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y}`); majorToUsd = y; }
+  }
+  const norm = normalizeListingToUsd(data, majorToUsd, FX_CONVERTIBLE_FIELDS, opts);
+  const fx = (norm.profile as any)?._listingFx;
+  if (fx?.converted) console.log(`[FX-LISTING] ${ticker}: ${code} → USD @ ${major}USD ${majorToUsd}${minor ? ` (÷${minor.factor})` : ""}`);
+  else if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FX-LISTING] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${code}, Statements USD wie bisher)`);
+  else console.warn(`[FX-LISTING] ${ticker}: ${fx?.warning ?? `FX ${major}USD fehlt`}`);
+  return norm;
 }
 
 // ============================================================

@@ -7,19 +7,22 @@
  * Wachstum n/a is estimated. Unmatched TAM/CAGR are estimated.
  * Anteil am TAM and vs. TAM are formula-only (shared/tam-na-fill.ts).
  *
- * Fail-closed: fills are returned only when every scope cell
- * (Wachstum · TAM · CAGR · Anteil am TAM · vs. TAM) closes. Otherwise 422
- * INCOMPLETE_FILL and nothing is applied. Does not write the fact cache and
- * does not recompute catalog coverage, quality, tamTotal,
- * segmentWeightedGrowth, or the DCF gate.
+ * Partial-apply: a fill is returned when it closes at least one in-scope cell
+ * (Wachstum · TAM · CAGR, plus the local Anteil-am-TAM / vs.-TAM formulas).
+ * Other cells stay n/a. 422 INCOMPLETE_FILL only when the model returns
+ * nothing usable. Rows with revenue null or 0 are omitted from the prompt.
+ * Does not write the fact cache and does not recompute catalog coverage,
+ * quality, tamTotal, segmentWeightedGrowth, or the DCF gate.
  */
 
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import type { PeerGrowthAnchor } from "../shared/peer-growth-anchor";
 import {
   TAM_NA_COLUMN_HEADER,
+  applicableTamNaFills,
   catalogCoverageNote,
-  countScopeRestNa,
   describeTamNaMatrixRow,
+  hasPositiveSegmentRevenue,
   segmentNeedsLlm,
   validateTamNaFills,
   type TamNaFill,
@@ -40,6 +43,8 @@ export interface TamNaFillArgs {
   description?: string;
   /** Fact catalog coverage from the existing analysis. Echoed, never recomputed. */
   coveragePct?: number | null;
+  /** Optionaler Peer-Median. Fehlt er, schätzt der Prompt nicht relativ. */
+  peerAnchor?: PeerGrowthAnchor | null;
   segments: TamNaFillRequestSegment[];
 }
 
@@ -83,7 +88,7 @@ function echoCoverage(v: unknown): number | null {
 function asRef(seg: TamNaFillRequestSegment): TamNaSegmentRef | null {
   const name = typeof seg.segmentName === "string" ? seg.segmentName.trim() : "";
   if (!name) return null;
-  if (!(typeof seg.segmentRevenue === "number" && Number.isFinite(seg.segmentRevenue) && seg.segmentRevenue >= 0)) return null;
+  if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) return null;
   const growth = typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth) ? seg.segmentGrowth : null;
   const tamSize = typeof seg.tamSize === "number" && Number.isFinite(seg.tamSize) ? seg.tamSize : null;
   const tamCAGR = typeof seg.tamCAGR === "number" && Number.isFinite(seg.tamCAGR) ? seg.tamCAGR : null;
@@ -132,7 +137,12 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
     ? `Rest-Zeile (sichtbar): ${REST_ROW_LABEL}\n`
     : "";
   const profile = clip(args.description, 500);
+  const anchor = args.peerAnchor;
+  const peerLine = anchor && anchor.medianRevenueYoyPct != null
+    ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
+    : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
   return `Schätze nur die n/a-Zellen der Tabelle Segment-TAM-Analyse. Fact-Zahlen nicht überschreiben.
+${peerLine}
 
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
@@ -144,15 +154,16 @@ ${rest}
 ${lines}
 
 Antworte ausschließlich mit JSON. segmentName ist exakt der Wert aus der Spalte Segment:
-{"fills":[{"segmentName":"<Segment>","segmentGrowth":<YoY % nur wenn Wachstum n/a>,"tamSize":<Mrd. USD nur wenn TAM n/a>,"tamCAGR":<Branchen-CAGR % nur wenn CAGR n/a>,"tamLabel":"<Marktname nur wenn TAM n/a>","tamSource":"<Quelle nur wenn TAM n/a>","confidence":"low"|"med"|"high","rationale":"<max 140 Zeichen>"}]}
+{"fills":[{"segmentName":"<Segment>","segmentGrowth":<YoY % nur wenn Wachstum n/a>,"tamSize":<Mrd. USD nur wenn TAM n/a>,"tamCAGR":<Branchen-CAGR % nur wenn CAGR n/a>,"tamLabel":"<Marktname nur wenn TAM n/a>","tamSource":"<Quelle nur wenn TAM n/a>","formula":"<Formel oder relative Begründung>","confidence":"low"|"med"|"high","rationale":"<max 140 Zeichen>"}]}
 
 REGELN:
-- Jede Zeile mit n/a in Wachstum, TAM oder CAGR muss in fills stehen. Eine Teilliste wird verworfen.
+- Jede Zeile mit n/a in Wachstum, TAM oder CAGR soll in fills stehen, soweit eine belegbare Zahl vorliegt. Zeilen ohne Beleg weglassen; die übrigen fills bleiben gültig.
 - segmentGrowth mappt auf Wachstum. Nur wenn die Zelle n/a ist. Das ist das Segment-YoY in Prozent, nicht die Branchen-CAGR. Eine Fact-Zahl nicht ersetzen.
 - tamSize mappt auf TAM, tamCAGR auf CAGR. Nur wenn die Zelle n/a ist. tamSize ist die Marktgröße in Milliarden USD, nicht Rev.
 - Anteil am TAM und vs. TAM sind lokale Formeln. Nicht schätzen und nicht ins JSON schreiben. Kein Über, kein Unter.
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
-- Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.`;
+- Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
+- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.`;
 }
 
 export async function requestTamNaFills(
@@ -188,8 +199,8 @@ export async function requestTamNaFills(
     return { ok: false, status: 502, error: "KI-Antwort fehlgeschlagen", code: "LLM_FAILED" };
   }
 
-  const fills = validateTamNaFills(eligible, llm.data);
-  if (countScopeRestNa(scoped, fills) !== 0) {
+  const fills = applicableTamNaFills(eligible, validateTamNaFills(eligible, llm.data));
+  if (fills.length === 0) {
     return { ok: false, status: 422, error: INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
   }
 

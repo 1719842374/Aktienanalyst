@@ -29,6 +29,10 @@ import {
   generatePESTELAnalysis,
   computeFcfTTM,
   highCapexFcfHint,
+  applyScalePermanentCapitalMoat,
+  alternativesMetricsNote,
+  tallyAnalystGrades,
+  lastReportedQuarterLabel,
 } from "./analyze-helpers";
 
 import {
@@ -41,6 +45,8 @@ import {
   dcfGrowthCapFromTam,
 } from "./sector-data";
 import { generateMacroCorrelations } from "./macro-correlations";
+import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
+import { liveBetaForCloses } from "./live-beta";
 
 import {
   calcImpliedGStar,
@@ -121,11 +127,15 @@ import {
   filterGeographicDuplicates,
   dropAliasRevenueDuplicates,
   geographicDedupNote,
+  geographicOnlyMessage,
+  promoteNonGeoRowsToBusiness,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { applyBiasFix } from "../shared/bias-fixes";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../shared/data-source";
+import { currencyFromTickerSuffix, currencyInfoFromListingFx, scaleBarsToUsd } from "../shared/listing-units";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import {
@@ -582,6 +592,38 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               console.warn(`[ANALYZE] Disk hit OHLCV refresh failed for ${upperTicker}: ${ohlcvErr?.message?.substring(0, 80)}`);
             }
           }
+          // A cached result still flagged incomplete gets one left-extension attempt.
+          // Converted listings are skipped: cached bars are USD, alt bars would be listing currency.
+          const cachedBars: OHLCVPoint[] = Array.isArray(served.ohlcvData) ? served.ohlcvData : [];
+          if (served.historyTruncated === true && cachedBars.length > 0 && served.currencyInfo?.converted !== true) {
+            try {
+              const { bars, source, truncated } = await fetchDailyHistory({
+                symbol: upperTicker,
+                timeframe: "10Y",
+                fetchFrom: indicatorWarmupFromDate(),
+                fmpFetch: async () => cachedBars.map((p) => ({ ...p, source: "fmp" as const })),
+                altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+              });
+              if (bars.length > 0 && bars[0].date < cachedBars[0].date) {
+                const ohlcvPoints = bars.slice(-TA_OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
+                const px = Number(served.currentPrice) || ohlcvPoints[ohlcvPoints.length - 1].close;
+                served = {
+                  ...served,
+                  historicalPrices: ohlcvPoints.map((pt) => ({ date: pt.date, close: pt.close })),
+                  ohlcvData: ohlcvPoints,
+                  technicalIndicators: buildTechnicalIndicators(ohlcvPoints, px),
+                  historyDataSource: source === "fmp+onvista" ? "fmp+onvista"
+                    : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : served.historyDataSource,
+                  historyTruncated: truncated,
+                };
+                diskCacheSet(cacheKey, served);
+                console.log(`[HISTORY-FALLBACK] Disk hit ${upperTicker}: source=${served.historyDataSource} truncated=${truncated} points=${ohlcvPoints.length}`);
+              }
+            } catch (histErr: any) {
+              console.warn(`[HISTORY-FALLBACK] Disk hit extension failed for ${upperTicker}: ${histErr?.message?.substring(0, 80)}`);
+            }
+          }
+          served = { ...served, betaLive: await liveBetaForCloses(served.historicalPrices) };
           analysisCache.set(cacheKey, {
             result: served,
             timestamp: Date.now(),
@@ -620,6 +662,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // geoSegments was added in commit cd79678 (fmp.ts:fmpGeoSegments +
       // analyze-helpers.ts wiring). fmpData carries it through to us.
       const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
+      // C1 (#252): FMP 402 → Yahoo-Fallback ohne Statements. Dann keine Bewertung (DCF/Score/Rating null).
+      const yahooOnly = (fmpData as any).source === "yahoo";
+      // FMP-ADR: 402-Listing mit Fundamentaldaten über das US-/ADR-Symbol (analyze-helpers fmpViaAdrData). Volle
+      // Bewertung (source 'fmp'); weitere FMP-Calls dieses Laufs gehen an das ADR-Symbol, Kurs/Chart bleiben lokal.
+      const adrInfo = (fmpData as any).adr ?? null;
+      const fmpSymbol: string = (fmpData as any).fmpSymbol ?? upperTicker;
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -631,7 +679,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const exchange = String(profile?.exchange ?? "");
       const website = String(profile?.website ?? "");
       const image = String(profile?.image ?? "");
-      const reportedCurrency = String(profile?.currency ?? "USD");
+      // DCF-FX / Tester #252-Prod: Im Yahoo-Pfad fehlt die Währung, wenn quoteSummary leer ist. Nicht still „USD“
+      // setzen, sondern aus dem Börsen-Suffix ableiten (.DE → EUR, .TO → CAD …). FMP-Pfad unverändert.
+      // DCF-FX: Umrechnungsmetadaten aus analyze-helpers listingToUsd (profile._listingFx); null bei USD-Listings.
+      const listingCurrencyInfo = currencyInfoFromListingFx((profile as any)?._listingFx);
+      const reportedCurrency = String(profile?.currency ?? (yahooOnly ? currencyFromTickerSuffix(upperTicker) : null) ?? "USD");
 
       // Income statement (most recent year)
       const incomeLatest = financials.income[0] ?? {};
@@ -696,21 +748,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
-      // dividendYield: FMP inconsistently returns either a decimal (0.036 = 3.6%)
-      // or an already-percent value (3.6 = 3.6%). Detect by magnitude: any value
-      // < 1 must be decimal form, so multiply by 100. This replaces the older
-      // check `> 1 ? 0.01 : 1` which mis-scaled 0.036 to 0.036% instead of 3.6%.
-      const _divRaw = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? profile?.lastAnnualDividend ?? 0));
-      const _divYield = (() => {
-        if (_divRaw <= 0) return 0;
-        // Value < 1 is definitely a decimal (0.036 → 3.6%). Value ≥ 1 is already
-        // in percent (3.6 stays 3.6). Yields > 25% are implausible for equities
-        // so treat those as raw dividend-per-share divided by price.
-        if (_divRaw < 1) return _divRaw * 100;
-        if (_divRaw > 25 && price > 0) return (_divRaw / price) * 100;
-        return _divRaw;
-      })();
-      const dividendYield = _divYield;
+      // dividendYield in PERCENT. Unit per FMP field, verified against DPS / price:
+      // see server/dividend-yield-normalize.ts. Unclear → 0 (N/A), never a guess.
+      const dividendYield = normalizeDividendYieldPct({
+        price,
+        ratioDividendYield: ratioLatest.dividendYield,
+        ratioDividendYieldPercentage: ratioLatest.dividendYieldPercentage,
+        ratioDividendPerShare: ratioLatest.dividendPerShare,
+        profileLastDividend: profile?.lastDividend ?? profile?.lastAnnualDividend,
+        quoteDividendYield: quote?.dividendYield,
+      }).pct;
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
       const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
 
@@ -777,12 +824,17 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             timeframe: "10Y",
             fetchFrom: indicatorWarmupFromDate(),
             fmpFetch: async () => ohlcvPoints.map((p) => ({ ...p, source: "fmp" as const })),
-            altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+            // DCF-FX: FMP-Bars sind nach USD umgerechnet (listingToUsd) → Alt-Bars (Major-Listing-Währung) mit
+            // demselben Kurs, sonst entstünde links eine Serie in EUR/CAD/GBP neben USD. USD-Titel: Faktor 1.
+            altFetch: async (from, to) => scaleBarsToUsd(await altFetchYahooThenStooq(upperTicker, from, to), (profile as any)?._listingFx),
           });
           if (bars.length > ohlcvPoints.length) {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
           }
-          historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
+          historyDataSource = (
+            source === "fmp+onvista" ? "fmp+onvista"
+              : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : "fmp"
+          ) as StockAnalysis["historyDataSource"];
           historyTruncated = truncated;
           console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
         }
@@ -798,9 +850,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Nur echte zukünftige Kalendertermine werden gezeigt. Fehlt FMPs Termin,
       // bleibt das Feld null; die UI zeigt transparent "n/a" statt einer Schätzung.
       const todayIso = new Date().toISOString().slice(0, 10);
-      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);
+      const earningsRows = await fmpEarningsCalendar(fmpSymbol).catch(() => []);
       const nextEarnings = earningsRows
-        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
+        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === fmpSymbol) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
         .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))[0] ?? null;
       const nextEarningsDate = nextEarnings?.date ? String(nextEarnings.date).slice(0, 10) : null;
       const nextEarningsTimeRaw = String(nextEarnings?.time ?? "").toLowerCase();
@@ -811,8 +863,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         : undefined;
       const latestFiscalYear = String(incomeLatest?.fiscalYear ?? incomeLatest?.calendarYear ?? "").trim();
       const latestPeriodRaw = String(incomeLatest?.period ?? "FY").trim();
-      const latestPeriod = /^fy$/i.test(latestPeriodRaw) ? "Q4" : latestPeriodRaw;
-      const lastReportedQuarter = latestFiscalYear ? `${latestPeriod} FY${latestFiscalYear}` : null;
+      // Annual FY is not Q4. The label is replaced once quarterly rows exist.
+      let lastReportedQuarter = lastReportedQuarterLabel({
+        todayIso,
+        earningsRows,
+        annualPeriod: latestPeriodRaw,
+        annualFiscalYear: latestFiscalYear,
+      });
 
       // Definition: FCF-Yield = FCF / Market Cap. Für die Vorjahresbasis wird
       // der historische Kurs am/kurz vor FY-Ende mit den damals gemeldeten
@@ -848,7 +905,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const analystPTMedian = parseNumber(String(analyst.priceTarget?.targetMedian ?? analyst.priceTarget?.priceTarget ?? 0));
       const analystPTHigh = parseNumber(String(analyst.priceTarget?.targetHigh ?? 0));
       const analystPTLow = parseNumber(String(analyst.priceTarget?.targetLow ?? 0));
-      const analystCount = Number(analyst.priceTarget?.numberOfAnalysts ?? analyst.grades?.length ?? 0);
+      let analystCount = Number(analyst.priceTarget?.numberOfAnalysts ?? 0);
 
       const latestGrade = analyst.grades?.[0];
       const analystConsensus = String(latestGrade?.recommendationMean ?? latestGrade?.action ?? "Hold");
@@ -905,17 +962,19 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // though EPS CAGR is still ~11%.
       const _rawEpsFY = parseNumber(String(incomeLatest.epsDiluted ?? incomeLatest.eps ?? 0));
       let epsGrowth5Y = revenueGrowth;
+      let epsCagrFromIncome = false;
       if (financials.income.length >= 3) {
         const oldest = financials.income[financials.income.length - 1] ?? {};
         const oldEps = parseNumber(String((oldest as any).epsDiluted ?? (oldest as any).eps ?? 0));
         if (oldEps > 0 && _rawEpsFY > 0) {
           const n = financials.income.length - 1;
           epsGrowth5Y = ((Math.pow(_rawEpsFY / oldEps, 1 / n) - 1) * 100);
+          epsCagrFromIncome = true;
         }
       }
       const lynchClass = classifyLynch({ epsGrowth5Y, revenueGrowth, sector: effectiveSector, industry, dividendYield, fcfMargin, pe, forwardPE, pbRatio });
       const { peg, pegBasis } = calcLynchPEG({ lynchClass, pe, forwardPE, epsGrowth5Y, epsGrowthFwd, revenueGrowth, dividendYield });
-      const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
+      const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc, company: { beta5Y: beta, totalDebt, marketCap, lynchClass } });
 
       // ── 7. Revenue segments ──
       // fmpSegments() (called upstream in getFmpFallbackData) already returns a
@@ -1051,7 +1110,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             { name: "Other", pct: 3 },
           ],
         };
-        const fb = productFallback[upperTicker];
+        const fb = productFallback[upperTicker] ?? (adrInfo ? productFallback[fmpSymbol] : undefined);
         if (fb) {
           revenueSegments = fb.map(row => ({
             name: row.name,
@@ -1111,7 +1170,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             const enrichCacheKey = `segments_growth__${upperTicker}`;
             let enrichResult = diskResearcherGet(enrichCacheKey) as { segments: RevenueSegment[]; _empty?: boolean } | null;
             if (!enrichResult) {
-              const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+              const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
               enrichResult = fetched && fetched.segments.length > 0
                 ? { segments: fetched.segments.map(s => ({ name: s.name, revenue: s.revenue, percentage: s.percentage, ...(typeof s.prevRevenue === "number" && s.prevRevenue > 0 && !s.noPriorYearMatch ? { prevRevenue: s.prevRevenue } : {}) })) }
                 : { segments: [], _empty: true };
@@ -1156,7 +1215,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           | null;
 
         if (!secResult) {
-          const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+          const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
           if (fetched && fetched.segments.length > 0) {
             const total = fetched.segments.reduce((sum, s) => sum + s.revenue, 0);
             secResult = {
@@ -1202,15 +1261,31 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           secFiscalYearLabel = secResultFinal.fiscalYear;
           console.log(`[SEGMENTS] SEC EDGAR fallback succeeded for ${upperTicker}: ${secResultFinal.formType ?? "10-K/20-F"} (${secResultFinal.fiscalYear ?? "unknown FY"}), ${secResultFinal.segments.length} segments`);
         } else {
-          // (d) Nothing found anywhere — clear message, NEVER a fake/generic fallback.
-          // Distinguish "company only reports geographically" (geoSegments present)
-          // from "no segment data at all" (neither present) per hard requirement #1.
-          revenueSegmentsSource = "none";
-          revenueSegmentsMessage = (Array.isArray(geoSegments) && geoSegments.length > 0)
-            ? "Unternehmen berichtet nur geografisch — kein separates Geschäftssegment-Reporting im letzten 10-K/20-F gefunden."
-            : "Segmentreporting nicht in den letzten 10-K/20-F enthalten.";
-          console.log(`[SEGMENTS] No business-segment data found for ${upperTicker} via FMP, curated map, or SEC EDGAR`);
+          // (d) Nothing found in FMP product segmentation, the curated map, or SEC.
+          // A non-geo name sitting in the geographic feed is still business data:
+          // promote it and do not say the company reports only geographically.
+          const promoted = promoteNonGeoRowsToBusiness(revenueSegments, geoSegments);
+          if (promoted.length > 0) {
+            revenueSegments = promoted;
+            revenueSegmentsSource = "fmp";
+            console.log(`[SEGMENTS] Promoted ${promoted.length} non-geo geographic rows into business segments for ${upperTicker}`);
+          } else {
+            revenueSegmentsSource = "none";
+            const onlyGeo = geographicOnlyMessage(0, geoSegments);
+            revenueSegmentsMessage = onlyGeo
+              ?? "Segmentreporting nicht in den letzten 10-K/20-F enthalten.";
+            console.log(`[SEGMENTS] No business-segment data found for ${upperTicker} via FMP, curated map, or SEC EDGAR`);
+          }
         }
+      }
+
+      const mergedNonGeo = promoteNonGeoRowsToBusiness(revenueSegments, geoSegments);
+      if (mergedNonGeo.length > revenueSegments.length) {
+        const added = mergedNonGeo.length - revenueSegments.length;
+        revenueSegments = mergedNonGeo;
+        if (revenueSegmentsSource === "none") revenueSegmentsSource = "fmp";
+        revenueSegmentsMessage = undefined;
+        console.log(`[SEGMENTS] Merged ${added} missing non-geo geographic rows into business segments for ${upperTicker}`);
       }
 
       revenueSegments = dedupeSegmentsByName(revenueSegments);
@@ -1228,6 +1303,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // +/- Overrides bleiben danach, Deckel 8.
       const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
       let peerTickers: string[] = rawPeerTickers.slice(0, 5);
+      let peerProfiles: Awaited<ReturnType<typeof resolveAdaptivePeerTickers>>["profiles"]; // PR B: nur Anzeige/Filter
       try {
         const resolved = await resolveAdaptivePeerTickers({
           subject: upperTicker,
@@ -1241,6 +1317,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           loadProfile: loadFmpPeerProfile,
         });
         peerTickers = resolved.tickers;
+        peerProfiles = resolved.profiles;
         console.log(`[PEERS-2HOP] ticker=${upperTicker} hopCalls=${resolved.hopCalls} F=[${peerTickers.join(",")}]`);
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
@@ -1456,7 +1533,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Abhaengigkeit) -- vorher lief scoreMoat() erst in Schritt 15, NACH
       // der These. Die urspruengliche Zeile in Schritt 15 referenziert jetzt
       // dieselbe Variable statt sie neu zu berechnen (kein doppelter Call).
-      const moatAssessment = scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description);
+      const moatAssessment = applyScalePermanentCapitalMoat(
+        scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description) as any,
+        description,
+        effectiveSector,
+        effectiveIndustry,
+      );
 
       let growthThesis: string | null = null;
       let growthThesisFingerprintValue: string | null = null;
@@ -1571,9 +1653,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Quartalsumsaetze fuer Realized-8Q (Scoring-Pipeline, §17.8) — 16 Quartale,
       // FMP liefert newest-first, calcRealizedGrowth8QServer erwartet chronologisch.
       let quarterlyRevenueChronological: number[] | null = null;
+      let quarterlyIncomeRows: any[] = [];
       try {
-        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
+        const qRows: any[] = await fmpIncomeStatementQuarterly(fmpSymbol, 16);
         if (Array.isArray(qRows) && qRows.length > 0) {
+          quarterlyIncomeRows = qRows;
           quarterlyRevenueChronological = qRows
             .map(r => Number(r?.revenue))
             .filter(v => isFinite(v) && v > 0)
@@ -1582,13 +1666,22 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       } catch (qErr: any) {
         console.warn(`[ANALYZE] Quarterly revenue fetch failed: ${qErr?.message?.substring(0, 80)}`);
       }
+      const reportedQuarter = lastReportedQuarterLabel({
+        todayIso,
+        quarterlyRows: quarterlyIncomeRows,
+        earningsRows,
+        annualPeriod: latestPeriodRaw,
+        annualFiscalYear: latestFiscalYear,
+      });
+      if (reportedQuarter) lastReportedQuarter = reportedQuarter;
 
       let peerComparison: any = null;
       if (peerTickers.length > 0) {
         try {
           peerComparison = await fetchPeerComparisonFromTickers(
             upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y,
-            { pb: subjectPB, epsGrowth1Y: subjectEpsGrowth1Y }
+            { pb: subjectPB, epsGrowth1Y: subjectEpsGrowth1Y },
+            peerProfiles,
           );
         } catch (peerErr: any) {
           console.warn(`[ANALYZE] Peer comparison failed: ${peerErr?.message?.substring(0, 80)}`);
@@ -1619,7 +1712,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const dcfGrowthRate = Math.min(Math.max(revenueGrowth / 100, -0.05), 0.25);
       const dcfTerminalGrowth = 0.025;
       const dcfYears = 5;
-      let dcfFairValue = 0;
+      // #326: Ohne berechenbaren FCF-DCF bleibt der Wert null (n/a) statt einer erfundenen 0.
+      // Negativer FCF bekommt den Grund 'negativer FCF' (gleiche Regel wie dcfApplicable §3.3).
+      let dcfFairValue: number | null = null;
+      const dcfNaReason: "negativer FCF" | null = fcfTTM < 0 ? "negativer FCF" : null;
       if (fcfTTM > 0 && sharesOutstanding > 0 && dcfWacc > dcfTerminalGrowth) {
         let pvFCF = 0;
         for (let y = 1; y <= dcfYears; y++) {
@@ -1629,7 +1725,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         dcfFairValue = Math.round((pvFCF + terminalValue - netDebt) / sharesOutstanding * 100) / 100;
       }
 
-      const upsidePotential = dcfFairValue > 0 && price > 0
+      const upsidePotential = dcfFairValue != null && dcfFairValue > 0 && price > 0
         ? Math.round((dcfFairValue / price - 1) * 1000) / 10
         : analystPTMedian > 0 && price > 0
           ? Math.round((analystPTMedian / price - 1) * 1000) / 10
@@ -1639,8 +1735,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Full matrix (indices, VIX, ISM, rates, energy, metals, crypto, FX).
       // Inputs match the historical call site: sector/industry already corrected
       // by getEffectiveSector, beta stored on the payload as beta5Y.
+      // DCF-FX (Befund A): Kurse sind nach listingToUsd in USD, das Währungsrisiko bleibt aber das der Listing-Währung
+      // → FX-Korrelation (GBP/USD, CAD/USD …) aus der Original-Major-Währung (currencyInfo.reportedCurrency), wie auf main.
       const macroCorrelations = generateMacroCorrelations(
-        effectiveSector, effectiveIndustry, description, beta, reportedCurrency
+        effectiveSector, effectiveIndustry, description, beta, listingCurrencyInfo?.reportedCurrency ?? reportedCurrency
       );
 
       // ── 20. Assemble final result ──
@@ -1666,10 +1764,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // epsGrowth5Y was computed earlier from the income-statement history
       // (see step 6 — needed for classifyLynch). No refinement needed here.
 
-      // Ratings — map buy/hold/sell distribution from analyst.grades.
-      const ratingsBuy = analyst.grades.filter((g: any) => /buy|outperform|overweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
-      const ratingsSell = analyst.grades.filter((g: any) => /sell|underperform|underweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
-      const ratingsHold = Math.max(0, analyst.grades.length - ratingsBuy - ratingsSell);
+      // Ratings — one row per analyst firm when every grade names a firm.
+      // Otherwise the counts are grade events and the UI says so.
+      const gradeTally = tallyAnalystGrades(analyst.grades);
+      if (!(analystCount > 0) && gradeTally.basis === "analysts") {
+        analystCount = gradeTally.buy + gradeTally.hold + gradeTally.sell;
+      }
 
       // Sector profile — the shape Section5/Section6 depend on.
       const sectorProfile = {
@@ -1697,10 +1797,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const totalLiab = parseNumber(String(bsLatest.totalLiabilities ?? Math.max(0, totalAssets - totalEquity)));
       const ebitdaMargin = revenue > 0 ? (ebitda / revenue) * 100 : 0;
       const fcfPerShare = sharesOutstanding > 0 ? fcfTTM / sharesOutstanding : 0;
-      const rawEpsGrowth = (() => {
-        const prevEps = parseNumber(String((incomeY1 as any).epsDiluted ?? (incomeY1 as any).eps ?? 0));
-        return prevEps > 0 && rawEpsFY > 0 ? ((rawEpsFY / prevEps - 1) * 100) : 0;
-      })();
       const healthReasons: string[] = [];
       if (fcfMargin > 15) healthReasons.push("Starke FCF-Marge > 15%");
       else if (fcfMargin < 5 && fcfMargin > 0) healthReasons.push("Schwache FCF-Marge < 5%");
@@ -1721,7 +1817,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           operatingIncome, operatingMargin,
           netIncome, netMargin,
           ebitda, ebitdaMargin,
-          eps: epsTTM, epsGrowth: rawEpsGrowth,
+          eps: epsTTM, epsGrowth: epsGrowth5Y,
         },
         balanceSheet: {
           totalAssets, totalLiabilities: totalLiab, totalEquity,
@@ -1767,7 +1863,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       let scoring: StockAnalysis["scoring"] = undefined;
       try {
-        scoring = buildScoringForAnalysis({
+        scoring = yahooOnly ? undefined : buildScoringForAnalysis({
           ctx: {
             impliedGStar,
             quarterlyRevenueChronological,
@@ -1866,11 +1962,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const geoCrossRemoved = specGeo.removedCount + aliasGeo.removedCount;
       const geoSegmentsNote = geographicDedupNote(geoCrossRemoved);
       const fcfCapexHint = highCapexFcfHint(sector, industry) ?? highCapexFcfHint(effectiveSector, effectiveIndustry);
+      const alternativesNote = alternativesMetricsNote(description, effectiveSector, effectiveIndustry);
 
       // NOTE: Cast to any at the end because we intentionally include a few
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
       // schema fields. shared/schema.ts:StockAnalysis is the source of truth
       // for what the frontend actually reads.
+      const betaLive = await liveBetaForCloses(historicalPrices);
       const analysis = {
         // ─── Section 1: Datenaktualität (Section1.tsx) ───
         ticker: upperTicker,
@@ -1878,12 +1976,17 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         exchange,
         sector: effectiveSector,
         industry: effectiveIndustry,
+        isEtf: profile?.isEtf === true,
+        isFund: profile?.isFund === true,
         description,
         currentPrice: price,
         priceTimestamp: new Date().toISOString(),
         currency: reportedCurrency || "USD",
-        marketCap,
+        // Tester #252-Prod (VOW3.DE): Yahoo ohne quoteSummary liefert keine Market Cap → null (UI n/a), nicht 0.
+        marketCap: yahooOnly && !(marketCap > 0) ? null : marketCap,
         sharesOutstanding,
+        // DCF-FX: Umrechnungs-Transparenz (Section1-Hinweis). Nur bei Nicht-USD-Listings gesetzt, USD-Titel unverändert.
+        ...(listingCurrencyInfo ? { currencyInfo: listingCurrencyInfo } : {}),
 
         // Analyst data (schema: analystPT + ratings objects, NOT flat fields)
         analystPT: {
@@ -1892,16 +1995,23 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           low: analystPTLow,
           count: analystCount,
         },
-        ratings: { buy: ratingsBuy, hold: ratingsHold, sell: ratingsSell },
+        ratings: {
+          buy: gradeTally.buy,
+          hold: gradeTally.hold,
+          sell: gradeTally.sell,
+          basis: gradeTally.basis,
+        },
 
         // Earnings (schema: peRatio, forwardPE, pegRatio — NOT pe)
-        epsTTM,
+        // Tester #252-Prod (VOW3.DE): Yahoo ohne EPS/KGV → null (UI n/a) statt 0 bzw. „Discount −100 %“. FMP unverändert.
+        epsTTM: yahooOnly && quote?.eps == null && profile?.eps == null ? null : epsTTM,
         epsAdjFY,
         epsConsensusNextFY,
         epsGrowth5Y,
+        epsCagrFromIncome,
 
-        peRatio: pe,
-        forwardPE,
+        peRatio: yahooOnly && !(pe > 0) ? null : pe,
+        forwardPE: yahooOnly && !(forwardPE > 0) ? null : forwardPE,
         pegRatio: peg ?? 0,
         peg: peg ?? null,
         lynchClass,
@@ -1909,10 +2019,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         evEbitda,
         beta5Y: beta,
         beta,
+        betaLive,
         fcfTTM,
         fcfMargin,
         fcfAvailable,
         ...(fcfCapexHint ? { fcfCapexHint } : {}),
+        ...(alternativesNote ? { alternativesMetricsNote: alternativesNote } : {}),
         nextEarningsDate,
         ...(nextEarningsTime ? { nextEarningsTime } : {}),
         ...(nextEarningsIsEstimate !== undefined ? { nextEarningsIsEstimate } : {}),
@@ -1971,7 +2083,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 10
         ohlcvData: ohlcvPoints,
-        historyDataSource,
+        // FMP-ADR: Chart kommt vom lokalen Listing (Yahoo), nicht vom ADR.
+        historyDataSource: yahooOnly || adrInfo ? "yahoo" : historyDataSource,
         historyTruncated,
         technicalIndicators,
 
@@ -2038,7 +2151,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // KI mode signalling for Dashboard state
         llmMode: useLLM,
         llmModelUsed,
-        dataSource: "fmp" as const,
+        dataSource: yahooOnly ? "yahoo" as const : "fmp" as const,
+        ...(yahooOnly ? { valuationNotice: YAHOO_NO_VALUATION_NOTICE } : {}),
+        ...(adrInfo ? { adrSource: adrInfo } : {}),
         dataTimestamp: new Date().toISOString(),
         _useLLM: useLLM,
 
@@ -2052,9 +2167,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         dividendYield,
         returnOnEquity,
         wacc,
-        dcfFairValue,
-        upsidePotential,
-        impliedGStar: impliedGStar ?? 0,
+        dcfFairValue: yahooOnly ? null : dcfFairValue,
+        ...(!yahooOnly && dcfNaReason ? { dcfNaReason } : {}),
+        upsidePotential: yahooOnly ? null : upsidePotential,
+        impliedGStar: yahooOnly ? null : (impliedGStar ?? 0),
         pbRatio,
         yearHigh,
         yearLow,
@@ -2157,7 +2273,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legt die Grundlage fuer Phase 2 (PIT-Universum). Laeuft NIEMALS auf
       // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
       // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
-      try {
+      // C1 (#252): bei Yahoo-Daten weder Server-CRV noch Backtest-Snapshot (keine 0-Werte ins Scoring).
+      if (!yahooOnly) try {
         // Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
         // Nutzer-Praezisierung 30.08.2026): invDcf/CRV jetzt ECHT serverseitig
         // berechnen — ueber dieselben reinen Funktionen wie die Live-UI
@@ -2306,8 +2423,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
       }
 
-      applyBiasFix(analysis);
-      attachExecSummary(analysis);
+      if (!yahooOnly) {
+        applyBiasFix(analysis);
+        attachExecSummary(analysis);
+      }
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
       diskCacheSet(cacheKey, analysis);
       return res.json(analysis);
@@ -2520,8 +2639,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // invertedDcf, die sich durch Enrichment NICHT aendern) -- ein
       // erneuter Aufruf auf "updated" zieht automatisch die neuen
       // Katalysatoren mit ein, ohne Logik zu duplizieren.
-      updated = applyBiasFix(updated);
-      updated = attachExecSummary(updated);
+      if (!isYahooOnly(updated)) {
+        updated = applyBiasFix(updated);
+        updated = attachExecSummary(updated);
+      }
 
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
       // Enrich überlebt die 20-min-RAM-TTL und einen Restart (gleicher Analyze-Key).
@@ -2595,9 +2716,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
   // ── POST /api/analyze/:ticker/tam-na-fill ────────────────────
   // Session-only KI estimates for Segment-TAM n/a cells (Spec v2).
-  // Success only when Rest-n/a in Wachstum·TAM·CAGR·Anteil am TAM·vs. TAM is 0;
-  // otherwise 422 INCOMPLETE_FILL and no overlay. Fact coverage, quality,
-  // tamTotal, weighted CAGR and the DCF gate are echoed, never recomputed.
+  // Partial-apply: valid fills are returned when at least one in-scope cell closes.
+  // Other cells stay n/a. 422 INCOMPLETE_FILL only when nothing usable comes back.
+  // Revenue null/0 is out of scope. Fact coverage, quality, tamTotal, weighted CAGR
+  // and the DCF gate are echoed, never recomputed.
   // This handler does not write the fact cache.
   app.post("/api/analyze/:ticker/tam-na-fill", async (req: Request, res: Response) => {
     try {

@@ -28,7 +28,7 @@ export const FMP_CONFIG = {
 };
 
 function getApiKey(): string {
-  return process.env.FMP_API_KEY || "";
+  return process.env.FMP_API_KEY || process.env.FMP_API_key || "";
 }
 
 // Simple in-process serialiser: guarantees FMP_MIN_INTERVAL_MS between outbound
@@ -84,6 +84,61 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
     }
   }
   throw lastErr ?? new Error(`FMP fetch failed: ${path}`);
+}
+
+function redactFmpText(text: string, key: string): string {
+  const stripped = key ? text.split(key).join("") : text;
+  return stripped.replace(/apikey=[^&\s]+/gi, "apikey=").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+/**
+ * Dieselbe Stable-Basis wie fmpFetch, aber mit HTTP-Status und Vendor-Text.
+ * Der Key steht weder im Detail noch in einem Log. Für die Growth-Karte, damit ein 402
+ * vom Symbol oder vom Endpunkt unterscheidbar bleibt, ohne den Score-Pfad zu ändern.
+ */
+export async function fmpObserved(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<{ status: number; json: unknown | null; detail: string }> {
+  const key = getApiKey();
+  if (!key) return { status: 0, json: null, detail: "FMP_API_KEY not set" };
+  const url = new URL(`${FMP_BASE}${path}`);
+  url.searchParams.set("apikey", key);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  let lastStatus = 0;
+  let lastDetail = "";
+  for (let attempt = 0; attempt <= FMP_CONFIG.maxRetries; attempt++) {
+    await spaceOutgoingCall();
+    trackFmpCall(1);
+    try {
+      const resp = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(15000),
+        headers: { "User-Agent": "StockAnalystPro/1.0" },
+      });
+      const text = await resp.text();
+      const detail = redactFmpText(text, key);
+      if ((resp.status === 429 || resp.status === 503) && attempt < FMP_CONFIG.maxRetries) {
+        lastStatus = resp.status;
+        lastDetail = detail;
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      if (!resp.ok) return { status: resp.status, json: null, detail };
+      try {
+        return { status: resp.status, json: JSON.parse(text) as unknown, detail: "" };
+      } catch {
+        return { status: resp.status, json: null, detail: "JSON nicht lesbar" };
+      }
+    } catch (err: any) {
+      const detail = redactFmpText(String(err?.message ?? err), key);
+      if (attempt < FMP_CONFIG.maxRetries && (err?.name === "AbortError" || err?.name === "TimeoutError")) {
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+        continue;
+      }
+      return { status: lastStatus, json: null, detail: detail || lastDetail || "FMP fetch failed" };
+    }
+  }
+  return { status: lastStatus, json: null, detail: lastDetail || "FMP fetch failed" };
 }
 
 // Cheap guard for /api/analyze — returns true when a full analysis run would
@@ -159,6 +214,13 @@ export async function fmpHistoricalPrices(symbol: string, from?: string, to?: st
   // GET /stable/historical-price-eod/full?symbol=AAPL&from=...&to=...
   // Returns a flat array (no .historical wrapper in /stable).
   const data = await fmpFetch(`/historical-price-eod/full`, params);
+  if (Array.isArray(data)) return data;
+  return data?.historical || [];
+}
+
+/** GET /stable/dividends?symbol=AAPL — dividend history (newest-first). Throws on HTTP errors so the caller can fall back. */
+export async function fmpDividends(symbol: string): Promise<any[]> {
+  const data = await fmpFetch(`/dividends`, { symbol });
   if (Array.isArray(data)) return data;
   return data?.historical || [];
 }
@@ -366,7 +428,7 @@ export function dedupeSegmentsByName<T extends { name: string; revenue: number }
 // 1) same normalized name and revenue within 1%
 // 2) NON_GEO_PATTERN (a business line sitting in the geographic bucket)
 export const NON_GEO_PATTERN =
-  /web services|aws|cloud|advertising|subscription|asset management|private equity|infrastructure fund|wealth solutions|fee.?related|corporate (activities)?/i;
+  /web services|aws|cloud|advertising|subscription|asset management|private equity|infrastructure|real estate|wealth solutions|fee.?related|corporate( activities)?|\benergy\b/i;
 
 export const GEO_SEGMENT_DEDUP_NOTE =
   "Einige reportable Segments (z. B. globale Geschäftsbereiche) sind unter Business Segments geführt, nicht unter Regionen.";
@@ -459,6 +521,72 @@ export function dropAliasRevenueDuplicates<T extends { name: string; revenue: nu
   return { geographic: kept, removedCount };
 }
 
+export const ONLY_GEOGRAPHIC_SEGMENT_MESSAGE =
+  "Unternehmen berichtet nur geografisch — kein separates Geschäftssegment-Reporting im letzten 10-K/20-F gefunden.";
+
+/**
+ * §10 "nur geo" copy. Allowed only when the business list is empty and every
+ * geographic name is a region. A NON_GEO_PATTERN name is business data.
+ */
+export function geographicOnlyMessage(
+  businessCount: number,
+  geographic: readonly { name?: string | null }[] | null | undefined,
+): string | null {
+  if (businessCount > 0) return null;
+  const rows = Array.isArray(geographic) ? geographic : [];
+  if (rows.length === 0) return null;
+  const hasBusinessLine = rows.some((row) =>
+    typeof row?.name === "string" && NON_GEO_PATTERN.test(row.name),
+  );
+  if (hasBusinessLine) return null;
+  return ONLY_GEOGRAPHIC_SEGMENT_MESSAGE;
+}
+
+/**
+ * Copies a geographic row into the business list when its name matches
+ * NON_GEO_PATTERN and that name is not already there. Existing business rows
+ * stay. A later geographic filter then drops the copy so the line is not
+ * shown twice and is not deleted from both lists.
+ */
+export function promoteNonGeoRowsToBusiness<T extends { name: string; revenue: number; percentage?: number }>(
+  business: readonly T[] | null | undefined,
+  geographic: readonly T[] | null | undefined,
+): T[] {
+  const existing = Array.isArray(business) ? [...business] : [];
+  const seen = new Set(
+    existing
+      .filter((row) => row && typeof row.name === "string")
+      .map((row) => normSegmentDisplayName(row.name)),
+  );
+  const geo = Array.isArray(geographic) ? geographic : [];
+  const promoted: T[] = [];
+  for (const row of geo) {
+    if (!row || typeof row.name !== "string" || !row.name.trim()) continue;
+    if (!NON_GEO_PATTERN.test(row.name)) continue;
+    const revenue = Number(row.revenue);
+    if (!Number.isFinite(revenue) || !(revenue > 0)) continue;
+    const key = normSegmentDisplayName(row.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const stated = Number(row.percentage);
+    const percentage = Number.isFinite(stated) && stated > 0 ? stated : 0;
+    promoted.push({ ...row, percentage });
+  }
+  if (promoted.length === 0) return existing;
+  const needShare = promoted.some((row) => !(Number(row.percentage) > 0));
+  if (!needShare) return [...existing, ...promoted];
+  const total = promoted.reduce((sum, row) => sum + Number(row.revenue), 0);
+  const withShare = promoted.map((row) => {
+    if (Number(row.percentage) > 0) return row;
+    const revenue = Number(row.revenue);
+    return {
+      ...row,
+      percentage: total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0,
+    };
+  });
+  return [...existing, ...withShare];
+}
+
 /**
  * Fetches revenue-product-segmentation from FMP /stable and normalises the
  * response into a consistent { name, revenue, percentage }[] array.
@@ -516,6 +644,29 @@ export async function fmpGeoSegments(symbol: string): Promise<FmpSegmentRow[]> {
   }
 }
 
+/**
+ * Rohzeilen der Segment-Endpunkte, jährlich oder quartalsweise.
+ * Die Jahres-Normalisierung in fmpSegments()/fmpGeoSegments() bleibt unverändert.
+ * period=quarter ist derselbe FMP-Stable-Parameter wie bei den Statements.
+ */
+export async function fmpSegmentationRows(
+  kind: "product" | "geographic",
+  symbol: string,
+  period: "annual" | "quarter",
+): Promise<unknown[]> {
+  const path = kind === "product" ? "/revenue-product-segmentation" : "/revenue-geographic-segmentation";
+  const params: Record<string, string> = { symbol };
+  if (period === "quarter") params.period = "quarter";
+  try {
+    const raw = await fmpFetch(path, params);
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw?.data)) return raw.data;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fmpPeers(symbol: string): Promise<any[]> {
   try {
     // GET /stable/stock-peers?symbol=AAPL
@@ -554,6 +705,25 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpKeyMetricsQuarterly(symbol: string, limit: number) {
+  // GET /stable/key-metrics?symbol=X&period=quarter&limit=
+  // returnOnInvestedCapital bleibt die Dezimalquote, wie in der Jahresreihe.
+  return fmpFetch(`/key-metrics`, { symbol, period: "quarter", limit: String(limit) });
+}
+
+export async function fmpEnterpriseValues(symbol: string, limit = 5) {
+  // GET /stable/enterprise-values?symbol=AAPL&limit=5 — gleiche FMP-Quelle, kein neuer Anbieter.
+  return fmpFetch(`/enterprise-values`, { symbol, limit: String(limit) });
+}
+
+export async function fmpEtfHoldings(symbol: string) {
+  // GET /stable/etf/holdings?symbol=XLK — gleiche FMP-Quelle, kein neuer Anbieter.
+  const data = await fmpFetch(`/etf/holdings`, { symbol });
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.holdings)) return data.holdings;
+  return [];
+}
+
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
   // /stable has no comma-separated batch quote — fetch each symbol in parallel.
@@ -569,7 +739,7 @@ export async function fmpBatchQuote(symbols: string[]) {
 }
 
 export function isFmpAvailable(): boolean {
-  return !!process.env.FMP_API_KEY;
+  return getApiKey().length > 0;
 }
 
 // Unlike fmpBatchQuote/fmpQuote this rejects, so callers can see 429 vs. unreachable.
@@ -603,6 +773,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   currency?: string;
   exchangeFullName?: string;
   exchange?: string;
+  isin?: string;
 }>> {
   if (!query || query.length < 1) return [];
   try {
@@ -625,6 +796,7 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
         currency: row.currency,
         exchangeFullName: row.exchangeFullName || row.stockExchange || "",
         exchange: row.exchangeShortName || row.exchange,
+        isin: typeof row.isin === "string" ? row.isin : undefined,
       }))
       .slice(0, limit);
   } catch { return []; }
@@ -685,7 +857,7 @@ export async function getFxRateToUsd(currency: string): Promise<number> {
 // Converts the numeric financial-statement fields of a FMP income/cashflow/balance-sheet
 // row from its reportedCurrency into USD. EPS-like per-share fields and aggregate
 // currency fields are converted; ratios, percentages, share counts and dates are left as-is.
-const FX_CONVERTIBLE_FIELDS = new Set([
+export const FX_CONVERTIBLE_FIELDS = new Set([
   "revenue", "costOfRevenue", "grossProfit", "operatingIncome", "netIncome", "ebit", "ebitda",
   "eps", "epsDiluted", "operatingExpenses", "researchAndDevelopmentExpenses",
   // /stable/analyst-estimates response fields for foreign-currency filers
@@ -973,4 +1145,17 @@ export async function fmpHistoricalMarketCap(symbol: string, from?: string, to?:
     const data = await fmpFetch(`/historical-market-capitalization`, params);
     return Array.isArray(data) ? data : [];
   } catch { return []; }
+}
+
+/** GET /stable/earning-call-transcript-dates?symbol= — fiscalYear, quarter, date. Wirft bei fehlendem Key. */
+export async function fmpEarningCallTranscriptDates(symbol: string): Promise<any[]> {
+  const data = await fmpFetch(`/earning-call-transcript-dates`, { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+/** GET /stable/earning-call-transcript?symbol=&year=&quarter= — content des letzten Calls. Wirft bei fehlendem Key. */
+export async function fmpEarningCallTranscript(symbol: string, year: number, quarter: number): Promise<any | null> {
+  const data = await fmpFetch(`/earning-call-transcript`, { symbol, year: String(year), quarter: String(quarter) });
+  if (Array.isArray(data)) return data[0] ?? null;
+  return data && typeof data === "object" ? data : null;
 }

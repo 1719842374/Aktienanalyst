@@ -2,21 +2,28 @@
  * SectorRotationPanel — Sprint C1 P0-P3.
  * Spec WORK_SEKTORROTATIONS_RAT.md §3.3 alle 4 Bloecke + §6 Quellenzeile.
  * P0/P1 (Engine/Route/Tabelle) siehe Commit 9aa6f9a.
- * P2 (Sektorradar-Donut) + P3 (Zyklus-Ring + 4 Empfehlungskarten) hier ergaenzt
- * -- rein additiv im Client, KEIN neues API-Feld (Response deckt §3.4 bereits
- * vollstaendig ab: risk/valuation/attractiveness/phaseFit/pe/pe10y/return6M/
- * phase/phaseConfidence/recommendations/dataQuality). Server/Engine unveraendert.
+ * P2 (Sektorradar-Donut) + P3 (Zyklus-Ring + 4 Empfehlungskarten) hier ergaenzt.
+ * Attraktivitäts-Ampel: Server liefert attrPercentile / attrBand / attrTrend /
+ * attrDelta (shared/sector-attr-band.ts). Die Zahl attractiveness bleibt.
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Loader2, RefreshCw,
+  AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Loader2, RefreshCw,
   Monitor, Radio, ShoppingBag, Factory, Landmark, Fuel, HeartPulse, ShoppingCart, Plug,
 } from "lucide-react";
+import { Tooltip as AttrTooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  sectorAttrBands,
+  type AttrBand,
+  type AttrTrend,
+} from "@shared/sector-attr-band";
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis,
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
+import { useSectorPeDisplay } from "@/lib/useSectorPeDisplay";
+import type { SectorPeDisplay } from "@shared/schema";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
 type CyclePhase = "Frühzyklus" | "Hochkonjunktur" | "Spätkonjunktur" | "Abschwung";
@@ -32,6 +39,10 @@ interface SectorRow {
   attractiveness: number;
   return6M: number | null;
   phaseFit: number;
+  attrPercentile?: number | null;
+  attrBand?: AttrBand;
+  attrTrend?: AttrTrend;
+  attrDelta?: number | null;
 }
 
 interface SectorRotationPayload {
@@ -51,6 +62,55 @@ const VAL_CLASS: Record<string, string> = {
   Attraktiv: "text-emerald-300",
   "n.v.": "text-foreground/40",
 };
+
+const BAND_CLASS: Record<AttrBand, string> = {
+  green: "text-emerald-400",
+  yellow: "text-amber-300",
+  red: "text-rose-400",
+  neutral: "text-foreground/45",
+};
+
+function attrTooltip(row: SectorRow): string {
+  if (!Number.isFinite(row.attractiveness)) return "kein Attraktivitätswert";
+  const pct = row.attrPercentile;
+  const pctLabel = pct == null || !Number.isFinite(pct) ? null : `Perzentil ${Math.round(pct * 100)} %`;
+  if (row.attrTrend == null || row.attrTrend === "none") {
+    return pctLabel ? `${pctLabel} · kein Vorwert` : "kein Vorwert";
+  }
+  const d = row.attrDelta;
+  const dLabel = d == null || !Number.isFinite(d)
+    ? "Δ n/a"
+    : `Δ ${d > 0 ? "+" : ""}${d.toFixed(1)}`;
+  return pctLabel ? `${pctLabel} · ${dLabel}` : dLabel;
+}
+
+function AttrCell({ row }: { row: SectorRow }) {
+  const band = row.attrBand ?? "neutral";
+  const trend = row.attrTrend ?? "none";
+  const tip = attrTooltip(row);
+  const Arrow = trend === "up" ? ArrowUp : trend === "down" ? ArrowDown : trend === "flat" ? ArrowRight : null;
+  return (
+    <AttrTooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className={`inline-flex items-center gap-1 tabular-nums font-medium whitespace-nowrap outline-none ${BAND_CLASS[band]}`}
+          data-testid={`attr-cell-${row.id}`}
+          data-attr-band={band}
+          data-attr-trend={trend}
+          title={tip}
+          aria-label={`Attraktivität ${fmtNum(row.attractiveness, 1)}. ${tip}`}
+        >
+          {fmtNum(row.attractiveness, 1)}
+          {Arrow && <Arrow className="w-3 h-3 shrink-0" aria-hidden data-testid={`attr-arrow-${row.id}`} />}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="text-[11px] max-w-[240px]" data-testid={`attr-tooltip-${row.id}`}>
+        {tip}
+      </TooltipContent>
+    </AttrTooltip>
+  );
+}
 
 // Feste Palette aggressiv→defensiv, Reihenfolge exakt wie ETF_PROXY_MAP in
 // server/sector-rotation-math.ts (Technologie..Versorger). Spec §3.2.
@@ -522,6 +582,12 @@ function SectorRadarRing({ sectors }: { sectors: RingSectorDatum[] }) {
 
 export function SectorRotationPanel() {
   const [data, setData] = useState<SectorRotationPayload | null>(null);
+  const sectorPe = useSectorPeDisplay();
+  const peById = useMemo(() => {
+    const map = new Map<string, SectorPeDisplay>();
+    for (const row of sectorPe.data?.sectors ?? []) map.set(row.id, row);
+    return map;
+  }, [sectorPe.data]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -580,6 +646,24 @@ export function SectorRotationPanel() {
 
   const recommendations = data?.recommendations;
   const activePhase = data?.phase;
+
+  // Server-Felder haben Vorrang (inkl. Pfeil aus dem Cache-Vorwert). Fehlen sie
+  // (alter Cache), färbt dieselbe reine Funktion nur nach Perzentil — ohne Pfeil.
+  const sectorsView = useMemo(() => {
+    const rows = data?.sectors ?? [];
+    if (rows.length === 0) return rows;
+    const complete = rows.every(s => s.attrBand != null && s.attrTrend != null);
+    if (complete) return rows;
+    const ann = sectorAttrBands(
+      rows.map(s => ({ id: s.id, attractiveness: s.attractiveness })),
+      null,
+    );
+    const byId = new Map(ann.map(a => [a.id, a]));
+    return rows.map(s => {
+      const a = byId.get(s.id);
+      return a ? { ...s, ...a } : s;
+    });
+  }, [data]);
 
   return (
     <div className="space-y-3">
@@ -738,8 +822,8 @@ export function SectorRotationPanel() {
             fortschritt-Spalte (min-w-[110px] -> min-w-[160px], eigenes
             Innen-Padding py-1) schaffen sichtbaren Luftraum zwischen den
             Sektorzeilen, insbesondere auf schmalen/mobilen Breiten. */}
-        <div className="rounded-lg border border-border/40 p-3 w-full min-h-[28rem]">
-          <table className="w-full text-left border-separate border-spacing-0" data-testid="table-sector-rotation">
+        <div className="rounded-lg border border-border/40 p-3 w-full min-h-[28rem] overflow-x-auto">
+          <table className="w-full min-w-[52rem] text-left border-separate border-spacing-0" data-testid="table-sector-rotation">
             <thead>
               <tr className="text-[10px] uppercase tracking-wider text-foreground/40 border-b border-border/40">
                 <th className="px-3 py-2.5 font-medium">Sektor</th>
@@ -753,13 +837,25 @@ export function SectorRotationPanel() {
               </tr>
             </thead>
             <tbody>
-              {(data.sectors || []).map(s => (
+              {sectorsView.map(s => (
                 <tr key={s.id} className="border-b border-border/20 text-[11px]">
                   <td className="px-3 py-3 font-medium text-foreground/90">{s.label}</td>
                   <td className="px-3 py-3 font-mono text-foreground/60">{s.etf}</td>
                   <td className="px-3 py-3 tabular-nums">{s.risk}</td>
-                  <td className={`px-3 py-3 ${VAL_CLASS[s.valuation] || ""}`}>{s.valuation}</td>
-                  <td className="px-3 py-3 tabular-nums">{fmtNum(s.attractiveness, 1)}</td>
+                  <td className={`px-3 py-3 ${VAL_CLASS[s.valuation] || ""}`}>
+                    <div>{s.valuation}</div>
+                    <div className="mt-0.5 max-w-[14rem] whitespace-normal text-[10px] font-normal text-foreground/60" data-testid={`sector-pe-${s.id}`}>
+                      {sectorPe.isLoading
+                        ? "Sektor-KGV wird geladen …"
+                        : sectorPe.isError
+                          ? "n/a — Sektor-KGV nicht geladen"
+                          : (peById.get(s.id)?.text ?? "n/a — kein Sektor-KGV in der Antwort")}
+                      {peById.get(s.id)?.sourceLabel && (
+                        <div data-testid={`sector-pe-source-${s.id}`}>Quelle: {peById.get(s.id)?.sourceLabel}</div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3"><AttrCell row={s} /></td>
                   <td className="px-3 py-3 tabular-nums">{fmtPct(s.return6M)}</td>
                   <td className="px-3 py-3 tabular-nums">{s.phaseFit}</td>
                   <td className="px-3 py-3 min-w-[220px] overflow-x-hidden" data-testid={`cycle-progress-row-${s.id}`}>

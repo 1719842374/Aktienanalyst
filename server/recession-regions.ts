@@ -42,6 +42,7 @@ export interface RegionalPrints {
   jpUnemployment: DatedPoint[];
   jpLong: DatedPoint[];
   jpIp: DatedPoint[];
+  jpIpSource: string;
   jpM2Yoy: number | null;
   jpPe: number | null;
   jpPeSource: string;
@@ -66,11 +67,11 @@ export interface ScoreInput {
   scorers: RegionScorers;
 }
 
-async function getText(url: string, timeoutMs = 20000): Promise<string> {
+async function getText(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): Promise<string> {
   try {
     const resp = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "User-Agent": "Aktienanalyst/1.0", Accept: "application/json,text/csv,*/*" },
+      headers: { "User-Agent": "Aktienanalyst/1.0", Accept: "application/json,text/csv,*/*", ...headers },
     });
     if (!resp.ok) return "";
     return await resp.text();
@@ -131,6 +132,150 @@ async function indexPe(symbols: string[]): Promise<{ value: number; source: stri
   return null;
 }
 
+const EXSA_DATA_QUERY = "portfolioId=251931&component=fundamentalsAndRisk&targetSite=de-ishares-v2&locale=de_DE&userType=individual&appType=PRODUCT_PAGE&appSubType=ISHARES";
+/** Same KGV block the product page embeds, without the 2.7MB document. */
+const ISHARES_EXSA_DATA = [
+  `https://www.blackrock.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?${EXSA_DATA_QUERY}`,
+  `https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?${EXSA_DATA_QUERY}`,
+];
+const ISHARES_EXSA = "https://www.ishares.com/de/privatanleger/de/produkte/251931/ishares-stoxx-europe-600-ucits-etf-de-fund";
+const STOXX_PE_URLS = [...ISHARES_EXSA_DATA, ISHARES_EXSA];
+const OECD_JP_IP = "https://api.db.nomics.world/v22/series/OECD/DSD_STES@DF_INDSERV/JPN.M.PRVM.IX.BTE.Y._Z._Z.N?observations=1";
+
+const GERMAN_MONTH: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", mrz: "03", mär: "03", apr: "04",
+  mai: "05", jun: "06", jul: "07", aug: "08", sep: "09", okt: "10",
+  nov: "11", dez: "12",
+};
+
+function peInRange(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && value <= 80;
+}
+
+function compactDate(raw: string): string | null {
+  if (!/^\d{8}$/.test(raw)) return null;
+  const date = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  return date;
+}
+
+/** Brace slice that stays inside strings, so a `}` in the KGV hint does not end the object. */
+function objectSlice(text: string, open: number): string | null {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === "\\") { i += 1; continue; }
+      if (ch === "\"") quoted = false;
+      continue;
+    }
+    if (ch === "\"") { quoted = true; continue; }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
+function ratioFromBlock(block: string): { date: string; value: number } | null {
+  const dateMatch = block.match(/"asOfDate"\s*:\s*"?(\d{8})"?/);
+  if (!dateMatch) return null;
+  const date = compactDate(dateMatch[1]);
+  if (!date) return null;
+  const formatted = block.match(/"formattedValue"\s*:\s*"([0-9]+(?:[.,][0-9]+)?)"/);
+  const numeric = block.match(/"value"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)/);
+  const formattedValue = formatted ? Number(formatted[1].replace(",", ".")) : NaN;
+  const numericValue = numeric ? Number(numeric[1]) : NaN;
+  const value = peInRange(formattedValue) ? formattedValue : numericValue;
+  if (!peInRange(value)) return null;
+  return { date, value };
+}
+
+/**
+ * iShares EXSA KGV. The product-data JSON and the product page use the same
+ * priceEarnings object. German pages print a decimal comma. Field order varies.
+ * A page that only rendered the table still has the cell and „Per TT.Mon.JJJJ“.
+ */
+export function isharesPriceEarnings(html: string): { date: string; value: number } | null {
+  if (!html) return null;
+  const text = html.replace(/&quot;/g, "\"").replace(/&#39;/g, "'");
+  const marker = /"priceEarnings"\s*:\s*\{/g;
+  let found: RegExpExecArray | null;
+  while ((found = marker.exec(text))) {
+    const block = objectSlice(text, found.index + found[0].length - 1);
+    if (!block) continue;
+    const ratio = ratioFromBlock(block);
+    if (ratio) return ratio;
+  }
+  const valueMatch = text.match(/data-id="fundamentalsAndRisk-priceEarnings-data"[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*</);
+  const dateMatch = text.match(/data-id="fundamentalsAndRisk-priceEarnings-asOf"[^>]*>\s*(?:Per\s+)?(\d{1,2})\.([A-Za-zÄÖÜäöü]{3})\.(\d{4})/);
+  if (!valueMatch || !dateMatch) return null;
+  const value = Number(valueMatch[1].replace(",", "."));
+  const month = GERMAN_MONTH[dateMatch[2].toLowerCase()];
+  const day = Number(dateMatch[1]);
+  if (!month || day < 1 || day > 31 || !peInRange(value)) return null;
+  return { date: `${dateMatch[3]}-${month}-${String(day).padStart(2, "0")}`, value };
+}
+
+/** DBnomics series.docs[0] period/value pairs. YYYY-MM becomes the month start. */
+export function parseDbNomicsSeries(payload: unknown): DatedPoint[] {
+  if (!payload || typeof payload !== "object") return [];
+  const docs = (payload as { series?: { docs?: unknown[] } }).series?.docs;
+  const doc = Array.isArray(docs) ? docs[0] : null;
+  if (!doc || typeof doc !== "object") return [];
+  const periods = (doc as { period?: unknown }).period;
+  const values = (doc as { value?: unknown }).value;
+  if (!Array.isArray(periods) || !Array.isArray(values)) return [];
+  const points: DatedPoint[] = [];
+  const n = Math.min(periods.length, values.length);
+  for (let i = 0; i < n; i++) {
+    const period = String(periods[i] ?? "");
+    const value = typeof values[i] === "number" ? values[i] : Number(values[i]);
+    if (!Number.isFinite(value)) continue;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(period)
+      ? period
+      : /^\d{4}-\d{2}$/.test(period)
+        ? `${period}-01`
+        : "";
+    if (!date) continue;
+    points.push({ date, value });
+  }
+  return points;
+}
+
+/** The series whose last print is newer. An empty side loses. A tie keeps the primary. */
+export function newerSeries(primary: DatedPoint[], fallback: DatedPoint[]): { points: DatedPoint[]; usedPrimary: boolean } {
+  const last = (points: DatedPoint[]) => points.reduce((max, point) => point.date > max ? point.date : max, "");
+  if (primary.length === 0) return { points: fallback, usedPrimary: false };
+  if (fallback.length === 0) return { points: primary, usedPrimary: true };
+  if (last(primary) >= last(fallback)) return { points: primary, usedPrimary: true };
+  return { points: fallback, usedPrimary: false };
+}
+
+async function stoxxPe(today: string): Promise<{ value: number | null; source: string }> {
+  const fmp = await indexPe(["^STOXX", "^SXXP", "EXSA.DE"]);
+  if (fmp) return { value: fmp.value, source: fmp.source };
+  for (const url of STOXX_PE_URLS) {
+    const pe = isharesPriceEarnings(await getText(url, 25000, { "User-Agent": "Mozilla/5.0" }));
+    if (!pe) continue;
+    if (isStale(pe.date, today)) {
+      return { value: null, source: `iShares EXSA KGV ${pe.date.slice(0, 7)} außerhalb des 18-Monats-Fensters` };
+    }
+    return { value: pe.value, source: `iShares EXSA KGV ${pe.date}` };
+  }
+  return { value: null, source: "STOXX 600 PE (FMP leer, iShares ohne KGV)" };
+}
+
+async function topixPe(): Promise<{ value: number | null; source: string }> {
+  const fmp = await indexPe(["^TPX", "1306.T"]);
+  if (fmp) return { value: fmp.value, source: fmp.source };
+  return { value: null, source: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)" };
+}
+
 function yearsAgo(today: string, years: number): string {
   const date = new Date(`${today}T00:00:00Z`);
   date.setUTCFullYear(date.getUTCFullYear() - years);
@@ -157,14 +302,15 @@ export function emptyRegionalPrints(): RegionalPrints {
     ezM3Yoy: null,
     ezHy: null,
     ezPe: null,
-    ezPeSource: "STOXX 600 PE (FMP leer)",
+    ezPeSource: "STOXX 600 PE (FMP leer, iShares ohne KGV)",
     ezVol: null,
     jpUnemployment: [],
     jpLong: [],
     jpIp: [],
+    jpIpSource: "FRED JPNPROINDMISMEI",
     jpM2Yoy: null,
     jpPe: null,
-    jpPeSource: "TOPIX/CAPE JP (FMP leer)",
+    jpPeSource: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)",
     jpVol: null,
   };
 }
@@ -172,7 +318,7 @@ export function emptyRegionalPrints(): RegionalPrints {
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIp, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -181,12 +327,22 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     fred("LRUNTTTTJPM156S", cosd),
     fred("IRLTLT01JPM156N", cosd),
     fred("JPNPROINDMISMEI", cosd),
+    getText(OECD_JP_IP, 25000),
     ecbM3Yoy(),
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
-    indexPe(["^STOXX"]),
-    indexPe(["^TPX"]),
+    stoxxPe(today),
+    topixPe(),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
+  let oecdIp: DatedPoint[] = [];
+  if (oecdIpText && !oecdIpText.includes("<html")) {
+    try {
+      oecdIp = parseDbNomicsSeries(JSON.parse(oecdIpText));
+    } catch {
+      oecdIp = [];
+    }
+  }
+  const jpIpPick = newerSeries(oecdIp, jpIpFred);
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
   const vol = [...vstoxx.vol].sort((a, b) => a.date.localeCompare(b.date));
   return {
@@ -196,15 +352,16 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     ezIp,
     ezM3Yoy,
     ezHy: latestFinite(ezHyPoints),
-    ezPe: ezPe?.value ?? null,
-    ezPeSource: ezPe?.source ?? "STOXX 600 PE (FMP leer)",
+    ezPe: ezPe.value,
+    ezPeSource: ezPe.source,
     ezVol: vol.length ? vol[vol.length - 1].value : null,
     jpUnemployment,
     jpLong,
-    jpIp,
+    jpIp: jpIpPick.points,
+    jpIpSource: jpIpPick.usedPrimary ? "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)" : "FRED JPNPROINDMISMEI",
     jpM2Yoy: m2.length ? m2[m2.length - 1].value : null,
-    jpPe: jpPe?.value ?? null,
-    jpPeSource: jpPe?.source ?? "TOPIX/CAPE JP (FMP leer)",
+    jpPe: jpPe.value,
+    jpPeSource: jpPe.source,
     jpVol: null,
   };
 }
@@ -240,7 +397,7 @@ function activitySlot(name: string, source: string, points: DatedPoint[], today:
     id: "activity",
     name,
     book: "recession",
-    value: `YoY ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`,
+    value: `YoY ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}% (${last.date.slice(0, 7)})`,
     rawScore: scored.rawScore,
     weight: 1,
     weightedScore: scored.rawScore,
@@ -320,16 +477,16 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const jp: RegionSlot[] = [
     laborSlot("ALQ Japan", "FRED LRUNTTTTJPM156S", sahmGapPp(prints.jpUnemployment.map(point => point.value))),
     curveSlot("Kurve JP 10J", "FRED IRLTLT01JPM156N", prints.jpLong, false, scorers.curve),
-    activitySlot("Aktivität JP", "FRED JPNPROINDMISMEI", prints.jpIp, today, scorers.activity),
+    activitySlot("Aktivität JP", prints.jpIpSource || "FRED JPNPROINDMISMEI", prints.jpIp, today, scorers.activity),
     prints.jpM2Yoy == null
       ? closedSlot("money", "Geld JP M2", "recession", "BoJ M2")
       : fromReading("money", "Geld JP M2", "recession", "BoJ M2", scorers.money(prints.jpM2Yoy), `${prints.jpM2Yoy.toFixed(1)}%`),
-    closedSlot("spreads", "Spreads JP", "recession", "JGB-Corp (keine freie Serie)"),
+    closedSlot("spreads", "Spreads JP", "recession", "JGB-Corp (keine freie OAS-Serie)"),
     prints.jpPe == null
       ? closedSlot("valuation", "TOPIX/CAPE JP", "correction", prints.jpPeSource)
       : fromReading("valuation", "TOPIX/CAPE JP", "correction", prints.jpPeSource, scorers.valuation(prints.jpPe), prints.jpPe.toFixed(1)),
     prints.jpVol == null
-      ? closedSlot("vol", "JNVI", "correction", "JNVI")
+      ? closedSlot("vol", "JNVI", "correction", "JNVI (keine freie Serie)")
       : fromReading("vol", "JNVI", "correction", "JNVI", scorers.vol(prints.jpVol), prints.jpVol.toFixed(1)),
   ];
   const us = region("US", "USA", input.usSlots);

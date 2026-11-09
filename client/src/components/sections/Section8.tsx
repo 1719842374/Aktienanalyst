@@ -3,7 +3,7 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, Risk } from "../../../../shared/schema";
 import { calculateDCF, invertedDcf } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, formatTarget, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useRef } from "react";
 import {
   ChevronDown, ChevronUp,
@@ -11,6 +11,16 @@ import {
   Sparkles, Loader2,
 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
+import { usePublishChatSection } from "@/lib/chatSectionData";
+import { useMarketCreditSpread } from "../../lib/useMarketCreditSpread";
+import { useCreditFundamentals } from "../../lib/useCreditFundamentals";
+import {
+  creditLevelReading,
+  formatCreditMetric,
+  marketSpreadLabel,
+  type CreditLevelReading,
+  type CreditMetricReading,
+} from "../../../../shared/credit";
 
 interface Props {
   data: StockAnalysis;
@@ -110,6 +120,10 @@ export function Section8({ data, useLLM = false }: Props) {
     }
   }, [data.ticker, useLLM]);
 
+  const creditPeers = (data.peerComparison?.peers ?? []).map(p => p.ticker).filter((t): t is string => typeof t === "string" && t.length > 0);
+  const spreadQuery = useMarketCreditSpread(true);
+  const fundamentalsQuery = useCreditFundamentals(data.ticker, creditPeers);
+
   const sp = data.sectorProfile;
 
   const top3 = useMemo(() =>
@@ -158,6 +172,9 @@ export function Section8({ data, useLLM = false }: Props) {
   const riskAdjVsPrice = (riskAdjTarget / data.currentPrice - 1) * 100;
   const riskAdjVsPT = hasPT ? (riskAdjTarget / analystPT - 1) * 100 : 0;
   const belowReference = riskAdjTarget < data.currentPrice;
+  // JOB 23: Inverted DCF in Statement-Währung; das Risk-Adj. Target nur dann, wenn es auf den DCF zurückfällt (kein PT).
+  const dcfCcy = statementCurrency(data);
+  const targetCcy = hasPT ? data.currency : dcfCcy;
 
   // Legacy: DCF vs Reference (für Rechenweg-Anzeige)
   const dcfVsReference = hasPT
@@ -213,8 +230,27 @@ export function Section8({ data, useLLM = false }: Props) {
     }
   }
 
+  const kiLines = risks.flatMap(r => {
+    const ex = r.explanation;
+    if (!ex) return [];
+    const bits = [ex.kontext, ex.gewichtungsBegrundung, ex.bewertungsAuswirkung, ex.mitigation, ex.gesamtEinschaetzung]
+      .map(part => (typeof part === "string" ? part.trim() : ""))
+      .filter(part => part.length > 0);
+    if (ex.unterschaetzt) bits.push("Unterschätzt");
+    return bits.length ? [`${r.name}: ${bits.join(" ")}`] : [];
+  });
+  usePublishChatSection("stock", "10", hasKIAnalysis && kiLines.length ? { kiAntwort: kiLines.join(" | ") } : null);
+
   return (
     <SectionCard number={10} title="INVERSION – RISIKOEINPREISUNG">
+
+      <CreditRiskCard
+        ticker={data.ticker}
+        level={spreadQuery.data ? creditLevelReading(spreadQuery.data.points) : null}
+        spreadPending={spreadQuery.isPending && spreadQuery.data == null}
+        fundamentals={fundamentalsQuery.data ?? null}
+        fundamentalsPending={fundamentalsQuery.isPending && fundamentalsQuery.data == null}
+      />
 
       {/* Warnung — Risiko-adjustierter Zielkurs vs. Kurs */}
       {belowReference && (
@@ -226,8 +262,8 @@ export function Section8({ data, useLLM = false }: Props) {
             </div>
             <div className="text-[11px] text-red-400 mt-0.5">
               {hasPT
-                ? `Analyst PT (${formatCurrency(analystPT)}) × (1−${totalExpectedDamage.toFixed(1)}% Risiko) = ${formatCurrency(riskAdjTarget)} — ${Math.abs(riskAdjVsPrice).toFixed(1)}% unter Kurs.`
-                : `Risikoadjustierter Fair Value (${formatCurrency(riskAdjTarget)}) unter Kurs (${formatCurrency(data.currentPrice)}).`
+                ? `Analyst PT (${formatCurrency(analystPT, 2, data.currency)}) × (1−${totalExpectedDamage.toFixed(1)}% Risiko) = ${formatCurrency(riskAdjTarget, 2, targetCcy)} — ${Math.abs(riskAdjVsPrice).toFixed(1)}% unter Kurs.`
+                : `Risikoadjustierter Fair Value (${formatCurrency(riskAdjTarget, 2, targetCcy)}) unter Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}).`
               } Anti-Bias: Erhöhte Vorsicht geboten.
             </div>
           </div>
@@ -445,7 +481,7 @@ export function Section8({ data, useLLM = false }: Props) {
             {hasPT && (
               <>
                 <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">
-                  = {formatCurrency(analystPT)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget)}
+                  = {formatCurrency(analystPT, 2, data.currency)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget, 2, targetCcy)}
                 </div>
                 <div className="text-[9px] text-amber-500/60 mt-0.5">
                   Hinweis: Basis ist Analysten-Konsensus (potenziell optimistisch) — nicht der unabhängige DCF Fair Value.
@@ -454,7 +490,7 @@ export function Section8({ data, useLLM = false }: Props) {
             )}
           </div>
           <div className="text-right shrink-0">
-            <div className="text-xl font-bold font-mono tabular-nums">{formatCurrency(riskAdjTarget)}</div>
+            <div className="text-xl font-bold font-mono tabular-nums">{formatCurrency(riskAdjTarget, 2, targetCcy)}</div>
             <div className={`text-sm font-mono tabular-nums font-semibold ${
               riskAdjVsPrice >= 0 ? 'text-emerald-400' : 'text-red-400'
             }`}>
@@ -473,7 +509,7 @@ export function Section8({ data, useLLM = false }: Props) {
           <div className="mt-3 pt-2 border-t border-border/20 grid grid-cols-2 gap-3 text-[10px]">
             <div className="space-y-0.5">
               <div className="text-muted-foreground">Analyst PT (Median)</div>
-              <div className="font-mono font-semibold text-sm">{formatCurrency(analystPT)}</div>
+              <div className="font-mono font-semibold text-sm">{formatTarget(analystPT, data.currency)}</div>
               <div className={`font-mono ${
                 analystPT > data.currentPrice ? 'text-emerald-400' : 'text-red-400'
               }`}>
@@ -482,7 +518,7 @@ export function Section8({ data, useLLM = false }: Props) {
             </div>
             <div className="space-y-0.5">
               <div className="text-muted-foreground">Konservativer Inverted DCF</div>
-              <div className="font-mono font-semibold text-sm text-foreground/50">{formatCurrency(invertedDCF.perShare)}</div>
+              <div className="font-mono font-semibold text-sm text-foreground/50">{formatCurrency(invertedDCF.perShare, 2, dcfCcy)}</div>
               <div className="text-muted-foreground/50 font-mono">
                 {dcfVsReference.toFixed(1)}% vs Analyst PT
               </div>
@@ -524,15 +560,100 @@ export function Section8({ data, useLLM = false }: Props) {
         invertedDCF.mode === 'growth'
           ? `Growth_adj = Base Growth × (1 − D−) = ${formatPercentNoSign(baseGrowth, 1)} × (1 − ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)}) = ${formatPercentNoSign(invertedDCF.gAdj, 2)} (WACC bleibt Base — nur eine Adjustierung)`
           : `WACC_adj = Base WACC + λ × D− = ${formatPercentNoSign(baseWACC)} + 0.02 × ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)} = ${formatPercentNoSign(invertedDCF.waccAdj, 2)} (Growth bleibt Base — nur eine Adjustierung)`,
-        `Inverted DCF (konservativ, ${invertedDCF.mode === 'growth' ? 'Growth_adj' : 'WACC_adj'} — einzige Adjustierung) → ${formatCurrency(invertedDCF.perShare)} per share`,
+        `Inverted DCF (konservativ, ${invertedDCF.mode === 'growth' ? 'Growth_adj' : 'WACC_adj'} — einzige Adjustierung) → ${formatCurrency(invertedDCF.perShare, 2, dcfCcy)} per share`,
         hasPT
-          ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget)}`
-          : `Risk-Adjusted Target = Inverted DCF = ${formatCurrency(riskAdjTarget)}`,
+          ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT, 2, data.currency)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget, 2, targetCcy)}`
+          : `Risk-Adjusted Target = Inverted DCF = ${formatCurrency(riskAdjTarget, 2, targetCcy)}`,
         belowReference
-          ? `⚠ WARNUNG: Risk-Adjusted Target (${formatCurrency(riskAdjTarget)}) = ${riskAdjVsPrice.toFixed(1)}% vs Kurs (${formatCurrency(data.currentPrice)}) → Abschlag dominiert`
-          : `✓ Risk-Adjusted Target (${formatCurrency(riskAdjTarget)}) = +${riskAdjVsPrice.toFixed(1)}% vs Kurs → Risiko eingepreist`,
+          ? `⚠ WARNUNG: Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, targetCcy)}) = ${riskAdjVsPrice.toFixed(1)}% vs Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}) → Abschlag dominiert`
+          : `✓ Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, targetCcy)}) = +${riskAdjVsPrice.toFixed(1)}% vs Kurs → Risiko eingepreist`,
       ]} />
     </SectionCard>
+  );
+}
+
+function CreditMetricCell({
+  testId,
+  label,
+  reading,
+  pending,
+  digits,
+  suffix,
+}: {
+  testId: string;
+  label: string;
+  reading: CreditMetricReading | null;
+  pending: boolean;
+  digits: number;
+  suffix?: string;
+}) {
+  const shown = pending
+    ? "n/a — wird geladen"
+    : reading
+      ? `${formatCreditMetric(reading, digits)}${suffix && reading.value != null ? suffix : ""}`
+      : "n/a — nicht geladen";
+  const stance = !pending && reading?.value != null
+    ? (reading.stance ?? "n/a — zu wenig Vergleichswerte")
+    : null;
+  return (
+    <div className="rounded-md border border-border/50 bg-background/40 p-2.5 min-w-0">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="text-sm font-semibold font-mono tabular-nums mt-0.5 break-words" data-testid={testId}>{shown}</div>
+      {stance && (
+        <div className="text-[10px] text-foreground/70 mt-1 leading-relaxed">
+          {reading?.basis ? `${reading.basis}: ` : ""}{stance}
+          {reading?.percentile != null ? ` · Perzentil ${Math.round(reading.percentile * 100)}` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreditRiskCard({
+  ticker,
+  level,
+  spreadPending,
+  fundamentals,
+  fundamentalsPending,
+}: {
+  ticker: string;
+  level: CreditLevelReading | null;
+  spreadPending: boolean;
+  fundamentals: { debtToEquity: CreditMetricReading; interestCoverage: CreditMetricReading } | null;
+  fundamentalsPending: boolean;
+}) {
+  const spreadShown = spreadPending
+    ? "n/a — wird geladen"
+    : level
+      ? (level.value == null ? formatCreditMetric(level, 2) : `${level.value.toFixed(2)}%`)
+      : "n/a — nicht geladen";
+  const spreadStance = !spreadPending && level?.value != null
+    ? (level.stance ?? "n/a — zu wenig Historie")
+    : null;
+  return (
+    <div data-testid="credit-risk-card" className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2">
+      <div className="text-xs font-semibold">Credit / Refinanzierung</div>
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        {marketSpreadLabel(ticker)}. kein CDS, kein ICE-OAS, kein Score, kein CRV.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="rounded-md border border-border/50 bg-background/40 p-2.5 min-w-0">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Markt-Spread BAA10Y</div>
+          <div className="text-sm font-semibold font-mono tabular-nums mt-0.5" data-testid="credit-spread-value">{spreadShown}</div>
+          <div className="text-[10px] text-foreground/70 mt-1 leading-relaxed" data-testid="credit-spread-percentile">
+            {spreadPending || !level
+              ? "historisches Perzentil n/a — wird geladen"
+              : level.percentile == null
+                ? `historisches Perzentil ${formatCreditMetric({ value: null, unavailable: level.unavailable }, 0)}`
+                : `historisches Perzentil ${Math.round(level.percentile * 100)}`}
+            {spreadStance ? ` — ${spreadStance}` : ""}
+            {level?.asOf && !spreadPending ? ` · Stand ${level.asOf}` : ""}
+          </div>
+        </div>
+        <CreditMetricCell testId="credit-debt-equity" label="Debt/Equity" reading={fundamentals?.debtToEquity ?? null} pending={fundamentalsPending} digits={2} />
+        <CreditMetricCell testId="credit-interest-coverage" label="Zinsdeckung" reading={fundamentals?.interestCoverage ?? null} pending={fundamentalsPending} digits={2} suffix="x" />
+      </div>
+    </div>
   );
 }
 
