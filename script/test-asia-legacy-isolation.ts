@@ -17,10 +17,12 @@ import {
   eurostatStep,
   jpActivitySource,
   loadAshrCloses,
+  oecdAttemptPlan,
   runAsiaSupplement,
   scoreRegionalCatalogs,
   ASIA_FMP_TIMEOUT_MS,
   EUROSTAT_RETRY_MS,
+  OECD_RETRY_MS,
   type RegionScorers,
 } from "../server/recession-regions";
 import { fetchYahooTimeseriesFundamentals } from "../server/yahoo-fetcher";
@@ -173,8 +175,9 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
   check("ein geworfener Nachzug lässt die leeren Legacy-Felder stehen und setzt ASHR auf n/a", thrown.cnVolSource.startsWith("n/a —") && thrown.jpIpSource === "FRED JPNPROINDMISMEI");
   const src = readFileSync("server/recession-regions.ts", "utf8");
   check("leerer Katalog nennt FMP und Yahoo, nicht nur den alten Yahoo-Satz", src.includes("cnVolSource: \"n/a — ASHR ohne Tagesschlüsse für realisierte Vol 20T (FMP leer; Yahoo leer)\""));
-  check("OECD wird bei leerer erster Antwort ein zweites Mal gelesen", src.includes("if (first && !first.includes(\"<html\")) return first;"));
-  check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", jpActivitySource(false, 0) === "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML");
+  check("OECD leer oder HTML wird einmal kurz wiederholt, ein Timeout nicht", oecdAttemptPlan(null) === "use" && oecdAttemptPlan("leer") === "retry" && oecdAttemptPlan("HTML") === "retry" && oecdAttemptPlan("HTTP 503") === "retry" && oecdAttemptPlan("Timeout") === "stop" && OECD_RETRY_MS <= 8000);
+  check("fällt OECD nach der Wiederholung aus, nennt die Quelle den Grund", jpActivitySource(false, 0, "empty") === "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML");
+  check("ein OECD-Timeout heißt Zeitüberschreitung", jpActivitySource(false, 0, "timeout") === "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung");
   check("ältere OECD-Daten ohne zweite Abfrage heißen nicht Wiederholung", jpActivitySource(false, 3) === "FRED JPNPROINDMISMEI; OECD älter als FRED" && jpActivitySource(true, 3).includes("OECD"));
   check("EA20 wird bei leerer erster Antwort wiederholt, bevor EA21 kommt", eurostatStep(0, false) === "retry" && eurostatStep(0, true) === "next" && eurostatStep(2, false) === "use");
   check("ein 20s-Hänger von EA20 startet keine zweite Frist", eurostatAttemptPlan({ pointCount: 0, alreadyRetried: false, why: "Timeout", dataset: "sts_inpr_m", httpStatus: null, hasNext: true }) === "next");
@@ -196,7 +199,9 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
       blockAborted = true;
       resolve({ closes: [], via: "none", reason: "timeout" });
     });
-  }));
+  }), {
+    gdp: async id => ({ value: null, source: `n/a — FRED ${id} Zeitüberschreitung` }),
+  });
   check(
     "der Asien-Block endet an der Gesamtfrist mit n/a Zeitüberschreitung",
     blockAborted && Date.now() - blockStart < 300 && blocked.cnVolSource.includes("Zeitüberschreitung") && blocked.cnPeSource.includes("Zeitüberschreitung"),
@@ -230,6 +235,28 @@ console.log("\n=== FMP-Timeout erreicht Yahoo und bricht den ersten Abruf ab ===
       && kept.cnPeSource.includes("Zeitüberschreitung")
       && Date.now() - keptStart < 500,
     `${Date.now() - keptStart}ms ${kept.jpGdpSource} vol=${kept.cnVolSource}`,
+  );
+  const ashrStart = Date.now();
+  let ashrGdpCalls = 0;
+  const ashrHung = await runAsiaSupplement("2026-11-09", 80, (_cosd, deps) => new Promise(resolve => {
+    deps.parent?.addEventListener("abort", () => resolve({ closes: [], via: "none", reason: "timeout" }));
+  }), {
+    gdp: async id => {
+      ashrGdpCalls += 1;
+      return { value: id.includes("JPA") ? 4e12 : 16e12, source: `FRED ${id} 2024` };
+    },
+  });
+  check(
+    "ASHR hängt, BIP bleibt",
+    ashrGdpCalls === 2
+      && ashrHung.jpGdpUsd === 4e12
+      && ashrHung.cnGdpUsd === 16e12
+      && ashrHung.jpGdpSource.includes("2024")
+      && !ashrHung.jpGdpSource.includes("Zeitüberschreitung")
+      && !ashrHung.cnGdpSource.includes("Zeitüberschreitung")
+      && ashrHung.cnVolSource.includes("Zeitüberschreitung")
+      && Date.now() - ashrStart < 500,
+    `${Date.now() - ashrStart}ms calls=${ashrGdpCalls} ${ashrHung.jpGdpSource} vol=${ashrHung.cnVolSource}`,
   );
   const yahooStart = Date.now();
   let yahooAt = -1;

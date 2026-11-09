@@ -365,11 +365,33 @@ export function parseDbNomicsSeries(payload: unknown): DatedPoint[] {
   return points;
 }
 
-/** FRED label when OECD is not the newer series. Older OECD data had no second fetch. */
-export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number): string {
+/** FRED label when OECD is not the newer series. A timeout is not described as an empty body. */
+export function jpActivitySource(usedPrimary: boolean, oecdPointCount: number, failure?: "timeout" | "empty" | null): string {
   if (usedPrimary) return "OECD STES JPN.M.PRVM.IX.BTE.Y (DBnomics)";
   if (oecdPointCount > 0) return "FRED JPNPROINDMISMEI; OECD älter als FRED";
+  if (failure === "timeout") return "FRED JPNPROINDMISMEI; OECD Zeitüberschreitung";
   return "FRED JPNPROINDMISMEI; OECD nach Wiederholung leer oder HTML";
+}
+
+/** Same rule as EA20: a 25s hang is not fetched again. Empty, HTTP and HTML get one 8s retry. */
+export const OECD_RETRY_MS = 8000;
+
+export function oecdAttemptPlan(why: string | null): "use" | "retry" | "stop" {
+  if (why == null) return "use";
+  if (why === "Timeout") return "stop";
+  return "retry";
+}
+
+async function readOecdJpIp(url = OECD_JP_IP): Promise<{ text: string; failure: "timeout" | "empty" | null }> {
+  const first = await getTextResult(url, 25000);
+  const why = eurostatWhy(first);
+  if (oecdAttemptPlan(why) === "use") return { text: first.text, failure: null };
+  if (oecdAttemptPlan(why) === "stop") return { text: "", failure: "timeout" };
+  const again = await getTextResult(url, OECD_RETRY_MS);
+  const againWhy = eurostatWhy(again);
+  if (oecdAttemptPlan(againWhy) === "use") return { text: again.text, failure: null };
+  if (againWhy === "Timeout") return { text: "", failure: "timeout" };
+  return { text: "", failure: "empty" };
 }
 
 /** The series whose last print is newer. An empty side loses. A tie keeps the primary. */
@@ -653,11 +675,7 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     fred("LRUNTTTTJPM156S", cosd),
     fred("IRLTLT01JPM156N", cosd),
     fred("JPNPROINDMISMEI", cosd),
-    (async () => {
-      const first = await getText(OECD_JP_IP, 25000);
-      if (first && !first.includes("<html")) return first;
-      return getText(OECD_JP_IP, 25000);
-    })(),
+    readOecdJpIp(OECD_JP_IP),
     ecbM3Yoy(),
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
     stoxxPe(today),
@@ -665,16 +683,20 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
   let oecdIp: DatedPoint[] = [];
-  if (oecdIpText && !oecdIpText.includes("<html")) {
+  if (oecdIpText.text && !oecdIpText.text.includes("<html")) {
     try {
-      oecdIp = parseDbNomicsSeries(JSON.parse(oecdIpText));
+      oecdIp = parseDbNomicsSeries(JSON.parse(oecdIpText.text));
     } catch {
       oecdIp = [];
     }
   }
   const jpIpPick = newerSeries(oecdIp, jpIpFred);
   if (!jpIpPick.usedPrimary) {
-    const why = oecdIp.length > 0 ? "OECD älter als FRED, keine Wiederholung" : "OECD nach Wiederholung leer oder HTML";
+    const why = oecdIp.length > 0
+      ? "OECD älter als FRED, keine Wiederholung"
+      : oecdIpText.failure === "timeout"
+        ? "OECD Zeitüberschreitung, keine zweite 25s-Frist"
+        : "OECD nach Wiederholung leer oder HTML";
     console.warn(`[RECESSION] ${why}; Fallback JPNPROINDMISMEI`);
   }
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
@@ -692,7 +714,7 @@ async function fetchLegacyRegionalPrints(today: string): Promise<RegionalPrints>
     jpUnemployment,
     jpLong,
     jpIp: jpIpPick.points,
-    jpIpSource: jpActivitySource(jpIpPick.usedPrimary, oecdIp.length),
+    jpIpSource: jpActivitySource(jpIpPick.usedPrimary, oecdIp.length, oecdIpText.failure),
     jpM2Yoy: m2.length ? m2[m2.length - 1].value : null,
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
@@ -760,6 +782,26 @@ async function buildAsiaSupplement(
   fields?: AsiaRuntimeDeps,
 ): Promise<AsiaSupplement> {
   const cosd = yearsAgo(today, 20);
+  const gdp = fields?.gdp ?? gdpUsd;
+  const linked = (signal: AbortSignal) => AbortSignal.any([signal, parent]);
+  const writeGdp = (id: string, assign: (value: { value: number | null; source: string }) => void) => bounded(
+    signal => gdp(id, linked(signal)),
+    ASIA_SUPPLEMENT_TIMEOUT_MS,
+    { value: null, source: `n/a — FRED ${id} Zeitüberschreitung` },
+  ).then(result => {
+    if (parent.aborted) return;
+    assign(result.value);
+  });
+  const gdpDone = Promise.all([
+    writeGdp(ASIA_GDP_USD.JP, value => {
+      partial.jpGdpUsd = value.value;
+      partial.jpGdpSource = value.source;
+    }),
+    writeGdp(ASIA_GDP_USD.CN, value => {
+      partial.cnGdpUsd = value.value;
+      partial.cnGdpSource = value.source;
+    }),
+  ]);
   const loaded = await load(cosd, {
     fmp: signal => fmpHistoricalPrices("ASHR", cosd, today, signal),
     yahoo: signal => fetchYahooDailySeries("ASHR", cosd, signal),
@@ -772,25 +814,14 @@ async function buildAsiaSupplement(
   partial.cnVolSource = vol.source;
   if (parent.aborted) return snapshotAsia(partial);
   const priceSource = ashrPriceSource(loaded.via, lastClose);
-  const linked = (signal: AbortSignal) => AbortSignal.any([signal, parent]);
   const pe = fields?.pe ?? ashrPe;
-  const gdp = fields?.gdp ?? gdpUsd;
   await Promise.all([
     bounded(signal => pe(today, lastClose, linked(signal), priceSource), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: "n/a — ASHR KGV Zeitüberschreitung" }).then(result => {
       if (parent.aborted) return;
       partial.cnPe = result.value.value;
       partial.cnPeSource = result.value.source;
     }),
-    bounded(signal => gdp(ASIA_GDP_USD.JP, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} Zeitüberschreitung` }).then(result => {
-      if (parent.aborted) return;
-      partial.jpGdpUsd = result.value.value;
-      partial.jpGdpSource = result.value.source;
-    }),
-    bounded(signal => gdp(ASIA_GDP_USD.CN, linked(signal)), ASIA_SUPPLEMENT_TIMEOUT_MS, { value: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} Zeitüberschreitung` }).then(result => {
-      if (parent.aborted) return;
-      partial.cnGdpUsd = result.value.value;
-      partial.cnGdpSource = result.value.source;
-    }),
+    gdpDone,
   ]);
   return snapshotAsia(partial);
 }
