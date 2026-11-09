@@ -59,12 +59,14 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
   }
   return (
     <div className="pl-4 space-y-0.5" data-testid="segment-children">
+      {data.reason ? <p className="text-[10px] text-muted-foreground" data-testid="segment-children-note">{data.reason}</p> : null}
       {data.children.map((child) => (
         <div key={`${child.parent}:${child.name}`} className="flex items-center gap-2 text-[10px]" data-testid="segment-child">
           <span className="truncate">{child.name}</span>
           {child.shareOfParentPct != null && (
             <span className="font-mono tabular-nums text-muted-foreground">{child.shareOfParentPct.toFixed(1)} %</span>
           )}
+          {child.basis ? <span className="text-muted-foreground">{child.basis}</span> : null}
           <span
             className={child.source === "KI"
               ? "rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200"

@@ -23,9 +23,11 @@ import {
 import { callLLMJson } from "./llm-openrouter";
 import {
   SEGMENT_CHILDREN_ROUTE,
+  canonicalSegmentName,
   childrenFromFmpRows,
-  childrenFromKiPayload,
+  reportedParentRevenue,
   resolveSegmentChildren,
+  reviewKiChildren,
   type SegmentChildrenResult,
 } from "../shared/segment-children";
 
@@ -43,6 +45,28 @@ const cache = new Map<string, { at: number; body: CacheBody }>();
 
 export function resetSegmentGrowthCacheForTests(): void {
   cache.clear();
+}
+
+const CHILDREN_CACHE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_RATE_MAX = 20;
+const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
+const childCache = new Map<string, { at: number; body: SegmentChildrenResult }>();
+const rateBuckets = new Map<string, number[]>();
+
+export function resetSegmentChildrenGuardsForTests(): void {
+  childCache.clear();
+  rateBuckets.clear();
+}
+
+export function takeSegmentChildrenSlot(ip: string, now: number, max: number, windowMs: number): boolean {
+  const recent = (rateBuckets.get(ip) ?? []).filter((at) => now - at < windowMs);
+  if (recent.length >= max) {
+    rateBuckets.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  rateBuckets.set(ip, recent);
+  return true;
 }
 
 function yearKey(row: unknown): string {
@@ -115,12 +139,14 @@ export interface SegmentChildrenDeps {
   fmpAvailable: () => boolean;
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
   ki: (ticker: string, parent: string) => Promise<unknown>;
+  now?: () => number;
+  rateLimit?: { max: number; windowMs: number };
 }
 
 async function defaultKiChildren(ticker: string, parent: string): Promise<unknown> {
   const result = await callLLMJson({
     systemPrompt: "Antworte nur mit JSON. Erfinde keine Untersegmente und keine Zahlen. Unbekannt heißt leeres children-Array.",
-    prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Gib nur Untersegmente dieses Hauptsegments zurück, die du belegen kannst. Form: {"children":[{"name":"","shareOfParentPct":null}]}. Sonst {"children":[]}.`,
+    prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Nur Untersegmente dieses einen FMP-Segmentnamens. Jeder Wert braucht ein Feld basis mit Quelle oder Begründung. Form: {"children":[{"name":"","shareOfParentPct":null,"basis":""}]}. Ohne Beleg: {"children":[]}.`,
     maxTokens: 400,
     temperature: 0,
   });
@@ -159,7 +185,7 @@ export async function loadSegmentChildren(
   } catch {
     kiPayload = null;
   }
-  return resolveSegmentChildren(label, [], childrenFromKiPayload(label, kiPayload));
+  return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label));
 }
 
 export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentChildrenDeps): void {
@@ -195,8 +221,23 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     if (!TICKER_RE.test(ticker) || !parent || parent.length > 120 || !kind) {
       return res.status(400).json({ error: "ticker, parent oder kind fehlt" });
     }
+    const deps = childrenDeps ?? defaultSegmentChildrenDeps();
+    const now = deps.now?.() ?? Date.now();
+    const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    if (!takeSegmentChildrenSlot(ip, now, limit.max, limit.windowMs)) {
+      return res.status(429).json({ error: "Zu viele Abfragen" });
+    }
     try {
-      return res.json(await loadSegmentChildren(ticker, parent, kind, childrenDeps));
+      const rawRows = deps.fmpAvailable() ? await deps.raw(kind, ticker) : [];
+      const canonical = canonicalSegmentName(Array.isArray(rawRows) ? rawRows : [], parent);
+      if (!canonical) return res.status(400).json({ error: "Segment ist nicht in der FMP-Liste" });
+      const cacheKey = `${ticker.toUpperCase()}|${kind}|${canonical}`;
+      const hit = childCache.get(cacheKey);
+      if (hit && now - hit.at < CHILDREN_CACHE_MS) return res.json(hit.body);
+      const body = await loadSegmentChildren(ticker, canonical, kind, deps);
+      childCache.set(cacheKey, { at: now, body });
+      return res.json(body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Untersegmente fehlgeschlagen";
       return res.status(502).json({ error: message.slice(0, 200) });

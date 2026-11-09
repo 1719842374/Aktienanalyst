@@ -12,6 +12,7 @@ export interface SegmentChild {
   revenue: number | null;
   shareOfParentPct: number | null;
   source: SegmentChildSource;
+  basis?: string | null;
 }
 
 export interface SegmentChildrenResult {
@@ -22,6 +23,15 @@ export interface SegmentChildrenResult {
 
 export const SEGMENT_CHILDREN_ROUTE = "/api/segment-children";
 export const NO_SEGMENT_CHILDREN = "n/a — weder FMP noch KI liefern Untersegmente";
+export const KI_WITHOUT_BASIS = "n/a — KI-Schätzung ohne Beleg";
+export const KI_SUM_EXCEEDS_PARENT = "n/a — KI-Summe überschreitet das Elternsegment";
+export const KI_NEGATIVE = "n/a — negativer KI-Wert verworfen";
+
+const SKIP_KEYS = new Set([
+  "symbol", "date", "reportedCurrency", "cik", "fillingDate",
+  "acceptedDate", "calendarYear", "period", "link", "finalLink",
+  "fiscalYear", "data",
+]);
 
 function norm(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
@@ -80,6 +90,46 @@ function readNested(parent: string, value: unknown): SegmentChild[] {
   return withShares(parent, rows);
 }
 
+function segmentMap(row: Record<string, unknown>): Record<string, unknown> {
+  return row.data && typeof row.data === "object" ? row.data as Record<string, unknown> : row;
+}
+
+export function segmentNamesFromFmpRows(raw: unknown[]): string[] {
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || isQuarter(item as Record<string, unknown>)) continue;
+    for (const [key, value] of Object.entries(segmentMap(item as Record<string, unknown>))) {
+      if (SKIP_KEYS.has(key) || !key.trim()) continue;
+      const numeric = finite(value);
+      const nested = !!value && typeof value === "object";
+      if (numeric == null && !nested) continue;
+      if (!names.some((name) => norm(name) === norm(key))) names.push(key.trim());
+    }
+  }
+  return names;
+}
+
+export function canonicalSegmentName(raw: unknown[], parent: string): string | null {
+  const wanted = norm(parent);
+  if (!wanted) return null;
+  return segmentNamesFromFmpRows(raw).find((name) => norm(name) === wanted) ?? null;
+}
+
+export function reportedParentRevenue(raw: unknown[], parent: string): number | null {
+  if (!Array.isArray(raw)) return null;
+  const wanted = norm(parent);
+  const rows = raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !isQuarter(item as Record<string, unknown>));
+  for (const row of [...rows].sort((a, b) => fiscalYear(b) - fiscalYear(a))) {
+    for (const [key, value] of Object.entries(segmentMap(row))) {
+      if (norm(key) !== wanted) continue;
+      const revenue = finite(value);
+      if (revenue != null && revenue > 0) return revenue;
+    }
+  }
+  return null;
+}
+
 export function childrenFromFmpRows(raw: unknown[], parent: string): SegmentChild[] {
   if (!Array.isArray(raw) || !parent.trim()) return [];
   const rows = raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !isQuarter(item as Record<string, unknown>));
@@ -113,6 +163,53 @@ export function childrenFromKiPayload(parent: string, payload: unknown): Segment
     });
   }
   return rows;
+}
+
+export function reviewKiChildren(
+  parent: string,
+  payload: unknown,
+  parentRevenue: number | null,
+): SegmentChildrenResult {
+  if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
+  const list = (payload as { children?: unknown }).children;
+  if (!Array.isArray(list) || list.length === 0) return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
+  const kept: SegmentChild[] = [];
+  const notes: string[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; basis?: unknown };
+    const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
+    if (!name) continue;
+    const basis = typeof rec.basis === "string" ? rec.basis.trim() : "";
+    if (!basis) {
+      notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
+      continue;
+    }
+    const share = finite(rec.shareOfParentPct);
+    const revenue = finite(rec.revenue);
+    if ((share != null && share < 0) || (revenue != null && revenue < 0)) {
+      notes.push(`${KI_NEGATIVE}: ${name}`);
+      continue;
+    }
+    kept.push({
+      parent,
+      name,
+      revenue: revenue != null && revenue >= 0 ? revenue : null,
+      shareOfParentPct: share != null && share >= 0 ? share : null,
+      source: "KI",
+      basis,
+    });
+  }
+  const shareSum = kept.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
+  const revenueSum = kept.reduce((sum, row) => sum + (row.revenue ?? 0), 0);
+  if (kept.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
+    return { parent, children: [], reason: KI_SUM_EXCEEDS_PARENT };
+  }
+  if (parentRevenue != null && parentRevenue > 0 && kept.some((row) => row.revenue != null) && revenueSum > parentRevenue) {
+    return { parent, children: [], reason: KI_SUM_EXCEEDS_PARENT };
+  }
+  if (kept.length === 0) return { parent, children: [], reason: notes[0] ?? NO_SEGMENT_CHILDREN };
+  return { parent, children: kept, reason: notes.length > 0 ? notes.join(" ") : null };
 }
 
 export function resolveSegmentChildren(
