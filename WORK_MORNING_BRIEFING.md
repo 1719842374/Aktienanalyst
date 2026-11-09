@@ -53,3 +53,17 @@ Bild 2 ist der **aktuelle Ist-Zustand** und **nicht** der Soll-Zustand.
 - Bild 2 (Ist): Aktuelles Pre-Market Briefing
 
 Stand: 2026-11-07
+
+---
+
+## Ampel / Soll-Ist (Nachzug main `01bf6089`, 09.11.2026 Europe/Madrid)
+
+| | |
+|---|---|
+| Spec-SHA (Blob) | `f1eb82241516debec795d8ea77e317d9ce6929e0` (Commit `01bf6089`, +55) |
+| Ampel | 🔴 offen |
+| Soll | Pre-Market Briefing im Researcher Tab optisch/strukturell 1:1 Country-Macro-Pulse (Bild 1): Event-Karten 2-Spalten-Grid, Kategorie-Badge, Impact INFLATION/ZINSEN/AKTIEN, Sektor-Tags, Hero+Tag |
+| Ist UI Briefing | `client/src/pages/Researcher.tsx` `BriefingModal` + Button „Briefing“ → dichter Textblock / Cross / 3 Spalten US\|EU\|ASIA / Top Changes (= Bild 2, Spec selbst als Ist) |
+| Ist UI Macro (Referenz Soll-Design) | Tab „Country Macro Pulse“ → `MacroPanel.tsx` `KeyEventCard` + `ImpactBadge` (Inflation/Zinsen/Aktien) + Kategorie-Badge + `affectedSectors`-Tags |
+| Ist Kette Briefing (Daten) | UI `runBriefing` → `apiRequest` `POST /api/researcher/daily-briefing` (`client/src/lib/queryClient.ts`) → `server/researcher.ts` (daily-briefing) |
+| Was fehlt | BriefingModal rendert **nicht** KeyEventCard-/Impact-/Sektor-Layout. Draft #180 `dc486855` „restore Pre-Market Briefing as Key-Event cards“ offen/Draft/nicht gemergt (HOLD). Kein fertig_-Rename. |
