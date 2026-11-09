@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
   SEGMENT_SUPPLEMENT_ROUTE,
+  applyManualGrowthOverride,
   type OfficialSegment,
   type SegmentSupplement,
 } from "@shared/segment-supplement";
@@ -58,7 +60,17 @@ function signed(value: number): string {
 }
 
 /** Eingerückte Ergänzung. Die Balken der Elternsegmente zeichnet Section2. */
-export function SegmentSupplementBody({ data }: { data: SegmentSupplement }) {
+export function SegmentSupplementBody({
+  data,
+  drafts = {},
+  onDraft,
+  onConfirm,
+}: {
+  data: SegmentSupplement;
+  drafts?: Record<string, string>;
+  onDraft?: (name: string, value: string) => void;
+  onConfirm?: (name: string) => void;
+}) {
   const share = data.reportedSharePct == null ? (data.reportedShareReason ?? "n/a") : `${data.reportedSharePct.toFixed(1)} %`;
   return (
     <div className="mt-2 space-y-1 min-w-0" data-testid="segment-supplement">
@@ -84,6 +96,23 @@ export function SegmentSupplementBody({ data }: { data: SegmentSupplement }) {
               {row.source ? ` · Quelle: ${row.source}` : ""}
             </span>
           )}
+          <input
+            type="text"
+            inputMode="decimal"
+            aria-label={`${row.name} manuell`}
+            data-testid="segment-override-input"
+            className="ml-1 w-16 rounded border border-border bg-transparent px-1"
+            value={drafts[row.name] ?? ""}
+            onChange={(event) => onDraft?.(row.name, event.target.value)}
+          />
+          <button
+            type="button"
+            className="ml-1 rounded border border-border px-1"
+            data-testid="segment-override-confirm"
+            onClick={() => onConfirm?.(row.name)}
+          >
+            Bestätigen
+          </button>
         </div>
       ))}
       {data.subItems.map((item) => (
@@ -113,6 +142,8 @@ export function SegmentSupplementView({
   segments: OfficialSegment[];
   request?: RequestFn;
 }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const query = useQuery({
     queryKey: [SEGMENT_SUPPLEMENT_ROUTE, ticker, segments.map((segment) => `${segment.name}:${segment.percentage ?? ""}:${segment.reportedGrowthPct ?? ""}`).join("|")],
     enabled: segments.length > 0,
@@ -130,5 +161,22 @@ export function SegmentSupplementView({
     }
     return null;
   }
-  return <SegmentSupplementBody data={query.data} />;
+  let shown = query.data;
+  for (const [name, raw] of Object.entries(drafts)) {
+    const value = Number(raw);
+    if (raw.trim() !== "" && Number.isFinite(value)) {
+      shown = applyManualGrowthOverride(shown, { name, action: "replace", nextYearGrowthPct: value });
+    }
+  }
+  for (const [name, ok] of Object.entries(confirmed)) {
+    if (ok) shown = applyManualGrowthOverride(shown, { name, action: "confirm" });
+  }
+  return (
+    <SegmentSupplementBody
+      data={shown}
+      drafts={drafts}
+      onDraft={(name, value) => setDrafts((current) => ({ ...current, [name]: value }))}
+      onConfirm={(name) => setConfirmed((current) => ({ ...current, [name]: true }))}
+    />
+  );
 }

@@ -1031,6 +1031,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               ...(typeof s.date === "string" && /^\d{4}/.test(s.date)
                 ? { fiscalYear: s.date.slice(0, 4) }
                 : {}),
+              ...(typeof s.reportedCurrency === "string" && /^[A-Za-z]{3}$/.test(s.reportedCurrency.trim())
+                ? { currency: s.reportedCurrency.trim().toUpperCase() }
+                : {}),
             }))
             .slice(0, 8)
         : [];

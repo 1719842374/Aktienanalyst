@@ -266,6 +266,8 @@ export interface FmpSegmentRow {
    *  dieser Wert komplett, obwohl prevRevenue pro Segment schon vorlag.
    *  undefined, wenn keine Vorperiode gefunden wurde (kein Fake-0). */
   prevPercentage?: number;
+  /** Berichtswährung der neuesten Segmentzeile, nur wenn das Feld dort steht. */
+  reportedCurrency?: string;
 }
 
 /**
@@ -343,6 +345,9 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
       const prevPercentage = hasPrev && prevTotal > 0
         ? Math.round((prevRevenue / prevTotal) * 1000) / 10
         : undefined;
+      const reportedCurrency = typeof latest?.reportedCurrency === "string" && /^[A-Za-z]{3}$/.test(latest.reportedCurrency.trim())
+        ? latest.reportedCurrency.trim().toUpperCase()
+        : undefined;
       return {
         name,
         revenue,
@@ -351,6 +356,7 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
         growth,
         ...(hasPrev ? { prevRevenue, prevDate: prevKey } : {}),
         ...(prevPercentage !== undefined ? { prevPercentage } : {}),
+        ...(reportedCurrency ? { reportedCurrency } : {}),
       };
     });
 }

@@ -1,7 +1,7 @@
 /**
  * POST /api/segment-supplement — Historie unter den gemeldeten Segmenten.
- * Körper-Hinweise werden ignoriert. Unterposten kommen nur aus dem Server-Provider,
- * der in der Produktfassung leer ist. Kein LLM, kein neuer Key.
+ * Körper-Hinweise werden ignoriert. Unterposten kommen nur aus Zeilen mit Elternname und Quelle.
+ * Eine gewöhnliche FMP-Jahresmap bleibt leer. Kein LLM, kein neuer Key.
  *
  * Registriert am Ende von registerRoutes in server/routes-register.ts.
  * Der Produkt-Provider für Unterposten bleibt leer. Der Hype-Hunk von #466 bleibt unberührt.
@@ -11,6 +11,7 @@ import { fmpSegmentationRows, isFmpAvailable } from "./fmp";
 import {
   SEGMENT_SUPPLEMENT_ROUTE,
   buildSegmentSupplement,
+  evidencedHintsFromRows,
   historyFromRaw,
   type EvidencedHint,
   type OfficialSegment,
@@ -64,17 +65,20 @@ export async function loadSegmentSupplement(
 ): Promise<SegmentSupplement & { ticker: string; source: "fmp" }> {
   let historyNote: string | null = null;
   let history: ReturnType<typeof historyFromRaw> = [];
+  let rawRows: unknown[] = [];
   if (!deps.fmpAvailable()) {
     historyNote = "n/a — FMP_API_KEY fehlt, Segmenthistorie nicht geladen.";
   } else {
     try {
       const raw = await deps.raw(ticker);
-      history = historyFromRaw(Array.isArray(raw) ? raw : []);
+      rawRows = Array.isArray(raw) ? raw : [];
+      history = historyFromRaw(rawRows);
     } catch {
       historyNote = "n/a — Segmenthistorie nicht erreichbar.";
     }
   }
-  const hints = await deps.hints(ticker, official);
+  const provided = await deps.hints(ticker, official);
+  const hints = [...evidencedHintsFromRows(rawRows, official), ...provided];
   return {
     ticker,
     ...buildSegmentSupplement(official, history, hints, historyNote),

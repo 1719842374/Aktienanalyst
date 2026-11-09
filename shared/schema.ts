@@ -433,6 +433,8 @@ export interface RevenueSegment {
   // Optional + additive — never renames/removes the fields above.
   source?: "fmp" | "sec" | "curated"; // where this row's numbers came from
   fiscalYear?: string;     // e.g. "FY2025" or "2025-06-30" — reporting period label
+  /** Berichtswährung der Segmentzeile, nur wenn die Quelle sie mitliefert. */
+  currency?: string | null;
   // Management-Score-Fix (05.08.2026): Umsatzanteil (%) dieses Segments in der
   // VORPERIODE — noetig fuer ΔSegment-Anteil (S_Segment.S_Share). undefined,
   // wenn keine Vorperiode gefunden wurde (kein Fake-0).

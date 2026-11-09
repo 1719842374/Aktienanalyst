@@ -264,3 +264,55 @@ export function buildSegmentSupplement(
     historyNote,
   };
 }
+
+/** Nur Zeilen mit explizitem Elternnamen und Quellenangabe. FMP-Jahresmaps ohne parent bleiben leer. */
+export function evidencedHintsFromRows(raw: unknown[], official: readonly OfficialSegment[]): EvidencedHint[] {
+  if (!Array.isArray(raw)) return [];
+  const hints: EvidencedHint[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { parent?: unknown; name?: unknown; shareOfParentPct?: unknown; source?: unknown };
+    if (typeof rec.parent !== "string" || typeof rec.name !== "string" || typeof rec.source !== "string") continue;
+    if (!rec.source.trim()) continue;
+    const share = typeof rec.shareOfParentPct === "number" && Number.isFinite(rec.shareOfParentPct)
+      ? rec.shareOfParentPct
+      : null;
+    const known = official.some((segment) => normSegmentName(segment.name) === normSegmentName(rec.parent as string));
+    if (!known) continue;
+    hints.push({
+      parent: rec.parent,
+      name: rec.name,
+      shareOfParentPct: share,
+      source: rec.source.trim(),
+    });
+  }
+  return hints;
+}
+
+export function applyManualGrowthOverride(
+  base: SegmentSupplement,
+  edit: { name: string; action: "confirm" | "replace"; nextYearGrowthPct?: number | null },
+): SegmentSupplement {
+  const growth = base.growth.map((row) => {
+    if (row.name !== edit.name) return row;
+    if (edit.action === "confirm") {
+      if (row.nextYearGrowthPct == null) return row;
+      return { ...row, override: true, label: "Override: manuell bestätigt" };
+    }
+    if (typeof edit.nextYearGrowthPct !== "number" || !Number.isFinite(edit.nextYearGrowthPct)) return row;
+    return {
+      ...row,
+      nextYearGrowthPct: edit.nextYearGrowthPct,
+      override: true,
+      source: "Nutzer",
+      label: "Override: manuell",
+    };
+  });
+  return {
+    ...base,
+    growth,
+    parents: base.parents.map((segment) => ({ ...segment })),
+    reportedSharePct: base.reportedSharePct,
+    reportedShareReason: base.reportedShareReason,
+  };
+}

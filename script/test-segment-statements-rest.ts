@@ -14,15 +14,17 @@ import { buildFinancialHistory, fcfOf, marginPct } from "../shared/financial-his
 import { balanceSankey, incomeSankey } from "../shared/statement-sankey";
 import {
   assignProvenHints,
+  applyManualGrowthOverride,
   buildSegmentSupplement,
   segmentGrowthOverrides,
   type OfficialSegment,
 } from "../shared/segment-supplement";
 import { registerFinancialHistoryRoute } from "../server/financial-history-route";
-import { registerSegmentSupplementRoute } from "../server/segment-supplement-route";
+import { loadSegmentSupplement, registerSegmentSupplementRoute } from "../server/segment-supplement-route";
 import { registerRoutes } from "../server/routes-register";
 import { registerApiNotFound } from "../server/api-not-found";
 import { AnnualFinancials, AnnualFinancialsView, fetchFinancialHistory } from "../client/src/components/sections/AnnualFinancials";
+import { annualSegments } from "../client/src/components/sections/FinancialStatements";
 import { StatementSankey } from "../client/src/components/sections/StatementSankey";
 import {
   SegmentSupplementBody,
@@ -609,4 +611,47 @@ try {
   if (savedFmpKeyAlt === undefined) delete process.env.FMP_API_key;
   else process.env.FMP_API_key = savedFmpKeyAlt;
 }
+const filingSegments = annualSegments({
+  revenueSegments: [{ name: "Cloud", revenue: 40, percentage: 100, fiscalYear: "2024", currency: "EUR" }],
+} as never);
+assert.equal(filingSegments[0].currency, "EUR");
+assert.equal(filingSegments[0].fiscalYear, "2024");
+const filingSankey = incomeSankey({
+  segments: filingSegments,
+  revenue: 100,
+  grossProfit: 60,
+  operatingIncome: 20,
+  netIncome: 10,
+  statementYear: "2024",
+  statementCurrency: "EUR",
+});
+assert.equal(filingSankey.links.some((link) => link.source === "Cloud"), true);
+const sourced = await loadSegmentSupplement("MSFT", [{ name: "Alpha", percentage: 100, reportedGrowthPct: null }], {
+  fmpAvailable: () => true,
+  raw: async () => [{ parent: "Alpha", name: "Hinweis", shareOfParentPct: 12, source: "FMP revenue-product-segmentation" }],
+  hints: async () => [],
+});
+assert.equal(sourced.subItems.length, 1);
+assert.equal(sourced.subItems[0].source, "FMP revenue-product-segmentation");
+assert.equal(sourced.reportedSharePct, 100);
+const plainFmp = await loadSegmentSupplement("MSFT", [{ name: "Alpha", percentage: 100, reportedGrowthPct: null }], {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: 2024, reportedCurrency: "EUR", data: { Alpha: 100 } }],
+  hints: async () => [],
+});
+assert.equal(plainFmp.subItems.length, 0);
+assert.match(plainFmp.undisclosedNote, /nicht schätzbar/);
+const overrideHtml = renderToStaticMarkup(React.createElement(SegmentSupplementBody, {
+  data: supplement,
+}));
+assert.match(overrideHtml, /data-testid="segment-override-confirm"/);
+assert.match(overrideHtml, /data-testid="segment-override-input"/);
+const manual = applyManualGrowthOverride(supplement, { name: "Alpha", action: "replace", nextYearGrowthPct: 3 });
+assert.equal(manual.reportedSharePct, supplement.reportedSharePct);
+assert.deepEqual(manual.parents, supplement.parents);
+assert.equal(manual.growth.find((row) => row.name === "Alpha")?.nextYearGrowthPct, 3);
+assert.match(manual.growth.find((row) => row.name === "Alpha")?.label ?? "", /manuell/);
+const confirmed = applyManualGrowthOverride(supplement, { name: "Alpha", action: "confirm" });
+assert.match(confirmed.growth.find((row) => row.name === "Alpha")?.label ?? "", /bestätigt/);
+assert.equal(confirmed.reportedSharePct, 100);
 console.log("segment statements rest: OK");
