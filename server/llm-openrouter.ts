@@ -134,6 +134,7 @@ export interface CombinedLLMInput {
     url: string;
     sentiment?: string;
     sentimentScore?: number;
+    sentimentSource?: string;
     matchedCatalyst?: string;
     matchedCatalystIdx?: number;
   }[];
@@ -1024,7 +1025,7 @@ export async function generateCompanySpecificRisks(input: {
   topCatalysts: Array<{ name: string; context: string }>;
   capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
   recentNewsHeadlines?: string[];
-}): Promise<Array<{ name: string; category: string; ew: number; impact: number }> | null> {
+}): Promise<Array<{ name: string; category: "Binary" | "Gradual" | "Correlated"; ew: number; impact: number }> | null> {
   const client = getClient();
   if (!client) return null;
 
@@ -1098,11 +1099,11 @@ SCHLECHTE Beispiele (VERBOTEN — kein Firmenbezug):
 Antworte NUR mit diesem JSON (GENAU 5 risks-Objekte, kein Markdown):
 {"risks":[{"name":"Konkreter Name max 6 Wörter","category":"Binary|Gradual|Correlated","ew":25,"impact":20},{"name":"...","category":"...","ew":20,"impact":30},{"name":"...","category":"...","ew":15,"impact":25},{"name":"...","category":"...","ew":30,"impact":15},{"name":"...","category":"...","ew":20,"impact":20}]}`;
 
-  const validate = (risks: any[]): Array<{ name: string; category: string; ew: number; impact: number }> | null => {
+  const validate = (risks: any[]): Array<{ name: string; category: "Binary" | "Gradual" | "Correlated"; ew: number; impact: number }> | null => {
     if (!Array.isArray(risks) || risks.length < 3) return null;
     return risks.slice(0, 5).map((r: any) => ({
       name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
-      category: ["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual",
+      category: (["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual") as "Binary" | "Gradual" | "Correlated",
       ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
       impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),
     }));
