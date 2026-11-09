@@ -9,9 +9,10 @@ const { registerRefreshRisksRoute } = await import("../server/refresh-risks-rout
 const reg = readFileSync("server/routes-register.ts", "utf8");
 assert.match(reg, /import\("\.\/refresh-risks-route"\)/);
 assert.match(reg, /registerRefreshRisksRoute\(app\)/);
-// Client contract: Section8 posts here and only accepts json.risks with ≥3 entries
+// Client contract: Section8 posts via apiRequest (API_BASE) and only accepts json.risks with ≥3 entries
 const s8 = readFileSync("client/src/components/sections/Section8.tsx", "utf8");
-assert.match(s8, /fetch\("\/api\/refresh-risks"/);
+assert.match(s8, /apiRequest\("POST", "\/api\/refresh-risks"/);
+assert.doesNotMatch(s8, /fetch\("\/api\/refresh-risks"/);
 assert.match(s8, /json\.risks\.length >= 3/);
 
 const body = { ticker: "msft", companyName: "Microsoft", description: "Cloud and software.", sector: "Technology",

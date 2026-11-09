@@ -59,24 +59,20 @@ export function Section8({ data, useLLM = false }: Props) {
     riskRefreshTriggeredRef.current = data.ticker;
     setRefreshingRisks(true);
 
-    fetch("/api/refresh-risks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ticker: data.ticker,
-        companyName: data.companyName,
-        description: data.description,
-        sector: data.sectorProfile?.sector || "",
-        industry: data.industry || "",
-        revenue: data.revenue || 0,
-        revenueGrowth: data.revenueGrowth || 0,
-        fcfMargin: data.fcfMargin || 0,
-        forwardPE: data.forwardPE || 0,
-        beta: data.beta5Y || 1.1,
-        governmentExposure: data.governmentExposure || 0,
-        catalysts: (data.catalysts || []).filter(c => !c.tags?.includes("capex-tailwind")),
-        newsItems: (data.newsItems || []).slice(0, 4),
-      }),
+    apiRequest("POST", "/api/refresh-risks", {
+      ticker: data.ticker,
+      companyName: data.companyName,
+      description: data.description,
+      sector: data.sectorProfile?.sector || "",
+      industry: data.industry || "",
+      revenue: data.revenue || 0,
+      revenueGrowth: data.revenueGrowth || 0,
+      fcfMargin: data.fcfMargin || 0,
+      forwardPE: data.forwardPE || 0,
+      beta: data.beta5Y || 1.1,
+      governmentExposure: data.governmentExposure || 0,
+      catalysts: (data.catalysts || []).filter(c => !c.tags?.includes("capex-tailwind")),
+      newsItems: (data.newsItems || []).slice(0, 4),
     })
       .then(r => r.json())
       .then(json => {
