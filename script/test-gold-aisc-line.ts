@@ -94,7 +94,10 @@ const series = buildGoldAiscSeries(file);
   check("2018-09-01 → 2018-Q2", goldAiscStepAt(series, "2018-09-01")?.aisc === 926);
   check("n/a-Grund vor der ersten Stufe, ohne Interpolation", (goldAiscNaReason(series, "2016-11-28") ?? "").includes("Nicht interpoliert") && goldAiscNaReason(series, "2018-06-15") === null);
   check("Formel nennt Mittelwert, minCompanies und lagDays", GOLD_AISC_FORMULA.includes("minCompanies") && GOLD_AISC_FORMULA.includes("lagDays") && GOLD_AISC_FORMULA.includes("Keine Interpolation"));
-  check("2024-05-30 → 2024-Q1", goldAiscStepAt(series, "2024-05-30")?.quarter === "2024-Q1");
+  check("2024-05-30 bleibt 2023-Q4; 2024-Q1 erst ab dem Quellen-Datum 2026-02-19",
+    goldAiscStepAt(series, "2024-05-30")?.quarter === "2023-Q4"
+    && series.quarters.find(step => step.quarter === "2024-Q1")!.availableFrom === "2026-02-19",
+    `${goldAiscStepAt(series, "2024-05-30")?.quarter} ${series.quarters.find(step => step.quarter === "2024-Q1")?.availableFrom}`);
   check("2026-10-18 → 2026-Q2 (Q3 erst ab 2026-11-29)", goldAiscStepAt(series, "2026-10-18")?.quarter === "2026-Q2");
   check("kein Lookahead: 2026-08-28 → 2026-Q1", goldAiscStepAt(series, "2026-08-28")?.quarter === "2026-Q1");
 }
@@ -106,7 +109,12 @@ console.log("\nn/a statt Schätzung bei < 2 Firmen");
   const q = s.quarters.find(x => x.quarter === "2025-Q2")!;
   check("2025-Q2 nur NEM → aisc null, count 1", q.aisc === null && q.count === 1);
   check("Lücken gelistet", s.gaps.includes("B 2025-Q2") && s.gaps.includes("AEM 2025-Q2"), s.gaps.join(","));
-  check("Datum in n/a-Stufe → null", goldAiscStepAt(s, "2025-09-15") === null);
+  const lastThin: GoldAiscFile = { ...file, values: file.values.filter(v => !(v.quarter === "2026-Q2" && v.company !== "NEM")) };
+  const lastSeries = buildGoldAiscSeries(lastThin);
+  const lastStep = lastSeries.quarters.find(x => x.quarter === "2026-Q2")!;
+  check("2026-Q2 nur NEM → aisc null, Stufe ab 2026-08-29", lastStep.aisc === null && lastStep.count === 1 && lastStep.availableFrom === "2026-08-29", `${lastStep.aisc} ${lastStep.availableFrom}`);
+  check("Datum in der n/a-Stufe nach availableFrom → null", goldAiscStepAt(lastSeries, "2026-09-01") === null, goldAiscStepAt(lastSeries, "2026-09-01")?.quarter);
+  check("vor der n/a-Stufe bleibt 2026-Q1", goldAiscStepAt(lastSeries, "2026-08-28")?.quarter === "2026-Q1", goldAiscStepAt(lastSeries, "2026-08-28")?.quarter);
   const two = buildGoldAiscSeries({ ...file, values: file.values.filter(v => !(v.quarter === "2025-Q2" && v.company === "AEM")) });
   check("2 Firmen → Ø aus 2", two.quarters.find(x => x.quarter === "2025-Q2")!.aisc === Math.round((1375 + 1684) / 2));
 }

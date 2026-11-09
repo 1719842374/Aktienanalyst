@@ -116,6 +116,9 @@ check("echte Historie: seit 2016 im Untertitel", !!realZone?.thresholds.since &&
 check("echte Historie: Bänder beginnen vor 2018", realHtml.includes('data-testid="gold-miner-band-span"') && /Bänder 201[67]-/.test(realHtml));
 check("Barrick-Lücken sind sichtbar und als nicht interpoliert gekennzeichnet", realHtml.includes('data-testid="gold-miner-company-gaps"') && realHtml.includes("B 2016-Q4") && realHtml.includes("nicht interpoliert"));
 check("Score-Karte zeigt den vollen Rang, nicht die 667-Tage-Stichprobe", realHtml.includes('data-testid="gold-miner-card-score"') && realHtml.includes(`${Math.round(realZone!.latest!.score)}/100`) && (realZone?.thresholds.obs ?? 0) > 2000);
+check("Sektion nennt das Quartals-Perzentil", realHtml.includes("über Quartale"));
+check("Formel nennt das Quellen-Datum", realHtml.includes("sourceDate"));
+check("die Stufe trägt keinen Look-ahead-Hinweis mehr", !realHtml.includes("nicht point-in-time"));
 
 console.log(failed === 0 ? "\nSektion 9 grün." : `\n${failed} Test(s) fehlgeschlagen.`);
 process.exit(failed === 0 ? 0 : 1);
