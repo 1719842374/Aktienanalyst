@@ -27,6 +27,7 @@ import {
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
 import { segmentEstimateButtonVisible } from "../client/src/components/sections/Section2";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { loadOutlineIdentity, loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
 import { reviewSegmentOutline } from "../shared/segment-children";
 import { priorSegmentRevenue } from "../server/fmp";
@@ -788,6 +789,141 @@ gap(
     && segmentEstimateButtonVisible([{ name: "iPhone" }]) === false,
   `arista=${arista.reason ?? arista.children.map((row) => row.name).join(",")} hp=${hpMarkup.slice(0, 220)}`,
 );
+
+const secChild = reviewKiChildren("Cloud", {
+  children: [{
+    name: "Azure",
+    owner: "Microsoft",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "10-K",
+    source: "Annual Report 2024 https://www.sec.gov/Archives/edgar/data/789019/10-k.htm",
+  }],
+}, null, { companyName: "Microsoft Corporation" });
+const reutersChild = reviewKiChildren("Cloud", {
+  children: [{
+    name: "Azure",
+    owner: "Microsoft",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Annual Report",
+    source: "Annual Report 2024 https://www.reuters.com/markets/example",
+  }],
+}, null, { companyName: "Microsoft Corporation" });
+const brokenUrl = reviewKiChildren("Cloud", {
+  children: [{
+    name: "Azure",
+    owner: "Microsoft",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Annual Report",
+    source: "Annual Report 2024 https://%",
+  }],
+}, null, { companyName: "Microsoft Corporation" });
+gap(
+  "neutral-host-child",
+  secChild.children.length === 1
+    && secChild.children[0]?.shareOfParentPct === 40
+    && reutersChild.children.length === 1
+    && reutersChild.children[0]?.shareOfParentPct === 40
+    && brokenUrl.children.length === 1
+    && brokenUrl.children[0]?.shareOfParentPct == null
+    && /ungültige URL/.test(brokenUrl.reason ?? ""),
+  `sec=${secChild.children.length}/${secChild.reason ?? ""} reuters=${reutersChild.children.length}/${reutersChild.reason ?? ""} broken=${brokenUrl.children.length}/${brokenUrl.reason ?? ""}`,
+);
+
+const orderSnaps = annotateMissingSegmentGrowth({
+  kind: "product",
+  annual: snapshotsFromFmpRows([
+    { date: "2025-12-31", data: { "Intelligent Cloud": 100 } },
+    { date: "2024-12-31", data: { "Cloud Intelligent": 80 } },
+  ]),
+});
+const orderAnn = annotationByName(orderSnaps, "Intelligent Cloud");
+gap(
+  "token-order-stays-direct",
+  orderAnn == null,
+  `order=${orderAnn?.basis ?? "none"}/${String(orderAnn?.growth ?? "")}`,
+);
+
+const labelOnly = html(React.createElement(SegmentSupplementBody, {
+  data: {
+    parents: [],
+    growth: [{
+      name: "Chemie",
+      reportedGrowthPct: null,
+      nextYearGrowthPct: 12,
+      observations: 2,
+      source: "FMP revenue-product-segmentation",
+      override: false,
+      label: "Schätzung. Vorzeichenwechsel in den YoY-Raten.",
+    }],
+    subItems: [],
+    reportedSharePct: 100,
+    reportedShareReason: null,
+    undisclosedNote: "",
+    childShareNotes: [],
+    historyNote: null,
+  },
+}));
+const noted = html(React.createElement(SegmentSupplementBody, {
+  data: {
+    parents: [],
+    growth: [{
+      name: "Chemie",
+      reportedGrowthPct: null,
+      nextYearGrowthPct: 12,
+      observations: 2,
+      source: "FMP revenue-product-segmentation",
+      override: false,
+      label: "Schätzung aus FMP-Segmenthistorie.",
+      outlierNote: "Basis ist der kleinste Umsatz der Reihe.",
+    }],
+    subItems: [],
+    reportedSharePct: 100,
+    reportedShareReason: null,
+    undisclosedNote: "",
+    childShareNotes: [],
+    historyNote: null,
+  },
+}));
+gap(
+  "outlier-from-data",
+  !labelOnly.includes("segment-growth-outlier")
+    && noted.includes("segment-growth-outlier")
+    && noted.includes("kleinste Umsatz"),
+  `labelOnly=${labelOnly.includes("segment-growth-outlier")} noted=${noted.includes("kleinste Umsatz")}`,
+);
+
+const { YahooSection3 } = await import("../client/src/components/sections/Section2");
+const yahooClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+for (const ticker of ["BYDDY", "XIACY", "1810.HK"]) {
+  const yahooHtml = html(React.createElement(
+    QueryClientProvider,
+    { client: yahooClient },
+    React.createElement(YahooSection3, {
+      data: {
+        ticker,
+        dataSource: "yahoo",
+        revenueSegments: [],
+        geoSegments: [],
+        revenueSegmentsMessage: "n/a — keine gemeldeten Segmente",
+      } as never,
+    }),
+  ));
+  gap(
+    `yahoo-segment-only-${ticker}`,
+    yahooHtml.includes("button-segment-outline-product")
+      && yahooHtml.includes("button-segment-outline-geo")
+      && yahooHtml.includes("yahoo-na-3")
+      && yahooHtml.includes("N/A mit KI schätzen")
+      && !yahooHtml.includes("Moat Assessment")
+      && !yahooHtml.includes("Peter Lynch")
+      && !yahooHtml.includes("FCF Haircut")
+      && !yahooHtml.includes("Conservative DCF"),
+    yahooHtml.slice(0, 400),
+  );
+}
 
 const estimated = reviewKiChildren("Server", {
   children: [{ name: "Azure", shareOfParentPct: 0, growthPct: 12.5, basis: "Produktlinie Azure, Wachstum ohne veröffentlichte Zahl bleibt leer" }],

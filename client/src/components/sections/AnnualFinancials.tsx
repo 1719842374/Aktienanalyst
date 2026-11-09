@@ -22,7 +22,7 @@ export async function fetchFinancialHistory(ticker: string, request: RequestFn =
 }
 
 type RowSpec =
-  | { kind: "money"; id: string; label: string; value: (year: StatementYear) => number | null; delta: (year: StatementYear) => Delta }
+  | { kind: "money"; id: string; label: string; balance?: boolean; value: (year: StatementYear) => number | null; delta: (year: StatementYear) => Delta }
   | { kind: "margin"; id: string; label: string; value: (year: StatementYear) => number | null; reason: (year: StatementYear) => string | null; delta: (year: StatementYear) => Delta };
 
 const ROWS: RowSpec[] = [
@@ -35,10 +35,10 @@ const ROWS: RowSpec[] = [
   { kind: "margin", id: "net-margin", label: "Nettomarge", value: (year) => year.netMarginPct, reason: (year) => year.netMarginReason, delta: (year) => year.netMarginYoyPp },
   { kind: "money", id: "fcf", label: "Free Cash Flow", value: (year) => year.fcf, delta: (year) => year.fcfYoy },
   { kind: "margin", id: "fcf-margin", label: "FCF-Marge", value: (year) => year.fcfMarginPct, reason: (year) => year.fcfMarginReason, delta: (year) => year.fcfMarginYoyPp },
-  { kind: "money", id: "assets", label: "Aktiva", value: (year) => year.totalAssets, delta: (year) => year.totalAssetsYoy },
-  { kind: "money", id: "equity", label: "Eigenkapital", value: (year) => year.totalEquity, delta: (year) => year.totalEquityYoy },
-  { kind: "money", id: "debt", label: "Schulden", value: (year) => year.totalDebt, delta: (year) => year.totalDebtYoy },
-  { kind: "money", id: "cash", label: "Cash", value: (year) => year.cash, delta: (year) => year.cashYoy },
+  { kind: "money", id: "assets", label: "Aktiva", balance: true, value: (year) => year.totalAssets, delta: (year) => year.totalAssetsYoy },
+  { kind: "money", id: "equity", label: "Eigenkapital", balance: true, value: (year) => year.totalEquity, delta: (year) => year.totalEquityYoy },
+  { kind: "money", id: "debt", label: "Schulden", balance: true, value: (year) => year.totalDebt, delta: (year) => year.totalDebtYoy },
+  { kind: "money", id: "cash", label: "Cash", balance: true, value: (year) => year.cash, delta: (year) => year.cashYoy },
 ];
 
 function deltaClass(delta: Delta): string {
@@ -157,7 +157,7 @@ function YearTable({ years }: { years: StatementYear[] }) {
               {years.map((year) => {
                 const shown = cellText(row, year);
                 const delta = row.delta(year);
-                const balanceRow = row.kind === "money" && (row.id === "assets" || row.id === "equity" || row.id === "debt" || row.id === "cash");
+                const balanceRow = row.kind === "money" && row.balance === true;
                 return (
                   <td key={year.fiscalYear} className="py-1 px-1 text-right font-mono tabular-nums align-top" data-testid={`cell-${row.id}-${year.fiscalYear}`} title={shown.title}>
                     <div>{shown.text}</div>

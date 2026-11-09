@@ -39,6 +39,7 @@ export interface SegmentGrowthOverride {
   source: string | null;
   override: boolean;
   label: string;
+  outlierNote?: string | null;
 }
 
 export interface SegmentSubItem {
@@ -171,6 +172,7 @@ export function segmentGrowthOverrides(
       observations: rates.length,
       source: mid == null ? null : SEGMENT_HISTORY_SOURCE,
       override: false,
+      outlierNote: outlier.trim() || null,
       label: mid == null
         ? `${NOT_ESTIMABLE} (Median nicht bestimmbar)`
         : `Schätzung aus FMP-Segmenthistorie, Median von ${rates.length} YoY-Raten. Keine Call- und keine Peer-Quelle.${outlier}`,

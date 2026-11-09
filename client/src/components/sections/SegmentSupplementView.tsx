@@ -103,7 +103,7 @@ export function SegmentSupplementBody({
             >
               Schätzung {signed(row.nextYearGrowthPct)}
               {row.source ? ` · Quelle: ${row.source}` : ""}
-              {/Vorzeichenwechsel|kleinste Umsatz/.test(row.label) ? <span data-testid="segment-growth-outlier"> {row.label}</span> : null}
+              {row.outlierNote ? <span data-testid="segment-growth-outlier"> {row.outlierNote}</span> : null}
             </span>
           )}
           <input

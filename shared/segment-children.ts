@@ -3,6 +3,7 @@
  * FMP nur, wenn die Segmentzeile das Hauptsegment als verschachtelte Werte führt.
  * Eine flache Umsatzzahl ist kein Untersegment. KI-Werte bleiben KI.
  */
+import { isAllowedBtcCitation, isOfficialEvidenceUrl } from "./btc-source-policy";
 import { prettifyProductSegmentName } from "./segment-growth-calc";
 
 export type SegmentChildSource = "FMP" | "KI";
@@ -230,9 +231,17 @@ export function reviewKiChildren(
     const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
     const ownerOk = companyReferenced(owner, companyName) || companyReferenced(ownerParent, companyName);
     const citationText = [rec.source, rec.basis].filter((part) => typeof part === "string").join(" ");
-    if (companyName && (!ownerOk || citedHostRejected(citationText, companyName))) {
+    const hostVerdict = citedHostVerdict(citationText, companyName);
+    if (companyName && !ownerOk) {
       foreign.push(name);
       continue;
+    }
+    if (hostVerdict === "foreign") {
+      foreign.push(name);
+      continue;
+    }
+    if (hostVerdict === "invalid") {
+      notes.push(`n/a — ungültige URL: ${name}`);
     }
     if (sameChildName(kind, parent, name)) {
       filtered += 1;
@@ -254,7 +263,7 @@ export function reviewKiChildren(
       continue;
     }
     const citation = typeof rec.source === "string" ? rec.source.trim() : "";
-    const sourced = concreteSource(citation, companyName);
+    const sourced = hostVerdict !== "invalid" && concreteSource(citation, companyName);
     let shareKept = share != null && share > 0 ? share : null;
     let growthKept = growth;
     if ((share != null || growth != null) && !sourced) {
@@ -321,7 +330,8 @@ export function concreteSource(value: string, companyName = ""): boolean {
       return false;
     }
     const labels = host.split(".").filter((label) => label.length >= 2);
-    if (!labels.some((label) => hostLabelMatches(label, companyName))) return false;
+    const ownHost = labels.some((label) => hostLabelMatches(label, companyName));
+    if (!ownHost && !neutralCitationHost(host)) return false;
     return SOURCE_DOC.test(text) || SOURCE_DOC.test(decodeURIComponent(urlMatch[0]));
   }
   if (!SOURCE_DOC.test(text)) return false;
@@ -412,16 +422,24 @@ function hostLabelMatches(label: string, companyName: string): boolean {
 
 const COMPANY_FILLER = new Set(["of", "the", "and"]);
 
-function citedHostRejected(citation: string, companyName: string): boolean {
+function neutralCitationHost(host: string): boolean {
+  const url = `https://${host}/`;
+  return isOfficialEvidenceUrl(url) || isAllowedBtcCitation(url);
+}
+
+function citedHostVerdict(citation: string, companyName: string): "none" | "foreign" | "invalid" {
   const urlMatch = citation.match(/https?:\/\/\S+/i);
-  if (!urlMatch || !companyName) return false;
+  if (!urlMatch || !companyName) return "none";
+  let host = "";
   try {
-    const host = new URL(urlMatch[0]).hostname.toLowerCase();
-    const labels = host.split(".").filter((label) => label.length >= 2);
-    return labels.length === 0 || !labels.some((label) => hostLabelMatches(label, companyName));
+    host = new URL(urlMatch[0]).hostname.toLowerCase();
   } catch {
-    return true;
+    return "invalid";
   }
+  if (neutralCitationHost(host)) return "none";
+  const labels = host.split(".").filter((label) => label.length >= 2);
+  if (labels.some((label) => hostLabelMatches(label, companyName))) return "none";
+  return "foreign";
 }
 
 function companyReferenced(text: string, companyName: string): boolean {

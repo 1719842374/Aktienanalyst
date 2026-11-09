@@ -36,7 +36,7 @@ import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
 import { isYahooOnly } from "@shared/data-source";
 import { isEtfOrFund } from "@shared/conflict-matrix";
 import { Section1 } from "@/components/sections/Section1";
-import { Section2 } from "@/components/sections/Section2";
+import { Section2, YahooSection3 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
 import { Section3 } from "@/components/sections/Section3";
 import { Section4 } from "@/components/sections/Section4";
@@ -695,7 +695,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { void invalidateCrossModuleQueries(queryClient); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooSection3 data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
