@@ -1,5 +1,5 @@
 {
- "_note": "#180: exakt freigegebene -U0-Hunks in server/researcher.ts (merge-base ed1e98cd → 709d5bc1; 4 Briefing-Hunks :34, :927–940, :1157–1165, :1236–1261; freigegeben 09.11.2026 21:59 Europe/Madrid). Reihenfolge, Anzahl und Text muessen exakt stimmen; jede andere Zeile in gesperrten Dateien schlaegt in den Waechtern an.",
+ "_note": "#180: exakt freigegebene -U0-Hunks in server/researcher.ts (merge-base ed1e98cd → 709d5bc1; 4 Briefing-Bereiche = 7 -U0-Hunks / 57 Zeilen, neue Zeilen :34 | :930–932 + :935–940 | :1157 + :1159 + :1164–1165 | :1236–1261; freigegeben 09.11.2026 21:59 Europe/Madrid). Reihenfolge, Anzahl und Text muessen exakt stimmen; jede andere Zeile in gesperrten Dateien schlaegt in den Waechtern an.",
  "files": {
   "server/researcher.ts": [
    [
