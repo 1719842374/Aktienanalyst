@@ -27,6 +27,7 @@ import {
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
 import { loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
+import { reviewSegmentOutline } from "../shared/segment-children";
 import { priorSegmentRevenue } from "../server/fmp";
 import { buildSegmentSupplement } from "../shared/segment-supplement";
 import { SegmentSupplementBody } from "../client/src/components/sections/SegmentSupplementView";
@@ -856,7 +857,9 @@ registerSegmentGrowthRoute(outlineApp, {
   raw: async () => [],
   names: async () => [],
   ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
   outline: async () => ({
+    companyEcho: "BYD",
     children: [
       { name: "Automobiles", shareOfParentPct: 70, growthPct: 12, basis: "Fahrzeuge", source: "BYD Jahresbericht 2024" },
       { name: "Batteries", shareOfParentPct: 20, growthPct: 8, basis: "Speicher", source: "BYD Jahresbericht 2024" },
@@ -897,7 +900,9 @@ registerSegmentGrowthRoute(bareApp, {
   raw: async () => [],
   names: async () => [],
   ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
   outline: async () => ({
+    companyEcho: "Xiaomi",
     children: [{ name: "Handsets", shareOfParentPct: 55, growthPct: 9, basis: "Smartphones", source: "" }],
   }),
 });
@@ -930,10 +935,12 @@ registerSegmentGrowthRoute(sumOutlineApp, {
   raw: async () => [],
   names: async () => [],
   ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
   outline: async () => ({
+    companyEcho: "BYD",
     children: [
-      { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "Bericht" },
-      { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "Bericht" },
+      { name: "Autos", shareOfParentPct: 70, growthPct: 5, basis: "Fahrzeuge", source: "Geschäftsbericht 2024" },
+      { name: "Batterien", shareOfParentPct: 50, growthPct: 4, basis: "Zellen", source: "Geschäftsbericht 2024" },
     ],
   }),
 });
@@ -953,6 +960,186 @@ try {
   );
 } finally {
   await new Promise<void>((resolve, reject) => sumOutlineServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const generic = reviewSegmentOutline({
+  children: [
+    { name: "A", shareOfParentPct: 40, growthPct: 5, basis: "Kern", source: "KI-Schätzung" },
+    { name: "B", shareOfParentPct: 20, growthPct: 4, basis: "Kern", source: "20-F" },
+    { name: "C", shareOfParentPct: 10, growthPct: 3, basis: "Kern", source: "20-F FY2025" },
+  ],
+});
+gap(
+  "outline-concrete-source",
+  generic.items.find((item) => item.name === "A")?.shareOfParentPct == null
+    && generic.items.find((item) => item.name === "B")?.growthPct == null
+    && generic.items.find((item) => item.name === "C")?.shareOfParentPct === 10
+    && generic.items.find((item) => item.name === "C")?.growthPct === 3,
+  JSON.stringify(generic.items.map((item) => [item.name, item.shareOfParentPct, item.growthPct])),
+);
+
+const zeroGrowth = reviewSegmentOutline({
+  children: [{ name: "A", shareOfParentPct: 50, growthPct: 0, basis: "b", source: "Geschäftsbericht 2024" }],
+});
+const nullGrowth = reviewSegmentOutline({
+  children: [{ name: "A", shareOfParentPct: 50, growthPct: null, basis: "b", source: "Geschäftsbericht 2024" }],
+});
+const coerced = reviewSegmentOutline({
+  children: [{ name: "A", shareOfParentPct: true, growthPct: "", basis: "b", source: "Geschäftsbericht 2024" }],
+});
+gap(
+  "outline-zero-growth",
+  zeroGrowth.items[0]?.growthPct === 0
+    && zeroGrowth.items[0]?.shareOfParentPct === 50
+    && nullGrowth.items[0]?.growthPct == null
+    && coerced.items[0]?.shareOfParentPct == null
+    && coerced.items[0]?.growthPct == null,
+  `zero=${String(zeroGrowth.items[0]?.growthPct)} coerced=${String(coerced.items[0]?.shareOfParentPct)}`,
+);
+
+resetSegmentChildrenGuardsForTests();
+let unionNames = ["Automobiles", "Batteries"];
+let outlineCalls = 0;
+const unionApp = express();
+unionApp.use(express.json());
+registerSegmentGrowthRoute(unionApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
+  outline: async () => {
+    outlineCalls += 1;
+    return {
+      companyEcho: "BYD",
+      children: unionNames.map((name) => ({ name, shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" })),
+    };
+  },
+});
+const unionServer = unionApp.listen(0);
+const unionPort = (unionServer.address() as { port: number }).port;
+try {
+  await fetch(`http://127.0.0.1:${unionPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "product", companyName: "Falsche Firma" }),
+  });
+  unionNames = ["Handsets"];
+  await fetch(`http://127.0.0.1:${unionPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "product" }),
+  });
+  const kept = await fetch(`http://127.0.0.1:${unionPort}/api/segment-children/BYDDY?parent=${encodeURIComponent("Batteries")}&kind=product`);
+  const added = await fetch(`http://127.0.0.1:${unionPort}/api/segment-children/BYDDY?parent=${encodeURIComponent("Handsets")}&kind=product`);
+  gap("outline-union", kept.status === 200 && added.status === 200, `kept=${kept.status} added=${added.status}`);
+} finally {
+  await new Promise<void>((resolve, reject) => unionServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let identityCalls = 0;
+const noIdApp = express();
+noIdApp.use(express.json());
+registerSegmentGrowthRoute(noIdApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  identity: async () => null,
+  outline: async () => {
+    identityCalls += 1;
+    return { companyEcho: "BYD", children: [{ name: "Fahrzeuge", shareOfParentPct: 80, growthPct: 10, basis: "Autos", source: "Geschäftsbericht 2024" }] };
+  },
+});
+const noIdServer = noIdApp.listen(0);
+const noIdPort = (noIdServer.address() as { port: number }).port;
+try {
+  const missing = await fetch(`http://127.0.0.1:${noIdPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "product", companyName: "BYD" }),
+  });
+  const missingBody = await missing.json().catch(() => ({})) as { items?: unknown[]; reason?: string; error?: string };
+  gap(
+    "outline-identity",
+    identityCalls === 0 && (missingBody.items?.length ?? 0) === 0 && /Identität/.test(`${missingBody.reason ?? ""} ${missingBody.error ?? ""}`),
+    `calls=${identityCalls} ${missingBody.reason ?? missingBody.error ?? missing.status}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => noIdServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const mismatchApp = express();
+mismatchApp.use(express.json());
+registerSegmentGrowthRoute(mismatchApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "HKSE", country: "CN", sector: "Technology", industry: "Consumer Electronics" }),
+  outline: async () => ({
+    companyEcho: "Shopify",
+    children: [{ name: "Online-Einzelhandel", shareOfParentPct: 45, growthPct: 18, basis: "Shop", source: "20-F FY2024" }],
+  }),
+});
+const mismatchServer = mismatchApp.listen(0);
+const mismatchPort = (mismatchServer.address() as { port: number }).port;
+try {
+  const wrong = await fetch(`http://127.0.0.1:${mismatchPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "XIACY", kind: "product" }),
+  });
+  const wrongBody = await wrong.json().catch(() => ({})) as { items?: unknown[]; reason?: string };
+  gap(
+    "outline-mismatch",
+    (wrongBody.items?.length ?? 1) === 0 && /passt nicht/.test(wrongBody.reason ?? ""),
+    wrongBody.reason ?? `n=${wrongBody.items?.length}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => mismatchServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const outlineMod = await import("../shared/segment-children.ts");
+const stillCurrent = outlineMod.outlineStillCurrent;
+gap(
+  "outline-ticker",
+  typeof stillCurrent === "function" && stillCurrent("BYDDY", "BYDDY") === true && stillCurrent("BYDDY", "XIACY") === false,
+  typeof stillCurrent,
+);
+
+resetSegmentChildrenGuardsForTests();
+let outlineClock = 1_700_000_000_000;
+const ttlApp = express();
+ttlApp.use(express.json());
+registerSegmentGrowthRoute(ttlApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  now: () => outlineClock,
+  identity: async () => ({ companyName: "BYD Company", exchange: "OTC", country: "CN", sector: "Consumer Cyclical", industry: "Auto Manufacturers" }),
+  outline: async () => ({
+    companyEcho: "BYD",
+    children: [{ name: "Batteries", shareOfParentPct: 40, growthPct: 5, basis: "Linie", source: "Geschäftsbericht 2024" }],
+  }),
+});
+const ttlServer = ttlApp.listen(0);
+const ttlPort = (ttlServer.address() as { port: number }).port;
+try {
+  await fetch(`http://127.0.0.1:${ttlPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "BYDDY", kind: "product" }),
+  });
+  const fresh = await fetch(`http://127.0.0.1:${ttlPort}/api/segment-children/BYDDY?parent=${encodeURIComponent("Batteries")}&kind=product`);
+  outlineClock += 25 * 60 * 60 * 1000;
+  const expired = await fetch(`http://127.0.0.1:${ttlPort}/api/segment-children/BYDDY?parent=${encodeURIComponent("Batteries")}&kind=product`);
+  gap("outline-ttl", fresh.status === 200 && expired.status === 400, `fresh=${fresh.status} expired=${expired.status}`);
+} finally {
+  await new Promise<void>((resolve, reject) => ttlServer.close((err) => err ? reject(err) : resolve()));
 }
 
 const indexSource = readFileSync("server/index.ts", "utf8");

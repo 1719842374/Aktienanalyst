@@ -17,6 +17,7 @@ import {
   fmpBalanceSheet,
   fmpCashFlow,
   fmpIncomeStatement,
+  fmpProfile,
   fmpSegmentationRows,
   isFmpAvailable,
   promoteNonGeoRowsToBusiness,
@@ -29,12 +30,15 @@ import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import {
   KI_FILTERED,
   KI_UNAVAILABLE,
+  OUTLINE_MISMATCH,
+  OUTLINE_NO_IDENTITY,
   SEGMENT_CHILDREN_ROUTE,
   SEGMENT_UNKNOWN,
   childrenFromFmpRows,
   reportedParentRevenue,
   resolveSegmentChildren,
   reviewKiChildren,
+  outlineEchoMatches,
   reviewSegmentOutline,
   segmentNamesFromFmpRows,
   type SegmentChildrenResult,
@@ -65,7 +69,10 @@ const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const childCache = new Map<string, { at: number; ttl: number; body: SegmentChildrenResult }>();
 const rateBuckets = new Map<string, number[]>();
 
-const outlineNames = new Map<string, string[]>();
+const OUTLINE_NAME_TTL_MS = 24 * 60 * 60 * 1000;
+const OUTLINE_NAMES_PER_TICKER = 24;
+const OUTLINE_NAMES_TOTAL = 400;
+const outlineNames = new Map<string, { names: string[]; at: number }>();
 
 export function resetSegmentChildrenGuardsForTests(): void {
   childCache.clear();
@@ -73,13 +80,42 @@ export function resetSegmentChildrenGuardsForTests(): void {
   outlineNames.clear();
 }
 
-function rememberOutlineNames(ticker: string, kind: "product" | "geographic", names: string[]): void {
-  outlineNames.set(`${ticker.toUpperCase()}|${kind}`, names);
+function rememberOutlineNames(ticker: string, kind: "product" | "geographic", names: string[], now: number): void {
+  const key = `${ticker.toUpperCase()}|${kind}`;
+  const existing = outlineNames.get(key);
+  const kept = existing && now - existing.at < OUTLINE_NAME_TTL_MS ? existing.names : [];
+  const merged = [...kept];
+  for (const name of names) {
+    if (!merged.some((current) => sameDisplayedName(kind, current, name))) merged.push(name);
+  }
+  outlineNames.set(key, { names: merged.slice(0, OUTLINE_NAMES_PER_TICKER), at: now });
+  const expired: string[] = [];
+  outlineNames.forEach((entry, entryKey) => {
+    if (now - entry.at >= OUTLINE_NAME_TTL_MS) expired.push(entryKey);
+  });
+  for (let i = 0; i < expired.length; i++) outlineNames.delete(expired[i]);
+  while (outlineNames.size > OUTLINE_NAMES_TOTAL) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    outlineNames.forEach((entry, entryKey) => {
+      if (entry.at < oldestAt) {
+        oldestAt = entry.at;
+        oldestKey = entryKey;
+      }
+    });
+    if (!oldestKey) break;
+    outlineNames.delete(oldestKey);
+  }
 }
 
-function rememberedOutlineName(ticker: string, kind: "product" | "geographic", parent: string): string | null {
-  const names = outlineNames.get(`${ticker.toUpperCase()}|${kind}`) ?? [];
-  return names.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
+function rememberedOutlineName(ticker: string, kind: "product" | "geographic", parent: string, now: number): string | null {
+  const key = `${ticker.toUpperCase()}|${kind}`;
+  const entry = outlineNames.get(key);
+  if (!entry || now - entry.at >= OUTLINE_NAME_TTL_MS) {
+    if (entry) outlineNames.delete(key);
+    return null;
+  }
+  return entry.names.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
 }
 
 export function takeSegmentChildrenSlot(ip: string, now: number, max: number, windowMs: number): boolean {
@@ -164,9 +200,18 @@ export interface SegmentChildrenDeps {
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
   ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[]) => Promise<unknown>;
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
-  outline?: (ticker: string, kind: "product" | "geographic") => Promise<unknown>;
+  outline?: (ticker: string, kind: "product" | "geographic", identity: OutlineIdentity) => Promise<unknown>;
+  identity?: (ticker: string) => Promise<OutlineIdentity | null>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
+}
+
+export interface OutlineIdentity {
+  companyName: string;
+  exchange: string;
+  country: string;
+  sector: string;
+  industry: string;
 }
 
 export interface SegmentChildrenScope {
@@ -315,7 +360,30 @@ async function defaultKiChildren(
   }
 }
 
-async function defaultOutline(ticker: string, kind: "product" | "geographic"): Promise<unknown> {
+function profileText(profile: Record<string, unknown>, key: string): string {
+  return typeof profile[key] === "string" ? profile[key].trim() : "";
+}
+
+export async function loadOutlineIdentity(ticker: string): Promise<OutlineIdentity | null> {
+  try {
+    const profile = await fmpProfile(ticker);
+    if (!profile || typeof profile !== "object") return null;
+    const record = profile as Record<string, unknown>;
+    const companyName = profileText(record, "companyName");
+    if (companyName.length < 2) return null;
+    return {
+      companyName,
+      exchange: profileText(record, "exchange") || profileText(record, "exchangeShortName"),
+      country: profileText(record, "country"),
+      sector: profileText(record, "sector"),
+      industry: profileText(record, "industry"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function defaultOutline(ticker: string, kind: "product" | "geographic", identity: OutlineIdentity): Promise<unknown> {
   if (!isLLMAvailable()) return null;
   let peerLine = "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht geladen. Eine Zahl ohne eigene Quelle weglassen.";
   try {
@@ -331,8 +399,8 @@ async function defaultOutline(ticker: string, kind: "product" | "geographic"): P
     : "Schätze die Geschäftssegmente oder Produktgruppen.";
   try {
     const result = await callLLMJson({
-      systemPrompt: "Antworte nur mit JSON. Schätze Hauptsegmente nur mit Basis und Quelle. Unbekannte Zahlen sind null, nie 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
-      prompt: `${peerLine}\nTicker ${ticker}. ${subject} Nenne drei bis sechs Namen. Schätze zu jedem Namen den Umsatzanteil und das Umsatzwachstum und setze source auf die Grundlage, zum Beispiel Jahresbericht oder 20-F. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"children":[{"name":"Fahrzeuge","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Jahresbericht"}]}. Ohne source bleiben die Zahlen null, nie 0.`,
+      systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. companyEcho muss den Firmennamen enthalten, industryEcho die Branche. Zahlen nur mit Dokumenttyp und Periode, sonst null. Echte 0 bleibt 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
+      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. Schätze Umsatzanteil und Umsatzwachstum. source muss Dokumenttyp und Periode nennen, zum Beispiel Geschäftsbericht 2025 oder 20-F FY2025. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || "n/a"}","children":[{"name":"Fahrzeuge","shareOfParentPct":60,"growthPct":15,"basis":"Kernumsatz","source":"Geschäftsbericht 2025"}]}. Ohne konkrete Quelle bleiben die Zahlen null.`,
       maxTokens: 800,
       temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
@@ -350,6 +418,7 @@ export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
     names: defaultDisplayedNames,
     ki: defaultKiChildren,
     outline: defaultOutline,
+    identity: loadOutlineIdentity,
   };
 }
 
@@ -450,7 +519,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         ? await deps.names(ticker, kind)
         : segmentNamesFromFmpRows(rows);
       const hit = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
-      const remembered = rememberedOutlineName(ticker, kind, parent);
+      const remembered = rememberedOutlineName(ticker, kind, parent, now);
       if (!hit && !remembered) return res.status(400).json({ error: SEGMENT_UNKNOWN });
       const fromNewestYear = hit ? newestMatchingRawKey(rows, kind, parent, listed) : null;
       const canonical = fromNewestYear ?? hit ?? remembered!;
@@ -504,12 +573,19 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       return res.status(429).json({ error: "Zu viele Abfragen" });
     }
     try {
+      const identity = deps.identity ? await deps.identity(ticker) : await loadOutlineIdentity(ticker);
+      if (!identity?.companyName) return res.json({ items: [], reason: OUTLINE_NO_IDENTITY });
       const payload = deps.outline
-        ? await deps.outline(ticker, kind)
-        : await defaultOutline(ticker, kind);
+        ? await deps.outline(ticker, kind, identity)
+        : await defaultOutline(ticker, kind, identity);
+      const rawJson = JSON.stringify(payload ?? null);
+      console.log(`[OUTLINE-RAW] ${ticker} ${kind} ${rawJson.slice(0, 2000)}`);
       if (payload == null) return res.status(503).json({ error: KI_UNAVAILABLE });
+      if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
+        return res.json({ items: [], reason: OUTLINE_MISMATCH });
+      }
       const reviewed = reviewSegmentOutline(payload);
-      if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name));
+      if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name), now);
       return res.json(reviewed);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Segment-Schätzung fehlgeschlagen";

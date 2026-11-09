@@ -31,6 +31,8 @@ export const KI_NEGATIVE = "n/a — negativer KI-Wert verworfen";
 export const KI_UNAVAILABLE = "n/a — KI nicht erreichbar";
 export const KI_FILTERED = "n/a — KI-Vorschläge verworfen: Elternname, Geschwister oder Geschäftssegment";
 export const KI_WITHOUT_SOURCE = "n/a — Schätzung ohne Quelle";
+export const OUTLINE_NO_IDENTITY = "n/a — Identität der Firma nicht belegt";
+export const OUTLINE_MISMATCH = "n/a — Antwort passt nicht zur Firma";
 export const SEGMENT_UNKNOWN = "n/a — Segment ist in der serverseitigen Liste nicht enthalten";
 export const BASIS_TEXT_MAX = 400;
 
@@ -280,6 +282,50 @@ export interface SegmentOutlineItem {
   origin: "KI";
 }
 
+const GENERIC_SOURCE = new Set(["ki-schätzung", "ki schätzung", "ki", "schätzung", "unbekannt", "unknown", "n/a", "na"]);
+
+export function concreteSource(value: string): boolean {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  if (GENERIC_SOURCE.has(lower)) return false;
+  if (/^https?:\/\/\S+$/i.test(text)) return true;
+  if (/^(10-k|20-f|10-q|8-k)$/i.test(lower)) return false;
+  const hasDocument = /(geschäftsbericht|jahresbericht|annual report|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i.test(text);
+  const hasPeriod = /(?:19|20)\d{2}/.test(text);
+  return hasDocument && hasPeriod;
+}
+
+function outlineNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+const ECHO_STOP = new Set(["company", "corporation", "corp", "inc", "ltd", "limited", "group", "holdings", "the", "and", "plc", "ag", "co"]);
+
+function echoTokens(value: string, min: number): string[] {
+  return value.toLowerCase().split(/[^a-z0-9äöü]+/).filter((token) => token.length >= min && !ECHO_STOP.has(token));
+}
+
+export function outlineEchoMatches(payload: unknown, companyName: string, industry = "", sector = ""): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const record = payload as { companyEcho?: unknown; industryEcho?: unknown };
+  const companyEcho = record.companyEcho;
+  if (typeof companyEcho !== "string" || !companyEcho.trim()) return false;
+  const companyTokens = echoTokens(companyName, 3);
+  if (companyTokens.length === 0 || !companyTokens.some((token) => companyEcho.toLowerCase().includes(token))) return false;
+  const industryEcho = record.industryEcho;
+  if (typeof industryEcho !== "string" || !industryEcho.trim()) return true;
+  const hints = echoTokens(`${industry} ${sector}`, 4);
+  if (hints.length === 0) return true;
+  const industryFold = industryEcho.toLowerCase();
+  return hints.some((token) => industryFold.includes(token));
+}
+
+export function outlineStillCurrent(startedTicker: string, currentTicker: string): boolean {
+  return startedTicker.trim().toUpperCase() === currentTicker.trim().toUpperCase();
+}
+
 export function reviewSegmentOutline(payload: unknown): { items: SegmentOutlineItem[]; reason: string | null } {
   if (!payload || typeof payload !== "object") return { items: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
@@ -300,15 +346,16 @@ export function reviewSegmentOutline(payload: unknown): { items: SegmentOutlineI
       continue;
     }
     const citation = (typeof rec.source === "string" && rec.source.trim() ? rec.source : typeof rec.tamSource === "string" ? rec.tamSource : "").trim();
-    const share = finite(rec.shareOfParentPct);
-    const growth = finite(rec.growthPct ?? rec.segmentGrowth);
+    const share = outlineNumber(rec.shareOfParentPct);
+    const growth = outlineNumber(rec.growthPct ?? rec.segmentGrowth);
     if ((share != null && share < 0) || (growth != null && growth < -100)) {
       notes.push(`${KI_NEGATIVE}: ${name}`);
       continue;
     }
+    const sourced = concreteSource(citation);
     let shareKept = share != null && share > 0 ? share : null;
-    let growthKept = growth != null && growth !== 0 ? growth : null;
-    if ((shareKept != null || growthKept != null) && !citation) {
+    let growthKept = growth;
+    if ((share != null || growth != null) && !sourced) {
       notes.push(`${KI_WITHOUT_SOURCE}: ${name}`);
       shareKept = null;
       growthKept = null;

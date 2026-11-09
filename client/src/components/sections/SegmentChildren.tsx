@@ -127,9 +127,10 @@ export function SegmentChildrenPanel({
   });
   if (query.isLoading) return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-loading">Untersegmente …</p>;
   if (query.isError || !query.data) {
-    const message = query.error instanceof Error && query.error.message.trim()
+    const raw = query.error instanceof Error && query.error.message.trim()
       ? query.error.message.trim()
       : "n/a — Untersegmente nicht erreichbar";
+    const message = /serverseitigen Liste/.test(raw) ? `${raw} Bitte die Schätzung erneut auslösen.` : raw;
     return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">{message}</p>;
   }
   return <SegmentChildrenList data={query.data} />;
