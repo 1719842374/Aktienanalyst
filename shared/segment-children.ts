@@ -342,7 +342,7 @@ function echoTokens(value: string, min: number): string[] {
 function foldCompany(value: string): string {
   const folded = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
   return folded
-    .replace(/&/g, "")
+    .replace(/\s*&\s*/g, "")
     .replace(/['’]/g, "")
     .replace(/\b(?:p\.?\s*l\.?\s*c\.?|s\.?\s*a\.?|n\.?\s*v\.?|l\.?\s*l\.?\s*c\.?|incorporated|corporation|company|holdings|holding|limited|group|corp|inc|ltd|llc|plc|gmbh|oyj)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")

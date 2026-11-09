@@ -1345,6 +1345,8 @@ const tokenCases: Array<[string, string, string, boolean]> = [
   ["3M Company", "3M Company", "", true],
   ["AT&T Inc.", "Atticus Capital", "", false],
   ["AT&T Inc.", "AT&T Inc.", "", true],
+  ["AT&T Inc.", "AT & T", "", true],
+  ["AT&T Inc.", "AT & T Inc.", "", true],
   ["L'Oréal S.A.", "L'Oréal S.A.", "", true],
   ["Xiaomi Corporation", "Xiaomi Corporation", "", true],
 ];
@@ -1378,6 +1380,9 @@ const citeCases: Array<[string, string, boolean]> = [
   ["Microsoft Corporation Form 10-K 2024", "Microsoft Corp", true],
   ["Bank of America Annual Report 2024", "Bank of America Corporation", true],
   ["AT&T Inc. 10-K 2024", "AT&T Inc.", true],
+  ["AT & T Inc. 10-K 2024", "AT&T Inc.", true],
+  ["AT & T 10-K 2024", "AT&T Inc.", true],
+  ["Atticus Capital Annual Report 2024", "AT&T Inc.", false],
   ["3M Company 10-K 2024", "3M Company", true],
   ["BYD Company Limited Annual Report 2024", "BYD", true],
   ["Xiaomi Corporation Annual Report 2024", "Xiaomi", true],
