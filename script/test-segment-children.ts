@@ -27,6 +27,7 @@ import {
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
 import { loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
+import { priorSegmentRevenue } from "../server/fmp";
 import { buildSegmentSupplement } from "../shared/segment-supplement";
 import { SegmentSupplementBody } from "../client/src/components/sections/SegmentSupplementView";
 
@@ -701,6 +702,61 @@ gap(
     && basisMarkup.includes("overflow-x-hidden")
     && !basisMarkup.includes("whitespace-nowrap"),
   `len=${shownBasis.length} end=${shownBasis.slice(-12)} markup=${basisMarkup.slice(0, 280)}`,
+);
+
+const wmtGeo = annotateMissingSegmentGrowth({
+  annual: snapshotsFromFmpRows([
+    { date: "2025-01-31", data: { "UNITED STATES": 462, "Walmart International": 122 } },
+    { date: "2024-01-31", data: { "United States": 410, International: 108 } },
+  ]),
+});
+const usGrowth = annotationByName(wmtGeo, "UNITED STATES");
+const intlGrowth = annotationByName(wmtGeo, "Walmart International");
+const usHtml = html(React.createElement(SegmentGrowthReadout, { fact: null, annotation: usGrowth }));
+const identical = annotateMissingSegmentGrowth({
+  annual: snapshotsFromFmpRows([
+    { date: "2025-01-31", data: { Server: 130 } },
+    { date: "2024-01-31", data: { Server: 100 } },
+  ]),
+});
+gap(
+  "wmt-geo-yoy",
+  usGrowth?.basis === "berechnet"
+    && usGrowth.growth === 12.7
+    && /berechnet/.test(usHtml)
+    && /\+12\.7%/.test(usHtml)
+    && intlGrowth?.basis === "berechnet"
+    && priorSegmentRevenue("UNITED STATES", { "United States": 410 }) === 410
+    && !identical.some((row) => row.name === "Server"),
+  `us=${usGrowth?.basis ?? "none"}:${String(usGrowth?.growth)} intl=${intlGrowth?.basis ?? "none"} html=${usHtml}`,
+);
+
+const estimated = reviewKiChildren("Server", {
+  children: [{ name: "Azure", shareOfParentPct: 0, growthPct: 12.5, basis: "Produktlinie Azure, Wachstum ohne veröffentlichte Zahl bleibt leer" }],
+}, null);
+const estimateMarkup = html(React.createElement(SegmentChildrenList, {
+  data: {
+    parent: "Server",
+    reason: null,
+    children: [{
+      parent: "Server",
+      name: "Azure",
+      revenue: null,
+      shareOfParentPct: estimated.children[0]?.shareOfParentPct ?? null,
+      growthPct: estimated.children[0]?.growthPct ?? null,
+      source: "KI",
+      basis: estimated.children[0]?.basis ?? "",
+    }],
+  },
+}));
+gap(
+  "ki-schaetzung",
+  estimated.children[0]?.shareOfParentPct == null
+    && estimated.children[0]?.growthPct === 12.5
+    && estimateMarkup.includes("KI-Schätzung")
+    && estimateMarkup.includes("+12.5%")
+    && !/Override/.test(estimateMarkup),
+  `share=${String(estimated.children[0]?.shareOfParentPct)} growth=${String(estimated.children[0]?.growthPct)} markup=${estimateMarkup.slice(0, 320)}`,
 );
 
 const indexSource = readFileSync("server/index.ts", "utf8");

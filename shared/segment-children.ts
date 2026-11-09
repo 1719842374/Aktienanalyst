@@ -12,6 +12,7 @@ export interface SegmentChild {
   name: string;
   revenue: number | null;
   shareOfParentPct: number | null;
+  growthPct?: number | null;
   source: SegmentChildSource;
   basis?: string | null;
 }
@@ -197,7 +198,7 @@ export function reviewKiChildren(
   const notes: string[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; basis?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -209,6 +210,7 @@ export function reviewKiChildren(
     if (kind === "geographic" && (scope.businessNames ?? []).some((business) => sameChildName("product", business, name))) continue;
     const share = finite(rec.shareOfParentPct);
     const revenue = finite(rec.revenue);
+    const growth = finite(rec.growthPct);
     if ((share != null && share < 0) || (revenue != null && revenue < 0)) {
       notes.push(`${KI_NEGATIVE}: ${name}`);
       continue;
@@ -218,6 +220,7 @@ export function reviewKiChildren(
       name,
       revenue: revenue != null && revenue > 0 ? revenue : null,
       shareOfParentPct: share != null && share > 0 ? share : null,
+      growthPct: growth != null && growth !== 0 ? growth : null,
       source: "KI",
       basis,
     });

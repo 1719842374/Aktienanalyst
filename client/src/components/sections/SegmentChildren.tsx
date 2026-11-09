@@ -83,6 +83,11 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
           <span className="font-mono tabular-nums text-muted-foreground" data-testid="segment-child-share">
             {child.shareOfParentPct != null ? `${child.shareOfParentPct.toFixed(1)} %` : "n/a"}
           </span>
+          {child.growthPct != null && (
+            <span className="font-mono tabular-nums text-muted-foreground" data-testid="segment-child-growth">
+              {`${child.growthPct > 0 ? "+" : ""}${child.growthPct.toFixed(1)}%`}
+            </span>
+          )}
           {child.basis ? (
             <span className="min-w-0 break-words text-muted-foreground" title={child.basis} aria-label={child.basis}>
               {visibleBasis(child.basis)}
@@ -94,7 +99,7 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
               : "text-muted-foreground"}
             data-testid="segment-child-source"
           >
-            {child.source}
+            {child.source === "KI" ? "KI-Schätzung" : child.source}
           </span>
         </div>
       ))}

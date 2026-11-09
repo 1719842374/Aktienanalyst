@@ -270,6 +270,19 @@ export interface FmpSegmentRow {
   reportedCurrency?: string;
 }
 
+/** Vorjahresumsatz auch bei anderer Großschreibung, sonst bleibt das Fakt-YoY leer. */
+export function priorSegmentRevenue(name: string, prevMap: Record<string, number>): number | undefined {
+  const direct = prevMap[name];
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  const wanted = name.toLowerCase().replace(/\s+/g, " ").trim();
+  const keys = Object.keys(prevMap);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key.toLowerCase().replace(/\s+/g, " ").trim() === wanted) return prevMap[key];
+  }
+  return undefined;
+}
+
 /**
  * Extrahiert die Segment-Zahlen aus einer FMP-Periodenzeile. FMP liefert die
  * Werte je nach Endpoint/Symbol entweder flach oder unter `data` — beide Formen
@@ -337,7 +350,7 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
     .sort((a, b) => curMap[b] - curMap[a])
     .map(name => {
       const revenue = curMap[name];
-      const prevRevenue = prevMap[name];
+      const prevRevenue = priorSegmentRevenue(name, prevMap);
       const hasPrev = typeof prevRevenue === "number" && isFinite(prevRevenue) && prevRevenue > 0;
       const growth = hasPrev
         ? Math.round(((revenue / prevRevenue) - 1) * 1000) / 10

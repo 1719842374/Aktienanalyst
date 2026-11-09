@@ -256,13 +256,13 @@ export function segmentChildrenKiMessages(
   const siblingLine = blocked ? ` Diese Namen sind Geschwister und keine Kinder: ${blocked}.` : "";
   if (kind === "geographic") {
     return {
-      systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Ein unbekannter Anteil ist null, nie 0.",
-      prompt: `Ticker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente.${siblingLine} Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"basis":""}]}. basis ist ein kurzer Quellenhinweis ohne erfundene Zahl. Leeres children nur, wenn keine Unterregion bekannt ist.`,
+      systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+      prompt: `Ticker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente.${siblingLine} Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":""}]}. basis ist ein kurzer Quellenhinweis. shareOfParentPct und growthPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Leeres children nur, wenn keine Unterregion bekannt ist.`,
     };
   }
   return {
-    systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0.",
-    prompt: `Ticker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister.${siblingLine} revenue und shareOfParentPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"basis":""}]}. basis benennt die Produktlinie in einem kurzen Satz. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+    prompt: `Ticker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister.${siblingLine} revenue, shareOfParentPct und growthPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":""}]}. basis benennt die Produktlinie in einem kurzen Satz. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 

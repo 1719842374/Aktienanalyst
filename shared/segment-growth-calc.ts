@@ -523,7 +523,12 @@ export function annotateMissingSegmentGrowth(input: AnnotateSegmentGrowthInput):
     if (!hit) continue;
     const change = logChange(row.revenue, hit.prevRevenue);
     if (change != null) seedLogs.push(change);
-    if (isDirectAnnual(hit, row)) continue;
+    if (isDirectAnnual(hit, row)) {
+      const priorName = hit.prevNames[0] ?? "";
+      if (priorName.trim() === row.name.trim()) continue;
+      calculated.set(row.name, toAnnotation(row, hit));
+      continue;
+    }
     calculated.set(row.name, toAnnotation(row, hit));
   }
 
