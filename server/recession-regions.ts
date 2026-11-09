@@ -35,7 +35,7 @@ const BOJ_M2_YOY = "MAM1YAM2M2MO";
 const FRED = "https://fred.stlouisfed.org/graph/fredgraph.csv";
 
 export interface RegionalPrints {
-  ezUnemployment: { geo: string; points: DatedPoint[] };
+  ezUnemployment: { geo: string; points: DatedPoint[]; unavailableReason?: string };
   ezLong: DatedPoint[];
   ezShort: DatedPoint[];
   ezIp: { geo: string; points: DatedPoint[] };
@@ -408,18 +408,35 @@ export function catalogUnemploymentFromRegional(loaded: {
   geo: string | null;
   rows: Array<{ date: string; value: number | null }>;
   ea20PointCount?: number;
+  ea20Stale?: boolean;
   timedOut?: boolean;
-} | null): { geo: string; points: DatedPoint[]; unavailableReason?: string } | null {
+} | null): { geo: string; points: DatedPoint[]; unavailableReason?: string; timedOut?: boolean } | null {
   if (!loaded) return null;
-  if (loaded.timedOut) return { geo: "EA20", points: [], unavailableReason: EZ_UNEMPLOYMENT_TIMEOUT_SOURCE };
+  if (loaded.timedOut) return { geo: "EA20", points: [], unavailableReason: EZ_UNEMPLOYMENT_TIMEOUT_SOURCE, timedOut: true };
   if (!loaded.geo) return null;
   const points = loaded.rows.flatMap(row =>
     row.value != null && Number.isFinite(row.value) ? [{ date: row.date, value: row.value }] : [],
   );
   if (points.length === 0) return null;
   const ea20Empty = loaded.ea20PointCount != null ? loaded.ea20PointCount === 0 : loaded.geo === "EA21";
-  const geo = loaded.geo === "EA21" && ea20Empty ? "EA21 (EA20 ohne Werte)" : loaded.geo;
+  const geo = loaded.geo === "EA21" && ea20Empty
+    ? "EA21 (EA20 ohne Werte)"
+    : loaded.geo === "EA20" && loaded.ea20Stale
+      ? "EA20 (älter als EA21)"
+      : loaded.geo;
   return { geo, points };
+}
+
+/** Points from the cube win. A timeout stays N/A. HTTP, HTML and an empty body use the regional EA20/EA21 query. */
+export async function unemploymentOrRegional(
+  preloaded: { geo: string; points: DatedPoint[]; unavailableReason?: string; timedOut?: boolean } | null,
+  regional: () => Promise<{ geo: string; points: DatedPoint[] }>,
+): Promise<{ geo: string; points: DatedPoint[]; unavailableReason?: string }> {
+  if (preloaded && preloaded.points.length > 0) return preloaded;
+  if (preloaded?.timedOut) return { geo: "EA20", points: [], unavailableReason: preloaded.unavailableReason ?? EZ_UNEMPLOYMENT_TIMEOUT_SOURCE };
+  const next = await regional();
+  if (next.points.length > 0) return next;
+  return { geo: next.geo || "EA20", points: [], unavailableReason: "n/a — Eurostat une_rt_m HTTP-Fehler/HTML" };
 }
 
 /** The series whose last print is newer. An empty side loses. A tie keeps the primary. */
@@ -700,9 +717,10 @@ async function fetchLegacyRegionalPrints(
   const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
     preloadedUnemployment == null
       ? eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"])
-      : Promise.resolve(preloadedUnemployment).then(value =>
-        value && value.points.length > 0 ? value : { geo: "EA20", points: [] },
-      ),
+      : Promise.resolve(preloadedUnemployment).then(value => unemploymentOrRegional(
+        value,
+        () => eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
+      )),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
     fred("IR3TIB01EZM156N", cosd),
@@ -1088,7 +1106,7 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const ezRates = une.points.map(point => point.value);
   const ezLaborSource = une.points.length
     ? `Eurostat une_rt_m ${une.geo}`
-    : (shared?.unavailableReason ?? "Eurostat une_rt_m EA20");
+    : (une.unavailableReason ?? shared?.unavailableReason ?? "Eurostat une_rt_m EA20");
   const ezSpread = alignSpread(prints.ezLong, prints.ezShort);
   const ezIpSource = prints.ezIp.points.length
     ? `Eurostat sts_inpr_m ${prints.ezIp.geo} I21`

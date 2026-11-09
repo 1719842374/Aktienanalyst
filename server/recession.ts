@@ -279,18 +279,6 @@ function scoreSahm(): { indicator: IndicatorResult; evaluated: SahmUnemploymentS
 /** ALQ dataflow. The euro-area geo is resolved from the dataset, not a ticker. */
 const EURO_AREA_UNEMPLOYMENT_DATAFLOW = "une_rt_m";
 
-function fetchEuroAreaUnemployment(cosd: string): { geo: string | null; rows: Array<{ date: string; value: number | null }> } {
-  const start = cosd.slice(0, 7);
-  const url = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/${EURO_AREA_UNEMPLOYMENT_DATAFLOW}?lang=en&s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=${start}`;
-  const raw = fetchUrl(url, 30000);
-  if (!raw || raw.includes("<html") || raw.includes("<!DOCTYPE")) return { geo: null, rows: [] };
-  try {
-    return euroAreaUnemploymentFromEurostat(JSON.parse(raw) as EurostatDataset);
-  } catch {
-    return { geo: null, rows: [] };
-  }
-}
-
 function sahmRegionBoard(
   region: SahmRegionBoard["region"],
   label: string,
@@ -322,10 +310,12 @@ function sahmRegionBoard(
   };
 }
 
-function scoreEuroAreaSahmFrom(loaded: { geo: string | null; rows: Array<{ date: string; value: number | null }>; timedOut?: boolean }): SahmRegionBoard {
+function scoreEuroAreaSahmFrom(loaded: { geo: string | null; rows: Array<{ date: string; value: number | null }>; timedOut?: boolean; ea20Stale?: boolean }): SahmRegionBoard {
   const source = loaded.timedOut
     ? EZ_UNEMPLOYMENT_TIMEOUT_SOURCE
-    : loaded.geo ? `Eurostat une_rt_m ${loaded.geo}` : "Eurostat une_rt_m";
+    : loaded.ea20Stale && loaded.geo === "EA20"
+      ? "Eurostat une_rt_m EA20 (älter als EA21)"
+      : loaded.geo ? `Eurostat une_rt_m ${loaded.geo}` : "Eurostat une_rt_m";
   return sahmRegionBoard("EZ", "Eurozone", source, scoreSahmFromUnemployment(loaded.rows, []), false);
 }
 
@@ -339,18 +329,24 @@ function scoreJapanSahm(cosd: string): SahmRegionBoard {
   );
 }
 
-/** One une_rt_m cube. fetch() starts before the synchronous US curls. */
-async function loadEuroAreaUnemploymentAsync(cosd: string): Promise<{
+/** One une_rt_m cube. The timeout starts only after the event loop can send the request. */
+export async function loadEuroAreaUnemploymentAsync(cosd: string, opts?: {
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<{
   geo: string | null;
   rows: Array<{ date: string; value: number | null }>;
   ea20PointCount: number;
+  ea20Stale: boolean;
   timedOut: boolean;
 }> {
+  await new Promise<void>(resolve => setImmediate(resolve));
   const start = cosd.slice(0, 7);
   const url = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/${EURO_AREA_UNEMPLOYMENT_DATAFLOW}?lang=en&s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=${start}`;
-  const empty = { geo: null, rows: [] as Array<{ date: string; value: number | null }>, ea20PointCount: 0, timedOut: false };
+  const empty = { geo: null, rows: [] as Array<{ date: string; value: number | null }>, ea20PointCount: 0, ea20Stale: false, timedOut: false };
+  const doFetch = opts?.fetchImpl ?? fetch;
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    const resp = await doFetch(url, { signal: AbortSignal.timeout(opts?.timeoutMs ?? 30000) });
     if (!resp.ok) return empty;
     const raw = await resp.text();
     if (!raw || raw.includes("<html") || raw.includes("<!DOCTYPE")) return empty;

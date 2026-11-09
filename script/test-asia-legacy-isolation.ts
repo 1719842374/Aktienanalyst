@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { capeReading, durableReading, m2Reading, scoreSeriesStress, vixReading } from "../server/recession";
+import { capeReading, durableReading, loadEuroAreaUnemploymentAsync, m2Reading, scoreSeriesStress, vixReading } from "../server/recession";
 import {
   applyAsiaSupplement,
   catalogUnemploymentFromRegional,
@@ -21,6 +21,8 @@ import {
   oecdAttemptPlan,
   runAsiaSupplement,
   scoreRegionalCatalogs,
+  unemploymentOrRegional,
+  EZ_UNEMPLOYMENT_TIMEOUT_SOURCE,
   ASIA_FMP_TIMEOUT_MS,
   EUROSTAT_RETRY_MS,
   OECD_RETRY_MS,
@@ -28,6 +30,7 @@ import {
 } from "../server/recession-regions";
 import { fetchYahooTimeseriesFundamentals } from "../server/yahoo-fetcher";
 import { euroAreaUnemploymentFromEurostat } from "../server/recession-sahm";
+import { bookProbability } from "../shared/recession-regions";
 import { realizedVol20 } from "../shared/recession-market-charts";
 
 let failed = 0;
@@ -202,6 +205,68 @@ console.log("\n=== Ausfall der neuen Quellen lässt EZ/JP-Drucke stehen ===");
   });
   const timedLabor = timed.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
   check("Zeitüberschreitung bleibt N/A mit Grund", timedLabor.available === false && timedLabor.source === "n/a — Eurostat une_rt_m Zeitüberschreitung");
+  let regionalCalled = false;
+  const fallback = await unemploymentOrRegional(
+    { geo: "EA20", points: [] },
+    async () => {
+      regionalCalled = true;
+      return { geo: "EA21 (EA20 ohne Werte)", points: Array.from({ length: 20 }, (_, index) => ({ date: day(index), value: 6.2 })) };
+    },
+  );
+  const fallbackCatalog = scoreRegionalCatalogs({
+    prints: { ...emptyEa20, ezUnemployment: fallback },
+    usSlots: [],
+    usRecession12m: 35,
+    usCorrection12m: 80,
+    today: "2026-11-09",
+    scorers: scorers(),
+  });
+  const fallbackLabor = fallbackCatalog.regions.find(region => region.id === "EZ")!.slots.find(slot => slot.id === "labor")!;
+  check(
+    "Würfel-Ausfall füllt den Slot aus der regionalen Reihe, EZ bleibt 45",
+    regionalCalled && fallbackLabor.available === true && fallbackLabor.rawScore === -3 && fallbackLabor.maxWeighted === 4 && bookProbability(-2, 14) === 45 && fallbackLabor.source.includes("EA21"),
+    `${fallbackLabor.available} ${fallbackLabor.rawScore} ${fallbackLabor.source}`,
+  );
+  let timeoutCalled = false;
+  const keptTimeout = await unemploymentOrRegional(
+    { geo: "EA20", points: [], timedOut: true, unavailableReason: EZ_UNEMPLOYMENT_TIMEOUT_SOURCE },
+    async () => {
+      timeoutCalled = true;
+      return { geo: "EA21", points: [{ date: "2026-08-01", value: 6 }] };
+    },
+  );
+  check("ein Timeout startet die regionale Ersatzabfrage nicht", timeoutCalled === false && keptTimeout.unavailableReason === EZ_UNEMPLOYMENT_TIMEOUT_SOURCE);
+  const stale = euroAreaUnemploymentFromEurostat(cube([
+    { code: "EA20", label: "Euro area – 20 countries", values: [6, null, null] },
+    { code: "EA21", label: "Euro area – 21 countries (from 2026)", values: [6.2, 6.3, 6.4] },
+  ]));
+  const staleLabel = catalogUnemploymentFromRegional(stale);
+  check(
+    "veraltetes EA20 bleibt EA20 und nennt den Stale-Hinweis",
+    stale.geo === "EA20" && stale.ea20Stale === true && staleLabel?.geo === "EA20 (älter als EA21)",
+    `${stale.geo} stale=${stale.ea20Stale} ${staleLabel?.geo}`,
+  );
+  const blockMs = 20000;
+  const timerMs = 5000;
+  let sentAt = 0;
+  const callAt = Date.now();
+  const paced = loadEuroAreaUnemploymentAsync("2006-01-01", {
+    timeoutMs: timerMs,
+    fetchImpl: async () => {
+      sentAt = Date.now();
+      return new Response(JSON.stringify(cube([
+        { code: "EA21", label: "Euro area – 21 countries (from 2026)", values: [6.2, 6.3, 6.4] },
+      ])), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const blockedUntil = Date.now() + blockMs;
+  while (Date.now() < blockedUntil) {}
+  const pacedResult = await paced;
+  check(
+    "ein US-Block von 20s erzeugt keinen Eurostat-Timeout",
+    pacedResult.timedOut === false && pacedResult.geo === "EA21" && sentAt >= blockedUntil - 50,
+    `timedOut=${pacedResult.timedOut} geo=${pacedResult.geo} sentAfterBlock=${sentAt - callAt}ms`,
+  );
   const handler = readFileSync("server/recession.ts", "utf8");
   const handlerStart = handler.indexOf("export async function runRecessionAnalysis");
   const handlerHead = handler.slice(handlerStart, handler.indexOf("const indicators", handlerStart));

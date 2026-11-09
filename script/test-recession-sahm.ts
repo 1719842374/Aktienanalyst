@@ -341,11 +341,19 @@ console.log("\n=== fixture: last 12 SAHMREALTIME months ===");
     !sahmFn.includes("SAHMCURRENT") && !/fmp|Trends|google/i.test(sahmFn),
   );
   check("Japan unemployment is fetched and scored", route.includes('fetchFredRows("LRUNTTTTJPM156S"') && route.includes("scoreSahmFromUnemployment"));
-  const euroFn = route.slice(route.indexOf("function fetchEuroAreaUnemployment"), route.indexOf("function scoreJapanSahm"));
+  const euroStart = route.indexOf("export async function loadEuroAreaUnemploymentAsync");
+  const euroFn = route.slice(euroStart, route.indexOf("// 2. Yield curve", euroStart));
   check(
     "the eurozone path is the ALQ dataflow and not a geo ticker",
-    euroFn.includes("une_rt_m") && !euroFn.includes("EA20") && !euroFn.includes("EA21") && !/\^STOXX|\bticker\b/i.test(euroFn),
+    route.includes('EURO_AREA_UNEMPLOYMENT_DATAFLOW = "une_rt_m"')
+      && euroFn.includes("EURO_AREA_UNEMPLOYMENT_DATAFLOW")
+      && euroFn.includes("setImmediate")
+      && euroFn.includes("AbortSignal.timeout")
+      && !euroFn.includes("execSync")
+      && !euroFn.includes("geo=EA")
+      && !/\^STOXX|\bticker\b/i.test(euroFn),
   );
+  check("the synchronous curl loader is gone", !route.includes("function fetchEuroAreaUnemployment"));
   check(
     "regional boards are returned beside the 17 indicators",
     route.includes("sahmRegions:") && route.includes('sahmRegionBoard("EZ"') && route.includes('sahmRegionBoard(\n    "JP"'),
