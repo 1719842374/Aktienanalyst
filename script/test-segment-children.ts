@@ -26,6 +26,7 @@ import {
   reviewKiChildren,
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
+import { segmentEstimateButtonVisible } from "../client/src/components/sections/Section2";
 import { loadOutlineIdentity, loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
 import { reviewSegmentOutline } from "../shared/segment-children";
 import { priorSegmentRevenue } from "../server/fmp";
@@ -733,6 +734,59 @@ gap(
     && /berechnet/.test(intlHtml)
     && !identical.some((row) => row.name === "Server"),
   `us=${usGrowth?.basis ?? "none"} fact=${String(usFact)} html=${usHtml} intl=${intlHtml}`,
+);
+
+const jpmGeo = annotateMissingSegmentGrowth({
+  annual: snapshotsFromFmpRows([
+    { date: "2025-12-31", data: { "Asia Pacific": 1406, "North America": 8000 } },
+    { date: "2024-12-31", data: { "Asia-Pacific": 1306, "North America": 7400 } },
+  ]),
+});
+const asia = annotationByName(jpmGeo, "Asia Pacific");
+const asiaHtml = html(React.createElement(SegmentGrowthReadout, { fact: null, annotation: asia }));
+const absentHtml = html(React.createElement(SegmentGrowthReadout, { fact: null, annotation: null }));
+gap(
+  "jpm-asia-yoy",
+  asia?.basis === "berechnet"
+    && typeof asia?.growth === "number"
+    && /berechnet/.test(asiaHtml)
+    && absentHtml.includes("segment-growth-missing")
+    && absentHtml.includes("n/a"),
+  `asia=${asia?.basis ?? "none"}/${String(asia?.growth)} html=${asiaHtml}`,
+);
+
+const arista = reviewKiChildren("Networking", {
+  children: [{
+    name: "Arista Networking",
+    owner: "Hewlett Packard Enterprise",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Switches",
+    source: "Annual Report 2024 https://www.arista.com/ir",
+  }],
+}, null, { companyName: "Hewlett Packard Enterprise Company" });
+const hpChild = reviewKiChildren("Printing", {
+  children: [{
+    name: "LaserJet",
+    owner: "HP Inc.",
+    shareOfParentPct: 40,
+    growthPct: 5,
+    basis: "Drucker",
+    source: "Annual Report 2024 https://investor.hp.com/ir",
+  }],
+}, null, { companyName: "HP Inc." });
+const hpMarkup = html(React.createElement(SegmentChildrenList, { data: hpChild }));
+gap(
+  "foreign-host-child",
+  arista.children.length === 0
+    && /Arista Networking/.test(arista.reason ?? "")
+    && hpChild.children.length === 1
+    && hpChild.children[0]?.shareOfParentPct === 40
+    && hpMarkup.includes("investor.hp.com")
+    && segmentEstimateButtonVisible([]) === true
+    && segmentEstimateButtonVisible(null) === true
+    && segmentEstimateButtonVisible([{ name: "iPhone" }]) === false,
+  `arista=${arista.reason ?? arista.children.map((row) => row.name).join(",")} hp=${hpMarkup.slice(0, 220)}`,
 );
 
 const estimated = reviewKiChildren("Server", {

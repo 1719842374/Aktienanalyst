@@ -430,8 +430,13 @@ function assignMaps(
   return out;
 }
 
+function sameFactName(left: string, right: string): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  return fold(left) === fold(right);
+}
+
 function isDirectAnnual(hit: Assignment, row: Indexed): boolean {
-  return hit.exact && hit.prevNames.length === 1 && tokenKey(segmentTokens(hit.prevNames[0])) === row.key;
+  return hit.exact && hit.prevNames.length === 1 && hit.prevNames.every((name) => sameFactName(name, row.name));
 }
 
 function aggregateWindow(snapshots: SegmentSnapshot[]): Indexed[] {

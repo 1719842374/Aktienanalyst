@@ -157,10 +157,11 @@ function YearTable({ years }: { years: StatementYear[] }) {
               {years.map((year) => {
                 const shown = cellText(row, year);
                 const delta = row.delta(year);
+                const balanceRow = row.kind === "money" && (row.id === "assets" || row.id === "equity" || row.id === "debt" || row.id === "cash");
                 return (
                   <td key={year.fiscalYear} className="py-1 px-1 text-right font-mono tabular-nums align-top" data-testid={`cell-${row.id}-${year.fiscalYear}`} title={shown.title}>
                     <div>{shown.text}</div>
-                    <div className={`text-[9px] ${deltaClass(delta)}`} title={delta.reason ?? undefined}>{formatDelta(delta)}</div>
+                    {balanceRow ? null : <div className={`text-[9px] ${deltaClass(delta)}`} title={delta.reason ?? undefined}>{formatDelta(delta)}</div>}
                   </td>
                 );
               })}

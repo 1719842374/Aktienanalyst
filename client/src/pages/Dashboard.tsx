@@ -695,7 +695,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { void invalidateCrossModuleQueries(queryClient); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>

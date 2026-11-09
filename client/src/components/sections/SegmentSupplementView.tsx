@@ -86,7 +86,7 @@ export function SegmentSupplementBody({
           <span className="text-muted-foreground">{row.name}, nächstes Jahr: </span>
           {row.nextYearGrowthPct == null ? (
             <span>{row.label}</span>
-          ) : (
+          ) : row.override ? (
             <span
               className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-700 dark:text-amber-300"
               title={row.label}
@@ -94,6 +94,16 @@ export function SegmentSupplementBody({
             >
               Override {signed(row.nextYearGrowthPct)}
               {row.source ? ` · Quelle: ${row.source}` : ""}
+            </span>
+          ) : (
+            <span
+              className="rounded border border-sky-500/40 bg-sky-500/10 px-1 text-sky-800 dark:text-sky-200"
+              title={row.label}
+              data-testid="segment-growth-estimate"
+            >
+              Schätzung {signed(row.nextYearGrowthPct)}
+              {row.source ? ` · Quelle: ${row.source}` : ""}
+              {/Vorzeichenwechsel|kleinste Umsatz/.test(row.label) ? <span data-testid="segment-growth-outlier"> {row.label}</span> : null}
             </span>
           )}
           <input

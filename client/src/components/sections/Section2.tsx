@@ -109,6 +109,10 @@ function OutlineRows({
   );
 }
 
+export function segmentEstimateButtonVisible(segments: readonly unknown[] | null | undefined): boolean {
+  return !segments || segments.length === 0;
+}
+
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
@@ -379,11 +383,11 @@ export function Section2({ data }: Props) {
           // SEC EDGAR fanden welche). Wird nur gerendert wenn eine Meldung vom
           // Server gesetzt wurde — sonst (z.B. alter Cache-Eintrag ohne das Feld)
           // bleibt der Block ganz ausgeblendet statt "N/A" zu zeigen.
-          data.revenueSegmentsMessage && (
+          (data.revenueSegmentsMessage || segmentEstimateButtonVisible(data.revenueSegments)) && (
             <div>
               <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
               <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage}</span>
+                <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage || "n/a — keine gemeldeten Segmente"}</span>
               </div>
               <button
                 type="button"

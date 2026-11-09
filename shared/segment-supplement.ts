@@ -106,6 +106,25 @@ function seriesFor(name: string, history: readonly SegmentYearPoint[]): { year: 
     .sort((a, b) => a.year - b.year);
 }
 
+function historyOutlierNote(rows: { year: number; revenue: number }[], rates: number[]): string {
+  const notes: string[] = [];
+  if (rates.some((rate) => rate > 0) && rates.some((rate) => rate < 0)) notes.push("Vorzeichenwechsel in den YoY-Raten");
+  const revenues = rows.map((row) => row.revenue);
+  const smallest = Math.min(...revenues);
+  const pairs: { prev: number; rate: number }[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].year - rows[i - 1].year !== 1) continue;
+    if (!(rows[i - 1].revenue > 0) || !(rows[i].revenue > 0)) continue;
+    pairs.push({
+      prev: rows[i - 1].revenue,
+      rate: ((rows[i].revenue - rows[i - 1].revenue) / rows[i - 1].revenue) * 100,
+    });
+  }
+  const extreme = pairs.find((pair) => pair.prev === smallest && pairs.every((other) => other === pair || Math.abs(pair.rate) > Math.abs(other.rate)));
+  if (extreme && revenues.some((revenue) => revenue > smallest)) notes.push("Basis ist der kleinste Umsatz der Reihe");
+  return notes.length > 0 ? ` ${notes.join(". ")}.` : "";
+}
+
 export function segmentGrowthOverrides(
   official: readonly OfficialSegment[],
   history: readonly SegmentYearPoint[],
@@ -144,16 +163,17 @@ export function segmentGrowthOverrides(
       };
     }
     const mid = median(rates);
+    const outlier = historyOutlierNote(rows, rates);
     return {
       name: segment.name,
       reportedGrowthPct: segment.reportedGrowthPct,
       nextYearGrowthPct: mid,
       observations: rates.length,
       source: mid == null ? null : SEGMENT_HISTORY_SOURCE,
-      override: mid != null,
+      override: false,
       label: mid == null
         ? `${NOT_ESTIMABLE} (Median nicht bestimmbar)`
-        : `Override: geschätzt aus FMP-Segmenthistorie, Median von ${rates.length} YoY-Raten. Keine Call- und keine Peer-Quelle.`,
+        : `Schätzung aus FMP-Segmenthistorie, Median von ${rates.length} YoY-Raten. Keine Call- und keine Peer-Quelle.${outlier}`,
     };
   });
 }

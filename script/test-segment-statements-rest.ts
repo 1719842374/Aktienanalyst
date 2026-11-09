@@ -77,7 +77,9 @@ assert.equal(supplement.subItems.find((item) => item.name === "Offen")?.shareOfP
 assert.match(supplement.subItems.find((item) => item.name === "Offen")?.label ?? "", /nicht schätzbar/);
 assert.equal(supplement.subItems.find((item) => item.name === "Zu hoch")?.shareOfParentPct, null);
 assert.equal(supplement.growth[0].nextYearGrowthPct, 10);
-assert.equal(supplement.growth[0].override, true);
+assert.equal(supplement.growth[0].override, false);
+assert.doesNotMatch(supplement.growth[0].label, /Override/);
+assert.match(supplement.growth[0].label, /Schätzung/);
 assert.equal(supplement.growth[0].reportedGrowthPct, 4);
 assert.match(supplement.growth[0].source ?? "", /revenue-product-segmentation/);
 assert.equal(supplement.growth[1].nextYearGrowthPct, null);
@@ -412,7 +414,8 @@ try {
   assert.match(segmentHtml, /Top-Level-Summe 100\.0 %/);
   assert.match(segmentHtml, /25\.0 % vom Elternsegment/);
   assert.match(segmentHtml, /Quelle: Fixture-Quelle/);
-  assert.match(segmentHtml, /Override \+10\.0 %/);
+  assert.match(segmentHtml, /Schätzung \+10\.0 %/);
+  assert.doesNotMatch(segmentHtml, /Override \+/);
   assert.doesNotMatch(segmentHtml, /Erfunden/);
 } finally {
   await server.close();
@@ -641,9 +644,39 @@ const plainFmp = await loadSegmentSupplement("MSFT", [{ name: "Alpha", percentag
 });
 assert.equal(plainFmp.subItems.length, 0);
 assert.match(plainFmp.undisclosedNote, /nicht schätzbar/);
+const outlier = segmentGrowthOverrides(
+  [{ name: "Chemical", percentage: 10, reportedGrowthPct: null }],
+  [
+    { fiscalYear: "2022", name: "Chemical", revenue: 1 },
+    { fiscalYear: "2023", name: "Chemical", revenue: 5 },
+    { fiscalYear: "2024", name: "Chemical", revenue: 6 },
+  ],
+);
+assert.equal(outlier[0].override, false);
+assert.equal(outlier[0].nextYearGrowthPct != null, true);
+assert.match(outlier[0].label, /kleinste Umsatz/);
+const balanceHistory = buildFinancialHistory({
+  income: [{ date: "2024-06-30", fiscalYear: "2024", revenue: 200, grossProfit: 80, operatingIncome: 40, netIncome: 20, reportedCurrency: "USD" }, { date: "2023-06-30", fiscalYear: "2023", revenue: 100, grossProfit: 40, operatingIncome: 20, netIncome: 10, reportedCurrency: "USD" }],
+  balance: [{ date: "2024-06-30", fiscalYear: "2024", totalAssets: 300, totalStockholdersEquity: 120, totalDebt: 80, cashAndCashEquivalents: 20, reportedCurrency: "USD" }, { date: "2023-06-30", fiscalYear: "2023", totalAssets: 200, totalStockholdersEquity: 100, totalDebt: 70, cashAndCashEquivalents: 15, reportedCurrency: "USD" }],
+  cashflow: [{ date: "2024-06-30", fiscalYear: "2024", operatingCashFlow: 50, capitalExpenditure: -10, freeCashFlow: 40, reportedCurrency: "USD" }, { date: "2023-06-30", fiscalYear: "2023", operatingCashFlow: 30, capitalExpenditure: -5, freeCashFlow: 25, reportedCurrency: "USD" }],
+});
+const tableHtml = renderToStaticMarkup(React.createElement(AnnualFinancialsView, {
+  history: { ...balanceHistory, ticker: "MSFT", source: "fixture" },
+  segments: [],
+}));
+assert.match(tableHtml, /cell-revenue-2024/);
+assert.match(tableHtml, /cell-assets-2024/);
+const assetCell = tableHtml.split('data-testid="cell-assets-2024"')[1]?.split("</td>")[0] ?? "";
+const revenueCell = tableHtml.split('data-testid="cell-revenue-2024"')[1]?.split("</td>")[0] ?? "";
+const fcfCell = tableHtml.split('data-testid="cell-fcf-2024"')[1]?.split("</td>")[0] ?? "";
+assert.equal(assetCell.includes("%"), false);
+assert.equal(revenueCell.includes("%"), true);
+assert.equal(fcfCell.includes("%"), true);
 const overrideHtml = renderToStaticMarkup(React.createElement(SegmentSupplementBody, {
   data: supplement,
 }));
+assert.match(overrideHtml, /segment-growth-estimate/);
+assert.doesNotMatch(overrideHtml, />Override /);
 assert.match(overrideHtml, /data-testid="segment-override-confirm"/);
 assert.match(overrideHtml, /data-testid="segment-override-input"/);
 const manual = applyManualGrowthOverride(supplement, { name: "Alpha", action: "replace", nextYearGrowthPct: 3 });

@@ -229,7 +229,8 @@ export function reviewKiChildren(
     const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
     const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
     const ownerOk = companyReferenced(owner, companyName) || companyReferenced(ownerParent, companyName);
-    if (companyName && !ownerOk) {
+    const citationText = [rec.source, rec.basis].filter((part) => typeof part === "string").join(" ");
+    if (companyName && (!ownerOk || citedHostRejected(citationText, companyName))) {
       foreign.push(name);
       continue;
     }
@@ -410,6 +411,18 @@ function hostLabelMatches(label: string, companyName: string): boolean {
 }
 
 const COMPANY_FILLER = new Set(["of", "the", "and"]);
+
+function citedHostRejected(citation: string, companyName: string): boolean {
+  const urlMatch = citation.match(/https?:\/\/\S+/i);
+  if (!urlMatch || !companyName) return false;
+  try {
+    const host = new URL(urlMatch[0]).hostname.toLowerCase();
+    const labels = host.split(".").filter((label) => label.length >= 2);
+    return labels.length === 0 || !labels.some((label) => hostLabelMatches(label, companyName));
+  } catch {
+    return true;
+  }
+}
 
 function companyReferenced(text: string, companyName: string): boolean {
   const core = (value: string) => companyMatchTokens(value).filter((token) => !COMPANY_FILLER.has(token));

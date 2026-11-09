@@ -61,6 +61,11 @@ export function SegmentLine({
 
 const VISIBLE_BASIS_MAX = 80;
 
+export function childSourceDomain(text: string | null | undefined): string | null {
+  const match = text?.match(/https?:\/\/([^/\s]+)/i);
+  return match ? match[1].replace(/^www\./, "") : null;
+}
+
 export function visibleBasis(text: string, max = VISIBLE_BASIS_MAX): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length <= max) return clean;
@@ -92,6 +97,11 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
             <span className="min-w-0 break-words text-muted-foreground" title={child.basis}>
               {visibleBasis(child.basis)}
             </span>
+          ) : null}
+          {childSourceDomain(child.basis) ? (
+            <span className="font-mono text-muted-foreground" data-testid="segment-child-domain">{childSourceDomain(child.basis)}</span>
+          ) : child.source === "KI" ? (
+            <span className="text-muted-foreground" data-testid="segment-child-source-missing">n/a — ohne Quelle</span>
           ) : null}
           <span
             className={child.source === "KI"
