@@ -703,6 +703,23 @@ export async function fmpPeers(symbol: string): Promise<any[]> {
   } catch { return []; }
 }
 
+/**
+ * Dieselbe /stable/stock-peers-Antwort wie fmpPeers, mit companyName.
+ * Für die Fremdmarken-Prüfung der KI-Untersegmente. fmpPeers bleibt unverändert.
+ */
+export async function fmpPeerCompanies(symbol: string): Promise<Array<{ symbol: string; companyName: string }>> {
+  try {
+    const data = await fmpFetch(`/stock-peers`, { symbol });
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((row: any) => ({
+        symbol: typeof row?.symbol === "string" ? row.symbol.trim() : "",
+        companyName: typeof row?.companyName === "string" ? row.companyName.trim() : "",
+      }))
+      .filter((row: { symbol: string; companyName: string }) => row.symbol.length > 0);
+  } catch { return []; }
+}
+
 export async function fmpRatios(symbol: string, limit = 10) {
   // GET /stable/ratios?symbol=AAPL&limit=10
   return fmpFetch(`/ratios`, { symbol, limit: String(limit) });

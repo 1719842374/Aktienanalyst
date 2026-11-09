@@ -192,7 +192,17 @@ export function reviewKiChildren(
   parent: string,
   payload: unknown,
   parentRevenue: number | null,
-  scope: { kind?: "product" | "geographic"; siblings?: readonly string[]; businessNames?: readonly string[]; companyName?: string } = {},
+  scope: {
+    kind?: "product" | "geographic";
+    siblings?: readonly string[];
+    businessNames?: readonly string[];
+    companyName?: string;
+    /** N23: Ticker und FMP-Profilbeschreibung = eigenes Vokabular der Firma. */
+    ticker?: string;
+    description?: string;
+    /** N23: dieselbe FMP-Peer-Liste wie der Peer-Anker (/stable/stock-peers), mit Firmennamen. */
+    peerCompanies?: readonly PeerCompany[];
+  } = {},
 ): SegmentChildrenResult {
   if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
@@ -215,9 +225,12 @@ export function reviewKiChildren(
   const notes: string[] = [];
   const foreign: string[] = [];
   let filtered = 0;
+  const brandScope = scope.companyName
+    ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", parent, ...(scope.siblings ?? [])], scope.peerCompanies ?? [])
+    : null;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -232,6 +245,10 @@ export function reviewKiChildren(
     const citationText = [rec.source, rec.basis].filter((part) => typeof part === "string").join(" ");
     const hostVerdict = citedHostVerdict(citationText, companyName);
     if (companyName && !ownerOk) {
+      foreign.push(name);
+      continue;
+    }
+    if (brandScope && namesForeignBrand(name, rec.brand, brandScope)) {
       foreign.push(name);
       continue;
     }
@@ -295,6 +312,86 @@ export function reviewKiChildren(
     return { parent, children: [], reason: parts.join(" ") || NO_SEGMENT_CHILDREN };
   }
   return { parent, children: kept, reason: parts.length > 0 ? parts.join(" ") : null };
+}
+
+export interface PeerCompany {
+  symbol: string;
+  companyName: string;
+}
+
+interface OwnBrandScope {
+  companyName: string;
+  tickerToken: string;
+  own: Set<string>;
+  peers: { symbolToken: string; tokens: string[] }[];
+}
+
+/** Plural und -ing gleich behandeln: „Networks“ und „Networking“ ergeben „network“. */
+function stemBrandToken(token: string): string {
+  const base = token.endsWith("ing") ? token.slice(0, -3) : token;
+  return base.endsWith("s") ? base.slice(0, -1) : base;
+}
+
+function brandTokens(value: string): string[] {
+  return companyMatchTokens(value)
+    .filter((token) => !COMPANY_FILLER.has(token))
+    .map(stemBrandToken)
+    .filter((token) => token.length > 0);
+}
+
+function tickerBase(ticker: string): string {
+  const base = ticker.trim().split(/[.:\-]/)[0]?.toLowerCase() ?? "";
+  return base.length >= 2 ? stemBrandToken(base) : "";
+}
+
+function containsTokenRun(have: readonly string[], wanted: readonly string[]): boolean {
+  if (wanted.length === 0) return false;
+  for (let start = 0; start <= have.length - wanted.length; start++) {
+    if (wanted.every((token, offset) => have[start + offset] === token)) return true;
+  }
+  return false;
+}
+
+function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly string[], peers: readonly PeerCompany[]): OwnBrandScope {
+  const tickerToken = tickerBase(ticker);
+  const own = new Set<string>(brandTokens(companyName));
+  if (tickerToken) own.add(tickerToken);
+  for (const text of ownTexts) {
+    for (const token of brandTokens(text)) own.add(token);
+  }
+  const foreignPeers: OwnBrandScope["peers"] = [];
+  for (const peer of peers) {
+    const peerName = typeof peer?.companyName === "string" ? peer.companyName.trim() : "";
+    const symbolToken = typeof peer?.symbol === "string" ? tickerBase(peer.symbol) : "";
+    if (!peerName && !symbolToken) continue;
+    if (symbolToken && symbolToken === tickerToken) continue;
+    if (peerName && (companyReferenced(peerName, companyName) || companyReferenced(companyName, peerName))) continue;
+    foreignPeers.push({ symbolToken, tokens: peerName ? brandTokens(peerName) : [] });
+  }
+  return { companyName, tickerToken, own, peers: foreignPeers };
+}
+
+function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
+  if (companyReferenced(text, scope.companyName)) return true;
+  return scope.tickerToken.length > 0 && brandTokens(text).includes(scope.tickerToken);
+}
+
+/**
+ * N23: Name eines KI-Kinds nennt eine andere Firma oder Marke.
+ * Eigene Firma oder eigener Ticker im Namen gehen vor.
+ * 1) Firmenname oder Ticker eines FMP-Peers steht im Namen, außer das Wort gehört zum eigenen Vokabular.
+ * 2) Die KI nennt in brand eine Marke, deren Wörter weder Firma, Ticker, Profilbeschreibung noch Segmentnamen enthalten.
+ */
+function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
+  if (namesOwnCompany(name, scope)) return false;
+  const tokens = brandTokens(name);
+  for (const peer of scope.peers) {
+    if (peer.tokens.length > 0 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
+    if (peer.symbolToken && !scope.own.has(peer.symbolToken) && tokens.includes(peer.symbolToken)) return true;
+  }
+  if (typeof brand !== "string" || !brand.trim()) return false;
+  if (namesOwnCompany(brand, scope)) return false;
+  return brandTokens(brand).some((token) => !scope.own.has(token));
 }
 
 export interface SegmentOutlineItem {

@@ -17,6 +17,7 @@ import {
   fmpBalanceSheet,
   fmpCashFlow,
   fmpIncomeStatement,
+  fmpPeerCompanies,
   fmpProfile,
   fmpSegmentationRows,
   isFmpAvailable,
@@ -41,6 +42,7 @@ import {
   outlineEchoMatches,
   reviewSegmentOutline,
   segmentNamesFromFmpRows,
+  type PeerCompany,
   type SegmentChildrenResult,
 } from "../shared/segment-children";
 
@@ -217,6 +219,8 @@ export interface SegmentChildrenDeps {
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
   outline?: (ticker: string, kind: "product" | "geographic", identity: OutlineIdentity) => Promise<unknown>;
   identity?: (ticker: string) => Promise<OutlineIdentity | null>;
+  /** N23: FMP-Peers mit Firmennamen für die Fremdmarken-Prüfung der KI-Kinder. */
+  peers?: (ticker: string) => Promise<readonly PeerCompany[]>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
 }
@@ -229,6 +233,8 @@ export interface OutlineIdentity {
   industry: string;
   fiscalYear?: string;
   currency?: string;
+  /** FMP-Profilbeschreibung. Nur eigenes Vokabular für die Fremdmarken-Prüfung, nicht im Prompt. */
+  description?: string;
 }
 
 export interface SegmentChildrenScope {
@@ -337,8 +343,8 @@ export function segmentChildrenKiMessages(
   const identityLine = identity
     ? `Firma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}.`
     : "Geschäftsjahr: n/a. Währung: n/a.";
-  const form = `{"companyEcho":"","industryEcho":"","children":[{"name":"","owner":"","ownerParent":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}`;
-  const sourceRule = "owner oder ownerParent nennt die Firma. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Echte 0 bleibt 0. Ein unbekannter Wert ist null, nie 0.";
+  const form = `{"companyEcho":"","industryEcho":"","children":[{"name":"","brand":"","owner":"","ownerParent":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}`;
+  const sourceRule = "owner oder ownerParent nennt die Firma. brand nennt die Firma oder Marke, die im Namen steht, sonst leer. Keine Produkte oder Marken einer anderen Firma, auch keine Wettbewerber. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Echte 0 bleibt 0. Ein unbekannter Wert ist null, nie 0.";
   if (kind === "geographic") {
     return {
       systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
@@ -347,7 +353,7 @@ export function segmentChildrenKiMessages(
   }
   return {
     systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-    prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments dieser Firma, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"companyEcho":"${identity?.companyName ?? ""}","industryEcho":"${identity?.industry || identity?.sector || ""}","children":[{"name":"","owner":"${identity?.companyName ?? ""}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. ${sourceRule} Jedes Kind braucht name, basis und owner. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    prompt: `${peerLine}\n${identityLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Nenne die bekannten Produktlinien nur dieses Segments dieser Firma, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. Beispiel: {"companyEcho":"${identity?.companyName ?? ""}","industryEcho":"${identity?.industry || identity?.sector || ""}","children":[{"name":"","brand":"","owner":"${identity?.companyName ?? ""}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. ${sourceRule} Jedes Kind braucht name, basis und owner. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 
@@ -451,6 +457,7 @@ export async function loadOutlineIdentity(ticker: string, load: OutlineIdentityL
       country: profileText(record, "country"),
       sector: profileText(record, "sector"),
       industry: profileText(record, "industry"),
+      description: profileText(record, "description"),
     };
     identityCache.set(key, { at: now, identity });
     const facts = await ensureStatementFacts(key, now, load);
@@ -496,6 +503,7 @@ export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
     ki: defaultKiChildren,
     outline: defaultOutline,
     identity: loadOutlineIdentity,
+    peers: fmpPeerCompanies,
   };
 }
 
@@ -537,11 +545,23 @@ export async function loadSegmentChildren(
   if (identity && !outlineEchoMatches(kiPayload, identity.companyName, identity.industry, identity.sector)) {
     return { parent: label, children: [], reason: OUTLINE_MISMATCH };
   }
+  let peerCompanies: readonly PeerCompany[] = [];
+  if (identity && deps.peers && deps.fmpAvailable()) {
+    try {
+      const rows = await deps.peers(ticker);
+      peerCompanies = Array.isArray(rows) ? rows : [];
+    } catch {
+      peerCompanies = [];
+    }
+  }
   return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label), {
     kind,
     siblings: scope.siblings,
     businessNames: scope.businessNames,
     companyName: identity?.companyName,
+    ticker,
+    description: identity?.description,
+    peerCompanies,
   });
 }
 
