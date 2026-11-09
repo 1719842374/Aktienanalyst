@@ -22,10 +22,12 @@ import {
   promoteNonGeoRowsToBusiness,
 } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { loadPeerGrowthAnchor } from "./peer-growth-anchor";
 import { curatedSegmentNames } from "./curated-product-segments";
 import { diskResearcherGetWithTtl } from "./disk-cache";
 import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import {
+  KI_FILTERED,
   KI_UNAVAILABLE,
   SEGMENT_CHILDREN_ROUTE,
   SEGMENT_UNKNOWN,
@@ -251,18 +253,20 @@ export function segmentChildrenKiMessages(
   parent: string,
   kind: "product" | "geographic",
   siblings: readonly string[],
+  peerLine = "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht geladen. Eine Zahl ohne eigene Quelle weglassen.",
 ): { systemPrompt: string; prompt: string } {
   const blocked = siblings.map((name) => name.trim()).filter((name) => name.length > 0).slice(0, 24).join(", ");
   const siblingLine = blocked ? ` Diese Namen sind Geschwister und keine Kinder: ${blocked}.` : "";
+  const form = `{"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"","source":""}]}`;
   if (kind === "geographic") {
     return {
-      systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-      prompt: `Ticker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente.${siblingLine} Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":""}]}. basis ist ein kurzer Quellenhinweis. shareOfParentPct und growthPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Leeres children nur, wenn keine Unterregion bekannt ist.`,
+      systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+      prompt: `${peerLine}\nTicker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente. Nicht den Namen "${parent}" wiederholen.${siblingLine} Form: ${form}. shareOfParentPct und growthPct sind Schätzungen und brauchen basis und source. Ohne source die Zahl weglassen. Leeres children nur, wenn keine Unterregion bekannt ist.`,
     };
   }
   return {
-    systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
-    prompt: `Ticker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister.${siblingLine} revenue, shareOfParentPct und growthPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":""}]}. basis benennt die Produktlinie in einem kurzen Satz. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+    systemPrompt: "Antworte nur mit JSON. Schätze Anteil und Wachstum nur mit Basis und Quelle. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0. Unbekanntes Wachstum ist null, nie 0. Das Label ist KI-Schätzung, nicht Override.",
+    prompt: `${peerLine}\nTicker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister und nicht noch einmal "${parent}".${siblingLine} Form: ${form}. shareOfParentPct und growthPct sind Schätzungen und brauchen basis und source. Ohne source die Zahl weglassen. basis benennt die Produktlinie. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
   };
 }
 
@@ -274,7 +278,16 @@ async function defaultKiChildren(
 ): Promise<unknown> {
   if (!isLLMAvailable()) return null;
   try {
-    const messages = segmentChildrenKiMessages(ticker, parent, kind, siblings);
+    let peerLine = "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht geladen. Eine Zahl ohne eigene Quelle weglassen.";
+    try {
+      const anchor = await loadPeerGrowthAnchor(ticker);
+      if (anchor?.medianRevenueYoyPct != null) {
+        peerLine = `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlendes Wachstum relativ zu diesem Median schätzen und die Quelle nennen.`;
+      }
+    } catch {
+      // Ohne Anker bleibt die Schätzung an die eigene Quelle gebunden.
+    }
+    const messages = segmentChildrenKiMessages(ticker, parent, kind, siblings, peerLine);
     const result = await callLLMJson({
       systemPrompt: messages.systemPrompt,
       prompt: messages.prompt,
@@ -400,15 +413,20 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       const siblings = listed.filter((name) => !sameDisplayedName(kind, name, canonical));
       let businessNames: string[] = [];
       if (kind === "geographic" && deps.fmpAvailable()) {
-        if (deps.names) {
-          businessNames = await deps.names(ticker, "product");
-        } else {
-          const productRows = await deps.raw("product", ticker);
-          businessNames = segmentNamesFromFmpRows(Array.isArray(productRows) ? productRows : []);
+        try {
+          if (deps.names) {
+            businessNames = await deps.names(ticker, "product");
+          } else {
+            const productRows = await deps.raw("product", ticker);
+            businessNames = segmentNamesFromFmpRows(Array.isArray(productRows) ? productRows : []);
+          }
+        } catch {
+          businessNames = [];
         }
       }
       const body = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames });
-      const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
+      const shortCache = body.children.length === 0 && (body.reason === KI_UNAVAILABLE || body.reason === KI_FILTERED);
+      const ttl = shortCache ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;
         let oldestAt = Number.POSITIVE_INFINITY;

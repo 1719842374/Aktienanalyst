@@ -89,7 +89,7 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
             </span>
           )}
           {child.basis ? (
-            <span className="min-w-0 break-words text-muted-foreground" title={child.basis} aria-label={child.basis}>
+            <span className="min-w-0 break-words text-muted-foreground" title={child.basis}>
               {visibleBasis(child.basis)}
             </span>
           ) : null}

@@ -29,6 +29,8 @@ export const KI_WITHOUT_BASIS = "n/a — KI-Schätzung ohne Beleg";
 export const KI_SUM_EXCEEDS_PARENT = "n/a — KI-Summe überschreitet das Elternsegment";
 export const KI_NEGATIVE = "n/a — negativer KI-Wert verworfen";
 export const KI_UNAVAILABLE = "n/a — KI nicht erreichbar";
+export const KI_FILTERED = "n/a — KI-Vorschläge verworfen: Elternname, Geschwister oder Geschäftssegment";
+export const KI_WITHOUT_SOURCE = "n/a — Schätzung ohne Quelle";
 export const SEGMENT_UNKNOWN = "n/a — Segment ist in der serverseitigen Liste nicht enthalten";
 export const BASIS_TEXT_MAX = 400;
 
@@ -196,9 +198,10 @@ export function reviewKiChildren(
   const kind = scope.kind ?? "product";
   const kept: SegmentChild[] = [];
   const notes: string[] = [];
+  let filtered = 0;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -206,8 +209,18 @@ export function reviewKiChildren(
       notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
       continue;
     }
-    if ((scope.siblings ?? []).some((sibling) => sameChildName(kind, sibling, name))) continue;
-    if (kind === "geographic" && (scope.businessNames ?? []).some((business) => sameChildName("product", business, name))) continue;
+    if (sameChildName(kind, parent, name)) {
+      filtered += 1;
+      continue;
+    }
+    if ((scope.siblings ?? []).some((sibling) => sameChildName(kind, sibling, name))) {
+      filtered += 1;
+      continue;
+    }
+    if (kind === "geographic" && (scope.businessNames ?? []).some((business) => sameChildName("product", business, name))) {
+      filtered += 1;
+      continue;
+    }
     const share = finite(rec.shareOfParentPct);
     const revenue = finite(rec.revenue);
     const growth = finite(rec.growthPct);
@@ -215,14 +228,23 @@ export function reviewKiChildren(
       notes.push(`${KI_NEGATIVE}: ${name}`);
       continue;
     }
+    const citation = typeof rec.source === "string" ? rec.source.trim() : "";
+    let shareKept = share != null && share > 0 ? share : null;
+    let growthKept = growth != null && growth !== 0 ? growth : null;
+    if ((shareKept != null || growthKept != null) && !citation) {
+      notes.push(`${KI_WITHOUT_SOURCE}: ${name}`);
+      shareKept = null;
+      growthKept = null;
+    }
+    const shownBasis = citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
     kept.push({
       parent,
       name,
       revenue: revenue != null && revenue > 0 ? revenue : null,
-      shareOfParentPct: share != null && share > 0 ? share : null,
-      growthPct: growth != null && growth !== 0 ? growth : null,
+      shareOfParentPct: shareKept,
+      growthPct: growthKept,
       source: "KI",
-      basis,
+      basis: shownBasis,
     });
   }
   const shareSum = kept.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
@@ -233,7 +255,7 @@ export function reviewKiChildren(
   if (parentRevenue != null && parentRevenue > 0 && kept.some((row) => row.revenue != null) && revenueSum > parentRevenue) {
     return { parent, children: [], reason: KI_SUM_EXCEEDS_PARENT };
   }
-  if (kept.length === 0) return { parent, children: [], reason: notes[0] ?? NO_SEGMENT_CHILDREN };
+  if (kept.length === 0) return { parent, children: [], reason: filtered > 0 ? KI_FILTERED : notes[0] ?? NO_SEGMENT_CHILDREN };
   return { parent, children: kept, reason: notes.length > 0 ? notes.join(" ") : null };
 }
 

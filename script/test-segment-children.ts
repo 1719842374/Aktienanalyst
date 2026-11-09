@@ -122,7 +122,7 @@ assert.equal(kiCalls, 0);
 const loadedKi = await loadSegmentChildren("MSFT", "Server", "product", {
   fmpAvailable: () => true,
   raw: async () => [{ fiscalYear: "2024", data: { Server: 129 } }],
-  ki: async () => ({ children: [{ name: "Azure", shareOfParentPct: 62, basis: "Geschäftsbericht 2024" }] }),
+  ki: async () => ({ children: [{ name: "Azure", shareOfParentPct: 62, basis: "Geschäftsbericht 2024", source: "Microsoft 10-K FY2024" }] }),
 });
 assert.equal(loadedKi.children[0].source, "KI");
 assert.equal(loadedKi.children[0].name, "Azure");
@@ -244,8 +244,8 @@ const tooMuch = await loadSegmentChildren("MSFT", "Server", "product", {
   fmpAvailable: () => true,
   raw: async () => [{ fiscalYear: "2024", data: { Server: 100 } }],
   ki: async () => ({ children: [
-    { name: "Azure", shareOfParentPct: 70, basis: "Bericht" },
-    { name: "Office", shareOfParentPct: 50, basis: "Bericht" },
+    { name: "Azure", shareOfParentPct: 70, basis: "Bericht", source: "Microsoft 10-K FY2024" },
+    { name: "Office", shareOfParentPct: 50, basis: "Bericht", source: "Microsoft 10-K FY2024" },
   ] }),
 });
 gap("sum-over-parent", tooMuch.children.length === 0 && /überschreitet/.test(tooMuch.reason ?? ""), tooMuch.reason ?? `children=${tooMuch.children.length}`);
@@ -698,7 +698,7 @@ gap(
   shownBasis === fullBasis
     && basisMarkup.includes("…")
     && basisMarkup.includes(`title="${fullBasis}"`)
-    && basisMarkup.includes(`aria-label="${fullBasis}"`)
+    && !basisMarkup.includes("aria-label=")
     && basisMarkup.includes("overflow-x-hidden")
     && !basisMarkup.includes("whitespace-nowrap"),
   `len=${shownBasis.length} end=${shownBasis.slice(-12)} markup=${basisMarkup.slice(0, 280)}`,
@@ -712,7 +712,10 @@ const wmtGeo = annotateMissingSegmentGrowth({
 });
 const usGrowth = annotationByName(wmtGeo, "UNITED STATES");
 const intlGrowth = annotationByName(wmtGeo, "Walmart International");
-const usHtml = html(React.createElement(SegmentGrowthReadout, { fact: null, annotation: usGrowth }));
+const usFactPrev = priorSegmentRevenue("UNITED STATES", { "United States": 410 });
+const usFact = usFactPrev != null ? Math.round((462 / usFactPrev - 1) * 1000) / 10 : null;
+const usHtml = html(React.createElement(SegmentGrowthReadout, { fact: usFact, annotation: usGrowth }));
+const intlHtml = html(React.createElement(SegmentGrowthReadout, { fact: null, annotation: intlGrowth }));
 const identical = annotateMissingSegmentGrowth({
   annual: snapshotsFromFmpRows([
     { date: "2025-01-31", data: { Server: 130 } },
@@ -721,14 +724,14 @@ const identical = annotateMissingSegmentGrowth({
 });
 gap(
   "wmt-geo-yoy",
-  usGrowth?.basis === "berechnet"
-    && usGrowth.growth === 12.7
-    && /berechnet/.test(usHtml)
+  usGrowth == null
+    && usFact === 12.7
     && /\+12\.7%/.test(usHtml)
+    && !/berechnet/.test(usHtml)
     && intlGrowth?.basis === "berechnet"
-    && priorSegmentRevenue("UNITED STATES", { "United States": 410 }) === 410
+    && /berechnet/.test(intlHtml)
     && !identical.some((row) => row.name === "Server"),
-  `us=${usGrowth?.basis ?? "none"}:${String(usGrowth?.growth)} intl=${intlGrowth?.basis ?? "none"} html=${usHtml}`,
+  `us=${usGrowth?.basis ?? "none"} fact=${String(usFact)} html=${usHtml} intl=${intlHtml}`,
 );
 
 const estimated = reviewKiChildren("Server", {
@@ -751,13 +754,99 @@ const estimateMarkup = html(React.createElement(SegmentChildrenList, {
 }));
 gap(
   "ki-schaetzung",
-  estimated.children[0]?.shareOfParentPct == null
-    && estimated.children[0]?.growthPct === 12.5
+  estimated.children.length === 1
+    && estimated.children[0]?.shareOfParentPct == null
+    && estimated.children[0]?.growthPct == null
+    && /ohne Quelle/.test(estimated.reason ?? "")
     && estimateMarkup.includes("KI-Schätzung")
-    && estimateMarkup.includes("+12.5%")
+    && estimateMarkup.includes("n/a")
+    && !estimateMarkup.includes("+12.5%")
     && !/Override/.test(estimateMarkup),
-  `share=${String(estimated.children[0]?.shareOfParentPct)} growth=${String(estimated.children[0]?.growthPct)} markup=${estimateMarkup.slice(0, 320)}`,
+  `share=${String(estimated.children[0]?.shareOfParentPct)} growth=${String(estimated.children[0]?.growthPct)} reason=${estimated.reason ?? ""} markup=${estimateMarkup.slice(0, 240)}`,
 );
+
+const sourced = reviewKiChildren("Server", {
+  children: [{ name: "Azure", shareOfParentPct: 40, growthPct: 12.5, basis: "Cloud-Plattform", source: "Microsoft 10-K FY2025" }],
+}, null);
+const sourcedMarkup = html(React.createElement(SegmentChildrenList, {
+  data: { parent: "Server", reason: null, children: sourced.children },
+}));
+gap(
+  "ki-sourced",
+  sourced.children.length === 1
+    && sourced.children[0]?.shareOfParentPct === 40
+    && sourced.children[0]?.growthPct === 12.5
+    && sourcedMarkup.includes("KI-Schätzung")
+    && sourcedMarkup.includes("+12.5%")
+    && !/Override/.test(sourcedMarkup),
+  `share=${String(sourced.children[0]?.shareOfParentPct)} growth=${String(sourced.children[0]?.growthPct)}`,
+);
+
+const selfChild = reviewKiChildren("iPhone", {
+  children: [{ name: "iPhone", shareOfParentPct: 80, growthPct: 4, basis: "Gerät", source: "Apple 10-K" }],
+}, null);
+gap(
+  "self-child",
+  selfChild.children.length === 0 && /verworfen/.test(selfChild.reason ?? "") && !/weder FMP noch KI/.test(selfChild.reason ?? ""),
+  selfChild.reason ?? `n=${selfChild.children.length}`,
+);
+
+resetSegmentChildrenGuardsForTests();
+let filterKi = 0;
+let filterClock = 0;
+const filterApp = express();
+registerSegmentGrowthRoute(filterApp, {
+  fmpAvailable: () => true,
+  raw: async () => [{ fiscalYear: "2025", data: { "UNITED STATES": 80, "Walmart International": 20 } }],
+  names: async () => ["UNITED STATES", "Walmart International"],
+  ki: async () => {
+    filterKi += 1;
+    return { children: [{ name: "Walmart International", shareOfParentPct: 18, basis: "Geschwister", source: "Walmart 10-K" }] };
+  },
+  now: () => filterClock,
+});
+const filterServer = filterApp.listen(0);
+const filterPort = (filterServer.address() as { port: number }).port;
+try {
+  const filtered = await fetch(`http://127.0.0.1:${filterPort}/api/segment-children/WMT?parent=${encodeURIComponent("UNITED STATES")}&kind=geographic`);
+  const filteredBody = await filtered.json() as { reason?: string; children?: unknown[] };
+  filterClock = 61_000;
+  await fetch(`http://127.0.0.1:${filterPort}/api/segment-children/WMT?parent=${encodeURIComponent("UNITED STATES")}&kind=geographic`);
+  gap(
+    "filtered-not-24h",
+    filtered.status === 200
+      && (filteredBody.children?.length ?? 0) === 0
+      && /verworfen/.test(filteredBody.reason ?? "")
+      && !/weder FMP noch KI/.test(filteredBody.reason ?? "")
+      && filterKi === 2,
+    `ki=${filterKi} reason=${filteredBody.reason ?? ""}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => filterServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+const geoNamesApp = express();
+registerSegmentGrowthRoute(geoNamesApp, {
+  fmpAvailable: () => true,
+  raw: async (kind) => kind === "geographic"
+    ? [{ fiscalYear: "2025", data: { "UNITED STATES": 80 } }]
+    : [{ fiscalYear: "2025", data: { "Sam's Club": 10 } }],
+  names: async (_ticker, kind) => {
+    if (kind === "product") throw new Error("Produktnamen nicht lesbar");
+    return ["UNITED STATES"];
+  },
+  ki: async () => ({ children: [{ name: "Texas", shareOfParentPct: null, basis: "Bundesstaat", source: "Walmart 10-K" }] }),
+});
+const geoNamesServer = geoNamesApp.listen(0);
+const geoNamesPort = (geoNamesServer.address() as { port: number }).port;
+try {
+  const geoHit = await fetch(`http://127.0.0.1:${geoNamesPort}/api/segment-children/WMT?parent=${encodeURIComponent("UNITED STATES")}&kind=geographic`);
+  const geoBody = await geoHit.json() as { children?: { name: string }[]; error?: string };
+  gap("geo-names-fail-open", geoHit.status === 200 && geoBody.children?.[0]?.name === "Texas", `status=${geoHit.status} ${geoBody.error ?? geoBody.children?.[0]?.name ?? ""}`);
+} finally {
+  await new Promise<void>((resolve, reject) => geoNamesServer.close((err) => err ? reject(err) : resolve()));
+}
 
 const indexSource = readFileSync("server/index.ts", "utf8");
 gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");
