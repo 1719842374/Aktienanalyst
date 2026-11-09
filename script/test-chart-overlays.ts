@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const { buildEarningsMarkers, attachEarningsToPoints } = await import("../shared/earnings-markers.ts");
-const { ampelBadge, conditionCount, paintAmpelClose, TA_PROTOCOL_SIZE } = await import("../shared/ta-ampel.ts");
 
 const thin = buildEarningsMarkers([
   { date: "2024-01-01", revenueActual: 10, revenueEstimate: 9, epsActual: null, epsEstimate: null },
@@ -51,32 +50,14 @@ assert.match(ui, /EPS Surprise/);
 assert.match(ui, /#22c55e/);
 assert.match(ui, /#ef4444/);
 assert.match(ui, /#94a3b8/);
-assert.match(ui, /paintAmpelClose\(plotted\)/);
+assert.doesNotMatch(ui, /paintAmpelClose/);
+assert.doesNotMatch(ui, /_closeGreen/);
 assert.match(ui, /data-testid="chart-ampel-label"/);
 assert.match(ui, /data-testid="button-ampel"/);
 assert.match(ui, /data-testid="symmetric-ampel-facts"/);
 assert.match(ui, /Anti-Bias Protokoll/);
 assert.match(ui, /data-testid="button-dividend"/);
 assert.match(ui, /data-testid="button-real10y"/);
-assert.equal(ampelBadge(TA_PROTOCOL_SIZE).text, "Starkes Kaufsignal");
-assert.equal(ampelBadge(TA_PROTOCOL_SIZE - 1).tone, "yellow");
-const partial = conditionCount({ close: 10, ma200: 9 }, null);
-assert.equal(partial.complete, false);
-assert.match(partial.reason ?? "", /n\/a/);
-const row = { close: 12, ma200: 10, ma50: 11, macd: 0.2 };
-const ready = conditionCount(row, 0.1);
-assert.equal(ready.complete, true);
-assert.equal(ready.met, TA_PROTOCOL_SIZE);
-const painted = paintAmpelClose([
-  { close: 8, ma200: 10, ma50: 9, macd: -0.4 },
-  { close: 8, ma200: 10, ma50: 9, macd: -0.2 },
-  row,
-]);
-assert.equal(painted[0]._ampel, null);
-assert.equal(painted[1]._ampel, "red");
-assert.equal(painted[1]._closeRed, 8);
-assert.equal(painted[2]._closeGreen, 12);
-assert.equal(painted[0]._closeGreen, null);
 assert.match(ui, /button-fund-peer/);
 assert.match(ui, /dataKey="_peerPx"/);
 assert.doesNotMatch(ui, /data-testid="button-peers"/);
