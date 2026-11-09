@@ -353,11 +353,24 @@ function companyMatchTokens(value: string): string[] {
   return foldCompany(value).split(/\s+/).filter((token) => token.length >= 2);
 }
 
+const COMPANY_FILLER = new Set(["of", "the", "and"]);
+
 function companyReferenced(text: string, companyName: string): boolean {
-  const wanted = companyMatchTokens(companyName);
+  const core = (value: string) => companyMatchTokens(value).filter((token) => !COMPANY_FILLER.has(token));
+  const wanted = core(companyName);
   if (!text.trim() || wanted.length === 0) return false;
-  const have = new Set(companyMatchTokens(text));
-  return wanted.some((token) => have.has(token));
+  const have = core(text);
+  for (let start = 0; start <= have.length - wanted.length; start++) {
+    let same = true;
+    for (let offset = 0; offset < wanted.length; offset++) {
+      if (have[start + offset] !== wanted[offset]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return true;
+  }
+  return false;
 }
 
 export function outlineEchoMatches(payload: unknown, companyName: string, industry = "", sector = ""): boolean {

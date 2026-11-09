@@ -1364,6 +1364,28 @@ gap(
   tokenMiss.join(" | ") || `youtube=${youtubeKept.children.length}/${youtubeOnlyGoogle.children.length}`,
 );
 
+function citedShareKept(source: string, company: string): boolean {
+  const reviewed = reviewSegmentOutline({
+    children: [{ name: "Produkt", shareOfParentPct: 40, growthPct: 5, basis: "Kern", source }],
+  }, company);
+  return reviewed.items[0]?.shareOfParentPct === 40;
+}
+const citeCases: Array<[string, string, boolean]> = [
+  ["General Electric Annual Report 2024 Form 10-K", "General Motors Company", false],
+  ["Bank of Montreal Annual Report 2024", "Bank of America Corporation", false],
+  ["American Express Form 10-K 2024", "American Airlines Group Inc.", false],
+  ["Meta Platforms Form 10-K 2024", "Meta Financial Group", false],
+  ["Microsoft Corporation Form 10-K 2024", "Microsoft Corp", true],
+  ["Bank of America Annual Report 2024", "Bank of America Corporation", true],
+  ["AT&T Inc. 10-K 2024", "AT&T Inc.", true],
+  ["3M Company 10-K 2024", "3M Company", true],
+  ["BYD Company Limited Annual Report 2024", "BYD", true],
+  ["Xiaomi Corporation Annual Report 2024", "Xiaomi", true],
+];
+const citeMiss = citeCases.filter(([source, company, want]) => citedShareKept(source, company) !== want)
+  .map(([source, company, want]) => `${company} ← ${source} soll=${want}`);
+gap("source-all-tokens", citeMiss.length === 0, citeMiss.join(" | ") || "ok");
+
 const subsidiary = reviewKiChildren("Google Services", {
   children: [{ name: "YouTube", owner: "Google LLC", ownerParent: "Alphabet Inc.", basis: "Video", source: "Alphabet Annual Report 2024" }],
 }, null, { companyName: "Alphabet Inc." });
