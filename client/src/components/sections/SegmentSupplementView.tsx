@@ -161,7 +161,7 @@ export function SegmentSupplementView({
     }
     return null;
   }
-  let shown = query.data;
+  let shown: SegmentSupplement = query.data;
   for (const [name, raw] of Object.entries(drafts)) {
     const value = Number(raw);
     if (raw.trim() !== "" && Number.isFinite(value)) {
