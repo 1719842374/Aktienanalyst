@@ -670,10 +670,11 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   };
 }
 // === RSL Calculation ===
-// Gibt null zurück, wenn keine ausreichende Kurshistorie vorliegt (< 60 Datenpunkte) —
+// Gibt null zurück, wenn keine ausreichende Kurshistorie vorliegt (< RSL_MIN_PRICES Datenpunkte) —
 // sonst würde ein Default von 100 fälschlich den RSL-Malus (< 105) im DCF aktivieren.
+export const RSL_MIN_PRICES = 60;
 export function calculateRSL(currentPrice: number, prices26w: number[]): number | null {
-  if (prices26w.length < 60) return null;
+  if (prices26w.length < RSL_MIN_PRICES) return null;
   const avg = prices26w.reduce((s, v) => s + v, 0) / prices26w.length;
   return (currentPrice / avg) * 100;
 }

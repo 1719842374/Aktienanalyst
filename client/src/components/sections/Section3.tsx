@@ -1,20 +1,11 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateRSL } from "../../lib/calculations";
+import { calculateRSL, RSL_MIN_PRICES } from "../../lib/calculations";
 
 interface Props { data: StockAnalysis }
 
-// Anzeige, wenn calculateRSL null liefert. Die Mindestlänge steht nur in
-// calculateRSL (shared/valuation-signal.ts, keine exportierte Konstante, Datei
-// unverändert). Hier wird sie abgelesen, nicht als zweite Schwelle geprüft.
-const RSL_UNAVAILABLE_LABEL = (() => {
-  const probe: number[] = [];
-  while (calculateRSL(1, probe) == null) {
-    probe.push(1);
-    if (probe.length > 500) return "n/a";
-  }
-  return `n/a (weniger als ${probe.length} Kurse)`;
-})();
+// Anzeige, wenn calculateRSL null liefert. Die Grenze ist RSL_MIN_PRICES.
+const RSL_UNAVAILABLE_LABEL = `RSL n/a — weniger als ${RSL_MIN_PRICES} Kurse`;
 
 export function Section3({ data }: Props) {
   const sp = data.sectorProfile;
@@ -67,15 +58,17 @@ export function Section3({ data }: Props) {
         let phaseColor = '';
         let phaseIcon = '';
         let phaseDetail = '';
-        // Bei null nur der Anzeigetext. Vergleiche bleiben wirkungsgleich:
-        // null > 110 ist false, null < 95 ist true (Trough bleibt erreichbar).
-        const rslText = rsl == null ? RSL_UNAVAILABLE_LABEL : rsl.toFixed(0);
 
-        if (isAboveMA200 && isGolden && macdPos && rsl != null && rsl > 110) {
+        if (rsl == null) {
+          phase = RSL_UNAVAILABLE_LABEL;
+          phaseColor = 'text-muted-foreground bg-muted/30 border-border/50';
+          phaseIcon = '\u2014';
+          phaseDetail = 'Keine Zyklusphase, weil der RSL nicht vorliegt (' + RSL_UNAVAILABLE_LABEL + ').';
+        } else if (isAboveMA200 && isGolden && macdPos && rsl > 110) {
           phase = 'Sp\u00e4tzyklus / \u00dcberhitzung';
           phaseColor = 'text-red-400 bg-red-500/10 border-red-500/20';
           phaseIcon = '\u26a0';
-          phaseDetail = 'Starkes Momentum (RSL ' + rslText + '), aber Zyklush\u00f6he n\u00e4hert sich. Gewinne absichern, keine neuen Positionen in Zyklikern.';
+          phaseDetail = 'Starkes Momentum (RSL ' + rsl.toFixed(0) + '), aber Zyklush\u00f6he n\u00e4hert sich. Gewinne absichern, keine neuen Positionen in Zyklikern.';
         } else if (isAboveMA200 && isGolden && macdPos) {
           phase = 'Expansion / Mittzyklus';
           phaseColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
@@ -86,11 +79,11 @@ export function Section3({ data }: Props) {
           phaseColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
           phaseIcon = '\u25bc';
           phaseDetail = 'Kurs noch \u00fcber MA200, aber MA50 < MA200 (Death Cross). Zyklus dreht \u2014 defensive Ausrichtung.';
-        } else if (!isAboveMA200 && !isGolden && !macdPos && (rsl == null || rsl < 95)) {
+        } else if (!isAboveMA200 && !isGolden && !macdPos && rsl < 95) {
           phase = 'Rezession / Trough';
           phaseColor = 'text-red-400 bg-red-500/10 border-red-500/20';
           phaseIcon = '\u25cf';
-          phaseDetail = 'B\u00e4renmarktbedingungen (RSL ' + rslText + ', unter MA200, Death Cross). Zykliker meiden, Qualit\u00e4tswerte akkumulieren.';
+          phaseDetail = 'B\u00e4renmarktbedingungen (RSL ' + rsl.toFixed(0) + ', unter MA200, Death Cross). Zykliker meiden, Qualit\u00e4tswerte akkumulieren.';
         } else if (!isAboveMA200 && macdRising) {
           phase = 'Fr\u00fche Erholung';
           phaseColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
@@ -116,7 +109,7 @@ export function Section3({ data }: Props) {
                 <span className={isAboveMA200 ? 'text-emerald-500' : 'text-red-500'}>Kurs vs MA200: {isAboveMA200 ? 'Dar\u00fcber' : 'Darunter'}</span>
                 <span className={isGolden ? 'text-emerald-500' : 'text-red-500'}>{isGolden ? 'Golden Cross' : 'Death Cross'}</span>
                 <span className={macdPos ? 'text-emerald-500' : 'text-red-500'}>MACD: {macdPos ? '> 0' : '< 0'}</span>
-                <span className="text-muted-foreground">RSL: {rslText}</span>
+                <span className="text-muted-foreground">RSL: {rsl == null ? RSL_UNAVAILABLE_LABEL : rsl.toFixed(0)}</span>
               </div>
             </div>
           </div>

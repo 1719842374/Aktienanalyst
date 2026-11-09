@@ -1,12 +1,11 @@
 /**
- * RSL-NULL-GUARD: calculateRSL liefert null bei zu kurzer Historie.
- * Section3 darf dann nicht über rsl.toFixed abstürzen; Anzeige "n/a" mit Grund.
- * Section9: nur wenn der Render wirft, n/a verlangen — sonst Markup identisch zu main
- * (Malus, Zone, growthAdj, gaugePos unangetastet).
- * Mindestens 130 Kurse: Section3 und Section9 identisch zu main (Phase, RSL-Zahl, rslZone, growthAdj).
+ * RSL-NULL-GUARD (N1): calculateRSL liefert null bei zu kurzer Historie.
+ * Section3: Phase n/a mit Grund, keine Zyklusphase. Belegter RSL: Markup identisch zu main.
+ * Section9: bei null Momentum n/a und Malus „nicht angewendet“ (DCF wendet ihn nicht an).
+ * Belegter RSL: Section9-Markup identisch zu main.
  *
  * SSR mit eigenem QueryClientProvider (script/ssr-query.ts wird nicht vorausgesetzt).
- * Die Mindestlänge kommt aus calculateRSL (Probe), keine zweite Schwelle im Test.
+ * Die Mindestlänge kommt aus calculateRSL (Probe) und muss dem Export RSL_MIN_PRICES entsprechen.
  *
  * Run: npx tsx --tsconfig script/tsconfig.jsx.json script/test-rsl-null-guard.ts
  */
@@ -26,7 +25,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "ed1e98cdf17bca6251650d2eb2c1825e850c6530";
 const LONG_N = 130;
 
-const { calculateRSL } = await import("../client/src/lib/calculations");
+const calculations = await import("../client/src/lib/calculations");
+const { calculateRSL } = calculations;
+const { buildDefaultDCFParams, calculateFCFFDCF } = await import("../shared/valuation-signal");
 const { Section3 } = await import("../client/src/components/sections/Section3");
 const { Section9 } = await import("../client/src/components/sections/Section9");
 
@@ -40,7 +41,15 @@ function rslMinPoints(): number {
 }
 
 const MIN_POINTS = rslMinPoints();
-const REASON = `n/a (weniger als ${MIN_POINTS} Kurse)`;
+const PHASE_NA = `RSL n/a — weniger als ${MIN_POINTS} Kurse`;
+const PHASE_NAMES = [
+  "Rezession / Trough",
+  "Expansion / Mittzyklus",
+  "Spätzyklus / Überhitzung",
+  "Früher Abschwung",
+  "Frühe Erholung",
+  "Übergang",
+];
 
 type Flags = { above: boolean; golden: boolean; macd: boolean; rising: boolean };
 
@@ -158,50 +167,62 @@ try {
   check("lange Historie liegt über der calculateRSL-Mindestlänge", LONG_N >= MIN_POINTS, `${LONG_N} >= ${MIN_POINTS}`);
   check("kurze Historie lässt calculateRSL null", calculateRSL(shortTrough.currentPrice, shortTrough.historicalPrices.map((p) => p.close)) == null);
   check("lange Historie lässt calculateRSL eine Zahl", typeof calculateRSL(longHot.currentPrice, longHot.historicalPrices.slice(-LONG_N).map((p) => p.close)) === "number");
+  check("RSL_MIN_PRICES exportiert und gleich der calculateRSL-Grenze", (calculations as { RSL_MIN_PRICES?: number }).RSL_MIN_PRICES === MIN_POINTS, String((calculations as { RSL_MIN_PRICES?: number }).RSL_MIN_PRICES));
 
-  console.log("\n=== kurz: Section9 (nur Throw prüfen) ===");
+  const dcfData = {
+    ...shortTrough,
+    marketCap: 5000,
+    revenue: 1000,
+    operatingIncome: 200,
+    ebitda: 250,
+    totalDebt: 100,
+    cashEquivalents: 40,
+    fcfHaircut: 0,
+    beta5Y: 1,
+    epsTTM: 2,
+    epsConsensusNextFY: 2.2,
+    sharesOutstanding: 100,
+    sectorProfile: { ...shortTrough.sectorProfile, growthAssumptions: { g1: 10, terminal: 2.5 } },
+  };
+  const dcfParams = buildDefaultDCFParams(dcfData as never);
+  const dcf = calculateFCFFDCF(dcfParams);
+  const malusLines = dcf.steps.filter((s) => s.includes("RSL-Momentum-Malus aktiv") || s.includes("RSL-adjustiert"));
+  console.log(`DCF param.rsl=${String(dcfParams.rsl)} malusZeilen=${malusLines.length}`);
+  check("DCF-Kette: buildDefaultDCFParams reicht rsl null durch", dcfParams.rsl == null, String(dcfParams.rsl));
+  check("DCF-Kette: calculateFCFFDCF ohne Malus-Zeile", malusLines.length === 0, malusLines.join(" | "));
+
+  console.log("\n=== kurz: Section9 (n/a, Malus nicht angewendet) ===");
   const s9shortMain = tryRender(MainSection9, shortTrough);
   const s9short = tryRender(Section9, shortTrough);
-  console.log(`Section9 main: ${s9shortMain.error ? describeError(s9shortMain.error) : "kein Throw"}`);
-  console.log(`Section9 head: ${s9short.error ? describeError(s9short.error) : "kein Throw"}`);
-  if (s9shortMain.error) {
-    console.error(s9shortMain.error);
-    check("Section9 kurz: Head wirft nicht mehr", s9short.error == null, describeError(s9short.error));
-    check("Section9 kurz: n/a sichtbar", s9short.html.includes("n/a"), s9short.html.slice(0, 240));
-  } else {
-    check("Section9 kurz: kein Throw", s9short.error == null, s9short.error ? describeError(s9short.error) : "");
-    check("Section9 kurz: Markup identisch zu main", s9short.html === s9shortMain.html);
+  console.log(`Section9 main: ${s9shortMain.error ? describeError(s9shortMain.error) : `zone=${zoneOf(s9shortMain.html)} growth=${growthOf(s9shortMain.html)}`}`);
+  console.log(`Section9 head: ${s9short.error ? describeError(s9short.error) : `zone=${zoneOf(s9short.html)} growth=${growthOf(s9short.html)}`}`);
+  check("Section9 kurz: kein Throw", s9short.error == null, s9short.error ? describeError(s9short.error) : "");
+  if (!s9short.error) {
+    check("Section9 kurz: Momentum n/a mit Grund", s9short.html.includes(PHASE_NA), zoneOf(s9short.html));
+    check("Section9 kurz: Malus nicht angewendet", s9short.html.includes("nicht angewendet"), growthOf(s9short.html));
+    check("Section9 kurz: kein Weak Momentum", !s9short.html.includes("Weak Momentum"));
+    check("Section9 kurz: Malus nicht als aktiv angezeigt", !s9short.html.includes("DCF Growth Adjustment aktiv"));
   }
 
-  console.log("\n=== kurz: Section3 (RED = TypeError) ===");
-  const s3cases = [
-    ["trough", shortTrough, "Rezession / Trough"],
-    ["expansion", shortExpansion, "Expansion / Mittzyklus"],
-  ] as const;
-  let section3Threw = false;
-  for (const [name, data, phase] of s3cases) {
+  console.log("\n=== kurz: Section3 (Phase n/a) ===");
+  for (const [name, data] of [["trough-flags", shortTrough], ["expansion-flags", shortExpansion]] as const) {
     const mainR = tryRender(MainSection3, data);
     const headR = tryRender(Section3, data);
-    console.log(`Section3 ${name} main: ${mainR.error ? describeError(mainR.error) : "kein Throw"}`);
+    console.log(`Section3 ${name} main: ${mainR.error ? describeError(mainR.error) : phaseOf(mainR.html)}`);
     console.log(`Section3 ${name} head: ${headR.error ? describeError(headR.error) : `phase=${phaseOf(headR.html)} rsl=${rslLabelOf(headR.html)}`}`);
     if (mainR.error) {
-      section3Threw = true;
       console.error(mainR.error);
       check(`Section3 ${name}: main wirft TypeError`, mainR.error instanceof TypeError, describeError(mainR.error));
     }
     if (headR.error) {
-      section3Threw = true;
       console.error(headR.error);
       check(`Section3 ${name}: kein Throw`, false, describeError(headR.error));
       continue;
     }
-    check(`Section3 ${name}: Phase bleibt ${phase}`, phaseOf(headR.html) === phase, phaseOf(headR.html));
-    check(`Section3 ${name}: RSL-Anzeige ${REASON}`, rslLabelOf(headR.html) === REASON, rslLabelOf(headR.html));
-    check(`Section3 ${name}: Grund im Markup`, headR.html.includes(REASON));
-    check(`Section3 ${name}: kein RSL: 0`, !headR.html.includes("RSL: 0"));
-  }
-  if (section3Threw && fail > 0) {
-    console.log("\nRED: Section3 wirft bei rsl null.");
+    const hit = PHASE_NAMES.filter((p) => headR.html.includes(p));
+    check(`Section3 ${name}: Phase ${PHASE_NA}`, phaseOf(headR.html) === PHASE_NA, phaseOf(headR.html));
+    check(`Section3 ${name}: Grund im Markup`, headR.html.includes(PHASE_NA));
+    check(`Section3 ${name}: keine Zyklusphase`, hit.length === 0, hit.join(", "));
   }
 
   console.log("\n=== lang (>=130): identisch zu main ===");
