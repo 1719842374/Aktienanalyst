@@ -3,6 +3,7 @@
  * FMP nur, wenn die Segmentzeile das Hauptsegment als verschachtelte Werte führt.
  * Eine flache Umsatzzahl ist kein Untersegment. KI-Werte bleiben KI.
  */
+import { prettifyProductSegmentName } from "./segment-growth-calc";
 
 export type SegmentChildSource = "FMP" | "KI";
 
@@ -28,7 +29,7 @@ export const KI_SUM_EXCEEDS_PARENT = "n/a — KI-Summe überschreitet das Eltern
 export const KI_NEGATIVE = "n/a — negativer KI-Wert verworfen";
 export const KI_UNAVAILABLE = "n/a — KI nicht erreichbar";
 export const SEGMENT_UNKNOWN = "n/a — Segment ist in der serverseitigen Liste nicht enthalten";
-export const BASIS_TEXT_MAX = 80;
+export const BASIS_TEXT_MAX = 400;
 
 const SKIP_KEYS = new Set([
   "symbol", "date", "reportedCurrency", "cik", "fillingDate",
@@ -38,6 +39,20 @@ const SKIP_KEYS = new Set([
 
 function norm(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function sameChildName(kind: "product" | "geographic", left: string, right: string): boolean {
+  if (kind === "product") return norm(prettifyProductSegmentName(left)) === norm(prettifyProductSegmentName(right));
+  return norm(left) === norm(right);
+}
+
+function boundBasis(text: string): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= BASIS_TEXT_MAX) return clean;
+  const slice = clean.slice(0, BASIS_TEXT_MAX);
+  const space = slice.lastIndexOf(" ");
+  const end = space >= 24 ? space : BASIS_TEXT_MAX;
+  return `${clean.slice(0, end).trimEnd()}…`;
 }
 
 function fiscalYear(row: Record<string, unknown>): number {
@@ -172,10 +187,12 @@ export function reviewKiChildren(
   parent: string,
   payload: unknown,
   parentRevenue: number | null,
+  scope: { kind?: "product" | "geographic"; siblings?: readonly string[]; businessNames?: readonly string[] } = {},
 ): SegmentChildrenResult {
   if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
   const list = (payload as { children?: unknown }).children;
   if (!Array.isArray(list) || list.length === 0) return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
+  const kind = scope.kind ?? "product";
   const kept: SegmentChild[] = [];
   const notes: string[] = [];
   for (const item of list) {
@@ -183,11 +200,13 @@ export function reviewKiChildren(
     const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; basis?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
-    const basis = typeof rec.basis === "string" ? rec.basis.trim().slice(0, BASIS_TEXT_MAX) : "";
+    const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
     if (!basis) {
       notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
       continue;
     }
+    if ((scope.siblings ?? []).some((sibling) => sameChildName(kind, sibling, name))) continue;
+    if (kind === "geographic" && (scope.businessNames ?? []).some((business) => sameChildName("product", business, name))) continue;
     const share = finite(rec.shareOfParentPct);
     const revenue = finite(rec.revenue);
     if ((share != null && share < 0) || (revenue != null && revenue < 0)) {
@@ -197,8 +216,8 @@ export function reviewKiChildren(
     kept.push({
       parent,
       name,
-      revenue: revenue != null && revenue >= 0 ? revenue : null,
-      shareOfParentPct: share != null && share >= 0 ? share : null,
+      revenue: revenue != null && revenue > 0 ? revenue : null,
+      shareOfParentPct: share != null && share > 0 ? share : null,
       source: "KI",
       basis,
     });

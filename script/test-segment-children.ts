@@ -23,6 +23,7 @@ import {
   childrenFromFmpRows,
   childrenFromKiPayload,
   resolveSegmentChildren,
+  reviewKiChildren,
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
 import { loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
@@ -363,7 +364,7 @@ const clipped = await loadSegmentChildren("MSFT", "Server", "product", {
   raw: async () => [{ fiscalYear: "2024", data: { Server: 100 } }],
   ki: async () => ({ children: [{ name: "Azure", shareOfParentPct: 10, basis: longBasis }] }),
 });
-gap("basis-length", (clipped.children[0]?.basis?.length ?? 999) <= 80, `len=${clipped.children[0]?.basis?.length}`);
+gap("basis-length", (clipped.children[0]?.basis?.length ?? 0) > 80 && (clipped.children[0]?.basis ?? "").startsWith("Quelle"), `len=${clipped.children[0]?.basis?.length}`);
 
 resetSegmentChildrenGuardsForTests();
 let rawCalls = 0;
@@ -608,6 +609,99 @@ try {
 }
 const envRestored = process.env.FMP_API_KEY === savedFmpKey && process.env.FMP_API_key === savedFmpKeyAlt;
 gap("sec-cache-25h", agedStatus === 200 && envRestored && !agedRun.stdout.includes(path.resolve(repoRoot, "data.db")), `status=${agedStatus} env=${envRestored} out=${agedRun.stdout.slice(-240)} err=${agedRun.stderr.slice(-240)}`);
+
+gap(
+  "ki-prompt",
+  routeSource.includes("Bekannte Produktlinien")
+    && routeSource.includes("Regionen, Länder oder Bundesstaaten")
+    && routeSource.includes("nie 0")
+    && !routeSource.includes("Ohne Beleg")
+    && !routeSource.includes("Erfinde keine Untersegmente"),
+  "prompt",
+);
+
+const zeroShare = reviewKiChildren("Server", {
+  children: [{ name: "Azure", shareOfParentPct: 0, revenue: null, basis: "Produktlinie Azure" }],
+}, null);
+const zeroMarkup = html(React.createElement(SegmentChildrenList, {
+  data: {
+    parent: "Server",
+    reason: null,
+    children: [{
+      parent: "Server",
+      name: "Azure",
+      revenue: null,
+      shareOfParentPct: zeroShare.children[0]?.shareOfParentPct ?? null,
+      source: "KI",
+      basis: "Produktlinie Azure",
+    }],
+  },
+}));
+gap(
+  "share-zero",
+  zeroShare.children.length === 1
+    && zeroShare.children[0]?.shareOfParentPct == null
+    && zeroShare.children[0]?.source === "KI"
+    && zeroMarkup.includes("n/a")
+    && !zeroMarkup.includes("0.0"),
+  `share=${String(zeroShare.children[0]?.shareOfParentPct)} markup=${zeroMarkup}`,
+);
+
+resetSegmentChildrenGuardsForTests();
+const wmtApp = express();
+registerSegmentGrowthRoute(wmtApp, {
+  fmpAvailable: () => true,
+  raw: async (kind) => kind === "geographic"
+    ? [{ fiscalYear: "2025", data: { "UNITED STATES": 81.5, "Walmart International": 18.5 } }]
+    : [{ fiscalYear: "2025", data: { "Walmart U.S.": 70, "Sam's Club": 12 } }],
+  names: async (_ticker, kind) => kind === "geographic"
+    ? ["UNITED STATES", "Walmart International"]
+    : ["Walmart U.S.", "Sam's Club"],
+  ki: async () => ({
+    children: [
+      { name: "Walmart International", shareOfParentPct: 0, basis: "Walmart 10-K, Geschwistersegment" },
+      { name: "Sam's Club", shareOfParentPct: 0, basis: "Walmart 10-K, Geschäftssegment" },
+      { name: "Texas", shareOfParentPct: null, basis: "Bundesstaat innerhalb der USA" },
+    ],
+  }),
+});
+const wmtServer = wmtApp.listen(0);
+const wmtPort = (wmtServer.address() as { port: number }).port;
+try {
+  const wmtHit = await fetch(`http://127.0.0.1:${wmtPort}/api/segment-children/WMT?parent=${encodeURIComponent("UNITED STATES")}&kind=geographic`);
+  const wmtBody = await wmtHit.json() as { children?: { name: string; source?: string; shareOfParentPct?: number | null }[] };
+  const names = (wmtBody.children ?? []).map((row) => row.name);
+  gap(
+    "wmt-siblings",
+    wmtHit.status === 200 && names.length === 1 && names[0] === "Texas" && wmtBody.children?.[0]?.source === "KI",
+    `status=${wmtHit.status} names=${names.join(",")}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => wmtServer.close((err) => err ? reject(err) : resolve()));
+}
+
+const fullBasis = "Walmart 10-K SEC Filing - Primary operating segment for domestic retail operations";
+const keptBasis = reviewKiChildren("UNITED STATES", {
+  children: [{ name: "Texas", shareOfParentPct: null, basis: fullBasis }],
+}, null);
+const shownBasis = keptBasis.children[0]?.basis ?? "";
+const basisMarkup = html(React.createElement(SegmentChildrenList, {
+  data: {
+    parent: "UNITED STATES",
+    reason: null,
+    children: [{ parent: "UNITED STATES", name: "Texas", revenue: null, shareOfParentPct: null, source: "KI", basis: shownBasis || fullBasis }],
+  },
+}));
+gap(
+  "basis-ellipsis",
+  shownBasis === fullBasis
+    && basisMarkup.includes("…")
+    && basisMarkup.includes(`title="${fullBasis}"`)
+    && basisMarkup.includes(`aria-label="${fullBasis}"`)
+    && basisMarkup.includes("overflow-x-hidden")
+    && !basisMarkup.includes("whitespace-nowrap"),
+  `len=${shownBasis.length} end=${shownBasis.slice(-12)} markup=${basisMarkup.slice(0, 280)}`,
+);
 
 const indexSource = readFileSync("server/index.ts", "utf8");
 gap("trust-proxy-hop-1", /set\(\s*"trust proxy",\s*1\s*\)/.test(indexSource) && !/set\(\s*"trust proxy",\s*true\s*\)/.test(indexSource), "server/index.ts");

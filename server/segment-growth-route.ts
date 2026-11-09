@@ -147,10 +147,15 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
 export interface SegmentChildrenDeps {
   fmpAvailable: () => boolean;
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
-  ki: (ticker: string, parent: string) => Promise<unknown>;
+  ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[]) => Promise<unknown>;
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
+}
+
+export interface SegmentChildrenScope {
+  siblings?: readonly string[];
+  businessNames?: readonly string[];
 }
 
 export function namesFromDisplayedSources(input: {
@@ -241,13 +246,39 @@ function sameDisplayedName(kind: "product" | "geographic", listed: string, reque
   return fold(listed) === fold(requested);
 }
 
-async function defaultKiChildren(ticker: string, parent: string): Promise<unknown> {
+export function segmentChildrenKiMessages(
+  ticker: string,
+  parent: string,
+  kind: "product" | "geographic",
+  siblings: readonly string[],
+): { systemPrompt: string; prompt: string } {
+  const blocked = siblings.map((name) => name.trim()).filter((name) => name.length > 0).slice(0, 24).join(", ");
+  const siblingLine = blocked ? ` Diese Namen sind Geschwister und keine Kinder: ${blocked}.` : "";
+  if (kind === "geographic") {
+    return {
+      systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Ein unbekannter Anteil ist null, nie 0.",
+      prompt: `Ticker ${ticker}. Geografisches Segment "${parent}". Nenne nur Regionen, Länder oder Bundesstaaten innerhalb dieses Gebiets. Keine Geschäftssegmente.${siblingLine} Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"basis":""}]}. basis ist ein kurzer Quellenhinweis ohne erfundene Zahl. Leeres children nur, wenn keine Unterregion bekannt ist.`,
+    };
+  }
+  return {
+    systemPrompt: "Antworte nur mit JSON. Erfinde keine Umsatzzahlen und keine Anteile. Bekannte Produktlinien sind erlaubt. Ein unbekannter Anteil ist null, nie 0.",
+    prompt: `Ticker ${ticker}. Geschäftssegment "${parent}". Bekannte Produktlinien nur dieses Segments, nicht die Geschwister.${siblingLine} revenue und shareOfParentPct bleiben null, außer basis nennt eine konkrete veröffentlichte Zahl. Form: {"children":[{"name":"","revenue":null,"shareOfParentPct":null,"basis":""}]}. basis benennt die Produktlinie in einem kurzen Satz. Leeres children nur, wenn keine Produktlinie bekannt ist.`,
+  };
+}
+
+async function defaultKiChildren(
+  ticker: string,
+  parent: string,
+  kind: "product" | "geographic" = "product",
+  siblings: readonly string[] = [],
+): Promise<unknown> {
   if (!isLLMAvailable()) return null;
   try {
+    const messages = segmentChildrenKiMessages(ticker, parent, kind, siblings);
     const result = await callLLMJson({
-      systemPrompt: "Antworte nur mit JSON. Erfinde keine Untersegmente und keine Zahlen. Unbekannt heißt leeres children-Array.",
-      prompt: `Ticker ${ticker}. Hauptsegment "${parent}". Nur Untersegmente dieses einen serverseitigen Segmentnamens. Jeder Wert braucht ein Feld basis mit Quelle oder Begründung. Form: {"children":[{"name":"","shareOfParentPct":null,"basis":""}]}. Ohne Beleg: {"children":[]}.`,
-      maxTokens: 400,
+      systemPrompt: messages.systemPrompt,
+      prompt: messages.prompt,
+      maxTokens: 800,
       temperature: 0,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
     });
@@ -271,6 +302,7 @@ export async function loadSegmentChildren(
   parent: string,
   kind: "product" | "geographic",
   deps: SegmentChildrenDeps = defaultSegmentChildrenDeps(),
+  scope: SegmentChildrenScope = {},
 ): Promise<SegmentChildrenResult> {
   const label = parent.trim();
   let raw: unknown[] = [];
@@ -286,12 +318,16 @@ export async function loadSegmentChildren(
   if (fmp.length > 0) return resolveSegmentChildren(label, fmp, []);
   let kiPayload: unknown = null;
   try {
-    kiPayload = await deps.ki(ticker, label);
+    kiPayload = await deps.ki(ticker, label, kind, scope.siblings ?? []);
   } catch {
     kiPayload = null;
   }
   if (kiPayload == null) return { parent: label, children: [], reason: KI_UNAVAILABLE };
-  return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label));
+  return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label), {
+    kind,
+    siblings: scope.siblings,
+    businessNames: scope.businessNames,
+  });
 }
 
 export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentChildrenDeps): void {
@@ -361,7 +397,17 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       if (!hit) return res.status(400).json({ error: SEGMENT_UNKNOWN });
       const fromNewestYear = newestMatchingRawKey(rows, kind, parent, listed);
       const canonical = fromNewestYear ?? hit;
-      const body = await loadSegmentChildren(ticker, canonical, kind, deps);
+      const siblings = listed.filter((name) => !sameDisplayedName(kind, name, canonical));
+      let businessNames: string[] = [];
+      if (kind === "geographic" && deps.fmpAvailable()) {
+        if (deps.names) {
+          businessNames = await deps.names(ticker, "product");
+        } else {
+          const productRows = await deps.raw("product", ticker);
+          businessNames = segmentNamesFromFmpRows(Array.isArray(productRows) ? productRows : []);
+        }
+      }
+      const body = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames });
       const ttl = body.reason === KI_UNAVAILABLE && body.children.length === 0 ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;

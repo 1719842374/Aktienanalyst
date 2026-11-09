@@ -59,20 +59,35 @@ export function SegmentLine({
   );
 }
 
+const VISIBLE_BASIS_MAX = 80;
+
+export function visibleBasis(text: string, max = VISIBLE_BASIS_MAX): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  const slice = clean.slice(0, max);
+  const space = slice.lastIndexOf(" ");
+  const end = space >= 24 ? space : max;
+  return `${clean.slice(0, end).trimEnd()}…`;
+}
+
 export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
   if (data.children.length === 0) {
     return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">{data.reason ?? "n/a"}</p>;
   }
   return (
-    <div className="pl-4 space-y-0.5" data-testid="segment-children">
+    <div className="max-w-full overflow-x-hidden pl-4 space-y-0.5" data-testid="segment-children">
       {data.reason ? <p className="text-[10px] text-muted-foreground" data-testid="segment-children-note">{data.reason}</p> : null}
       {data.children.map((child) => (
-        <div key={`${child.parent}:${child.name}`} className="flex items-center gap-2 text-[10px]" data-testid="segment-child">
-          <span className="truncate">{child.name}</span>
-          {child.shareOfParentPct != null && (
-            <span className="font-mono tabular-nums text-muted-foreground">{child.shareOfParentPct.toFixed(1)} %</span>
-          )}
-          {child.basis ? <span className="text-muted-foreground">{child.basis}</span> : null}
+        <div key={`${child.parent}:${child.name}`} className="flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 overflow-x-hidden text-[10px]" data-testid="segment-child">
+          <span className="min-w-0 break-words">{child.name}</span>
+          <span className="font-mono tabular-nums text-muted-foreground" data-testid="segment-child-share">
+            {child.shareOfParentPct != null ? `${child.shareOfParentPct.toFixed(1)} %` : "n/a"}
+          </span>
+          {child.basis ? (
+            <span className="min-w-0 break-words text-muted-foreground" title={child.basis} aria-label={child.basis}>
+              {visibleBasis(child.basis)}
+            </span>
+          ) : null}
           <span
             className={child.source === "KI"
               ? "rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200"
