@@ -27,6 +27,7 @@ import {
   fetchFXRate,
   convertFinancials,
   generatePESTELAnalysis,
+  type GeneratedPestel,
   computeFcfTTM,
   highCapexFcfHint,
   applyScalePermanentCapitalMoat,
@@ -79,10 +80,8 @@ import {
   type TradingSignal,
   type TechnicalStatus,
   type MoatAssessment,
-  type PorterForce,
   type CatalystReasoning,
   type CurrencyInfo,
-  type PESTELAnalysis,
   type RevenueSegment,
 } from "../shared/schema";
 import { clampPorterThreat, porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
@@ -386,7 +385,7 @@ function scoreMoat(
 
   let score = 0;
   const sources: string[] = [];
-  const porterForces: PorterForce[] = [];
+  const porterForces: Array<{ force: string; rating: "Niedrig" | "Mittel" | "Hoch"; score: number }> = [];
 
   if (grossMargin > 60) { score += 2; sources.push("Hohe Bruttomarge (>60%)"); }
   else if (grossMargin > 40) { score += 1; sources.push("Solide Bruttomarge (>40%)"); }
@@ -1482,7 +1481,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             revenue, revenueGrowth, fcfMargin, grossMargin, forwardPE, beta,
             governmentExposure: govExposure,
             topCatalysts: catalysts.slice(0, 3).map((c) => ({ name: c.name, context: c.context ?? "" })),
-            capexContext: capexContext ? { sector: capexContext.sector, programmes: capexContext.programmes, rationale: capexContext.beneficiaryEntry?.rationale ?? "" } : null,
+            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as CapexTailwindContext).sector, programmes: (capexContext as CapexTailwindContext).programmes, rationale: (capexContext as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
           if (llmRisks && llmRisks.length >= 3) {
@@ -1561,7 +1560,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             revenueGrowth, fcfMargin, grossMargin, operatingMargin, forwardPE, evEbitda,
             analystPTMedian, currentPrice: price, returnOnEquity,
             catalysts,
-            capexContext: capexContext ? { sector: capexContext.sector, programmes: capexContext.programmes, rationale: capexContext.beneficiaryEntry?.rationale ?? "" } : null,
+            capexContext: (capexContext as CapexTailwindContext | null) ? { sector: (capexContext as CapexTailwindContext).sector, programmes: (capexContext as CapexTailwindContext).programmes, rationale: (capexContext as CapexTailwindContext).beneficiaryEntry?.rationale ?? "" } : null,
             revenueSegments,
             gStar: impliedGStar,
             moat: (moatAssessment as any).moatStrength ?? null,
@@ -1581,7 +1580,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       // ── 15. Porter + PESTEL ──
 
-      let pestelAnalysis: PESTELAnalysis = generatePESTELAnalysis(
+      let pestelAnalysis: GeneratedPestel = generatePESTELAnalysis(
         effectiveSector, industry, description, beta, govExposure, reportedCurrency
       );
 
