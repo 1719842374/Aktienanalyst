@@ -363,8 +363,6 @@ export interface PorterForce {
   reasoning: string;
   /** Optionale Unterpunkte, aus denen `score` abgeleitet wird. */
   subScores?: PorterSubScore[];
-  /** Heuristik vor toSchemaPorterForce. In der Schema-Form steht der Name in `name`. */
-  force?: string;
 }
 
 export interface MoatAssessment {
@@ -520,15 +518,6 @@ export interface StockAnalysis {
   fcfMarginYoyPp?: number | null;
   fcfMarginYoyAvailable?: boolean;
   revenue: number;
-  /** Compare und Section 8 lesen das Feld, wenn der Payload es setzt. Sonst undefined. */
-  revenueGrowth?: number | null;
-  rsl?: { value?: number | null } | null;
-  monteCarloResults?: {
-    mean?: number | null;
-    median?: number | null;
-    probLoss?: number | null;
-    probLoss20?: number | null;
-  } | null;
   ebitda: number;
   operatingIncome: number;
   netIncome: number;

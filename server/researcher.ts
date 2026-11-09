@@ -239,7 +239,6 @@ interface MacroPulseResult {
       affectedSectors: string[];
       rationale: string;
     }>;
-    _fallback?: boolean;
   } | null;
   modelUsed?: string;
   _cached?: boolean;

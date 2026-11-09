@@ -5,6 +5,7 @@
  */
 
 import { execSync } from "child_process";
+import type { PESTELAnalysis, PESTELFactor, PESTELFactorItem, CurrencyInfo } from "../shared/schema";
 import {
   isFmpAvailable, fmpQuoteStrict, classifyFmpError, type FmpFailure, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -770,36 +771,14 @@ export function convertFinancials(
 // ============================================================
 // PESTEL Analysis Generator
 // ============================================================
-export interface GeneratedPestelItem {
-  item: string;
-  impact: "Positiv" | "Neutral" | "Negativ";
-  stockCorrelation: "Positiv" | "Neutral" | "Negativ";
-  stockCorrelationNote: string;
-}
-
-export interface GeneratedPestelFactor {
-  category: "Political" | "Economic" | "Social" | "Technological" | "Environmental" | "Legal";
-  emoji: string;
-  items: GeneratedPestelItem[];
-  overallImpact: "Positiv" | "Neutral" | "Negativ";
-}
-
-/** Form, die generatePESTELAnalysis schreibt. analyze-route mappt sie auf PESTELAnalysis. */
-export interface GeneratedPestel {
-  factors: GeneratedPestelFactor[];
-  overallSentiment: "Positiv" | "Neutral" | "Negativ";
-  region: string;
-  analysisDate: string;
-}
-
 export function generatePESTELAnalysis(
   sector: string, industry: string, description: string,
   beta: number, govExposure: number, reportedCurrency: string
-): GeneratedPestel {
+): PESTELAnalysis {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
   const desc = description.toLowerCase();
-  const factors: GeneratedPestelFactor[] = [];
+  const factors: PESTELFactor[] = [];
 
   const regionMap: Record<string, string> = {
     USD: "USA", EUR: "Europa/EU", GBP: "UK", CHF: "Schweiz", JPY: "Japan",
@@ -903,7 +882,7 @@ export function generatePESTELAnalysis(
   }
 
   // === P: Political ===
-  const pItems: GeneratedPestelItem[] = [
+  const pItems: PESTELFactorItem[] = [
     { item: govExposure > 20 ? `Hohe Regierungsabhängigkeit (${govExposure}% Government Revenue): direkte Budgetabhängigkeit von politischen Entscheidungen` : `Moderate Regulierungsexponierung in ${region}`, impact: govExposure > 20 ? "Negativ" : "Neutral", ...stockCorr("govDependency", govExposure > 20 ? "Negativ" : "Neutral") },
     { item: isEM ? `Politisches Risiko in Emerging Markets (${region}): Verstaatlichungsrisiko, Kapitalkontrollen, Sanktionsexponierung` : `Geopolitische Spannungen (US-China, Ukraine): Lieferkettendiversifizierung, Exportkontrollen`, impact: isEM ? "Negativ" : "Neutral", ...stockCorr("geo", isEM ? "Negativ" : "Neutral") },
     { item: isEU ? `EU-Regulierungsrahmen (GDPR, DSA/DMA, CSRD): Compliance-Kosten steigen, aber klarer Rechtsrahmen schafft Planungssicherheit` : `Handelspolitik und Zolländerungen (US-China Decoupling, CHIPS Act, IRA): direkte Auswirkung auf Lieferketten und Absatzmärkte`, impact: "Neutral", ...stockCorr("trade", "Neutral") },
@@ -911,7 +890,7 @@ export function generatePESTELAnalysis(
   factors.push({ category: "Political", emoji: "🏦", items: pItems, overallImpact: govExposure > 30 ? "Negativ" : "Neutral" });
 
   // === E: Economic ===
-  const eItems: GeneratedPestelItem[] = [
+  const eItems: PESTELFactorItem[] = [
     { item: `Zinspolitik der Zentralbanken (Fed, EZB): ${isBank ? "Zinserhöhungen erweitern NIM (Net Interest Margin) direkt" : isRealEstate ? "Hohe Zinsen belasten Immobilienbewertungen und Refinanzierungskosten" : "WACC-Impakt auf Discounted-Cash-Flow-Bewertung; Growth-Multiple-Kompression bei steigenden Zinsen"}`, impact: isBank ? "Positiv" : (isRealEstate || isTech) ? "Negativ" : "Neutral", ...stockCorr("interest", isBank ? "Positiv" : "Negativ") },
     { item: `Inflationsdynamik (${region === 'USA' ? 'US CPI' : region === 'Europa/EU' ? 'Euro-Inflation' : 'globale Inflation'}): ${isConsumerDisc ? "Kaufkraftverlust trifft diskretionären Konsum direkt" : isConsumerStaple ? "Pricing Power schützt Margen bei moderater Inflation" : "Input-Kostenp Pressure vs. Pricing Power als Gegenkraft"}`, impact: isConsumerDisc ? "Negativ" : "Neutral", ...stockCorr("inflation", "Neutral") },
     { item: `Konjunkturzyklus und BIP-Wachstum: ${isConsumerStaple || isUtil ? "Defensive Qualität — geringer Konjunktureinfluss" : `Beta ${beta.toFixed(1)} signalisiert ${beta > 1.3 ? "hohe" : beta > 0.8 ? "moderate" : "geringe"} Konjunktursensitivität`}`, impact: beta > 1.3 ? "Negativ" : beta < 0.7 ? "Positiv" : "Neutral", ...stockCorr("conjuncture", "Neutral") },
@@ -919,28 +898,28 @@ export function generatePESTELAnalysis(
   factors.push({ category: "Economic", emoji: "📈", items: eItems, overallImpact: "Neutral" });
 
   // === S: Social ===
-  const sItems: GeneratedPestelItem[] = [
+  const sItems: PESTELFactorItem[] = [
     { item: isHealthcare || isPharma ? `Demografischer Wandel: Alternde Bevölkerung (Baby-Boomer-Übergang) erhöht strukturell Gesundheitsausgaben; GLP-1/Adipositas-Welle als Megatrend` : `Demografischer Wandel und Konsumpräferenzen: ${isConsumerDisc ? 'Gen-Z/Millennial-Konsum (Digital-First, Nachhaltigkeit)' : 'Urbanisierung und Mittelschichtwachstum in Emerging Markets als Absatztreiber'}`, impact: isHealthcare ? "Positiv" : "Neutral", ...stockCorr("demo", isHealthcare ? "Positiv" : "Neutral") },
     { item: `ESG-Investorenpräferenzen und gesellschaftliche Erwartungen: ${isFossil ? 'ESG-Divestment-Trend reduziert Investorenbasis und erhöht Kapitalkosten strukturell' : isDefense ? 'Sin-Stocks-Stigma begrenzt ESG-Fonds-Investitionen, aber NATO-Zeitenwende verbessert ESG-Wahrnehmung' : 'Steigende ESG-Anforderungen schaffen Compliance-Kosten, aber auch Differenzierungschance'}`, impact: isFossil ? "Negativ" : isDefense ? "Neutral" : "Neutral", ...stockCorr("esg", isFossil ? "Negativ" : "Neutral") },
   ];
   factors.push({ category: "Social", emoji: "👥", items: sItems, overallImpact: isHealthcare ? "Positiv" : "Neutral" });
 
   // === T: Technological ===
-  const tItems: GeneratedPestelItem[] = [
+  const tItems: PESTELFactorItem[] = [
     { item: `Künstliche Intelligenz & Automatisierung: ${isTech ? 'AI-Investitionszyklus als primärer Wachstumsmotor — Cloud-Workloads, Copilot-Monetarisierung, AI-as-a-Service' : isSemiconductor ? 'AI-Rechenzentrum-Boom treibt GPU/HBM-Nachfrage säkular' : 'AI-Integration in Produkte erhöht Wertschöpfung und Kundenbindung, aber erzeugt auch Disruptionsrisiko'}`, impact: isTech || isSemiconductor ? "Positiv" : "Neutral", ...stockCorr("ai", isTech ? "Positiv" : "Neutral") },
     { item: `Cybersecurity-Risiken: ${isCyberSec ? 'Steigende Cyberangriffe sind direkter Umsatzkatalysator (Nachfragetreiber)' : 'Zunehmende Cyberangriffe erhöhen IT-Sicherheitsausgaben; Supply-Chain-Angriffe als systemisches Risiko'}`, impact: isCyberSec ? "Positiv" : "Neutral", ...stockCorr("cyber", "Neutral") },
   ];
   factors.push({ category: "Technological", emoji: "🤖", items: tItems, overallImpact: isTech || isSemiconductor ? "Positiv" : "Neutral" });
 
   // === E: Environmental ===
-  const envItems: GeneratedPestelItem[] = [
+  const envItems: PESTELFactorItem[] = [
     { item: `Klimapolitik und CO₂-Regulierung (${isEU ? 'EU ETS, CBAM, CSRD' : 'US IRA, EPA-Regularien, SEC Climate Disclosure'}): ${isFossil ? 'Stranded-Asset-Risiko und CO₂-Preise erhöhen strukturell operative Kosten' : isRenewable ? 'CO₂-Preise und Renewable-Förderprogramme (IRA, EU Green Deal) als Umsatzkatalysator' : 'Scope 1-3-Emissionsreporting verpflichtend; Carbon-Cost-of-Capital als Bewertungsfaktor'}`, impact: isFossil ? "Negativ" : isRenewable ? "Positiv" : "Neutral", ...stockCorr("climate", isFossil ? "Negativ" : isRenewable ? "Positiv" : "Neutral") },
     { item: `Energiekosten und Versorgungssicherheit: ${isUtil || isFossil ? 'Kerngeschäft direkt mit Energiepreisen korreliert' : 'Energie als Betriebskostenfaktor; Rechenzentren (AI-Workloads) treiben Stromverbrauch → Power Purchase Agreements als Hedge'}`, impact: isFossil ? "Positiv" : "Neutral", ...stockCorr("energy", "Neutral") },
   ];
   factors.push({ category: "Environmental", emoji: "🌱", items: envItems, overallImpact: isFossil ? "Negativ" : isRenewable ? "Positiv" : "Neutral" });
 
   // === L: Legal ===
-  const lItems: GeneratedPestelItem[] = [
+  const lItems: PESTELFactorItem[] = [
     { item: `Regulatorische Anforderungen und Compliance: ${isTech ? 'Kartellverfahren (Google, Meta, Apple), Digital Markets Act, KI-Regulierung (EU AI Act) als strukturelle Risiken' : isPharma ? 'FDA-Zulassungsprozesse, Patentschutz und Paragraph-IV-Herausforderungen als binäre Risiken' : isBank ? 'Basel III/IV, Dodd-Frank, MiFID II: Kapitalanforderungen begrenzen Leverage und ROE' : `Branchenspezifische Regulierung in ${region} als Eintrittsbarriere und Compliance-Kostenfaktor`}`, impact: isTech || isPharma ? "Negativ" : "Neutral", ...stockCorr("regulation", "Neutral") },
     { item: `Geistiges Eigentum und IP-Schutz: ${isPharma ? 'Patentlaufzeiten (exklusiver Marktschutz) und Biosimilar-Bedrohungen als binärer Katalysator' : isTech ? 'Software-Patente, Urheberrecht an KI-Trainingsdaten und Open-Source-Compliance-Risiken' : 'Standard-IP-Schutz und Markenschutz als Wettbewerbsmoat'}`, impact: isPharma ? "Negativ" : "Neutral", ...stockCorr("ip", "Neutral") },
   ];
