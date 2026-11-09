@@ -26,7 +26,7 @@ import {
   reviewKiChildren,
 } from "../shared/segment-children";
 import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
-import { loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
+import { loadOutlineIdentity, loadSegmentChildren, namesFromDisplayedSources, registerSegmentGrowthRoute, resetSegmentChildrenGuardsForTests } from "../server/segment-growth-route";
 import { reviewSegmentOutline } from "../shared/segment-children";
 import { priorSegmentRevenue } from "../server/fmp";
 import { buildSegmentSupplement } from "../shared/segment-supplement";
@@ -1152,8 +1152,8 @@ const iphoneChild = reviewKiChildren("Smartphones", {
   companyEcho: "Xiaomi Corporation",
   industryEcho: "Consumer Electronics",
   children: [
-    { name: "iPhone", shareOfParentPct: null, growthPct: 16.5, basis: "Flagship-Smartphone", source: "KI" },
-    { name: "Redmi", shareOfParentPct: null, growthPct: null, basis: "Xiaomi Smartphone" },
+    { name: "iPhone", owner: "Apple Inc.", shareOfParentPct: null, growthPct: 16.5, basis: "Flagship-Smartphone", source: "KI" },
+    { name: "Redmi", owner: "Xiaomi Corporation", shareOfParentPct: null, growthPct: null, basis: "Xiaomi Smartphone" },
   ],
 }, null, { companyName: "Xiaomi Corporation" });
 gap(
@@ -1274,6 +1274,103 @@ try {
 gap(
   "prompt-year-currency",
   routeSource.includes("Geschäftsjahr") && routeSource.includes("Währung") && routeSource.includes("Annual Report"),
+  "prompt",
+);
+
+const kindleChild = reviewKiChildren("Smartphones", {
+  children: [
+    { name: "Kindle", owner: "Amazon", shareOfParentPct: 10, growthPct: 4, basis: "Lesegerät", source: "Geschäftsbericht 2024" },
+    { name: "Redmi", owner: "Xiaomi Corporation", shareOfParentPct: 30, growthPct: 5, basis: "Smartphone", source: "Geschäftsbericht 2024" },
+  ],
+}, null, { companyName: "Xiaomi Corporation" });
+gap(
+  "child-kindle",
+  !kindleChild.children.some((row) => row.name === "Kindle")
+    && kindleChild.children.some((row) => row.name === "Redmi")
+    && /Fremdmarke verworfen: Kindle/.test(kindleChild.reason ?? ""),
+  kindleChild.children.map((row) => row.name).join(",") || kindleChild.reason || "leer",
+);
+
+const missingOwner = reviewKiChildren("Smartphones", {
+  children: [{ name: "Redmi", shareOfParentPct: 30, growthPct: 5, basis: "Smartphone", source: "Geschäftsbericht 2024" }],
+}, null, { companyName: "Xiaomi Corporation" });
+gap(
+  "child-owner-required",
+  missingOwner.children.length === 0 && /Fremdmarke verworfen: Redmi/.test(missingOwner.reason ?? ""),
+  missingOwner.reason ?? missingOwner.children.map((row) => row.name).join(","),
+);
+
+const deck = reviewKiChildren("Smartphones", {
+  children: [{ name: "Redmi", shareOfParentPct: 20, growthPct: 4, basis: "Linie", source: "Investor-Präsentation 2024" }],
+}, null);
+gap(
+  "investor-source",
+  deck.children[0]?.shareOfParentPct === 20 && deck.children[0]?.growthPct === 4,
+  `share=${String(deck.children[0]?.shareOfParentPct)} growth=${String(deck.children[0]?.growthPct)}`,
+);
+
+gap(
+  "industry-echo-optional",
+  typeof echoMatches === "function" && echoMatches(
+    { companyEcho: "Xiaomi Corporation" },
+    "Xiaomi Corporation",
+    "",
+    "",
+  ) === true,
+  typeof echoMatches,
+);
+
+resetSegmentChildrenGuardsForTests();
+const noIndustryApp = express();
+noIndustryApp.use(express.json());
+registerSegmentGrowthRoute(noIndustryApp, {
+  fmpAvailable: () => false,
+  raw: async () => [],
+  names: async () => [],
+  ki: async () => ({ children: [] }),
+  identity: async () => ({ companyName: "Xiaomi Corporation", exchange: "OTC", country: "CN", sector: "", industry: "" }),
+  outline: async () => ({
+    companyEcho: "Xiaomi Corporation",
+    children: [{ name: "Smartphones", shareOfParentPct: 50, growthPct: 8, basis: "Kern", source: "Geschäftsbericht 2024" }],
+  }),
+});
+const noIndustryServer = noIndustryApp.listen(0);
+const noIndustryPort = (noIndustryServer.address() as { port: number }).port;
+try {
+  const openIndustry = await fetch(`http://127.0.0.1:${noIndustryPort}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticker: "XIACY", kind: "product" }),
+  });
+  const openIndustryBody = await openIndustry.json().catch(() => ({})) as { items?: { name?: string }[]; reason?: string };
+  gap(
+    "outline-no-industry",
+    openIndustryBody.items?.[0]?.name === "Smartphones",
+    openIndustryBody.reason ?? `n=${openIndustryBody.items?.length ?? "none"}`,
+  );
+} finally {
+  await new Promise<void>((resolve, reject) => noIndustryServer.close((err) => err ? reject(err) : resolve()));
+}
+
+resetSegmentChildrenGuardsForTests();
+let profileCalls = 0;
+const countedProfile = async () => {
+  profileCalls += 1;
+  return { companyName: "Xiaomi Corporation", currency: "USD", sector: "", industry: "" };
+};
+await loadOutlineIdentity("XIACY", { profile: countedProfile });
+await loadOutlineIdentity("XIACY", { profile: countedProfile });
+gap("identity-cache", profileCalls === 1, String(profileCalls));
+
+gap(
+  "no-children-raw-log",
+  !routeSource.includes("[CHILDREN-RAW]"),
+  "log",
+);
+
+gap(
+  "prompt-owner-source",
+  routeSource.includes("owner") && routeSource.includes("Geschäftsbericht") && routeSource.includes("Investor-Präsentation"),
   "prompt",
 );
 

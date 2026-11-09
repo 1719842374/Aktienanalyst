@@ -216,7 +216,7 @@ export function reviewKiChildren(
   let filtered = 0;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; brand?: unknown; companyEcho?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -225,11 +225,10 @@ export function reviewKiChildren(
       continue;
     }
     const companyName = scope.companyName ?? "";
-    const brand = typeof rec.brand === "string" ? rec.brand : typeof rec.companyEcho === "string" ? rec.companyEcho : "";
-    const brandMiss = companyName.length > 0 && brand.trim().length > 0 && !echoTokens(companyName, 3).some((token) => brand.toLowerCase().includes(token));
-    if (companyName && (foreignCompanyProduct(name, companyName) || brandMiss)) {
+    const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
+    const ownerOk = owner.length > 0 && echoTokens(companyName, 3).some((token) => owner.toLowerCase().includes(token));
+    if (companyName && !ownerOk) {
       notes.push(`n/a — Fremdmarke verworfen: ${name}`);
-      filtered += 1;
       continue;
     }
     if (sameChildName(kind, parent, name)) {
@@ -300,7 +299,7 @@ export function concreteSource(value: string): boolean {
   if (GENERIC_SOURCE.has(lower)) return false;
   if (/^https?:\/\/\S+$/i.test(text)) return true;
   if (/^(10-k|20-f|10-q|8-k)$/i.test(lower)) return false;
-  const hasDocument = /(geschäftsbericht|jahresbericht|annual report|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i.test(text);
+  const hasDocument = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i.test(text);
   const hasPeriod = /(?:19|20)\d{2}/.test(text);
   return hasDocument && hasPeriod;
 }
@@ -323,32 +322,12 @@ export function outlineEchoMatches(payload: unknown, companyName: string, indust
   if (typeof companyEcho !== "string" || !companyEcho.trim()) return false;
   const companyTokens = echoTokens(companyName, 3);
   if (companyTokens.length === 0 || !companyTokens.some((token) => companyEcho.toLowerCase().includes(token))) return false;
+  const hints = echoTokens(`${industry} ${sector}`, 4);
+  if (hints.length === 0) return true;
   const industryEcho = record.industryEcho;
   if (typeof industryEcho !== "string" || !industryEcho.trim()) return false;
-  const hints = echoTokens(`${industry} ${sector}`, 4);
-  if (hints.length === 0) return false;
   const industryFold = industryEcho.toLowerCase();
   return hints.some((token) => industryFold.includes(token));
-}
-
-const OTHER_FIRM_PRODUCTS: { owner: string; names: readonly string[] }[] = [
-  { owner: "apple", names: ["iphone", "ipad", "ipod", "macbook", "airpod"] },
-  { owner: "oppo", names: ["oppo"] },
-  { owner: "samsung", names: ["galaxy"] },
-  { owner: "google", names: ["pixel"] },
-  { owner: "huawei", names: ["huawei"] },
-  { owner: "oneplus", names: ["oneplus"] },
-  { owner: "vivo", names: ["vivo"] },
-];
-
-export function foreignCompanyProduct(name: string, companyName: string): boolean {
-  const company = companyName.toLowerCase();
-  const child = name.toLowerCase();
-  for (const firm of OTHER_FIRM_PRODUCTS) {
-    if (company.includes(firm.owner)) continue;
-    if (firm.names.some((product) => child.includes(product))) return true;
-  }
-  return false;
 }
 
 export function outlineStillCurrent(startedTicker: string, currentTicker: string): boolean {
