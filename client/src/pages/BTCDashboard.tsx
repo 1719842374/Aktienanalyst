@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useCallback, useMemo } from "react";
+import { Fragment, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
@@ -9,6 +9,7 @@ import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
+import { MinerMapPanel } from "@/components/researcher/MinerMapPanel";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
 import { AssetConflictSummary } from "@/components/sections/AssetConflictSummary";
 import { btcConflictMatrix } from "@shared/asset-conflict-matrix";
@@ -26,6 +27,21 @@ import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisInterv
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
+import { BTC_TA_RANGES, sliceBtcTaWindow, type BtcTaRange } from "@/lib/btcTaWindow";
+import {
+  M2_IMPLIED_COLOR,
+  M2_IMPLIED_DISCLAIMER,
+  M2_IMPLIED_LINE_NAME,
+  fitM2ImpliedBtc,
+  m2ImpliedAxisHint,
+  m2ImpliedAxisPlacement,
+  m2ImpliedPointOutside,
+  m2ImpliedPrice,
+  m2ImpliedTooltipLines,
+} from "@/lib/m2ImpliedBtc";
+import { BTC_SPOT_SOURCE_LABEL, BTC_VOLUME_SOURCE_LABEL, formatBtcVolumeUsd, normalizeBtcVolumeBars } from "@shared/btc-spot";
+import { snapBtcSignalsToChart } from "@shared/btc-signals";
+import { BtcDividendNa, QeQtBandsToggle, QeQtPhaseList, qeQtBandNodes, qeQtUnavailableText, useQeQtOverlay } from "@/components/qeQtBands";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -74,6 +90,8 @@ interface TechChartPoint {
   ma1400: number | null;
   real10y?: number | null; m2Yoy?: number | null;
   m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
+  /** exp(a + b·ln(M2-Lag)) auf der Preisachse. OLS über die Historie bis zum Fensterende. */
+  m2ImpliedBtc?: number | null;
   /** Fed-Bilanz WALCL in Bio. USD (Liquiditäts-Endpoint) */
   walcl?: number | null;
   rsi14?: number | null;
@@ -93,6 +111,8 @@ interface BTCAnalysis {
   gisCalculation: string;
   /** Liquiditätsblock (WALCL/Bills/DGS10); fehlt bei Fallback-Daten. */
   liquidity?: BtcLiquidityBlock | null;
+  /** Wochen-WALCL für die QE/QT-Bänder. Fehlt bei Fallback-Daten. */
+  walclOverlay?: { source: string; sourceUrl: string | null; points: { date: string; valueTn: number }[] } | null;
   powerLaw: {
     daysSinceGenesis: number; fairValue: number; support: number; resistance: number;
     deviationPercent: number; fairValue6M: number; powerSignal: number;
@@ -119,6 +139,9 @@ interface BTCAnalysis {
   };
   technicalChart: TechChartPoint[];
   technicalChartFull: TechChartPoint[];
+  spotSource?: string | null;
+  spotSourceUrl?: string | null;
+  spotHistoryError?: string | null;
   technicalSignals: { date: string; type: "BUY" | "SELL"; reason: string; price: number; }[];
   bullConditions: { priceAboveMA200: boolean; ma50AboveMA200: boolean; macdAboveZero: boolean; macdAboveSignal: boolean; macdRising: boolean; };
   isBull: boolean;
@@ -983,7 +1006,7 @@ const BTC_OVERLAYS = [
 
 type MAKey = typeof MA_LINES[number]["key"];
 type BTCOverlayKey = typeof BTC_OVERLAYS[number]["key"];
-type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
+type TimeRange = BtcTaRange;
 
 // StatusPill: ausgelagert nach TaStatusPill (Markup unveraendert), Gold nutzt dieselbe Karte.
 const StatusPill = TaStatusPill;
@@ -1019,6 +1042,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const [showM2AbsoluteLagged, setShowM2AbsoluteLagged] = useState(false);
   // Fed-Bilanz (WALCL) aus dem Liquiditätsblock — wie die absoluten M2-Linien nur manuell an.
   const [showWalcl, setShowWalcl] = useState(false);
+  const [showQeQt, setShowQeQt] = useState(false);
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1081,17 +1105,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     [capitulationInputsFull]
   );
 
-  // Filter data by time range (using calendar days)
-  const filteredData = useMemo(() => {
-    if (fullChart.length === 0) return [];
-    const daysCutoff: Record<TimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysCutoff[timeRange]);
-    const cutoffStr = cutoff.toISOString().split("T")[0];
-    return fullChart.filter(d => d.date >= cutoffStr);
-  }, [fullChart, timeRange]);
+  // Kalenderfenster ab heute. Die SMA ist vorher auf der ganzen Historie gerechnet, der Vorlauf bleibt draußen.
+  const taWindow = useMemo(() => sliceBtcTaWindow(fullChart, timeRange), [fullChart, timeRange]);
+  const filteredData = taWindow.visible;
 
-  // Downsample for performance: max ~500 points
+  // Anzeige verdichtet auf ~500 Punkte. Die Reihe darunter bleibt täglich;
+  // das Fenster (10Y/Max) bestimmt den ersten und den letzten Punkt.
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
@@ -1101,6 +1120,21 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }
     return result;
   }, [filteredData]);
+
+  // Koeffizienten aus den echten Monatswerten der Historie bis zum Fensterende,
+  // nicht aus dem sichtbaren Fenster und nicht aus der auf 500 Punkte gedownsampleten Zeichenreihe.
+  const m2Implied = useMemo(
+    () => fitM2ImpliedBtc(fullChart, filteredData.length > 0 ? filteredData[filteredData.length - 1].date : null),
+    [fullChart, filteredData],
+  );
+
+  const qePoints = useMemo(
+    () => fullChart.map(p => ({ date: p.date, price: p.price, walcl: p.walcl ?? null })),
+    [fullChart],
+  );
+  const qeDates = useMemo(() => chartData.map(d => d.date), [chartData]);
+  const { view: qeQt, phases: qePhases } = useQeQtOverlay(qePoints, qeDates, data.walclOverlay?.points);
+  const qeUnavailable = qeQtUnavailableText(qeQt.unavailableReason, "btc");
 
   const hasReal10y = useMemo(() => chartData.some(d => d.real10y != null), [chartData]);
   const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
@@ -1145,7 +1179,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // chartData[].date entsprechen, sonst wird die Flaeche gar nicht
   // gezeichnet (kein Fehler, einfach stiller No-Render). capitulation-
   // SegmentsFull wurde bisher aus fullChart (volle, ungefilterte Reihe)
-  // berechnet, aber gegen chartData (auf max. 500 Punkte downgesampelt)
+  // berechnet, aber gegen chartData (auf max. 500 Punkte verdichtet)
   // gerendert -- die exakten Segment-Datumswerte existierten dort meist
   // nicht. Fix: jede Segmentgrenze auf den naechstgelegenen Datumswert
   // in chartData snappen, der tatsaechlich existiert.
@@ -1183,36 +1217,31 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     const hasServerRSI = chartData.some(d => d.rsi14 != null);
     const clientRsiArr = hasServerRSI ? [] : calcRSI(prices);
 
-    // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
-    const rawVols = chartData.map(d => d.volume ?? 0);
-    const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
-    const hasServerVol = serverVolNorms.some(v => v > 0);
-    const hasRawVol = rawVols.some(v => v > 0);
-
-    let volNorms: number[];
-    if (hasServerVol) {
-      volNorms = serverVolNorms;
-    } else if (hasRawVol) {
-      const maxRawVol = Math.max(...rawVols);
-      volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
-    } else {
-      volNorms = chartData.map(() => 0);
-    }
+    // Balkenhöhe aus dem USD-Betrag, logarithmisch. Die lineare Norm am
+    // Maximum lässt die Jahre vor 2017 auf der Max-Skala verschwinden.
+    const volNorms = normalizeBtcVolumeBars(chartData.map(d => d.volume ?? 0));
 
     return chartData.map((d, i) => ({
       ...d,
       rsi14: hasServerRSI ? (d.rsi14 ?? null) : (clientRsiArr[i] ?? null),
       _volNorm: volNorms[i] ?? 0,
       _volUp: i === 0 ? true : prices[i] >= prices[i - 1],
+      m2ImpliedBtc: m2ImpliedPrice(m2Implied, d.m2AbsoluteLagged),
     }));
-  }, [chartData]);
+  }, [chartData, m2Implied]);
 
-  // Filter signals within the displayed time range
+  // Filter signals within the displayed time range. Gezeichnet wird auf dem
+  // nächsten Punkt der verdichteten Reihe, sonst fehlt die Linie, sobald der
+  // genaue Tag ausgedünnt wurde.
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0 || !data.technicalSignals) return [];
     const startDate = chartData[0].date;
     return data.technicalSignals.filter(s => s.date >= startDate);
   }, [data.technicalSignals, chartData, showSignals]);
+  const plottedSignals = useMemo(
+    () => snapBtcSignalsToChart(visibleSignals, chartData.map(point => point.date)),
+    [visibleSignals, chartData],
+  );
 
   const toggleMA = (key: MAKey) => {
     setVisibleMAs(prev => {
@@ -1237,7 +1266,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const yDomain = useMemo(() => {
     let minVal = Infinity;
     let maxVal = -Infinity;
-    for (const d of chartData) {
+    for (const d of chartDataWithRSI) {
       if (d.price > 0) {
         if (d.price < minVal) minVal = d.price;
         if (d.price > maxVal) maxVal = d.price;
@@ -1259,18 +1288,26 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         }
       }
     }
-    // Safeguard: never go below 0, ensure valid range
+    // Safeguard: never go below 0, ensure valid range.
+    // Der implizite M2-Preis zieht die Achse nicht auf: er liegt auf derselben
+    // Skala und wird am Rand abgeschnitten, wenn er außerhalb des Kurses liegt.
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) {
       return [0, 100000] as [number, number];
     }
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartData, visibleMAs, visibleOverlays]);
+  }, [chartDataWithRSI, visibleMAs, visibleOverlays]);
+
+  const m2ImpliedPlacement = useMemo(
+    () => m2ImpliedAxisPlacement(chartDataWithRSI.map(d => d.m2ImpliedBtc), yDomain),
+    [chartDataWithRSI, yDomain],
+  );
+  const m2ImpliedOffAxis = m2ImpliedAxisHint(m2ImpliedPlacement);
 
   // Format helpers
   const formatDate = (date: string) => {
     const parts = date.split("-");
-    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y") {
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") {
       return `${parts[1]}/${parts[0].slice(2)}`;
     }
     return `${parts[1]}/${parts[2]}`;
@@ -1510,7 +1547,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         {/* Time range buttons */}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="btc-presets">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+          {BTC_TA_RANGES.map(r => (
             <button
               key={r}
               onClick={() => setTimeRange(r)}
@@ -1522,6 +1559,44 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             </button>
           ))}
         </div>
+        {taWindow.historyNote && (
+          <div className="w-full basis-full text-[10px] text-amber-300" data-testid="btc-history-since">
+            {taWindow.historyNote}
+          </div>
+        )}
+        {showM2AbsoluteLagged && (
+          <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-note">
+            {m2Implied.ok
+              ? `${M2_IMPLIED_LINE_NAME} auf der Preisachse · OLS über die Historie bis zum Fensterende, nur Monatswerte (n=${m2Implied.n}) · ${M2_IMPLIED_DISCLAIMER}`
+              : m2Implied.reason}
+          </div>
+        )}
+        {showM2AbsoluteLagged && m2Implied.ok && m2ImpliedOffAxis && (
+          <div className="w-full basis-full text-[10px] text-cyan-300" data-testid="btc-m2-implied-offaxis">
+            {m2ImpliedOffAxis}
+          </div>
+        )}
+        <div
+          className="w-full basis-full text-[10px] text-muted-foreground"
+          data-testid="btc-spot-source"
+          title={data.spotSourceUrl || undefined}
+        >
+          Spot-Quelle: {data.spotSource || BTC_SPOT_SOURCE_LABEL}
+          {` · Volumen: ${BTC_VOLUME_SOURCE_LABEL}`}
+          {(data.chartData?.allPrices?.length ?? 0) > 0
+            ? ` · ${data.chartData.allPrices[0].date} – ${data.chartData.allPrices[data.chartData.allPrices.length - 1].date} · ${data.chartData.allPrices.length} Tage`
+            : ""}
+        </div>
+        {data.spotHistoryError && (
+          <div className="w-full basis-full text-[10px] text-red-400" data-testid="btc-spot-error" role="alert">
+            BTC-Spot-Historie abgebrochen: {data.spotHistoryError}
+          </div>
+        )}
+        {capitulationSegmentsSnapped.length > 0 && (
+          <div className="w-full basis-full text-[10px] text-orange-300" data-testid="btc-miner-zone-legend">
+            Miner-Kapitulation: orange Schraffur mit gestricheltem Rand
+          </div>
+        )}
 
         {/* MA toggles */}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
@@ -1637,7 +1712,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showM2AbsoluteLagged ? "border-amber-300 text-amber-300" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
-                title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, ein-/ausblenden"
+                title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, plus M2-impliziter BTC-Preis in USD auf der Preisachse"
                 data-testid="toggle-btc-m2absolute-lagged"
               >
                 {showM2AbsoluteLagged ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
@@ -1659,6 +1734,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
           </div>
         )}
+
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+        <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+        <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Bilanz:</span>
+        <QeQtBandsToggle view={qeQt} show={showQeQt} onToggle={() => setShowQeQt(v => !v)} asset="btc" testId="toggle-btc-qe-qt" />
+        <BtcDividendNa />
+        </div>
 
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
         {/* Measurement tool toggle */}
@@ -1731,6 +1813,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               }
             }}
           >
+            <defs>
+              <pattern id="btc-miner-zone" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="7" height="7" fill="#fb923c" fillOpacity="0.07" />
+                <line x1="0" y1="0" x2="0" y2="7" stroke="#fb923c" strokeWidth="1.5" strokeOpacity="0.75" />
+              </pattern>
+            </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
@@ -1741,6 +1829,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
             <YAxis
               domain={yDomain}
+              allowDataOverflow
               tick={xTick}
               tickFormatter={formatYAxis}
               width={55}
@@ -1811,7 +1900,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 return (
                   <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                     <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                    {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => (
+                    {payload.filter((p: any) => p.dataKey !== "_volNorm" && p.dataKey !== "m2ImpliedBtc").map((p: any) => (
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
                         <span className="font-mono tabular-nums">
@@ -1826,9 +1915,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                       </div>
                     ))}
                     {(volPoint?.volume ?? 0) > 0 && (
-                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{((volPoint!.volume ?? 0) / 1e9).toFixed(2)}B</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{formatBtcVolumeUsd(volPoint!.volume ?? 0)}</span></div>
                     )}
-                    {visibleSignals.filter(s => s.date === label).map((s, i) => (
+                    {showM2AbsoluteLagged && (
+                      <div className="mt-1 space-y-0.5 border-t border-border pt-1" data-testid="btc-m2-implied-tooltip">
+                        {m2ImpliedTooltipLines(
+                          m2Implied,
+                          volPoint?.m2ImpliedBtc ?? null,
+                          m2ImpliedPointOutside(volPoint?.m2ImpliedBtc, yDomain) ? "outside" : "inside",
+                        ).map(line => (
+                          <div key={line} className="text-cyan-300">{line}</div>
+                        ))}
+                      </div>
+                    )}
+                    {plottedSignals.filter(s => s.date === label).map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
                       </div>
@@ -1838,22 +1938,6 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               }}
             />
 
-            {/* Kapitulationszonen (additiv): rote Fläche pro zusammenhängendem
-                Segment, in dem Spot < Breakeven UND Puell < 0.5 UND MA30(Hashrate)
-                < MA60(Hashrate) gleichzeitig gelten (siehe minerMetrics.ts).
-                Nur Segmente sichtbar, die im aktuell gewählten Zeitfenster liegen
-                — Recharts clippt ReferenceArea automatisch am sichtbaren Bereich. */}
-            {capitulationSegmentsSnapped.map((seg, idx) => (
-              <ReferenceArea
-                key={`cap-zone-${idx}`}
-                x1={seg.x1}
-                x2={seg.x2}
-                fill="#EF4444"
-                fillOpacity={0.3}
-                strokeOpacity={0}
-                ifOverflow="hidden"
-              />
-            ))}
             {capitulationResolvedFull && breakevenNowForChart != null && (
               <>
                 <ReferenceLine
@@ -1879,6 +1963,25 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               />
             )}
 
+            {qeQtBandNodes(qeQt.bands, showQeQt)}
+
+            {/* Miner-Kapitulation über den QE/QT-Flächen: orange Schraffur und
+                gestrichelter Rand. Die Bänder selbst bleiben Grün/Rot/Grau.
+                Bedingung: Spot < Breakeven und Puell < 0.5 und MA30 < MA60. */}
+            {capitulationSegmentsSnapped.map((seg, idx) => (
+              <ReferenceArea
+                key={`cap-zone-${idx}`}
+                x1={seg.x1}
+                x2={seg.x2}
+                fill="url(#btc-miner-zone)"
+                stroke="#fb923c"
+                strokeWidth={1.25}
+                strokeDasharray="4 3"
+                strokeOpacity={0.9}
+                ifOverflow="hidden"
+              />
+            ))}
+
             {/* Price line */}
             <Line
               type="monotone"
@@ -1891,20 +1994,27 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
 
             {/* Standard MA lines */}
-            {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
-              <Line
-                key={ma.key}
-                type="monotone"
-                dataKey={ma.key}
-                name={ma.label}
-                stroke={ma.color}
-                strokeWidth={1.5}
-                dot={false}
-                strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
-                connectNulls={true}
-                isAnimationActive={false}
-              />
-            ))}
+            {MA_LINES.map(ma => {
+              const sma = ma.key === "ma50" || ma.key === "ma200";
+              const hasValue = !sma || chartData.some(d => {
+                const v = d[ma.key];
+                return typeof v === "number" && Number.isFinite(v);
+              });
+              return visibleMAs.has(ma.key) && hasValue && (
+                <Line
+                  key={ma.key}
+                  type="monotone"
+                  dataKey={ma.key}
+                  name={ma.label}
+                  stroke={ma.color}
+                  strokeWidth={1.5}
+                  dot={false}
+                  strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
+                  connectNulls={!sma}
+                  isAnimationActive={false}
+                />
+              );
+            })}
 
             {/* BTC-specific overlay lines */}
             {BTC_OVERLAYS.map(o => visibleOverlays.has(o.key) && (
@@ -1974,6 +2084,19 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 isAnimationActive={false}
               />
             )}
+            {showM2AbsoluteLagged && hasM2AbsoluteLagged && m2Implied.ok && (
+              <Line
+                type="monotone"
+                dataKey="m2ImpliedBtc"
+                name={M2_IMPLIED_LINE_NAME}
+                stroke={M2_IMPLIED_COLOR}
+                strokeWidth={1.5}
+                strokeDasharray="5 3"
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
 
             {showWalcl && hasWalcl && (
               <Line
@@ -1990,7 +2113,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             )}
 
             {/* Buy/Sell signal markers — senkrechte Linien, keine Kreise auf dem Kurs. */}
-            {showSignals && visibleSignals.map((s, i) => (
+            {showSignals && plottedSignals.map((s, i) => (
               <Fragment key={`sig-${i}`}>
                 <ReferenceLine
                   x={s.date}
@@ -2026,6 +2149,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       {narrow && showVolume && (
         <TaVolumeBand data={chartDataWithRSI} leftAxisWidth={55} rightAxisWidth={visibleRightWidth} marginRight={8} />
       )}
+      {showQeQt && (
+        <QeQtPhaseList phases={qePhases} unavailable={qeUnavailable} testId="btc-qe-qt-phases" />
+      )}
+      {!showQeQt && qeUnavailable && (
+        <QeQtPhaseList phases={[]} unavailable={qeUnavailable} testId="btc-qe-qt-phases" />
+      )}
+
       {hiddenMacroSeries.length > 0 && (
         <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="macro-axis-note">
           <span>Ohne eigene Achse — Wert im Tooltip:</span>
@@ -2773,6 +2903,13 @@ export default function BTCDashboard() {
     setSidebarOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (!data) return;
+    const hash = window.location.hash;
+    const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+    if (new URLSearchParams(q).get("section") === "13") scrollToSection(13);
+  }, [data, scrollToSection]);
+
   const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
     sectionRefs.current[id] = el;
   }, []);
@@ -2881,7 +3018,10 @@ export default function BTCDashboard() {
         {/* Main content */}
         <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
           {!data && !analyzeMutation.isPending ? (
-            <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
+            <div>
+              <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
+              <div className="max-w-5xl mx-auto p-3 sm:p-4"><MinerMapPanel showBtcLink={false} /></div>
+            </div>
           ) : analyzeMutation.isPending ? (
             <BTCLoadingScreen />
           ) : analyzeMutation.isError ? (
@@ -2900,7 +3040,10 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(10)}><Section9FinalEstimate data={data} /></div>
               <div ref={setSectionRef(11)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div ref={setSectionRef(12)}><Section11FearGreed data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(13)}>
+                <Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} />
+                <div className="mt-3"><MinerMapPanel showBtcLink={false} /></div>
+              </div>
               <div ref={setSectionRef(14)}><Section12Fazit data={data} /></div>
               <div className="pb-8" />
             </div>

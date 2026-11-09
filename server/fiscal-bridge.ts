@@ -513,3 +513,258 @@ export function findFiscalResearchMatches(
   }
   return out;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FW-34 — Anschluss an den Researcher-Discovery-Workflow (Capex & Fiscal).
+//
+// buildCapexFiscal / POST /api/researcher/capex liefert Programme als Freitext
+// (amountUSD "$20bn", timeline "2025-2027", status Active/Announced/…).
+// Dieser Anschluss schreibt sie in den bestehenden FiscalProgram-Store
+// (save/load + detectContradiction + invalidateProgram).
+//
+// Zahlen-Prinzip: amountUSD und timeline werden NICHT geparst. volumeUsdBn,
+// startYear und endYear bleiben null. Status aus Freitext wird nur auf
+// announced oder (bei "Phasing Out") expired abgebildet — nie auf
+// legislated/funded/deploying und nie confidence=high. Damit kann der
+// Eintrag fiscalMegatrendQualifies / numerisches Forward-Overlay nicht
+// erfüllen. analyze-route.ts wird hier nicht gelesen und nicht geändert.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DISCOVERY_INDEX_KEY = "fiscal_discovery_index_v1";
+const DISCOVERY_ID_PREFIX = "discovery__";
+
+export interface DiscoveryProgrammeInput {
+  name?: unknown;
+  status?: unknown;
+  amountUSD?: unknown;
+  budget?: unknown;
+  timeline?: unknown;
+  rationale?: unknown;
+  description?: unknown;
+  sectors?: unknown;
+}
+
+export interface DiscoverySyncInput {
+  region: string;
+  asOf: string;
+  programmes?: readonly unknown[] | null;
+}
+
+export interface DiscoverySyncStats {
+  saved: number;
+  invalidated: number;
+  skipped: number;
+}
+
+export interface DiscoveredFiscalProgramView {
+  id: string;
+  name: string;
+  region: string;
+  status: FiscalProgramStatus;
+  confidence: FiscalConfidence;
+  volumeUsdBn: number | null;
+  startYear: number | null;
+  endYear: number | null;
+  active: boolean;
+  publishedAt: string;
+}
+
+function discoveryAsOfIso(raw: string): string {
+  const parsed = new Date(raw).getTime();
+  if (!Number.isFinite(parsed)) return new Date().toISOString();
+  return new Date(parsed).toISOString();
+}
+
+/** Stabiler Store-Schlüssel. Kein Ticker, kein Budget, kein Jahr im Schlüssel. */
+export function discoveryProgramId(region: string, name: string): string {
+  const reg = region.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "") || "NA";
+  const slug = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 72)
+    .toUpperCase();
+  return `${DISCOVERY_ID_PREFIX}${reg}__${slug || "UNNAMED"}`;
+}
+
+/**
+ * Freitext-Status der Capex-Discovery. Nur "Phasing Out" / "expired" wird
+ * zum harten expired. Alles andere bleibt announced (niedrigste Stufe),
+ * damit ein LLM-Label "Active" kein deploying/high-Programm erzeugt.
+ */
+export function discoveryStatusFromLabel(raw: unknown): FiscalProgramStatus {
+  const label = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (label === "phasing out" || label === "expired") return "expired";
+  return "announced";
+}
+
+function discoverySectorKeys(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const keys = raw
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim())
+    .slice(0, 8);
+  return keys.length > 0 ? keys : undefined;
+}
+
+/**
+ * Ein Discovery-Programm als FiscalProgram. Budget- und Timeline-Felder
+ * werden absichtlich ignoriert (auch wenn sie wie eine Zahl aussehen).
+ */
+export function fiscalProgramFromDiscovery(
+  region: string,
+  asOf: string,
+  programme: unknown,
+): FiscalProgram | null {
+  if (!programme || typeof programme !== "object") return null;
+  const row = programme as DiscoveryProgrammeInput;
+  const name = typeof row.name === "string" ? row.name.trim() : "";
+  if (!name || name.toLowerCase() === "unknown") return null;
+  const status = discoveryStatusFromLabel(row.status);
+  const confidence: FiscalConfidence = "low";
+  const snippetSource = typeof row.rationale === "string" && row.rationale.trim()
+    ? row.rationale
+    : typeof row.description === "string" && row.description.trim()
+      ? row.description
+      : name;
+  const publishedAt = discoveryAsOfIso(asOf);
+  return {
+    id: discoveryProgramId(region, name),
+    name,
+    region: region.trim().toUpperCase() || "NA",
+    sectorKeys: discoverySectorKeys(row.sectors),
+    status,
+    confidence,
+    volumeUsdBn: null,
+    startYear: null,
+    endYear: null,
+    source: {
+      url: "",
+      publishedAt,
+      snippet: snippetSource.slice(0, 500),
+    },
+    expiresAt: computeExpiresAt(publishedAt, status, confidence),
+  };
+}
+
+/**
+ * Reine Store-Anwendung einer Discovery-Runde. Kein Disk-I/O.
+ * Bestehende Zahlen (volume/Jahre) und die Confidence bleiben erhalten,
+ * solange detectContradiction keinen Grund liefert. Ein Statuswechsel auf
+ * expired läuft über invalidateProgram ('denied').
+ */
+export function applyDiscoveryRound(
+  store: Map<string, FiscalProgram>,
+  input: DiscoverySyncInput,
+): DiscoverySyncStats {
+  const region = input.region.trim().toUpperCase() || "NA";
+  const asOf = discoveryAsOfIso(input.asOf);
+  let saved = 0;
+  let invalidated = 0;
+  let skipped = 0;
+  for (const programme of input.programmes ?? []) {
+    const draft = fiscalProgramFromDiscovery(region, asOf, programme);
+    if (!draft) {
+      skipped += 1;
+      continue;
+    }
+    const prev = store.get(draft.id) ?? null;
+    if (!prev) {
+      store.set(draft.id, draft);
+      saved += 1;
+      continue;
+    }
+    const reason = detectContradiction(prev, {
+      status: draft.status,
+      volumeUsdBn: null,
+      snippet: draft.source.snippet,
+    });
+    if (reason) {
+      const row = invalidateProgram(store, {
+        programId: draft.id,
+        reason,
+        at: asOf,
+        source: draft.source,
+        note: "discovery",
+      });
+      invalidated += 1;
+      if (row) saved += 1;
+      continue;
+    }
+    store.set(draft.id, {
+      ...prev,
+      name: draft.name,
+      sectorKeys: draft.sectorKeys ?? prev.sectorKeys,
+      source: {
+        ...prev.source,
+        snippet: draft.source.snippet,
+        publishedAt: prev.source.publishedAt || draft.source.publishedAt,
+      },
+      expiresAt: computeExpiresAt(asOf, prev.status, prev.confidence),
+    });
+    saved += 1;
+  }
+  return { saved, invalidated, skipped };
+}
+
+function readDiscoveryIndex(): string[] {
+  const raw = diskResearcherGet(DISCOVERY_INDEX_KEY);
+  const ids = raw?.ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id: unknown): id is string => typeof id === "string" && id.startsWith(DISCOVERY_ID_PREFIX));
+}
+
+function writeDiscoveryIndex(ids: string[]): void {
+  diskResearcherSet(DISCOVERY_INDEX_KEY, { ids, updatedAt: new Date().toISOString() });
+}
+
+/** Discovery-Runde in den Disk-Store schreiben. Antwort der Capex-Route bleibt unverändert. */
+export function syncFiscalProgramsFromDiscovery(input: DiscoverySyncInput): DiscoverySyncStats {
+  const region = input.region.trim().toUpperCase() || "NA";
+  const asOf = discoveryAsOfIso(input.asOf);
+  const store = new Map<string, FiscalProgram>();
+  for (const programme of input.programmes ?? []) {
+    const draft = fiscalProgramFromDiscovery(region, asOf, programme);
+    if (!draft) continue;
+    const prev = loadFiscalProgram(draft.id);
+    if (prev) store.set(prev.id, prev);
+  }
+  const before = new Set(store.keys());
+  const stats = applyDiscoveryRound(store, { region, asOf, programmes: input.programmes });
+  const index = new Set(readDiscoveryIndex());
+  Array.from(before).forEach((id) => {
+    if (!store.has(id)) {
+      deleteFiscalProgram(id);
+      index.delete(id);
+    }
+  });
+  Array.from(store.entries()).forEach(([id, program]) => {
+    saveFiscalProgram(program);
+    index.add(id);
+  });
+  writeDiscoveryIndex(Array.from(index));
+  return stats;
+}
+
+export function listDiscoveredFiscalPrograms(asOf = new Date().toISOString()): DiscoveredFiscalProgramView[] {
+  const at = discoveryAsOfIso(asOf);
+  const views: DiscoveredFiscalProgramView[] = [];
+  for (const id of readDiscoveryIndex()) {
+    const program = loadFiscalProgram(id);
+    if (!program) continue;
+    views.push({
+      id: program.id,
+      name: program.name,
+      region: program.region,
+      status: program.status,
+      confidence: program.confidence,
+      volumeUsdBn: program.volumeUsdBn,
+      startYear: program.startYear,
+      endYear: program.endYear,
+      active: isProgramActive(program, at),
+      publishedAt: program.source.publishedAt,
+    });
+  }
+  return views;
+}

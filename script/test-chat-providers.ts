@@ -55,11 +55,11 @@ async function main() {
   }
   // Sektions-IDs = Seiten-IDs
   assert.deepEqual(buildBtcChatContext({}).sections.map(s => s.id), Object.keys(BTC_SECTION_LABELS).map(Number));
-  assert.deepEqual(buildGoldChatContext({}).sections.map(s => s.id), [1, 100, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual(Object.keys(GOLD_SECTION_LABELS).map(Number).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 100]);
-  ok("BTC 1–14 und Gold 1,100,2–8 wie in den Seiten");
-  assert.deepEqual(recessionSectionLayout(false, false).map(s => s.id), Array.from({ length: 14 }, (_, i) => i + 1));
-  assert.deepEqual(recessionSectionLayout(true, true).map(s => s.id), Array.from({ length: 16 }, (_, i) => i + 1));
+  assert.deepEqual(buildGoldChatContext({}).sections.map(s => s.id), [1, 100, 2, 9, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(Object.keys(GOLD_SECTION_LABELS).map(Number).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 100]);
+  ok("BTC 1–14 und Gold 1,100,2,9,3–8 wie in den Seiten");
+  assert.deepEqual(recessionSectionLayout(false, false).map(s => s.id), Array.from({ length: 15 }, (_, i) => i + 1));
+  assert.deepEqual(recessionSectionLayout(true, true).map(s => s.id), Array.from({ length: 17 }, (_, i) => i + 1));
   const lay = recessionSectionLayout(true, false); assert.equal(lay.find(s => s.key === "quellen")!.id, 14); assert.equal(lay.find(s => s.key === "buffett")!.id, 12); assert.equal(lay.find(s => s.key === "ta")!.id, 11);
   ok("Rezession: Nummerierung folgt der Seite (Regionen/Fazit dynamisch)");
   // Seitenquellen: Widget eingehängt, Provider genutzt

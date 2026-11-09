@@ -3,9 +3,9 @@ import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildGoldChatContext, enrichChatContext } from "@shared/chat-context";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
 import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
+import { fetchGoldWithRetry, goldAnalysisRefetchInterval, goldAnalysisStaleTime, goldFetchTimeout } from "@/lib/goldFetchPolicy";
 import { useTheme } from "@/components/ThemeProvider";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
 import { GoldIndicatorsSection } from "@/components/gold/GoldIndicatorsSection";
@@ -17,7 +17,9 @@ import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard
 import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
 import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
+import { GoldMinerBreakevenSection } from "@/components/gold/GoldMinerBreakevenSection";
 import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
+import { GoldCrossBacktestCard } from "@/components/gold/GoldCrossBacktestCard";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
@@ -31,6 +33,7 @@ const SECTIONS: { id: number; label: string; icon: typeof TrendingUp; badge?: st
   { id: 1, label: "Preis & Status", icon: TrendingUp },
   { id: 100, label: "Gold-News", icon: Newspaper, badge: "📰" },
   { id: 2, label: "Preis-Chart", icon: LineChart },
+  { id: 9, label: "Miner-Breakeven", icon: Scale },
   { id: 3, label: "Indikatoren", icon: BarChart3 },
   { id: 4, label: "Fair Value", icon: Calculator },
   { id: 5, label: "Monte Carlo", icon: Dice6 },
@@ -48,26 +51,28 @@ export default function GoldDashboard() {
   // JOB 16: der Aktualisieren-Button umgeht den 10-min-Servercache (?fresh=1); Auto-Laden nicht.
   const freshRef = useRef(false);
 
-  const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis>({
+  const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis & { fallbackReason?: string }>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
-      // Try live API first, fallback to bundled static data
-      try {
-        const fresh = freshRef.current;
-        freshRef.current = false;
-        const res = await apiRequest("GET", fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold");
-        // apiRequest does not throw on HTTP errors. A 500 body is not a GoldAnalysis
-        // (missing FMP key → { error }) and used to crash the page on spotPrice.toFixed.
-        if (!res.ok) throw new Error(`Gold-API ${res.status}`);
-        return res.json();
-      } catch {
-        // Return pre-computed data bundled at build time
-        return GOLD_FALLBACK_DATA;
-      }
+      // apiRequest wirft bei HTTP-Fehlern nicht. Timeout (goldFetchTimeout, nicht 90s)
+      // und Status ≠ 200 laufen durch fetchGoldWithRetry (mehr als ein Retry, exponentiell).
+      // Der Fallback ist eine erfolgreiche, aber sofort veraltete Antwort und wird
+      // im Hintergrund neu geholt, bis Live-Daten da sind. Er bleibt nicht 5 min frisch.
+      const fresh = freshRef.current;
+      freshRef.current = false;
+      const result = await fetchGoldWithRetry<GoldAnalysis>(fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold", { timeoutMs: goldFetchTimeout });
+      if (result.ok) return result.data;
+      return { ...GOLD_FALLBACK_DATA, fallbackReason: result.reason };
     },
-    staleTime: 5 * 60 * 1000,
-    retry: 1,
+    staleTime: (query) => goldAnalysisStaleTime(query.state.data),
+    refetchInterval: (query) => goldAnalysisRefetchInterval(query.state.data),
+    retry: false,
   });
+
+  const reloadLive = useCallback(() => {
+    freshRef.current = true;
+    void refetch();
+  }, [refetch]);
 
   const scrollToSection = useCallback((id: number) => {
     const el = sectionRefs.current[id];
@@ -128,7 +133,7 @@ export default function GoldDashboard() {
             </div>
           )}
           <button
-            onClick={() => { freshRef.current = true; refetch(); }}
+            onClick={reloadLive}
             disabled={isLoading}
             data-testid="gold-refresh"
             className="h-8 px-3 text-xs font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
@@ -205,10 +210,20 @@ export default function GoldDashboard() {
             <GoldErrorScreen error={error as Error} onRetry={() => refetch()} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              {/* Offline-Fallback sichtbar machen: gebündelte Build-Daten statt Live-API, Werte unverändert */}
+              {/* Offline-Fallback: Grund (HTTP-Status oder Timeout) und Datum, plus Neu laden */}
               {data.timestamp === GOLD_FALLBACK_DATA.timestamp && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-offline-note">
-                  Offline-Daten vom {data.analysisDate.split(",")[0]} – Live-API nicht erreichbar, Werte nicht aktuell
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-offline-note" role="status">
+                  <span className="min-w-0 flex-1">
+                    Offline-Daten vom {data.analysisDate.split(",")[0]} – {data.fallbackReason ?? "Live-API nicht erreichbar"}, Werte nicht aktuell
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="gold-offline-reload"
+                    onClick={reloadLive}
+                    className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-700"
+                  >
+                    Neu laden
+                  </button>
                 </div>
               )}
               {/* JOB 16: Teilausfall sichtbar machen (Antwort enthält interne Ersatzwerte) */}
@@ -220,7 +235,8 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(1)} className="space-y-3"><GoldPriceSection data={data} /><GoldSilverRatioRow /></div>
               {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
               <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
-              <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
+              <div ref={setSectionRef(2)} className="space-y-3"><GoldPriceChart data={data} onRetryPrices={reloadLive} /><GoldCrossBacktestCard /></div>
+              <div ref={setSectionRef(9)}><GoldMinerBreakevenSection data={data} /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
               <div ref={setSectionRef(5)}><GoldMonteCarloSection data={data} /></div>

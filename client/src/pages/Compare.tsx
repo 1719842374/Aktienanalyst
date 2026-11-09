@@ -155,7 +155,7 @@ export default function Compare() {
 
                   {/* Risiko */}
                   <tr><td colSpan={4} className="py-1.5 px-2 text-[9px] text-foreground/30 uppercase tracking-wider bg-muted/10 font-semibold">Risiko & Momentum</td></tr>
-                  <CompareRow label="Beta (5Y)" v1={data1.beta5Y} v2={data2.beta5Y} lowerBetter dec={2} />
+                  <CompareRow label="Beta" v1={data1.betaLive} v2={data2.betaLive} lowerBetter dec={2} />
                   <CompareRow label="RSL" v1={data1.rsl?.value} v2={data2.rsl?.value} />
 
                   {/* Monte Carlo */}

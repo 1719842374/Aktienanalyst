@@ -46,6 +46,7 @@ import {
 } from "./sector-data";
 import { generateMacroCorrelations } from "./macro-correlations";
 import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
+import { liveBetaForCloses } from "./live-beta";
 
 import {
   calcImpliedGStar,
@@ -591,6 +592,38 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               console.warn(`[ANALYZE] Disk hit OHLCV refresh failed for ${upperTicker}: ${ohlcvErr?.message?.substring(0, 80)}`);
             }
           }
+          // A cached result still flagged incomplete gets one left-extension attempt.
+          // Converted listings are skipped: cached bars are USD, alt bars would be listing currency.
+          const cachedBars: OHLCVPoint[] = Array.isArray(served.ohlcvData) ? served.ohlcvData : [];
+          if (served.historyTruncated === true && cachedBars.length > 0 && served.currencyInfo?.converted !== true) {
+            try {
+              const { bars, source, truncated } = await fetchDailyHistory({
+                symbol: upperTicker,
+                timeframe: "10Y",
+                fetchFrom: indicatorWarmupFromDate(),
+                fmpFetch: async () => cachedBars.map((p) => ({ ...p, source: "fmp" as const })),
+                altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+              });
+              if (bars.length > 0 && bars[0].date < cachedBars[0].date) {
+                const ohlcvPoints = bars.slice(-TA_OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
+                const px = Number(served.currentPrice) || ohlcvPoints[ohlcvPoints.length - 1].close;
+                served = {
+                  ...served,
+                  historicalPrices: ohlcvPoints.map((pt) => ({ date: pt.date, close: pt.close })),
+                  ohlcvData: ohlcvPoints,
+                  technicalIndicators: buildTechnicalIndicators(ohlcvPoints, px),
+                  historyDataSource: source === "fmp+onvista" ? "fmp+onvista"
+                    : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : served.historyDataSource,
+                  historyTruncated: truncated,
+                };
+                diskCacheSet(cacheKey, served);
+                console.log(`[HISTORY-FALLBACK] Disk hit ${upperTicker}: source=${served.historyDataSource} truncated=${truncated} points=${ohlcvPoints.length}`);
+              }
+            } catch (histErr: any) {
+              console.warn(`[HISTORY-FALLBACK] Disk hit extension failed for ${upperTicker}: ${histErr?.message?.substring(0, 80)}`);
+            }
+          }
+          served = { ...served, betaLive: await liveBetaForCloses(served.historicalPrices) };
           analysisCache.set(cacheKey, {
             result: served,
             timestamp: Date.now(),
@@ -798,7 +831,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           if (bars.length > ohlcvPoints.length) {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
           }
-          historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
+          historyDataSource = (
+            source === "fmp+onvista" ? "fmp+onvista"
+              : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : "fmp"
+          ) as StockAnalysis["historyDataSource"];
           historyTruncated = truncated;
           console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
         }
@@ -1932,6 +1968,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
       // schema fields. shared/schema.ts:StockAnalysis is the source of truth
       // for what the frontend actually reads.
+      const betaLive = await liveBetaForCloses(historicalPrices);
       const analysis = {
         // ─── Section 1: Datenaktualität (Section1.tsx) ───
         ticker: upperTicker,
@@ -1982,6 +2019,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         evEbitda,
         beta5Y: beta,
         beta,
+        betaLive,
         fcfTTM,
         fcfMargin,
         fcfAvailable,

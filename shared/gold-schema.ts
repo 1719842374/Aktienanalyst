@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { GoldAiscSeries } from "./schema";
+import type { GoldAiscSeries, GoldMinerZone } from "./schema";
 
 // === Gold Analysis Types ===
 
@@ -309,4 +309,11 @@ export interface GoldAnalysis {
   /** Future_10 §5 (B1): Quartals-AISC NEM/B/AEM für die gestufte Chart-Linie. Nur Anzeige, kein Score.
    * null, wenn server/data/gold-aisc.json fehlt oder ungültig ist; fehlt bei älteren Antworten. */
   aiscLine?: GoldAiscSeries | null;
+  /** Spot vs. AISC, adaptive Perzentil-Zonen, nur Anzeige, kein Score. */
+  aiscZone?: GoldMinerZone | null;
+  /**
+   * Spot-Quelle der Miner-Zone, eine Reihe (pickLongerSource, nicht gemischt).
+   * Gilt für jeden Spot-Wert der Zone. Fehlt bei älteren Antworten.
+   */
+  aiscZoneSpotSource?: string | null;
 }

@@ -1,11 +1,14 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Switch, Route, Router } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { CrossModuleRefreshHost } from "@/components/CrossModuleRefresh";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { LocaleProvider, LocaleSwitch, useLocale } from "@/lib/locale";
+import BalanceScreenPage from "@/pages/BalanceScreenPage";
 import Dashboard from "@/pages/Dashboard";
 import BTCDashboard from "@/pages/BTCDashboard";
 import GoldDashboard from "@/pages/GoldDashboard";
@@ -65,20 +68,45 @@ function AppRouter() {
       <Route path="/valuechain" component={ValueChainDashboard} />
       <Route path="/lab" component={ThesisLabDashboard} />
       <Route path="/calibration" component={CalibrationPage} />
+      <Route path="/balance-screen" component={BalanceScreenPage} />
       <Route component={NotFound} />
     </Switch>
+  );
+}
+
+function LocaleDock() {
+  const { t } = useLocale();
+  const [onGold, setOnGold] = useState(false);
+  useEffect(() => {
+    const sync = () => setOnGold(window.location.hash.startsWith("#/gold"));
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  if (onGold) return null;
+  return (
+    <div className="fixed bottom-3 left-3 z-40 flex items-center gap-1.5 rounded-md border border-border bg-card/95 px-1.5 py-1 shadow-sm">
+      <LocaleSwitch />
+      <a href="#/balance-screen" className="h-8 px-2 inline-flex items-center text-[11px] rounded-md border border-border/60 hover:bg-muted/50" data-testid="link-balance-screen">
+        {t("nav.balance")}
+      </a>
+    </div>
   );
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <CrossModuleRefreshHost />
       <TooltipProvider>
         <ThemeProvider>
-          <Toaster />
-          <Router hook={useHashLocationWithQuery}>
-            <AppRouter />
-          </Router>
+          <LocaleProvider>
+            <Toaster />
+            <Router hook={useHashLocationWithQuery}>
+              <LocaleDock />
+              <AppRouter />
+            </Router>
+          </LocaleProvider>
         </ThemeProvider>
       </TooltipProvider>
     </QueryClientProvider>

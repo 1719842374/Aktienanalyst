@@ -22,9 +22,9 @@
  * Additiv: Diese Datei ist komplett neu und aendert keine bestehende Datei.
  * Der einzige Call-Site-Eingriff erfolgt minimal-invasiv in analyze-route.ts.
  */
-import { stooqListing, yahooBarsToMajor } from "../shared/listing-units";
+import { minorUnitInfo, stooqListing, yahooBarsToMajor } from "../shared/listing-units";
 
-export type HistoryProvider = "fmp" | "yahoo" | "stooq";
+export type HistoryProvider = "fmp" | "yahoo" | "stooq" | "nasdaq" | "onvista";
 
 export interface DailyBar {
   date: string; // YYYY-MM-DD
@@ -97,11 +97,16 @@ function utcUnixDay(iso: string): number {
 }
 
 export async function yahooFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
+  return (await yahooChart(symbol, from, to)).bars;
+}
+
+/** Yahoo bars in the major unit plus that major currency (GBp → GBP). */
+export async function yahooChart(symbol: string, from: string, to: string): Promise<{ bars: DailyBar[]; currency: string | null }> {
   const period1 = utcUnixDay(from);
   const end = new Date(`${to}T00:00:00Z`);
   end.setUTCDate(end.getUTCDate() + 1);
   const period2 = Math.floor(end.getTime() / 1000);
-  if (!isFinite(period1) || !isFinite(period2) || period1 >= period2) return [];
+  if (!isFinite(period1) || !isFinite(period2) || period1 >= period2) return { bars: [], currency: null };
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(15000),
@@ -140,7 +145,11 @@ export async function yahooFetch(symbol: string, from: string, to: string): Prom
     });
   }
   // LSE etc. quote in pence (meta.currency "GBp"); FMP bars are normalised to pounds upstream.
-  return yahooBarsToMajor(bars, result.meta?.currency);
+  const metaCurrency = typeof result.meta?.currency === "string" ? result.meta.currency : null;
+  return {
+    bars: yahooBarsToMajor(bars, metaCurrency),
+    currency: minorUnitInfo(metaCurrency)?.major ?? metaCurrency,
+  };
 }
 
 /**
@@ -201,6 +210,260 @@ export function altSeamUnitMismatch(fmpBars: DailyBar[], alt: DailyBar[]): boole
 }
 
 /**
+ * Keep the newest run whose day-to-day closes stay within the seam factor.
+ * A jump above 2× or below 0.5× is a unit break, not a trading day, so the
+ * older prefix is dropped instead of feeding the moving averages a cliff.
+ */
+export function contiguousSameScale(bars: DailyBar[]): DailyBar[] {
+  const sorted = bars.filter((b) => b.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  let start = 0;
+  for (let i = sorted.length - 1; i > 0; i--) {
+    const ratio = sorted[i - 1].close / sorted[i].close;
+    if (ratio > 2 || ratio < 0.5) {
+      start = i;
+      break;
+    }
+  }
+  return sorted.slice(start);
+}
+
+function sameClose(a: number, b: number): boolean {
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1);
+  return Math.abs(a - b) <= scale * 1e-6;
+}
+
+/**
+ * A vendor day with no volume and no high-low range that repeats the previous
+ * close is a carried last sale, not a session. Keeping it draws a staircase
+ * and lets that stale quote count as many days in the moving averages.
+ * A print with volume, a range, or a new close stays. Nothing is interpolated.
+ */
+export function tradedSessions(bars: DailyBar[]): DailyBar[] {
+  const sorted = bars.filter((b) => b.close > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const kept: DailyBar[] = [];
+  for (const bar of sorted) {
+    const prev = kept[kept.length - 1];
+    const flat = sameClose(bar.open, bar.close) && sameClose(bar.high, bar.close) && sameClose(bar.low, bar.close);
+    const repeat = prev != null && sameClose(bar.close, prev.close);
+    if (prev && !(bar.volume > 0) && flat && repeat) continue;
+    kept.push(bar);
+  }
+  return kept;
+}
+
+/** Nasdaq public daily history. US symbols only; dotted listings stay on Yahoo/Stooq. */
+export async function nasdaqFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
+  const sym = symbol.trim().toUpperCase();
+  if (sym.includes(".") || !/^[A-Z][A-Z0-9-]{0,9}$/.test(sym)) return [];
+  const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(sym)}/historical?assetclass=stocks&fromdate=${from}&todate=${to}&limit=10000`;
+  const resp = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      "Accept": "application/json",
+    },
+  });
+  if (!resp.ok) throw new Error(`Nasdaq historical HTTP ${resp.status}`);
+  const json: any = await resp.json();
+  const rows: any[] = json?.data?.tradesTable?.rows ?? [];
+  const bars: DailyBar[] = [];
+  for (const row of rows) {
+    const rawDate = String(row?.date ?? "");
+    const parts = rawDate.split("/");
+    if (parts.length !== 3) continue;
+    const [month, day, year] = parts;
+    const date = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    if (date < from || date > to) continue;
+    const close = Number(String(row?.close ?? "").replace(/[$,]/g, ""));
+    if (!isFinite(close) || close <= 0) continue;
+    const num = (value: unknown, fallback: number) => {
+      const parsed = Number(String(value ?? "").replace(/[$,]/g, ""));
+      return isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+    const volume = Number(String(row?.volume ?? "").replace(/[,]/g, ""));
+    bars.push({
+      date,
+      open: num(row?.open, close),
+      high: num(row?.high, close),
+      low: num(row?.low, close),
+      close,
+      volume: isFinite(volume) && volume > 0 ? volume : 0,
+      source: "nasdaq",
+    });
+  }
+  return bars.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** OTC venues also quote on weekends; those days are not exchange sessions. */
+function isWeekday(iso: string): boolean {
+  const day = new Date(`${iso}T00:00:00Z`).getUTCDay();
+  return day !== 0 && day !== 6;
+}
+
+/** One trading venue of the same security, in that venue's currency. */
+export interface VenueSeries {
+  venue: string;
+  currency: string | null;
+  bars: DailyBar[];
+}
+
+/** Venue closes must match the primary listing on shared days before they may fill its gap. */
+export const VENUE_MIN_OVERLAP_DAYS = 20;
+export const VENUE_MAX_MEDIAN_DEVIATION = 0.05;
+
+const ONVISTA_API = "https://api.onvista.de/api/v1";
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+async function getJson(url: string, timeoutMs = 15000): Promise<any> {
+  const resp = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { "User-Agent": BROWSER_UA, "Accept": "application/json" },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+/**
+ * Daily history of the same security on its other venues (onvista, keyed by
+ * the instrument whose home symbol is the ticker). A depositary receipt or a
+ * share that moved its primary listing keeps trading elsewhere before the
+ * current listing's first day.
+ */
+export async function onvistaVenues(symbol: string, from: string, to: string): Promise<VenueSeries[]> {
+  const home = symbol.trim().toUpperCase().split(".")[0];
+  if (!home) return [];
+  const search = await getJson(`${ONVISTA_API}/instruments/search?searchValue=${encodeURIComponent(home)}`);
+  const hit = (search?.list ?? []).find((it: any) =>
+    it?.entityType === "STOCK" && String(it?.homeSymbol ?? "").toUpperCase() === home);
+  if (!hit?.entityValue) return [];
+  const base = `${ONVISTA_API}/instruments/STOCK/${encodeURIComponent(hit.entityValue)}`;
+  const quotes = await getJson(`${base}/quotes`);
+  const markets: { id: number; name: string; currency: string | null }[] = (quotes?.list ?? [])
+    .map((q: any) => ({ id: Number(q?.market?.idNotation), name: String(q?.market?.name ?? ""), currency: q?.isoCurrency ?? null }))
+    .filter((m: { id: number }) => Number.isFinite(m.id));
+  const series = await Promise.all(markets.map(async (m): Promise<VenueSeries | null> => {
+    try {
+      const eod = await getJson(`${base}/eod_history?idNotation=${m.id}&range=MAX&startDate=${from}&perPage=5000`, 20000);
+      const times: number[] = eod?.datetimeLast ?? [];
+      const bars: DailyBar[] = [];
+      for (let i = 0; i < times.length; i++) {
+        const close = Number(eod.last?.[i]);
+        if (!Number.isFinite(close) || close <= 0) continue;
+        const date = new Date(times[i] * 1000).toISOString().slice(0, 10);
+        if (date < from || date > to) continue;
+        const num = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : close);
+        const volume = Number(eod.volume?.[i]);
+        bars.push({
+          date,
+          open: num(eod.first?.[i]),
+          high: num(eod.high?.[i]),
+          low: num(eod.low?.[i]),
+          close,
+          volume: Number.isFinite(volume) && volume > 0 ? volume : 0,
+          source: "onvista",
+        });
+      }
+      const currency = eod?.isoCurrency ?? m.currency;
+      return { venue: m.name, currency: minorUnitInfo(currency)?.major ?? currency, bars: yahooBarsToMajor(bars, currency) };
+    } catch {
+      return null;
+    }
+  }));
+  return series.filter((s): s is VenueSeries => s != null && s.bars.length > 0);
+}
+
+/** Daily FX closes (quote currency per unit of base) from Yahoo, e.g. EURUSD=X. */
+export async function yahooFxCloses(base: string, quote: string, from: string, to: string): Promise<Map<string, number>> {
+  const { bars } = await yahooChart(`${base}${quote}=X`, from, to);
+  return new Map(bars.filter((b) => b.close > 0).map((b) => [b.date, b.close]));
+}
+
+function rateOn(rates: Map<string, number>, sortedDates: string[], date: string): number | null {
+  let lo = 0, hi = sortedDates.length - 1, hitIdx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedDates[mid] <= date) { hitIdx = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  const key = sortedDates[hitIdx >= 0 ? hitIdx : 0];
+  return key != null ? rates.get(key) ?? null : null;
+}
+
+/** Venue bars converted to the listing currency with that day's (or the previous) FX close. */
+export function convertVenueBars(series: VenueSeries, target: string, fx: Map<string, number> | null): DailyBar[] | null {
+  if (!series.currency || series.currency === target) return series.bars;
+  if (!fx || fx.size === 0) return null;
+  const dates = Array.from(fx.keys()).sort();
+  const out: DailyBar[] = [];
+  for (const b of series.bars) {
+    const r = rateOn(fx, dates, b.date);
+    if (r == null || !(r > 0)) continue;
+    out.push({ ...b, open: b.open * r, high: b.high * r, low: b.low * r, close: b.close * r });
+  }
+  return out;
+}
+
+/**
+ * Pick the venue that fills the days before the primary listing's first bar.
+ * Only venues whose closes match the primary listing on shared days qualify;
+ * among those, the one with the most traded sessions in the gap wins.
+ */
+export function venueBackfill(
+  primary: DailyBar[],
+  converted: { venue: string; bars: DailyBar[] }[],
+): { venue: string; bars: DailyBar[]; medianDeviation: number } | null {
+  const first = primary[0]?.date;
+  if (!first) return null;
+  const byDate = new Map(primary.map((b) => [b.date, b.close]));
+  let best: { venue: string; bars: DailyBar[]; medianDeviation: number } | null = null;
+  for (const c of converted) {
+    const devs: number[] = [];
+    for (const b of c.bars) {
+      const p = byDate.get(b.date);
+      if (p != null && p > 0) devs.push(Math.abs(b.close / p - 1));
+    }
+    if (devs.length < VENUE_MIN_OVERLAP_DAYS) continue;
+    devs.sort((a, b) => a - b);
+    const medianDeviation = devs[Math.floor(devs.length / 2)];
+    if (medianDeviation > VENUE_MAX_MEDIAN_DEVIATION) continue;
+    const gap = tradedSessions(c.bars.filter((b) => b.date < first && isWeekday(b.date)));
+    if (gap.length === 0) continue;
+    if (!best || gap.length > best.bars.length) best = { venue: c.venue, bars: gap, medianDeviation };
+  }
+  return best;
+}
+
+async function venueGapFill(symbol: string, from: string, primary: DailyBar[], currency: string | null): Promise<DailyBar[]> {
+  const to = new Date().toISOString().slice(0, 10);
+  // Callers often ask only up to FMP's first bar; the overlap check needs the listing after that.
+  if (primary.length < VENUE_MIN_OVERLAP_DAYS) {
+    const full = await yahooChart(symbol, from, to);
+    primary = full.bars;
+    currency = full.currency ?? currency;
+  }
+  if (!primary.length || !currency) return [];
+  const venues = await onvistaVenues(symbol, from, to);
+  const fxCache = new Map<string, Map<string, number> | null>();
+  const converted: { venue: string; bars: DailyBar[] }[] = [];
+  for (const v of venues) {
+    let fx: Map<string, number> | null = null;
+    if (v.currency && v.currency !== currency) {
+      if (!fxCache.has(v.currency)) {
+        try { fxCache.set(v.currency, await yahooFxCloses(v.currency, currency, from, to)); }
+        catch { fxCache.set(v.currency, null); }
+      }
+      fx = fxCache.get(v.currency) ?? null;
+    }
+    const bars = convertVenueBars(v, currency, fx);
+    if (bars?.length) converted.push({ venue: v.venue, bars });
+  }
+  const pick = venueBackfill(primary, converted);
+  if (pick) {
+    console.log(`[HISTORY-FALLBACK] ${symbol}: ${pick.bars.length} Handelstage vor ${primary[0].date} von ${pick.venue} (Abweichung Median ${(pick.medianDeviation * 100).toFixed(1)} %)`);
+  }
+  return pick?.bars ?? [];
+}
+
+/**
  * 1) FMP full historical from..to
  * 2) Wenn rawEarliest zu jung fuer tf -> Alternative nachladen
  * 3) Merge nach date (Alternative fuellt Luecken / verlaengert links)
@@ -230,17 +493,21 @@ export async function fetchDailyHistory(opts: {
   let truncated = !gotFrom || gotFrom > visibleFrom;
   const wantsEarlier = !gotFrom || gotFrom > from;
   let source = "fmp";
+  let altOldest: string | undefined;
 
   if ((truncated || wantsEarlier) && opts.altFetch) {
     try {
-      const alt = await opts.altFetch(from, gotFrom ?? to);
+      const alt = contiguousSameScale(await opts.altFetch(from, gotFrom ?? to));
       if (alt.length > 0 && altSeamUnitMismatch(bars, alt)) {
         console.warn(`[HISTORY-FALLBACK] ${opts.symbol}: Alt-Provider-Einheit passt nicht zu FMP (Sprung an der Nahtstelle) -- verworfen`);
       } else if (alt.length > 0) {
+        altOldest = alt[0].date;
         const byDate = new Map(bars.map((b) => [b.date, b]));
         for (const a of alt) if (!byDate.has(a.date)) byDate.set(a.date, a);
         bars = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
-        source = "fmp+alt";
+        source = alt.some((a) => a.source === "onvista")
+          ? "fmp+onvista"
+          : alt.some((a) => a.source === "nasdaq") ? "fmp+nasdaq" : "fmp+alt";
       }
     } catch (err) {
       // Alt-Provider fehlgeschlagen (z.B. Rate-Limit) -> ehrlich truncated
@@ -249,8 +516,13 @@ export async function fetchDailyHistory(opts: {
       console.warn(`[HISTORY-FALLBACK] altFetch fehlgeschlagen fuer ${opts.symbol}: ${(err as Error)?.message ?? err}`);
     }
     truncated = !bars[0] || bars[0].date > visibleFrom;
+    // Older same-scale bars from the alt provider are the listing's real start.
+    // That series is complete even when it begins after the 10Y window.
+    const extended = Boolean(altOldest && gotFrom && bars[0] && bars[0].date < gotFrom && bars[0].date <= altOldest);
+    if (truncated && extended) truncated = false;
   }
 
+  bars = tradedSessions(bars);
   return { bars, source, truncated };
 }
 
@@ -261,12 +533,35 @@ export async function fetchDailyHistory(opts: {
  * an der Call-Site duplizieren zu muessen.
  */
 export async function altFetchYahooThenStooq(symbol: string, from: string, to: string): Promise<DailyBar[]> {
+  let yahoo: DailyBar[] = [];
+  let currency: string | null = null;
   try {
-    const bars = await yahooFetch(symbol, from, to);
-    if (bars.length > 0) return bars;
+    ({ bars: yahoo, currency } = await yahooChart(symbol, from, to));
   } catch (err) {
     console.warn(`[HISTORY-FALLBACK] Yahoo fehlgeschlagen fuer ${symbol}: ${(err as Error)?.message ?? err}`);
   }
+  const yahooFrom = yahoo[0]?.date;
+  let older: DailyBar[] = [];
+  if (!yahooFrom || yahooFrom > from) {
+    try {
+      older = (await venueGapFill(symbol, from, yahoo, currency)).filter((b) => b.date <= to);
+    } catch (err) {
+      console.warn(`[HISTORY-FALLBACK] Handelsplätze fehlgeschlagen fuer ${symbol}: ${(err as Error)?.message ?? err}`);
+    }
+    // Nasdaq last-sale prints only when no venue traded the security daily.
+    if (older.length === 0) {
+      try {
+        older = await nasdaqFetch(symbol, from, to);
+      } catch (err) {
+        console.warn(`[HISTORY-FALLBACK] Nasdaq fehlgeschlagen fuer ${symbol}: ${(err as Error)?.message ?? err}`);
+      }
+    }
+  }
+  const merged = new Map<string, DailyBar>();
+  for (const bar of older) merged.set(bar.date, bar);
+  for (const bar of yahoo) merged.set(bar.date, bar);
+  const combined = tradedSessions(contiguousSameScale(Array.from(merged.values())));
+  if (combined.length > 0) return combined;
   try {
     return await stooqFetch(symbol, from, to);
   } catch (err) {

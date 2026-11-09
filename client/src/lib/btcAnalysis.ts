@@ -1,8 +1,12 @@
-// Client-side BTC analysis — runs entirely in the browser using fetch().
-// Uses Blockchain.com API for full historical BTC prices (10+ years),
-// CoinGecko simple/price for current price data, and alternative.me for F&G.
+// Client-side BTC analysis. Die Tages-Spot-Historie kommt von
+// GET /api/analyze-btc/spot-history (server/btc-spot.ts, blockchain.info
+// market-price timespan=all sampled=false). CoinGecko simple/price nur für
+// den aktuellen Kurs. Ein Abbruch der Historie bleibt sichtbar und wird
+// nicht durch eine kürzere Reihe ersetzt.
 
 import { apiRequest } from "./queryClient";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL, normalizeBtcVolumeBars } from "@shared/btc-spot";
+import { detectBtcChartSignals } from "@shared/btc-signals";
 import {
   applyBtcLiquidityBlock,
   walclByDate,
@@ -102,6 +106,11 @@ export interface BTCAnalysis {
   gisCalculation: string;
   /** Liquiditätsblock (WALCL/Bills/DGS10). null = Endpoint nicht erreichbar → GIS ohne Block. */
   liquidity?: BtcLiquidityBlock | null;
+  /**
+   * Wochenwerte der Fed-Bilanz für die QE/QT-Bänder. Dieselbe FRED-Reihe WALCL
+   * wie der Gold-Chart, hier aus GET /api/analyze-btc/liquidity. Kein Score.
+   */
+  walclOverlay?: { source: string; sourceUrl: string | null; points: { date: string; valueTn: number }[] } | null;
   powerLaw: {
     daysSinceGenesis: number;
     fairValue: number;
@@ -151,6 +160,11 @@ export interface BTCAnalysis {
   };
   technicalChart: TechChartPoint[];
   technicalChartFull: TechChartPoint[];
+  /** Sichtbare Spot-Quelle. Steht auch, wenn die Reihe leer ist. */
+  spotSource?: string | null;
+  spotSourceUrl?: string | null;
+  /** Gesetz, wenn die Tageshistorie abbricht. Die Kursreihe bleibt dann leer. */
+  spotHistoryError?: string | null;
   technicalSignals: TechSignal[];
   bullConditions: {
     priceAboveMA200: boolean;
@@ -221,6 +235,43 @@ function filterByYears(data: { date: string; price: number }[], years: number) {
   cutoff.setFullYear(cutoff.getFullYear() - years);
   const cutoffStr = cutoff.toISOString().split("T")[0];
   return data.filter(d => d.date >= cutoffStr);
+}
+
+async function fetchSpotHistory(): Promise<{
+  points: { date: string; price: number; volume: number }[];
+  source: string;
+  sourceUrl: string;
+  error: string | null;
+}> {
+  const empty = {
+    points: [] as { date: string; price: number; volume: number }[],
+    source: BTC_SPOT_SOURCE_LABEL,
+    sourceUrl: BTC_SPOT_SOURCE_URL,
+    error: `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`,
+  };
+  try {
+    const res = await apiRequest("GET", "/api/analyze-btc/spot-history", undefined, 60000);
+    const body = await res.json().catch(() => ({} as { error?: unknown; source?: unknown; sourceUrl?: unknown; points?: unknown }));
+    const source = typeof body?.source === "string" ? body.source : BTC_SPOT_SOURCE_LABEL;
+    const sourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl : BTC_SPOT_SOURCE_URL;
+    if (!res.ok || !Array.isArray(body?.points)) {
+      const detail = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
+      return { points: [], source, sourceUrl, error: detail };
+    }
+    const points = (body.points as { date?: unknown; price?: unknown; volume?: unknown }[])
+      .filter((point): point is { date: string; price: number; volume?: number } =>
+        !!point && typeof point.date === "string" && typeof point.price === "number" && point.price > 0)
+      .map((point) => ({
+        date: point.date,
+        price: point.price,
+        volume: typeof point.volume === "number" && Number.isFinite(point.volume) && point.volume >= 0 ? point.volume : 0,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { points, source, sourceUrl, error: null };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "BTC-Spot-Historie nicht verfügbar";
+    return { ...empty, error: `Abruf abgebrochen: ${message}. Quelle: ${BTC_SPOT_SOURCE_LABEL}` };
+  }
 }
 
 async function fetchJSON(url: string, timeoutMs = 30000): Promise<any> {
@@ -410,10 +461,9 @@ async function fetchETFFlows(): Promise<{ totalFlow: number; days: number; daily
 
 export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // force=true: bypass any in-memory caching (external APIs called fresh regardless)
-  // Strategy: Fetch non-CoinGecko APIs in parallel first, then CoinGecko simple/price,
-  // then Blockchain.com for full history.
+  // Spot-Historie: GET /api/analyze-btc/spot-history, parallel zu den übrigen Quellen.
 
-  // === 1. Parallel fetch: F&G, F&G History, FRED, Blockchain.com, DXY, Hashrate (all non-CoinGecko) ===
+  // === 1. Parallel fetch: F&G, F&G History, FRED, DXY, Hashrate, Spot-Historie ===
   let fearGreedIndex = 50, fearGreedLabel = "Neutral";
   let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
   let fedFundsRate = 3.64; // Updated default: Feb 2026 FRED FEDFUNDS
@@ -421,16 +471,16 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   let hashrateChange = 0; // percent change over 90 days
   let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult, liquidityResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult, liquidityResult, spotResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
-    fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
     fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
     fetchETFFlows(),
     fetchJSON("/api/analyze-btc/fiscal-frontend", 45000),
     fetchBtcLiquidity(),
+    fetchSpotHistory(),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -498,72 +548,17 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     else etfFlowScore = -1;                       // strong outflows
   }
 
-  // === 1b. Fetch Binance OHLCV für Volume-Daten (2 Calls für ~5Y Coverage) ===
-  // Binance: max 1000 Klines pro Call = ~2.7 Jahre. Zwei Calls ergänzen = ~5.4 Jahre.
-  let binanceVolumeMap = new Map<string, number>(); // date → USDT-Volume
-  try {
-    const now = Date.now();
-    const dayMs = 86400000;
-    // Call 1: neueste 1000 Tage
-    // Call 2: 1000 Tage davor (startTime = vor 2000 Tagen, endTime = vor 1000 Tagen)
-    const endTime1 = now;
-    const startTime2 = now - 2000 * dayMs;
-    const endTime2 = now - 1000 * dayMs;
-
-    const [raw1, raw2] = await Promise.allSettled([
-      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime1}`, 20000),
-      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime2}`, 20000),
-    ]);
-
-    for (const result of [raw1, raw2]) {
-      if (result.status !== "fulfilled" || !Array.isArray(result.value)) continue;
-      for (const k of result.value as any[][]) {
-        const date = new Date(k[0]).toISOString().split("T")[0];
-        const closePrice = parseFloat(k[4]);
-        // k[7] = quote asset volume (USDT) — zuverlässigeres Volume als k[5] (BTC)
-        const quoteVol = parseFloat(k.length > 7 ? String(k[7]) : String(k[5]));
-        if (closePrice > 0 && quoteVol > 0) binanceVolumeMap.set(date, quoteVol);
-      }
-    }
-    console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage (~${Math.round(binanceVolumeMap.size/365*10)/10} Jahre)`);
-  } catch {
-    // Binance nicht verfügbar — kein Volume, aber kein Crash
-  }
-
-  // === 2. Parse Blockchain.com historical data ===
-  let allPriceData: { date: string; price: number }[] = [];
-
-  if (blockchainResult.status === "fulfilled" && blockchainResult.value?.values) {
-    const dayMap = new Map<string, number>();
-    for (const point of blockchainResult.value.values as { x: number; y: number }[]) {
-      const d = new Date(point.x * 1000).toISOString().split("T")[0];
-      dayMap.set(d, point.y);
-    }
-    allPriceData = Array.from(dayMap.entries())
-      .map(([date, price]) => ({ date, price }))
-      .filter(d => d.price > 0);
-  }
-
-  // Fallback: CoinGecko market_chart if Blockchain.com failed
-  if (allPriceData.length === 0) {
-    try {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
-      const parsed = await fetchJSON(
-        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fiveYearsAgo}&to=${nowSec}`,
-        60000
-      );
-      if (parsed?.prices && Array.isArray(parsed.prices)) {
-        const dayMap = new Map<string, number>();
-        for (const p of parsed.prices as [number, number][]) {
-          const d = new Date(p[0]).toISOString().split("T")[0];
-          dayMap.set(d, p[1]);
-        }
-        allPriceData = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
-      }
-    } catch {
-      // swallow
-    }
+  // === 2. Spot-Historie vom Server. Kein stiller Kurz-Fallback. ===
+  // Volumen hängt an jedem Kurstag (On-Chain-USD, volle Historie).
+  let allPriceData: { date: string; price: number; volume: number }[] = [];
+  let spotSource: string | null = BTC_SPOT_SOURCE_LABEL;
+  let spotSourceUrl: string | null = BTC_SPOT_SOURCE_URL;
+  let spotHistoryError: string | null = `Abruf abgebrochen. Quelle: ${BTC_SPOT_SOURCE_LABEL}`;
+  if (spotResult.status === "fulfilled") {
+    allPriceData = spotResult.value.points;
+    spotSource = spotResult.value.source;
+    spotSourceUrl = spotResult.value.sourceUrl;
+    spotHistoryError = spotResult.value.error;
   }
 
   allPriceData.sort((a, b) => a.date.localeCompare(b.date));
@@ -600,12 +595,10 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     const today = new Date().toISOString().split("T")[0];
     const lastDate = allPriceData[allPriceData.length - 1].date;
     if (lastDate < today) {
-      allPriceData.push({ date: today, price: btcPrice });
+      allPriceData.push({ date: today, price: btcPrice, volume: 0 });
     } else if (lastDate === today) {
       allPriceData[allPriceData.length - 1].price = btcPrice;
     }
-  } else if (allPriceData.length === 0 && btcPrice > 0) {
-    allPriceData = [{ date: new Date().toISOString().split("T")[0], price: btcPrice }];
   }
 
   // Slice into timeframes
@@ -974,21 +967,21 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     return m - s;
   });
 
-  // Volume-Normalisierung für Overlay (0–1, aus Binance-Daten)
-  const allVolumes = allPriceData.map(d => binanceVolumeMap.get(d.date) ?? 0);
-  const maxVol = Math.max(...allVolumes.filter(v => v > 0), 1);
+  // Balkenhöhe logarithmisch, sonst verschluckt das Maximum die Jahre vor 2017.
+  const allVolumes = allPriceData.map(d => d.volume ?? 0);
+  const volNorms = normalizeBtcVolumeBars(allVolumes);
 
   // RSI(14) für alle Preise
   const rsi14All = calcRSI14(closePrices);
 
   // Build enhanced technical chart data
   const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => {
-    const vol = binanceVolumeMap.get(d.date) ?? 0;
+    const vol = d.volume ?? 0;
     return {
       date: d.date,
       price: d.price,
       volume: vol,
-      _volNorm: vol > 0 ? vol / maxVol : 0,
+      _volNorm: volNorms[i] ?? 0,
       _volUp: i === 0 ? true : d.price >= allPriceData[i - 1].price,
       ma20: ma20[i],
       ma50: ma50[i],
@@ -1015,60 +1008,8 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     };
   });
 
-  // === 12. Signal Detection ===
-  const signals: TechSignal[] = [];
-
-  for (let i = 1; i < technicalChartData.length; i++) {
-    const prev = technicalChartData[i - 1];
-    const curr = technicalChartData[i];
-
-    // Golden Cross: MA50 crosses above MA200
-    if (prev.ma50 !== null && prev.ma200 !== null && curr.ma50 !== null && curr.ma200 !== null) {
-      if (prev.ma50 <= prev.ma200 && curr.ma50 > curr.ma200) {
-        signals.push({ date: curr.date, type: "BUY", reason: "Golden Cross (MA50 > MA200)", price: curr.price });
-      }
-      if (prev.ma50 >= prev.ma200 && curr.ma50 < curr.ma200) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Death Cross (MA50 < MA200)", price: curr.price });
-      }
-    }
-
-    // MACD Bullish/Bearish Crossover
-    if (prev.macd !== null && prev.signal !== null && curr.macd !== null && curr.signal !== null) {
-      if (prev.macd <= prev.signal && curr.macd > curr.signal) {
-        signals.push({ date: curr.date, type: "BUY", reason: "MACD Bullish Crossover", price: curr.price });
-      }
-      if (prev.macd >= prev.signal && curr.macd < curr.signal) {
-        signals.push({ date: curr.date, type: "SELL", reason: "MACD Bearish Crossover", price: curr.price });
-      }
-    }
-
-    // MACD crosses zero line
-    if (prev.macd !== null && curr.macd !== null) {
-      if (prev.macd <= 0 && curr.macd > 0) {
-        signals.push({ date: curr.date, type: "BUY", reason: "MACD über Nulllinie", price: curr.price });
-      }
-      if (prev.macd >= 0 && curr.macd < 0) {
-        signals.push({ date: curr.date, type: "SELL", reason: "MACD unter Nulllinie", price: curr.price });
-      }
-    }
-
-    // Pi Cycle Top: MA111 crosses above MA350×2
-    if (prev.ma111 !== null && prev.ma350x2 !== null && curr.ma111 !== null && curr.ma350x2 !== null) {
-      if (prev.ma111 <= prev.ma350x2 && curr.ma111 > curr.ma350x2) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Pi Cycle Top", price: curr.price });
-      }
-    }
-
-    // 2-Year MA crossover
-    if (prev.ma730 !== null && curr.ma730 !== null) {
-      if (prev.price >= prev.ma730 && curr.price < curr.ma730) {
-        signals.push({ date: curr.date, type: "SELL", reason: "Unter 2-Year MA", price: curr.price });
-      }
-      if (prev.price <= prev.ma730 && curr.price > curr.ma730) {
-        signals.push({ date: curr.date, type: "BUY", reason: "Über 2-Year MA", price: curr.price });
-      }
-    }
-  }
+  // === 12. Signal Detection über die ganze Kursreihe, ohne Zuschnitt ===
+  const signals: TechSignal[] = detectBtcChartSignals(technicalChartData);
 
   // Current technical status
   const lastTech = technicalChartData.length > 0 ? technicalChartData[technicalChartData.length - 1] : null;
@@ -1150,6 +1091,13 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     gis,
     gisCalculation,
     liquidity: liquidityBlock,
+    walclOverlay: liquidity?.walcl?.length
+      ? {
+          source: "FRED WALCL (H.4.1)",
+          sourceUrl: liquidity.sources?.walcl ?? null,
+          points: liquidity.walcl,
+        }
+      : null,
 
     powerLaw: {
       daysSinceGenesis,
@@ -1209,7 +1157,10 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
 
     technicalChart: technicalChartData.slice(-365 * 5),
     technicalChartFull: technicalChartData,
-    technicalSignals: signals.slice(-100),
+    spotSource,
+    spotSourceUrl,
+    spotHistoryError,
+    technicalSignals: signals,
     bullConditions,
     isBull,
     currentMA20: lastTech?.ma20 ?? null,

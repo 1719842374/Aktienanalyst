@@ -39,6 +39,8 @@ const TITLE: Record<string, RegExp> = {
   untergruppen: /Score-Übersicht/, prozent: /Prozentschätzungen/, regionen: /Regionale Kataloge/, rsi: /RSI/, markt: /Märkte|Markt/,
   ta: /Technische Analyse/, buffett: /Buffett/, summary: /Zusammenfassung/, fazit: /Fazit/, quellen: /Quellenliste/,
   lager: /Lager\/Nachfrage/,
+  makroSchicht: /Makro-Schicht/,
+  gewinn: /Gewinnwachstum/,
 };
 
 let n = 0, fail = 0;
@@ -66,11 +68,16 @@ for (const hasRegions of [false, true]) for (const hasFazit of [false, true]) {
     .map(l => `S${l.id} ${l.key}≠„${rendered.find(x => x.id === l.id)?.title ?? "fehlt"}“`);
   check(`${tag}: jede Layout-Nummer zeigt in der UI auf die passende Sektion`, mism.length === 0, mism.join("; "));
   const keys = layout.map(l => l.key);
+  const at = (k: string) => rendered.find(r => TITLE[k].test(r.title))?.id;
   if (hasRegions && hasFazit) {
-    const at = (k: string) => rendered.find(r => TITLE[k].test(r.title))?.id;
     check(`${tag}: gerendert TA 11, Buffett 12, Quellen 15`, at("ta") === 11 && at("buffett") === 12 && at("quellen") === 15, `TA ${at("ta")} Buffett ${at("buffett")} Quellen ${at("quellen")}`);
+    check(`${tag}: gewinn 18 nach makroSchicht 17`, at("makroSchicht") === 17 && at("gewinn") === 18, `makro ${at("makroSchicht")} gewinn ${at("gewinn")}`);
+  }
+  if (!hasRegions && !hasFazit) {
+    check(`${tag}: gewinn 16 nach makroSchicht 15`, at("makroSchicht") === 15 && at("gewinn") === 16, `makro ${at("makroSchicht")} gewinn ${at("gewinn")}`);
   }
   check(`${tag}: TA direkt nach Marktcharts, vor Buffett`, keys.indexOf("ta") === keys.indexOf("markt") + 1 && keys.indexOf("buffett") === keys.indexOf("ta") + 1);
+  check(`${tag}: Gewinnwachstum direkt nach Makro-Schicht`, keys.indexOf("gewinn") === keys.indexOf("makroSchicht") + 1 && keys.indexOf("makroSchicht") === keys.indexOf("lager") + 1);
 }
 const { InventoryDemandGapCard } = await import("../client/src/components/recession/InventoryDemandGapCard");
 const sources = { isratio: "FRED ISRATIO" as const, orders: "FRED DGORDER" as const, shipments: "FRED AMDMVS" as const };

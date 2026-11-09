@@ -77,3 +77,19 @@
 
 **Kurz:**  
 Earnings Yield und ROIC 5Y als Dual-Axis-Plots in Sektion 12. Peer-Ticker können als Kurs oder ROIC eingeblendet werden. Aufwand ~17–24 h.
+
+---
+
+## Soll-Ist 2026-11-02 — Peer-Dividende und Tooltip des Haupttitels
+
+Die Abschnitte oben bleiben der Plan vom 26.10. Peer-Preis ist `GET /api/chart/peer-price/:symbol?from&to` (#423). Negatives EPS bleibt sichtbar (#434).
+
+| | Ist vorher | Soll | Stand |
+| --- | --- | --- | --- |
+| Tooltip MSFT, Peer ORCL, 04.05.2023, Kegel aus | EY und ROIC des Haupttitels `n/a — kein Wert`, Peer-ROIC hat einen Wert. Abruf nur bei eingeschaltetem Chip (`showEy` / `showRoic`), der Tooltip zeigt die Zeile trotzdem. | EY = TTM-EPS des letzten Filings vor dem Tag / Kurs. ROIC = letzter berichteter Wert. Leer nur mit konkretem Grund. | `fundActive` lädt beide Serien, sobald der Peer an ist. `earningsYieldKnown` / `roicKnown` füllen den Tooltip. Die Linie bleibt am Chip. Ohne FMP-Key hat Yahoo vor dem 04.05.2023 kein EPS und keinen ROIC (MSFT-Jahresfiling 30.06.2023, EPS 9.68). Der Tooltip nennt dann den Warmup-Grund. Ab dem Filing steht das Jahres-EPS. |
+| Richtung ORCL Haupttitel, MSFT Peer | dieselbe Lücke | dieselbe Regel | dieselbe Join-Funktion, beide Richtungen im Test |
+| Peer Div. Yield | keine zweite Linie | Overlay Div. Yield zeigt die Peer-Rendite. Formel `Dividende TTM / Kurs`. Quelle FMP zuerst, Yahoo als Fallback, auch bei `.DE` (dieselbe Route wie auf main). | `GET /api/dividends/:peer` und Peer-Kurs, Linie `_peerDivYield`. Kein Yahoo-zuerst. |
+| Schätzung | — | Badge `Schätzung` plus Quelle und Formel | Badge nur, wenn der Hinweis `Schätzung` enthält. Berichtete Fallbacks bleiben `Fallback:` |
+| Negatives EPS | wird angezeigt | bleibt angezeigt (#434) | keine Untergrenze, Test mit EPS −1 |
+| .DE EY/ROIC | Yahoo zuerst, FMP ergänzt | unverändert, nur Earnings Yield und ROIC | `loadGermanEarningsYield` / `loadGermanRoic`. Die Peer-Dividende bleibt FMP zuerst. |
+| Pins / Score | VOW3 4.735718, SAP 5.174758, MSFT 4.058138, buildBias 5.6381 | unverändert | Overlay-Test prüft die drei Pins. analyze-route, researcher, schema unangetastet |

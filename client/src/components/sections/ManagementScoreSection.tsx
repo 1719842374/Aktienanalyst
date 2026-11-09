@@ -10,6 +10,7 @@
  *              + 0.15·S_Credibility + 0.10·S_QualNews)
  */
 import { useEffect, useState } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -151,6 +152,8 @@ export function ManagementScoreSection({ data, onScore }: Props) {
   const [llmInterpretResult, setLlmInterpretResult] = useState<ManagementScoreInterpretResponse | null>(null);
   const [llmInterpretError, setLlmInterpretError] = useState<string | null>(null);
 
+  useEffect(() => { setLlmInterpretResult(null); setLlmInterpretError(null); }, [data.ticker]);
+
   const run = async (force = false) => {
     setLoading(true);
     setError(null);
@@ -262,6 +265,19 @@ export function ManagementScoreSection({ data, onScore }: Props) {
       setLlmInterpretLoading(false);
     }
   }
+
+  const interp = llmInterpretResult?.interpretation;
+  const kiAntwort = interp
+    ? [
+        interp.gesamteinschaetzung,
+        interp.staerken?.length ? `Stärken: ${interp.staerken.join("; ")}` : "",
+        interp.schwaechen?.length ? `Schwächen: ${interp.schwaechen.join("; ")}` : "",
+        interp.interpretation?.positiv ? `Positiv: ${interp.interpretation.positiv}` : "",
+        interp.interpretation?.kritisch ? `Kritisch: ${interp.interpretation.kritisch}` : "",
+        interp.fazit ? `Fazit: ${interp.fazit}` : "",
+      ].filter(Boolean).join(" | ")
+    : "";
+  usePublishChatSection("stock", "19", kiAntwort ? { kiAntwort } : null);
 
   return (
     <SectionCard number={19} title="MANAGEMENT-EXECUTION-SCORE">

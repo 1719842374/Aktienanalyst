@@ -21,7 +21,11 @@ export interface EarningsMarker {
   kind: EarningsKind | null;
   reason: string | null;
   basis: "revenue" | "eps" | null;
+  revenueActual: number | null;
+  revenueEstimate: number | null;
   revenueSurprisePct: number | null;
+  epsActual: number | null;
+  epsEstimate: number | null;
   epsSurprisePct: number | null;
 }
 
@@ -44,7 +48,13 @@ export function buildEarningsMarkers(rows: readonly EarningsRaw[]): EarningsMark
     const epsSurprisePct = surprisePct(row.epsActual, row.epsEstimate);
     const basis: "revenue" | "eps" | null = revenueSurprisePct != null ? "revenue" : epsSurprisePct != null ? "eps" : null;
     const value = basis === "revenue" ? revenueSurprisePct : basis === "eps" ? epsSurprisePct : null;
-    return { ...row, revenueSurprisePct, epsSurprisePct, basis, value };
+    return {
+      ...row,
+      revenueSurprisePct,
+      epsSurprisePct,
+      basis,
+      value,
+    };
   });
 
   const sample = prepared.map(p => p.value).filter((v): v is number => v != null);
@@ -55,19 +65,28 @@ export function buildEarningsMarkers(rows: readonly EarningsRaw[]): EarningsMark
       const why = p.revenueActual == null && p.epsActual == null
         ? "n/a — weder Umsatz- noch EPS-Ist berichtet"
         : "n/a — Schätzung fehlt oder ist 0, keine Surprise";
-      return { date: p.date, kind: null, reason: why, basis: null, revenueSurprisePct: p.revenueSurprisePct, epsSurprisePct: p.epsSurprisePct };
+      return {
+        date: p.date, kind: null, reason: why, basis: null,
+        revenueActual: p.revenueActual, revenueEstimate: p.revenueEstimate, revenueSurprisePct: p.revenueSurprisePct,
+        epsActual: p.epsActual, epsEstimate: p.epsEstimate, epsSurprisePct: p.epsSurprisePct,
+      };
     }
     if (band == null) {
       return {
         date: p.date, kind: null, basis: p.basis,
         reason: "n/a — weniger als zwei Surprises, kein Inline-Band (Median der Beträge)",
-        revenueSurprisePct: p.revenueSurprisePct, epsSurprisePct: p.epsSurprisePct,
+        revenueActual: p.revenueActual, revenueEstimate: p.revenueEstimate, revenueSurprisePct: p.revenueSurprisePct,
+        epsActual: p.epsActual, epsEstimate: p.epsEstimate, epsSurprisePct: p.epsSurprisePct,
       };
     }
     let kind: EarningsKind = "inline";
     if (p.value > band) kind = "beat";
     else if (p.value < -band) kind = "miss";
-    return { date: p.date, kind, reason: null, basis: p.basis, revenueSurprisePct: p.revenueSurprisePct, epsSurprisePct: p.epsSurprisePct };
+    return {
+      date: p.date, kind, reason: null, basis: p.basis,
+      revenueActual: p.revenueActual, revenueEstimate: p.revenueEstimate, revenueSurprisePct: p.revenueSurprisePct,
+      epsActual: p.epsActual, epsEstimate: p.epsEstimate, epsSurprisePct: p.epsSurprisePct,
+    };
   });
 
   const classified = markers.filter(m => m.kind != null && m.basis === "revenue");
@@ -97,7 +116,16 @@ export function attachEarningsToPoints<T extends { date: string; close: number }
   return points.map(p => {
     const event = byDate.get(p.date);
     if (!event?.kind) return p;
-    return { ...p, _earn: p.close, _earnKind: event.kind, _earnRev: event.revenueSurprisePct, _earnEps: event.epsSurprisePct };
+    return {
+      ...p,
+      _earn: p.close,
+      _earnKind: event.kind,
+      _earnRevActual: event.revenueActual,
+      _earnRevEst: event.revenueEstimate,
+      _earnRev: event.revenueSurprisePct,
+      _earnEps: event.epsSurprisePct,
+      _earnReason: event.reason,
+    };
   });
 }
 

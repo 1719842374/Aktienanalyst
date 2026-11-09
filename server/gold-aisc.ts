@@ -35,6 +35,40 @@ function seriesFrom(parsed: GoldAiscFile, label: string): GoldAiscSeries | null 
  * Ohne Argument: die gebündelte server/data/gold-aisc.json (cwd-unabhängig, einmal geprüft).
  * Mit Pfad: Datei per fs lesen und prüfen (Tests/Werkzeuge), Cache bis zur nächsten Änderung.
  */
+export interface GoldMapOnlyAisc {
+  code: string;
+  quarter: string;
+  aisc: number;
+  metricNote: string;
+  sourceUrl: string;
+  sourceDate: string;
+}
+
+/** Karten-Zusatz. Liegt nicht in values und geht nicht in die NEM/B/AEM-Linie. */
+export function loadGoldMapAiscPoints(): GoldMapOnlyAisc[] {
+  const extra = (bundledGoldAisc as { mapOnly?: unknown }).mapOnly;
+  if (!Array.isArray(extra)) return [];
+  const out: GoldMapOnlyAisc[] = [];
+  for (const row of extra) {
+    if (!row || typeof row !== "object") continue;
+    const point = row as Partial<GoldMapOnlyAisc>;
+    if (typeof point.code !== "string" || !point.code.trim()) continue;
+    if (typeof point.quarter !== "string" || !point.quarter.trim()) continue;
+    if (!(typeof point.aisc === "number" && Number.isFinite(point.aisc) && point.aisc > 0)) continue;
+    if (typeof point.metricNote !== "string" || !point.metricNote.trim()) continue;
+    if (typeof point.sourceUrl !== "string" || !point.sourceUrl.startsWith("https://")) continue;
+    out.push({
+      code: point.code.trim().toUpperCase(),
+      quarter: point.quarter,
+      aisc: point.aisc,
+      metricNote: point.metricNote,
+      sourceUrl: point.sourceUrl,
+      sourceDate: typeof point.sourceDate === "string" ? point.sourceDate : "",
+    });
+  }
+  return out;
+}
+
 export function loadGoldAiscSeries(file?: string): GoldAiscSeries | null {
   if (file === undefined) {
     if (!bundled) bundled = { series: seriesFrom(bundledGoldAisc as GoldAiscFile, GOLD_AISC_FILE) };

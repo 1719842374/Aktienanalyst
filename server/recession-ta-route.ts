@@ -8,8 +8,10 @@ import type { Express, Request, Response } from "express";
 import { fmpHistoricalPrices, isFmpAvailable } from "./fmp";
 import { fetchFredVolSeries, fetchVstoxxVol } from "./recession-markets";
 import { realizedVol20 } from "../shared/recession-market-charts";
+import { loadBuffettOverlay } from "./buffett-route";
 import {
   RECESSION_TA_BOOKS,
+  buffettOverlayFromLoaded,
   diffSeries,
   normalizeBars,
   parseTaRegion,
@@ -127,27 +129,33 @@ export async function buildRecessionTa(region: RecessionTaRegion): Promise<Reces
   };
 }
 
+async function attachBuffett(data: RecessionTaResponse): Promise<RecessionTaResponse> {
+  const overlay = await loadBuffettOverlay(RECESSION_TA_BOOKS[data.region].buffettRegion);
+  return { ...data, buffett: overlay };
+}
+
 export function registerRecessionTaRoute(app: Express) {
   app.get("/api/analyze-recession/ta", async (req: Request, res: Response) => {
     const region = parseTaRegion(req.query.region);
     const hit = cache.get(region);
-    if (hit && Date.now() - hit.ts < TTL_MS) return res.json(hit.data);
     try {
-      const data = await buildRecessionTa(region);
-      // Only pin complete payloads; partial ones retry on the next request.
-      if (data.ohlcv.length > 0 && data.series.every(s => !s.error)) cache.set(region, { ts: Date.now(), data });
-      res.json(data);
+      const base = hit && Date.now() - hit.ts < TTL_MS ? hit.data : await buildRecessionTa(region);
+      if (!hit || Date.now() - hit.ts >= TTL_MS) {
+        if (base.ohlcv.length > 0 && base.series.every(s => !s.error)) cache.set(region, { ts: Date.now(), data: base });
+      }
+      res.json(await attachBuffett(base));
     } catch (err: any) {
       console.error("[RECESSION-TA]", err?.message);
-      // n/a instead of 5xx: the section renders its own empty state.
+      const reason = String(err?.message ?? err).slice(0, 120);
       res.json({
         region,
         label: RECESSION_TA_BOOKS[region].label,
         etf: RECESSION_TA_BOOKS[region].etf,
         ohlcv: [],
         ohlcvSource: null,
-        ohlcvError: String(err?.message ?? err).slice(0, 120),
+        ohlcvError: reason,
         series: [],
+        buffett: buffettOverlayFromLoaded(null, reason),
       } satisfies RecessionTaResponse);
     }
   });

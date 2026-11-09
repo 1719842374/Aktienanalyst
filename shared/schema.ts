@@ -492,6 +492,8 @@ export interface StockAnalysis {
   lynchPEGBasis?: string;   // Erklärung welche Methode verwendet wurde
   evEbitda: number;
   beta5Y: number;
+  /** Aktuelles Beta: letzte 252 Handelstage täglich gegen SPY. Nicht das Mehrjahres-Beta des Profils und nicht der DCF-Input. */
+  betaLive?: number | null;
   fcfTTM: number;
   fcfMargin: number;
   /** A3 (WORK_SECTION4_DATA_BUGS.md §4): false wenn weder freeCashFlow noch
@@ -641,7 +643,7 @@ export interface StockAnalysis {
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
    *  alten Cache-Eintraegen vor diesem Ticket.
    *  'yahoo' = C1 (#252): FMP 402, Historie komplett aus dem Yahoo-Fallback. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'fmp+nasdaq' | 'fmp+onvista' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
@@ -956,6 +958,36 @@ export interface CreditSpreadResponse {
   note: string | null;
 }
 
+/**
+ * F1-20/F1-21: Debt/Equity und Zinsdeckung aus vorhandenen FMP-Ratios.
+ * GET /api/credit-fundamentals/:ticker. Nur Anzeige in Sektion 10 — kein Score, kein CRV.
+ * value null = nicht geliefert; die UI zeigt dann unavailable, nie 0 als Ersatz.
+ */
+export type CreditStance = "angespannt" | "im Mittelfeld" | "entspannt";
+export type CreditBasis = "eigene Historie" | "Peers";
+
+export interface CreditMetricReading {
+  value: number | null;
+  asOf: string | null;
+  /** Grund, wenn value null ist. */
+  unavailable: string | null;
+  /** Mid-Rank 0..1 gegen die gewählte Referenz. null = Stichprobe zu klein. */
+  percentile: number | null;
+  zScore: number | null;
+  sampleSize: number;
+  basis: CreditBasis | null;
+  stance: CreditStance | null;
+}
+
+export interface CreditFundamentalsResponse {
+  ticker: string;
+  /** z. B. "FMP ratios" */
+  source: string;
+  debtToEquity: CreditMetricReading;
+  interestCoverage: CreditMetricReading;
+  note: string | null;
+}
+
 /** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
 export interface CreditOverlayPoint {
   date: string;
@@ -1046,6 +1078,55 @@ export interface GoldAiscSeries {
   inScore: false;
 }
 
+// ─── Gold Miner-Breakeven (Spot vs. AISC), nur Anzeige ───────────────────────
+// Adaptive Perzentil-Zonen aus der eigenen Multiple-Historie. Kein GIS, kein
+// adaptiver Score. Euphorie (P90) ist ein Typ-Slot; ob sie klassifiziert wird,
+// entscheidet Philip — die Rechnung setzt euph nicht.
+
+/** capitulation · transition · profitable sind aktiv. euphoria ist reserviert, nicht vergeben. */
+export type GoldMinerZoneName = "capitulation" | "transition" | "profitable" | "euphoria";
+
+export interface GoldMinerZonePoint {
+  date: string;
+  spot: number;
+  aisc: number | null;
+  multiple: number | null;
+  marginPct: number | null;
+  zone: GoldMinerZoneName | null;
+}
+
+export interface GoldMinerZone {
+  /** ausgedünnt ≤ 800 */
+  points: GoldMinerZonePoint[];
+  segments: { x1: string; x2: string; zone: GoldMinerZoneName }[];
+  thresholds: {
+    pLowRank: 20;
+    pHighRank: 50;
+    pEuphRank: 90;
+    low: number | null;
+    high: number | null;
+    /** null, solange die Euphorie-Zone (P90) nicht freigegeben ist. */
+    euph: number | null;
+    obs: number;
+    since: string | null;
+  };
+  latest: {
+    date: string;
+    spot: number;
+    aisc: number;
+    quarter: string;
+    multiple: number;
+    marginUsd: number;
+    marginPct: number;
+    score: number;
+    zone: GoldMinerZoneName;
+    perCompany: { company: GoldAiscCompanyCode; aisc: number }[];
+  } | null;
+  /** z. B. "Historie < 120 Handelstage" */
+  naReason: string | null;
+  inScore: false;
+}
+
 // ─── BTC-Liquiditätsblock (C1/C2, Philip-Freigabe 18.10.2026) ─────────────────
 // GET /api/analyze-btc/liquidity. Drei freie FRED-Reihen: Fed-Bilanz (WALCL),
 // T-Bill-Anteil an den marktfähigen Treasuries (Z.1, BOGZ1FL313161110Q /
@@ -1107,3 +1188,17 @@ export interface BtcLiquidityResponse {
   fetchedAt: string;
   sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
 }
+
+// ─── Earnings Yield / ROIC 5Y (Anzeige, Sektion 12) ─────────────────────────
+// GET /api/chart/earnings-yield/:symbol und GET /api/chart/roic/:symbol.
+// Kein Score, kein Rating. Fehlende Punkte: value null + note, nie 0.
+export type {
+  FundamentalPoint,
+  EarningsYieldResponse,
+  RoicSeriesResponse,
+  FundJoinPoint,
+} from "./earnings-yield-roic";
+
+// ─── Sektor-KGV (Anzeige, Researcher) ────────────────────────────────────────
+// GET /api/researcher/sector-pe. Getrennt von pe/pe10y der Sektorrotation.
+export type { SectorPeDisplay, SectorPeResponse } from "./sector-pe-display";

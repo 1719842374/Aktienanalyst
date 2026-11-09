@@ -1,10 +1,11 @@
-> Aktueller Soll-Ist im Detail (alle 11 Future-Dateien, Stand 18.10.2026 auf `35ead515`): siehe [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). Der Inhalt unten ist der Stand vom 11.10.2026.
+> Aktueller Soll-Ist im Detail: [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). **Kopf-Tip:** main `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445). Der Inhalt unten ist der Stand vom 11.10.2026.
 
 # Offen — Future Soll/Ist (main)
 
-**Geprüft gegen:** `origin/main` `5849ed15a956388fea2259f166a303c16fa6ed69`  
-**Commit-Betreff:** `docs: document Peer-Add bug …`  
-**Datum:** 11.10.2026  
+**Kopf-Tip:** `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445 `feat(chart): Kurslinie nach der gemeinsamen TA-Ampel färben`, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`). Dieser Nachzug setzt nur den Kopf.  
+**Geprüft gegen (Inventur 11.10.2026):** `origin/main` `5849ed15a956388fea2259f166a303c16fa6ed69`  
+**Commit-Betreff der Inventur:** `docs: document Peer-Add bug …`  
+**Datum der Inventur:** 11.10.2026  
 **Art:** Inventur. Kein App-Code in diesem PR.
 
 Datenfluss der Ist-Prüfung: UI `client/src` → Hooks → API-Route → `server/` → Quelle bzw. `shared/schema.ts` (Gold: `shared/gold-schema.ts`, Regionen: `shared/recession-regions.ts`).

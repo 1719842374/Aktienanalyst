@@ -30,7 +30,9 @@ import { ArrowLeft, Info, Menu, X, SlidersHorizontal, BarChart3, Table2, LayoutD
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { forceAnalyzeOnce, guardModule, invalidateCrossModuleQueries, registerPortfolioRefresh, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import type { StockAnalysis } from "../../../shared/schema";
 import {
   makePosition, loadPositionsFromStorage, savePositionsToStorage,
@@ -241,10 +243,58 @@ export default function PortfolioPage() {
     setPositions(prev => prev.filter(p => p.id !== id));
   }
 
-  function handleRefreshAllAnalyses() {
-    const tickers = Array.from(new Set(positions.map(p => p.ticker.toUpperCase()).filter(Boolean)));
-    tickers.forEach(t => fetchAnalysisForTicker(t, true));
+  const fetchAnalysisForRefresh = useCallback(async (ticker: string) => {
+    const upper = ticker.toUpperCase();
+    fetchedTickersRef.current.add(upper);
+    setLoadingTickers(prev => new Set(prev).add(upper));
+    try {
+      const res = await apiRequest("POST", "/api/analyze", { ticker: upper, useLLM: false, force: true }, 120000);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+      }
+      const data: StockAnalysis = await res.json();
+      setAnalysisByTicker(prev => ({ ...prev, [upper]: data }));
+    } finally {
+      setLoadingTickers(prev => { const next = new Set(prev); next.delete(upper); return next; });
+    }
+  }, []);
+
+  function portfolioTickers(): string[] {
+    return Array.from(new Set(positions.map(p => p.ticker.toUpperCase()).filter(Boolean)));
   }
+
+  const refreshOhlcv = useCallback(async () => {
+    const openLongs = positions
+      .filter(p => p.status === "open" && p.side === "long")
+      .map(p => p.ticker.toUpperCase())
+      .filter(Boolean);
+    const bench = (policy.benchmark || "SPY").trim().toUpperCase() || "SPY";
+    const tickers = Array.from(new Set([bench, ...openLongs])).slice(0, 12);
+    if (tickers.length === 0) return;
+    const from = timeframeCutoffIso(timeframe);
+    const res = await apiRequest(
+      "GET",
+      `/api/ohlcv?tickers=${encodeURIComponent(tickers.join(","))}&from=${encodeURIComponent(from)}`,
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+    }
+    const body = await res.json();
+    setHistoricalPricesByTickerLong(body.bars || {});
+    setOhlcvMetaByTicker(body.meta || {});
+  }, [positions, policy.benchmark, timeframe]);
+
+  useCrossModuleHandler("portfolio", async () => {
+    const tickers = portfolioTickers();
+    await Promise.all(tickers.map((ticker) => forceAnalyzeOnce(ticker, "Portfolio", () => fetchAnalysisForRefresh(ticker))));
+    await guardModule("Portfolio", () => refreshOhlcv());
+  });
+  useEffect(() => registerPortfolioRefresh({
+    tickers: portfolioTickers,
+    fetchTicker: fetchAnalysisForRefresh,
+  }), [positions, fetchAnalysisForRefresh]);
 
   function handleTakeoverFromAnalysis(id: string) {
     const position = positions.find(p => p.id === id);
@@ -372,9 +422,17 @@ export default function PortfolioPage() {
             Positions-Tracker + Sharpe/Kelly/CAPM — reine Berechnungslogik, keine Order-Ausführung
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefreshAllAnalyses} className="gap-1.5 shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
+          className="gap-1.5 shrink-0"
+          title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam über die API. Kann Credits verbrauchen. Keine Score-Änderung."
+          data-testid="button-cross-module-refresh"
+        >
           <RefreshCw className="w-3.5 h-3.5" /> Alle aktualisieren
         </Button>
+        <CrossModuleRefreshNotice />
       </header>
 
       <div className="flex flex-1 overflow-hidden">

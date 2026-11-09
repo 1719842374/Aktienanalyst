@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
+import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaReason, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
+import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
@@ -58,7 +61,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   ] as const;
 
   const tam = data.tamAnalysis;
+  const segmentGrowth = useSegmentGrowth(data.ticker, (tam?.segments?.length ?? 0) > 0);
   const [tamAiFills, setTamAiFills] = useState<Record<string, TamNaFill> | null>(null);
+  const [tamNaReasons, setTamNaReasons] = useState<TamNaReason[]>([]);
   const [tamAiLoading, setTamAiLoading] = useState(false);
   const [tamAiError, setTamAiError] = useState<string | null>(null);
   const tamAiRequest = useRef(0);
@@ -80,6 +85,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   useEffect(() => {
     tamAiRequest.current += 1;
     setTamAiFills(null);
+    setTamNaReasons([]);
     setTamAiError(null);
     setTamAiLoading(false);
   }, [data.ticker, tamSegmentSig]);
@@ -96,17 +102,22 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     [tam],
   );
 
+  const growthForSegment = (name: string, fact: number | null | undefined): number | null => {
+    if (typeof fact === "number" && Number.isFinite(fact)) return fact;
+    const calculated = calculatedGrowth(fact, annotationByName(segmentGrowth.data?.business, name));
+    return calculated?.growth ?? null;
+  };
   const tamNaRefs = useMemo(() => {
     const out: TamNaSegmentRef[] = [];
     const seen = new Set<string>();
     for (const s of visibleTamSegments) {
-      const ref = toTamNaRef(s);
+      const ref = toTamNaRef({ ...s, segmentGrowth: growthForSegment(s.segmentName, s.segmentGrowth) });
       if (!ref || seen.has(ref.segmentName)) continue;
       seen.add(ref.segmentName);
       out.push(ref);
     }
     return out;
-  }, [visibleTamSegments]);
+  }, [visibleTamSegments, segmentGrowth.data]);
   const scopeNaCount = useMemo(() => countScopeRestNa(tamNaRefs, null), [tamNaRefs]);
   const kiCellCount = useMemo(
     () => (tamAiFills ? countKiFilledCells(tamNaRefs, Object.values(tamAiFills)) : 0),
@@ -119,7 +130,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     setTamAiLoading(true);
     setTamAiError(null);
     try {
-      const res = await apiRequest("POST", `/api/analyze/${encodeURIComponent(data.ticker)}/tam-na-fill`, {
+      const res = await apiRequest("POST", "/api/segment-tam-estimate", {
+        ticker: data.ticker,
         companyName: data.companyName,
         sector: data.sector,
         industry: data.industry,
@@ -129,23 +141,25 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
           segmentShare: s.segmentShare,
-          segmentGrowth: typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null,
+          segmentGrowth: growthForSegment(s.segmentName, s.segmentGrowth),
           matched: s.matched === false ? false : true,
           tamSize: typeof s.tamSize === "number" && Number.isFinite(s.tamSize) ? s.tamSize : null,
           tamCAGR: typeof s.tamCAGR === "number" && Number.isFinite(s.tamCAGR) ? s.tamCAGR : null,
         })),
       });
-      let json: { fills?: TamNaFill[]; error?: string } | null = null;
+      let json: { fills?: TamNaFill[]; naReasons?: TamNaReason[]; error?: string } | null = null;
       try { json = await res.json(); } catch { json = null; }
       if (requestId !== tamAiRequest.current) return;
       const incomplete = "KI-Schätzung unvollständig — nichts übernommen";
+      const reasons = Array.isArray(json?.naReasons) ? json.naReasons : [];
+      setTamNaReasons(reasons);
       if (!res.ok || !json || !Array.isArray(json.fills)) {
         setTamAiError(json?.error || incomplete);
         return;
       }
       const applied = applicableTamNaFills(tamNaRefs, json.fills);
       if (applied.length === 0) {
-        setTamAiError(json.error || incomplete);
+        if (reasons.length === 0) setTamAiError(json.error || incomplete);
         return;
       }
       const next: Record<string, TamNaFill> = {};
@@ -198,6 +212,21 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
       if (requestId === peerKiRequest.current) setPeerKiLoading(false);
     }
   }
+
+  const calculatedWeighted = useMemo(() => {
+    const rows = visibleTamSegments.flatMap((s) => {
+      const fact = typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null;
+      const extra = calculatedGrowth(fact, annotationByName(segmentGrowth.data?.business, s.segmentName));
+      const growth = fact ?? extra?.growth ?? null;
+      const share = typeof s.segmentShare === "number" && Number.isFinite(s.segmentShare) ? s.segmentShare : 0;
+      if (growth == null || !(share > 0)) return [];
+      return [{ growth, share, calculated: extra != null }];
+    });
+    if (!rows.some((row) => row.calculated)) return null;
+    const weight = rows.reduce((sum, row) => sum + row.share, 0);
+    if (!(weight > 0)) return null;
+    return Math.round((rows.reduce((sum, row) => sum + row.growth * row.share, 0) / weight) * 10) / 10;
+  }, [visibleTamSegments, segmentGrowth.data]);
 
   return (
     <SectionCard number={9} title="RELATIVE BEWERTUNG">
@@ -345,7 +374,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                 {tamAiFills && (
                   <button
                     type="button"
-                    onClick={() => { setTamAiFills(null); setTamAiError(null); }}
+                    onClick={() => { setTamAiFills(null); setTamAiError(null); setTamNaReasons([]); }}
                     className="inline-flex items-center rounded-md border border-border/60 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground hover:bg-muted/40"
                     title="KI-Schätzungen aus dieser Sitzung entfernen"
                     data-testid="button-tam-na-fill-clear"
@@ -354,8 +383,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                   </button>
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
-                Violett/KI = Schätzung · Anteil am TAM & vs. TAM immer Formel
+                <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
+                Violett/KI = Schätzung · berechnet = Formel aus FMP · Anteil am TAM & vs. TAM immer Formel
               </div>
               {tamAiFills && (
                 <div className="text-[10px] text-violet-700 dark:text-violet-300" data-testid="text-tam-na-coverage-note">
@@ -383,7 +412,11 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                   </thead>
                   <tbody className="divide-y divide-border/30">
                     {visibleTamSegments.map((seg: any, i: number) => {
-                      const row = tamRowView(seg, tamAiFills?.[seg.segmentName]);
+                      const growthNote = annotationByName(segmentGrowth.data?.business, seg.segmentName);
+                      const row = tamRowView(seg, tamAiFills?.[seg.segmentName], growthNote);
+                      const naGrowth = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "growth");
+                      const naTam = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "tam");
+                      const naCagr = tamNaReasons.find((r) => r.segmentName === seg.segmentName && r.field === "cagr");
                       return (
                       <tr key={i} className="hover:bg-muted/10">
                         <td className="py-1.5 pr-2 font-medium">
@@ -400,33 +433,34 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                         {row.growth === null ? (
                           <td
                             className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60"
-                            title="Keine Vorjahreszahl fuer dieses Segment berichtet"
+                            title={naGrowth?.reason ?? growthNote?.reason ?? "Keine Vorjahreszahl fuer dieses Segment berichtet"}
                           >
                             n/a
                           </td>
                         ) : (
-                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? "N/A ersetzt durch KI" : undefined}>
+                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? kiEstimateTitle(tamAiFills?.[seg.segmentName]) : row.growthIsCalculated ? growthTitle(growthNote) : undefined}>
                             {row.growth >= 0 ? '+' : ''}{formatNumber(row.growth, 1)}%
-                            {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} />}
+                            {row.growthIsCalculated && <span className="ml-1 text-[8px] font-sans font-semibold uppercase tracking-wide text-sky-300">berechnet</span>}
+                            {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />}
                           </td>
                         )}
                         {row.tamIsKi && row.tamSize != null ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI" data-testid={`cell-tam-ki-size-${i}`}>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} data-testid={`cell-tam-ki-size-${i}`}>
                             ${formatNumber(row.tamSize, 0)}B
-                            <KiBadge testId={`badge-tam-ki-${i}`} />
+                            <KiBadge testId={`badge-tam-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
                           </td>
                         ) : row.tamSize === null ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title="Kein TAM-Markt zugeordnet">n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naTam?.reason ?? "Kein TAM-Markt zugeordnet"}>n/a</td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(row.tamSize, 0)}B</td>
                         )}
                         {row.cagrIsKi ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])}>
                             {row.tamCagr}%
-                            <KiBadge />
+                            <KiBadge title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
                           </td>
                         ) : row.unmatched ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naCagr?.reason}>n/a</td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
                         )}
@@ -478,6 +512,15 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               )}
               {/* QS: umsatzgewichtetes Wachstum aus den ECHTEN Segment-Raten —
                   muss plausibel zum oben gezeigten Revenue Growth passen. */}
+              {calculatedWeighted != null && (
+                <div className="text-[10px] text-muted-foreground">
+                  Anzeige inkl. berechnet:{" "}
+                  <span className={`font-mono tabular-nums font-medium ${calculatedWeighted >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                    {calculatedWeighted >= 0 ? "+" : ""}{formatNumber(calculatedWeighted, 1)}%
+                  </span>
+                  <span className="text-muted-foreground/60"> — nicht im Fact-gewichteten Wachstum und nicht im Score</span>
+                </div>
+              )}
               {typeof tam.segmentWeightedGrowth === 'number' && isFinite(tam.segmentWeightedGrowth) && (
                 <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
                   <span>
@@ -728,6 +771,13 @@ function toTamNaRef(s: {
   };
 }
 
+function kiEstimateTitle(fill: TamNaFill | undefined): string {
+  if (!fill) return "Schätzung";
+  const formula = fill.formula || fill.rationale || "Begründung fehlt";
+  const source = fill.tamSource ? `Quelle: ${fill.tamSource}` : "Quelle: siehe Begründung";
+  return `Schätzung · ${formula} · ${source}`;
+}
+
 function tamRowView(seg: {
   segmentName: string;
   segmentRevenue: number;
@@ -738,14 +788,15 @@ function tamRowView(seg: {
   tamCAGR?: number | null;
   marketShare?: number | null;
   shareWarning?: boolean;
-}, fill: TamNaFill | undefined) {
+}, fill: TamNaFill | undefined, growthNote?: SegmentGrowthAnnotation | null) {
   const ref = toTamNaRef(seg);
   const unmatched = seg.matched === false;
   const factGrowth = typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth) ? seg.segmentGrowth : null;
-  const kiGrowth = factGrowth == null && fill && typeof fill.segmentGrowth === "number" && Number.isFinite(fill.segmentGrowth)
+  const calculated = calculatedGrowth(factGrowth, growthNote);
+  const kiGrowth = factGrowth == null && calculated == null && fill && typeof fill.segmentGrowth === "number" && Number.isFinite(fill.segmentGrowth)
     ? fill.segmentGrowth
     : null;
-  const growth = factGrowth ?? kiGrowth;
+  const growth = factGrowth ?? calculated?.growth ?? kiGrowth;
   const factTam = ref ? factTamSize(ref) : null;
   const factCagr = ref ? factTamCagr(ref) : null;
   const kiTam = unmatched && fill && typeof fill.tamSize === "number" && Number.isFinite(fill.tamSize) && fill.tamSize > 0
@@ -760,6 +811,7 @@ function tamRowView(seg: {
     unmatched,
     growth,
     growthIsKi: kiGrowth != null,
+    growthIsCalculated: calculated != null,
     tamSize,
     tamIsKi: kiTam != null,
     tamCagr,
@@ -772,12 +824,12 @@ function tamRowView(seg: {
   };
 }
 
-function KiBadge({ testId }: { testId?: string }) {
+function KiBadge({ testId, title = "Schätzung" }: { testId?: string; title?: string }) {
   return (
     <span
       className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-300"
-      title="N/A ersetzt durch KI"
-      aria-label="N/A ersetzt durch KI"
+      title={title}
+      aria-label={title}
       data-testid={testId}
     >
       KI

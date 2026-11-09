@@ -18,6 +18,7 @@ import {
   CHART_BOOKS,
   MARKET_WINDOWS,
   VOL_Y_MAX,
+  displayNa,
   pegDisplaySuffix,
   volBandLabel,
   type ChartMarketId,
@@ -203,7 +204,7 @@ function SnapshotRow({ market }: { market: MarketChart }) {
   return (
     <>
       <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-        {market.valuationLabel} · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+        {market.valuationLabel} · PE {displayNa(s.pe, fmt(s.pe, 1), s.missing, "PE")} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
         {pegDisplaySuffix(s.pegKind)}
         {pegNote} · PEG fwd {fmt(s.pegFwd, 2)}
         {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
@@ -222,7 +223,7 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
   if (error) return <p className="text-xs text-red-500">{error instanceof Error ? error.message : "Factpack fehlgeschlagen"}</p>;
   if (!pack) return null;
   const rows: { label: string; value: string; warn?: boolean }[] = [
-    { label: "PE ttm", value: fmt(pack.pe, 2) },
+    { label: "PE ttm", value: displayNa(pack.pe, fmt(pack.pe, 2), pack.note, "PE") },
     { label: "PE fwd", value: fmt(pack.peFwd, 2) },
     { label: "EPS YoY", value: pack.epsYoy == null ? "n/a" : `${fmt(pack.epsYoy, 2)} %` },
     { label: "PEG ttm", value: `${fmt(pack.peg, 2)}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
@@ -546,8 +547,8 @@ function MarketPanes({
           <p className="text-[10px] text-muted-foreground">z(YoY) &gt; 1 = Hebel hoch. Nur SPY — nicht unter ASHR, kein EU-Klon.</p>
         </div>
       )}
-      {market.id === "SPY" && !market.leverage && market.leverageNote && (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="leverage-note">{market.leverageNote}</p>
+      {!market.leverage && market.leverageNote && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400 break-words" data-testid={market.id === "SPY" ? "leverage-note" : `leverage-note-${market.id}`}>{market.leverageNote}</p>
       )}
     </div>
   );

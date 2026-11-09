@@ -1,7 +1,8 @@
 # Soll-Ist im Detail: alle 11 Future-Dateien gegen main `29fdf1d5`
 
+**Kopf-Tip:** `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445 `feat(chart): Kurslinie nach der gemeinsamen TA-Ampel färben`, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`). Nur dieser Kopf. Die Tabellenzeilen sind in diesem Nachzug nicht neu gegen den Tip geprüft. Kein App-Code, kein Rename.
 **Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
-**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung. **Nachzug 01.11.2026, Tip `3baef0e5` (#356, Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHAs per GitHub-API):** F1-14 (Schwelle), F1-45, F9-04 und die Zählung. F1-39 ✅ auf Tip `aa0b6f2a` (#354, Bundle `index-84vk90H1.js`). Kein App-Code in diesem Nachzug.
+**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung. **Nachzug 01.11.2026, Tip `3baef0e5` (#356, Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHAs per GitHub-API):** F1-14 (Schwelle), F1-45, F9-04 und die Zählung. F1-39 ✅ auf Tip `aa0b6f2a` (#354, Bundle `index-84vk90H1.js`). Kein App-Code in diesem Nachzug. **Nachzug Tip `8421b296` (#369, 01.11.2026):** F1-17 und F1-18 ❌→✅ (Soft) und die Zählung. Kein App-Code, kein Rename. `server/analyze-route.ts` nicht berührt. **Kopf-Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445):** nur der Kopf. Zeilen unterhalb nicht neu gegen diesen Tip geprüft.
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -79,8 +80,8 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-14 | Z.299 | Farbe für attraktive Yield-Bereiche (> 4 %) | ✅ #341 `5eef74fca60dae431b1c326676fb41f9f7beae18`, gelesen auf Tip `3baef0e5`. Soll-Text Future_1 ist „> 4 %“. Der Code markiert **≥ 4 %**: `isAttractiveDividendYield` in `shared/dividends.ts:289–290` ist `yieldPct >= DIV_ATTRACTIVE_YIELD_PCT` (`DIV_ATTRACTIVE_YIELD_PCT = 4`, `:286`). UI `TechnicalChart.tsx:1638` und `:1669`: „≥ 4 % attraktiv“. Das Band `attractiveYieldBand` (`shared/dividends.ts:297–299`) beginnt bei 4 und entfällt, wenn die Achsenobergrenze ≤ 4 ist (`axisMax <= 4` → null). Exakt 4,00 % ist attraktiv markiert. Dateien des Merges: `shared/dividends.ts` (+19), `TechnicalChart.tsx` (+17/−2), `script/test-dividend-yield-band.ts` (+48) | ✅ | Keiner. Klarstellung: Future_1 schreibt „> 4 %“, Code und UI werten „≥ 4 %“ |
 | F1-15 | Z.304 | Markierungen bei Ex-Dividenden-Tagen | `TechnicalChart.tsx:1460` `dividendMarkerLines` (Ex-Tage im Tooltip), `shared/dividends.ts:265` | ✅ | Keiner |
 | F1-16 | Z.310, 317, 382 | Aktuelle Dividendenrendite als KPI in Sektion 1 (heute Sektion 2) | `client/src/components/sections/Section1.tsx:43, 181` (`useDividendKpi`). SHA `744075c` (#237); dieselbe Kachel in Financial Statements `582844e` (#246) | ✅ | Keiner |
-| F1-17 | Z.312, 384 | Sektion 4 alt (heute 6 „Bewertung“): Dividendenrendite gegen Sektor und historische Spanne | `client/src/components/sections/Section4.tsx`: 0 Treffer „dividend“. Es gibt nur die KPI-Kachel in Financial Statements | ❌ | Autonom: Spanne aus der vorhandenen Dividenden-Historie (`/api/dividends`) in Sektion 6 zeigen; Sektor-Vergleich braucht Peer-Daten |
-| F1-18 | Z.313 | Sektion 17 alt (heute 20): kurzer Hinweis, wenn Yield auffällig | `SummarySection.tsx`, `ExecSummaryCard.tsx`: 0 Treffer „dividend“ | ❌ | Klein, autonom (nur Text, kein Score) |
+| F1-17 | Z.312, 384 | Sektion 4 alt (heute 6 „Bewertung“): Dividendenrendite gegen eigene Historie und Peers (Future_1 Z.312 „vs. Sektor / historische Spanne“, Z.384 Vergleichstabelle) | ✅ (Soft) #369 Squash `8421b296` (Tree `7d0cb7ef`). Soll: eigene Historie und Peers. Ist: `Section4.tsx:219` `DividendYieldSpanPanel` (`SectionCard number={6}`) → `DividendYieldContext.tsx:29` → `useDividendHistory.ts:46` → `GET /api/dividends/:ticker` (`:20`) → `server/dividend-route.ts:121` (Registrierung `server/routes-register.ts:41`) → `shared/dividends.ts:394` `dividendYieldSpan` (Perzentil, Median, Min, Max). Peers: `server/news-peers.ts:357` `peerDividendYieldPct`, gesetzt `:440`, Schema `shared/schema.ts:120`, Median `shared/dividends.ts:419`, Anzeige `DividendYieldContext.tsx:49`. Sektor: Schema `shared/schema.ts:173` optional und ungefüllt; Anzeige `:50`; Grund `shared/dividends.ts:431–433` „Sektorprofil ohne Dividendenrendite (Damodaran liefert keinen Dividend-Yield-Median)“. `analyze-route.ts:1901–1909` setzt den Damodaran-Median ohne `dividendYield` (Datei nicht angefasst). Soft-Rest: Peer-Median n/a, solange Prod `peerDividendYieldPct` nicht liefert (Grund `shared/dividends.ts:425` „Peer-Set ohne Dividendenrendite (Feld fehlt, nicht als 0 gesetzt)“). Sektor-Median bewusst n/a, weil Damodaran keinen Dividend-Yield-Median liefert und keine neue Quelle angebunden ist. Beleg, von Stabschef übermittelt: Tester PASS Soft @ `3daf31f` (Tree identisch mit Merge-Tree `7d0cb7ef`) und Doublecheck Post-Merge GO. Nachprüfung: `git merge-tree --write-tree 3d029a9 3daf31f` = `7d0cb7ef` = `8421b296^{tree}`. Vorher: 0 Treffer „dividend“ in `Section4.tsx` | ✅ (Soft) `8421b296` | Soft-Rest: Peer-Median n/a bis Prod `peerDividendYieldPct` liefert. Sektor-Median bleibt n/a mit Grund (Damodaran ohne Dividend-Yield-Median). Kein Score |
+| F1-18 | Z.313 | Sektion 17 alt (heute 20): kurzer Hinweis, wenn Yield auffällig (Future_1 Z.313) | ✅ (Soft) #369 `8421b296`. Soll: kurzer Hinweis. Ist: `dividendNotableHint` `shared/dividends.ts:437` nur bei auffälliger eigener Historie (äußeres Dezil `notableTailPercentile` 0,9, kein fester Rendite-Prozentwert, kein Score). Der Hinweis steht in Sektion 20 `SummarySection.tsx:136`, in der Executive Summary und zusätzlich in S1 `ExecSummaryCard.tsx:102` (`SectionCard number={1}`). Dieselbe Kette wie F1-17 (`/api/dividends` → `shared/dividends.ts`). Beleg, von Stabschef übermittelt: Tester PASS Soft @ `3daf31f` (Tree identisch mit Merge-Tree `7d0cb7ef`) und Doublecheck Post-Merge GO. Vorher: 0 Treffer „dividend“ in `SummarySection.tsx` und `ExecSummaryCard.tsx` | ✅ (Soft) `8421b296` | Keiner für den Hinweis. Soft-Rest der Peer-/Sektor-Anzeige steht bei F1-17 |
 | F1-19 | Z.340–349 | Neue Felder im Analyse-Ergebnis: 5J-CDS, längste Anleihe-Rendite, Rating | `shared/schema.ts`: 0 Treffer `cdsSpread`, `longestBondYield`, `creditRating` | ⛔ | Emittenten-Daten nur über bezahlte Quelle; Leeway/Terrapin nicht freigegeben, Credit nur über BAA10Y |
 | F1-20 | Z.346–347 | Felder Verschuldung/Eigenkapital und Zinsdeckung im Credit-Kontext | 0 Treffer `interestCoverage` in `shared/schema.ts`; FMP liefert die Rohdaten | ❌ | Autonom baubar aus FMP (keine neue Quelle), als Teil der Credit-Karte F1-21 |
 | F1-21 | Z.352–353, 360, 367, 386, 392 | Credit-Risiko-Karte / Warnhinweis, Hauptstelle Sektion 8 alt (heute 10 „Risikoinversion“) mit „Expected Damage“ | `client/src/components/sections/Section8.tsx:26` nur generischer Risikoname „Credit Quality Deterioration“, keine Karte | ❌ | Autonom: Karte aus BAA10Y-Markt-Spread (`/api/credit-spread/market`) + FMP-Verschuldung. Ohne CDS (⛔). Kein Score ohne Philip |
@@ -259,17 +260,17 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
-| F9-08 | Z.38 | CAPEX der Hyperscaler, YoY | 0 Treffer im Makropfad | ❌ | Autonom; FMP-Cashflow der 4–5 Hyperscaler |
+| F9-08 | Z.38 | CAPEX der Hyperscaler, YoY | 🟡 #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. Kette: `MacroAdaptiveLayerCard.tsx:188` Knopf → `POST /api/macro/adaptive-layer` (`server/macro-adaptive-layer-route.ts:40`, Registrierung `server/routes.ts:575`) → `server/hyperscaler-capex.ts:23–25` ohne `FMP_API_KEY` Rückgabe `n/a — FMP_API_KEY fehlt` → `shared/hyperscaler-capex.ts` `computeHyperscalerCapex`. Vorher: 0 Treffer im Makropfad | 🟡 | Code auf `9c0fdda9`. Live n/a, weil `FMP_API_KEY` fehlt |
 | F9-09 | Z.58–91 | `calculateAdaptiveWeights`: Basisgewichte, Habitat „restrictive“, Konzentration > 0,4, Stärke-Layer | 0 Treffer; nur das Gold-Gegenstück `server/gold-adaptive-score.ts:17–105` | ❌ | Autonom (freigegeben); Muster aus Gold übernehmen |
 | F9-10 | Z.95–103 | Managing-Score Makro (CAPEX, EPS, Realzins, Konzentration gegen Trend) | 0 Treffer | ❌ | Autonom, nach F9-02/06/07/08 |
 | F9-11 | Z.14, 69 | Dimension „Makro-Bilanzwidersprüche“ | 0 Treffer | ❌ | Spec ist hier unscharf → vor Bau Definition schärfen |
 | F9-12 | Z.141–232 | OpenRouter-Call `getAIWeightSuggestion`: JSON, max ±25 %, Fehler → quantitative Gewichte | Infrastruktur `server/llm-openrouter.ts` (`callLLMJson`) vorhanden; Rezession nutzt LLM nur für Treiber-Text (`server/recession-drivers.ts:422–477`, `bc72953` #152) | ❌ | Autonom (Philip JA 18.10.); bestehenden `callLLMJson` nutzen, keinen zweiten Client |
 | F9-13 | Z.235–239 | API-Key über Umgebungsvariable, Modell frei, Antwort 6–12 h cachen | Key vorhanden (`OPENROUTER_API_KEY`), Cache für diesen Call fehlt | ❌ | Mit F9-12 |
-| F9-14 | Z.129 | Europa-Ersatzdaten definieren | 0 Treffer | ❌ | Nach F9-09 |
+| F9-14 | Z.129 | Europa-Ersatzdaten definieren | ✅ #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. `shared/europe-macro-fallbacks.ts:2–4` (Surprise, Equal-Weight EXSA.DE/OSX6.DE, Eurostat P51G) und `server/europe-macro-fallbacks.ts`; Anzeige in `MacroAdaptiveLayerCard.tsx` erst nach Klick. Vorher: 0 Treffer | ✅ | Keiner |
 | F9-15 | Z.130 | Habitat-Erkennung verfeinern | kein Habitat im Rezessionspfad | ❌ | Mit F9-09 |
 | F9-16 | Z.132 | Im Dashboard zeigen, welche Gewichte angepasst wurden | 0 Treffer | ❌ | Mit F9-12 (Muster `client/src/components/gold/GoldAdaptiveLayersCard.tsx`) |
 | F9-17 | Z.133 | Historische Validierung 2000 / 2008 / 2022 | 0 Treffer | ❌ | Vor dem Umschalten der Live-P Pflicht |
-| F9-18 | Z.137, 218–232 | Umsetzung über einen Analyse-Button | 0 Treffer | ❌ | Mit F9-12 |
+| F9-18 | Z.137, 218–232 | Umsetzung über einen Analyse-Button | ✅ #417 `9c0fdda9`, Doublecheck Post-Merge GO auf Tip `1acb07d9`. `MacroAdaptiveLayerCard.tsx:13–14` kein Abruf beim Seitenladen, `:188–193` Knopf „Schicht analysieren“; `server/macro-adaptive-layer.ts:2–3` läuft erst beim POST; `shared/macro-adaptive-layer.ts:3,11` `scoreSwitch` bleibt `aus`, `liveScoreUnchanged: true`. Karte `RecessionDashboard.tsx:210`. Layer lädt nur auf Klick, Score unverändert. Vorher: 0 Treffer | ✅ | Keiner |
 
 ## Future_10_Gold_Adaptive_Scoring_Framework.md (279 Zeilen)
 
@@ -307,7 +308,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F10-30 | Z.244–247 | Anzeige: Zusammenfassung, Flag, Zeitstempel | `GoldNewsCard.tsx:80–88` („Stand …“, „Letzter guter Stand …“) | ✅ | Keiner |
 | F10-31 | Z.256–260 | Score aus den Layern aggregieren | Layer-Score wird berechnet und nur als „Δ GIS“ gezeigt (`server/gold-routes.ts:859`, `GoldAdaptiveLayersCard.tsx:43`); der GIS selbst bleibt unverändert | 🟡 | GIS umschalten = Score-Änderung → **braucht Philip** |
 | F10-32 | Z.272 | Volumendaten zuverlässig anbinden | `server/gold-routes.ts:11` `volumeReadingsAreReal`, Volumen im Chart (`GoldPriceChart.tsx:81`). SHA `575d788` (#214) | ✅ | Keiner |
-| F10-33 | Z.274 | Backtest der MA-Kreuz-Signale auf Gold | 0 Treffer in `server/backtest*` | ❌ | Autonom |
+| F10-33 | Z.274 | Backtest der MA-Kreuz-Signale auf Gold | `server/gold-backtest-cross.ts`, `GET /api/gold/backtest-cross`, Karte `GoldCrossBacktestCard.tsx`. SHA `8362b797` (#401) | ✅ | Keiner |
 | F10-34 | Z.275 | Käufe der Zentralbanken (Europa/global) per LLM | 0 Treffer in `server/gold-news.ts` | ❌ | Autonom (kleiner LLM-Zusatz zur News-Sektion) |
 | F10-35 | Z.151–152, 269–270 | Doku: AISC-Linie und Kapitulationszone stehen noch als „Offen“ | Code erledigt (#254), Text in Future_10 veraltet | ❌ | Nur Doku-Nachzug (Philip will Doku-PRs nur auf Ansage) |
 
@@ -373,19 +374,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 117 | 1 | 116 |
+| ✅ erledigt | 119 | 1 | 118 |
 | 🟡 teilweise | 33 | 3 | 30 |
-| ❌ fehlt | 67 | 6 | 61 |
+| ❌ fehlt | 65 | 6 | 59 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 104 erledigte Bau-Punkte. Nachzug 01.11.2026: F1-14 ❌→✅, F1-39 ❌→✅ (`aa0b6f2a`), F1-45 🟡→✅, F9-04 ❌→✅ (Soft).
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 106 erledigte Bau-Punkte. Nachzug 01.11.2026: F1-14 ❌→✅, F1-39 ❌→✅ (`aa0b6f2a`), F1-45 🟡→✅, F9-04 ❌→✅ (Soft). Nachzug Tip `8421b296` (#369): F1-17 ❌→✅ (Soft), F1-18 ❌→✅ (Soft).
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 41 | 11 | 16 | 6 | 74 |
+| Future_1_Work.md | 43 | 11 | 14 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 4 | 3 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -396,7 +397,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_9_Adaptive_Macro_Framework_Complete.md | 2 | 0 | 16 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 24 | 4 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **117** | **33** | **67** | **16** | **233** |
+| **Summe** | **119** | **33** | **65** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -412,6 +413,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | (nicht aus Future-Dateien) Peer-Duplikat | – | **#353** (Draft, Head `7e3e6612`, nicht gemergt) | HOLD bis Philip |
 | (nicht aus Future-Dateien) Szenario-Kegel | – | **#359** (Draft, Head `426a7621`, nicht gemergt) | Tester-Prod ❌ FAIL, NVO Label-Overlap |
 | F9-04 Route, UI, Chat | – | **#357** gemergt `3f59edcb` | 🟢 Soft. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef). Werte erst nach Laden der Karte im Kontext |
+| F1-17, F1-18 Dividendenrendite gegen eigene Historie und Peers, plus Hinweis | – | **#369** gemergt `8421b296` | 🟢 Soft. Beleg, von Stabschef übermittelt: Tester PASS Soft @ `3daf31f` (Tree identisch mit Merge-Tree `7d0cb7ef`) und Doublecheck Post-Merge GO. Peer-Median n/a bis Prod `peerDividendYieldPct` liefert. Sektor-Median bewusst n/a (Damodaran ohne Dividend-Yield) |
 | Regulatory-Cache-Miss 200 statt 404 | – | **#356** gemergt `3baef0e5` | 🟢. Doublecheck Post-Merge GO, Tester Prod-PASS (von Stabschef) |
 
 ---
@@ -427,7 +429,7 @@ Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry ✅ `2e360ca9` (#325). Erledigt.
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
-6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6 und F1-18 Hinweis in Sektion 20 bleiben ❌. F1-14 Band ✅ #341 `5eef74f` (Klarstellung: Future_1 „> 4 %“, Code „≥ 4 %“).
+6. **Dividende fertig machen** – F1-17 Spanne/Peers in Sektion 6 und F1-18 Hinweis in Sektion 20, in der Executive Summary und in S1 sind ✅ (Soft) #369 `8421b296`. Soft-Rest: Peer-Median n/a, solange Prod `peerDividendYieldPct` nicht liefert. Sektor-Median bewusst n/a (Damodaran liefert keinen Dividend-Yield-Median). F1-14 Band ✅ #341 `5eef74f` (Klarstellung: Future_1 „> 4 %“, Code „≥ 4 %“).
 7. **Rezessions-TA in einer Sektion** – F1-41 bleibt offen (Sektionen weiter getrennt), F1-42 offen, F1-43 ✅ `470c28c5`, F1-45 ✅ `53128cba` (#360). „Rest-Overlays offen“ gilt nicht mehr.
 8. **Buffett Europa/Asien mit echten Benchmarks** – F1-71, F1-74 (M, nur Chart). Das Label „Asien“ erst nach Philips Asien-Entscheidung. ✅ `09750838` (#320); Asia ^TPX und Label „Asien“ offen.
 9. **SPY-Fundamentals und Analystenschätzungen mit Yahoo-Ersatz** – F1-67, F1-68 (S). Erst nach #264, weil dasselbe Crumb-Problem gilt.
@@ -472,7 +474,7 @@ Abgeglichen mit: `/home/box/agent-data/shared/Future_SOLL_IST_122762b3.md` und d
 | A-04 | Sektorrotations-Rat (FW-03, alt D4) | mit Kostolany zusammen „offen“ | Sektorrotations-Rat ist **live** (`SectorRotationPanel.tsx`, `fertig_WORK_SEKTORROTATIONS_RAT.md`). Offen ist nur das Kostolany-Rad (FW-04) |
 | A-05 | N/A-Katalog EZ/JP (alt F8) | „Ob die Serien heute liefern: unklar“ | FRED-Abruf 18.10.: EZ-HY (15.10.), JP-ALQ (08/2026), JP-10J (09/2026) liefern; EZ-Kurve bis 01/2026 (innerhalb 18 Monate); JP-Aktivität kommt aus OECD/DBnomics (alt nicht erwähnt). Live-Anzeige weiter ungeprüft |
 | A-06 | Credit-Teil von Future_1 §11.2 (F1-20 bis F1-26) | nur „E1 Firmenanleihen-YTM/CDS → Philip“ | Die Credit-**Karte** in Sektion 10, PESTEL-Zeile und Verschuldungs-Kennzahlen gehen ohne bezahlte Quelle (BAA10Y + FMP) und fehlen komplett. Nur CDS/Anleihe/Rating sind ⛔ |
-| A-07 | Dividende (F1-14, F1-17, F1-18) | „Dividende KPI/Overlay erledigt“ | Overlay und KPI ja. Es fehlen zum Stand `35ead515`: Vergleich in Sektion 6 (Bewertung), Hinweis in Sektion 20, Farbband ab 4 %. Nachtrag 01.11.2026: das Band ist seit #341 `5eef74f` im Code. Future_1 schreibt „> 4 %“, der Code wertet „≥ 4 %“ (`yieldPct >= 4`). F1-17 und F1-18 bleiben ❌ |
+| A-07 | Dividende (F1-14, F1-17, F1-18) | „Dividende KPI/Overlay erledigt“ | Overlay und KPI ja. Es fehlen zum Stand `35ead515`: Vergleich in Sektion 6 (Bewertung), Hinweis in Sektion 20, Farbband ab 4 %. Nachtrag 01.11.2026: das Band ist seit #341 `5eef74f` im Code. Future_1 schreibt „> 4 %“, der Code wertet „≥ 4 %“ (`yieldPct >= 4`). Nachtrag Tip `8421b296` (#369): F1-17 und F1-18 sind ✅ (Soft). Der Vergleich steht in Sektion 6, der Hinweis in Sektion 20, in der Executive Summary und in S1. Peer-Median n/a bis Prod `peerDividendYieldPct` liefert. Sektor-Median bewusst n/a (Damodaran ohne Dividend-Yield-Median) |
 | A-08 | Gold-Kreuze (F10-04, alt H1) | „Crosses wirken nur als Gates“ | Kreuze wirken **auch** als z-Signal in der Zusatzschicht (`gold-adaptive-score.ts:510–522`), dazu MACD und Volumen-Divergenz. Der GIS selbst bleibt unverändert (F10-31) – das stand im alten Vergleich nicht |
 | A-09 | Gold-Schicht „erledigt“ (alt Liste (4)) | adaptive Gold-Schicht erledigt | Schicht ✅, aber der Layer-Score ändert den GIS nicht (nur „Δ GIS“ angezeigt) und die AISC-Marge bekommt `aisc: null` (F10-20) |
 | A-10 | Buffett-Robustheit (F1-31, F1-35, alt F4) | „Annotation erledigt, sonst Retry/Fallback fehlen“ | Ergänzung: Fortschreibung über Proxy bis 30 Tage existiert (#245) als Teil-Ersatz; Cache ist 15 min, nicht 6 h wie in `Offen_FUTURE_SOLL_IST.md` |

@@ -12,13 +12,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRegulatoryRisksRoute(app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);
-  // GET /api/researcher/geo-map?layer=capex (Offen_WORK_CAPEX_SECTOR_MAP Slice 1, nur Anzeige, kein Score)
+  // GET /api/researcher/geo-map?layer=capex|sector|miner|gold|valuechain (SWR und Miner-Netz aus #397)
   const { registerGeoMapRoute } = await import("./researcher-geo-map-route");
   registerGeoMapRoute(app);
   const { registerLiquidityRoute } = await import("./researcher-liquidity-route");
   registerLiquidityRoute(app);
   const { registerLiquidityBriefingRoute } = await import("./liquidity-briefing-route");
   registerLiquidityBriefingRoute(app);
+  // GET /api/researcher/fiscal-programs (FW-34, Discovery → Fiscal-Bridge, nur Anzeige, kein Score)
+  const { registerFiscalDiscoveryRoute } = await import("./fiscal-discovery-route");
+  registerFiscalDiscoveryRoute(app);
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
@@ -55,12 +58,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/watchlist + GET /api/cache from the disk cache (lost in 57189dd, see watchlist-route.ts)
   const { registerWatchlistRoutes } = await import("./watchlist-route");
   registerWatchlistRoutes(app);
-  // GET /api/gold-silver-ratio (JOB 17, nur Anzeige auf /gold, kein Score)
+  // GET /api/gold-silver-ratio und /api/gold-silver-ratio/history (nur Anzeige auf /gold, kein Score)
   const { registerGoldSilverRatioRoute } = await import("./gold-silver-ratio");
   registerGoldSilverRatioRoute(app);
   // POST /api/chat (KI-Chatbot, WORK_DASHBOARD_FEATURES §4/§4c; nur Kontext lesen, kein Score)
   const { registerChatRoute } = await import("./chat-route");
   registerChatRoute(app);
+  // POST /api/podcast/brief — Key Driver und Skript, kein Score.
+  const { registerPodcastRoute } = await import("./podcast-route");
+  registerPodcastRoute(app);
+  const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");
+  registerPodcastTranscriptRoute(app);
+  const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
+  registerAttraktivNotifyRoute(app);
+  // GET /api/earnings-markers/:ticker (WORK_DASHBOARD_FEATURES §2, nur Anzeige, kein Score)
   const { registerEarningsMarkersRoute } = await import("./earnings-markers-route");
   registerEarningsMarkersRoute(app);
+  // POST /api/balance-screen (FW-27, CSV im Body, nur Anzeige, kein Score)
+  const { registerBalanceScreenRoute } = await import("./balance-screen-route");
+  registerBalanceScreenRoute(app);
 }

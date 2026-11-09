@@ -6,7 +6,10 @@ import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useMemo } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
+import { annotationByName } from "../../../../shared/segment-growth-calc";
+import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
+import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 
 interface Props { data: StockAnalysis }
 
@@ -54,6 +57,10 @@ const CYCLICAL_TICKERS = new Set([
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
+  const segmentGrowth = useSegmentGrowth(
+    data.ticker,
+    (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0,
+  );
 
   // === SINGLE SOURCE OF TRUTH: shared DCF defaults (same as Section5/Section6/SummarySection) ===
   // buildDefaultDCFParams liefert auch `rsl` mit → identischer Fair Value wie Section 5/6.
@@ -229,11 +236,10 @@ export function Section2({ data }: Props) {
                         {seg.revenue > 0 && (
                           <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
                         )}
-                        {(seg.growth !== undefined && seg.growth !== null) || (seg.yoyChangePercent !== undefined && seg.yoyChangePercent !== null) ? (
-                          <span className={`text-[10px] font-mono tabular-nums ${(seg.growth ?? seg.yoyChangePercent ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                            {(seg.growth ?? seg.yoyChangePercent ?? 0) >= 0 ? '+' : ''}{formatNumber(seg.growth ?? seg.yoyChangePercent ?? 0, 1)}%
-                          </span>
-                        ) : null}
+                        <SegmentGrowthReadout
+                          fact={seg.growth ?? seg.yoyChangePercent}
+                          annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
+                        />
                         <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                       </div>
                     </div>
@@ -280,11 +286,10 @@ export function Section2({ data }: Props) {
                       {seg.revenue > 0 && (
                         <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
                       )}
-                      {seg.growth !== undefined && seg.growth !== null && (
-                        <span className={`text-[10px] font-mono tabular-nums ${seg.growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                          {seg.growth >= 0 ? '+' : ''}{formatNumber(seg.growth, 1)}%
-                        </span>
-                      )}
+                      <SegmentGrowthReadout
+                        fact={seg.growth}
+                        annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
+                      />
                       <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                     </div>
                   </div>

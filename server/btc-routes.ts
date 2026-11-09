@@ -8,6 +8,8 @@ import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 import { fetchReal10YHistory } from "./btc-macro";
+import { BTC_SPOT_SOURCE_LABEL, BTC_SPOT_SOURCE_URL } from "../shared/btc-spot";
+import { fetchBtcSpotHistory } from "./btc-spot";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const cache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchBTCMacroHistory>> }>();
@@ -27,6 +29,21 @@ let stablecoinMemCache: { expiresAt: number; data: Awaited<ReturnType<typeof bui
  * FRED-Makro-Overlays.
  */
 export function registerBTCRoutes(app: Express): void {
+  // Tägliche Spot-Historie. Ein Fehlschlag bleibt 502 mit Quelle — kein kürzerer Ersatz.
+  app.get("/api/analyze-btc/spot-history", async (_req, res) => {
+    try {
+      res.json(await fetchBtcSpotHistory());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "BTC-Spot-Historie nicht verfügbar";
+      console.error("[GET /api/analyze-btc/spot-history]", message.substring(0, 200));
+      res.status(502).json({
+        error: message,
+        source: BTC_SPOT_SOURCE_LABEL,
+        sourceUrl: BTC_SPOT_SOURCE_URL,
+      });
+    }
+  });
+
   app.get("/api/analyze-btc/macro-history", async (req, res) => {
     const requestedStart = typeof req.query.startDate === "string" ? req.query.startDate : "2011-01-01";
     const startDate = DATE_PATTERN.test(requestedStart) ? requestedStart : "2011-01-01";
