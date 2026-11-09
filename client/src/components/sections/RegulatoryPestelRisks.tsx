@@ -1,3 +1,4 @@
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Scale } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
@@ -16,10 +17,19 @@ interface Cached {
 
 /**
  * Liest Disk-Cache (24h) — kein LLM. Füllt sich nach POST /api/regulatory.
- * Miss ist { cached:false } und kein Fehler. queryKey dedupt die zwei Mounts
- * (Moat-Sektion und PESTEL-Sektion).
+ * Miss ist { cached:false } und kein Fehler. queryKey dedupt jeden Mount
+ * (Moat, PESTEL und Sektion 10).
+ * variant "risk-inversion" (FW-36): dieselben Daten in Sektion 10, reine Anzeige — fließt nicht in
+ * Total Expected Damage, Risk-Adjusted Target, Score oder Rating. initialCached nur für SSR-Tests.
+ * Cache-Miss und leeres Ergebnis: risk-inversion zeigt „n/a — keine PESTEL-Regulatorik im Cache“.
+ * Die PESTEL-Variante rendert dann weiter null. Der Query liefert in beiden Fällen null.
  */
-export function RegulatoryPestelRisks({ data }: { data: StockAnalysis }) {
+export function RegulatoryPestelRisks({ data, variant = "pestel", initialCached = null }: {
+  data: StockAnalysis;
+  variant?: "pestel" | "risk-inversion";
+  initialCached?: Cached | null;
+}) {
+  const inS10 = variant === "risk-inversion";
   const q = useQuery({
     queryKey: ["regulatory-cached", data.ticker],
     queryFn: async (): Promise<Cached | null> => {
@@ -30,22 +40,34 @@ export function RegulatoryPestelRisks({ data }: { data: StockAnalysis }) {
       return json;
     },
   });
-  const cached = q.data ?? null;
+  const cached = q.data ?? initialCached;
 
   const risks = cached?.pestelRisks;
   const empty =
     !risks ||
     (risks.political.length === 0 && risks.legal.length === 0 && risks.badgeOnly.length === 0);
-  if (empty && !cached?.gate) return null;
+  if (empty && !cached?.gate) {
+    if (!inS10) return null;
+    return (
+      <div className="text-[11px] text-muted-foreground" data-testid="s10-regulatory-risks">
+        n/a — keine PESTEL-Regulatorik im Cache
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-lg border border-border/50 p-3 space-y-2">
+    <div className="rounded-lg border border-border/50 p-3 space-y-2" data-testid={inS10 ? "s10-regulatory-risks" : undefined}>
       <div className="flex items-center gap-2">
         <Scale className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-          PESTEL-Risks aus Regulatory-Matrix ({data.ticker})
+          {inS10 ? `Regulatorische Risiken aus Regulatory-Matrix (${data.ticker})` : `PESTEL-Risks aus Regulatory-Matrix (${data.ticker})`}
         </span>
       </div>
+      {inS10 && (
+        <div className="text-[10px] text-muted-foreground/70">
+          Nur Anzeige (Quelle: PESTEL-Regulatorik-Analyse, Cache 24h) — nicht in Total Expected Damage, Risk-Adjusted Target oder Score eingerechnet.
+        </div>
+      )}
       {cached?.gate && (
         <div className="text-[11px] text-amber-500">
           Gate Cap {cached.gate.cap} ({cached.gate.severity}): {cached.gate.rationale}
