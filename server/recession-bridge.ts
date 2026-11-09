@@ -175,7 +175,7 @@ export function parseFredCsv(csv: string): FredObs[] {
     const value = parseFloat(valRaw?.trim());
     if (date && Number.isFinite(value)) byDate.set(date, value);
   }
-  return [...byDate.entries()]
+  return [...(byDate.entries() as unknown as Array<[string, number]>)]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, value]) => ({ date, value }));
 }

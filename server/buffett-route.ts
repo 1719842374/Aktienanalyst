@@ -275,7 +275,7 @@ async function buildUnitedStates(): Promise<{
   if (gdp.length < 8) throw new BuffettSourceError(`BIP-Reihe leer – ${gdpResult.error ?? `nur ${gdp.length} Werte`}`);
   const nfcMap = asMap(nfc);
   const financialMap = asMap(financial);
-  const earlyDates = [...nfcMap.keys()]
+  const earlyDates = [...(nfcMap.keys() as unknown as string[])]
     .filter(date => date >= "1950-01-01" && financialMap.has(date))
     .sort();
   const early: RatioObs[] = [];

@@ -142,7 +142,7 @@ export function assessBtcTradeVolumeCoverage(
   const volumeDates = new Set(
     volumes.filter((point) => typeof point.volume === "number" && point.volume > 0).map((point) => point.date),
   );
-  const volumeSorted = [...volumeDates].sort();
+  const volumeSorted = [...(volumeDates as unknown as string[])].sort();
   const firstPrice = priceDates[0] ?? null;
   const lastPrice = priceDates[priceDates.length - 1] ?? null;
   const firstVolume = volumeSorted[0] ?? null;

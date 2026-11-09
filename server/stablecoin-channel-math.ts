@@ -143,7 +143,7 @@ export function mergeDailyCaps(stored: CapObservation[], incoming: CapObservatio
     if (!isIsoDate(point.date) || !finiteCap(point.totalMarketCapUsd)) continue;
     if (point.date === liveDate || !map.has(point.date)) map.set(point.date, point.totalMarketCapUsd);
   }
-  return [...map.entries()]
+  return [...(map.entries() as unknown as Array<[string, number]>)]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([date, totalMarketCapUsd]) => ({ date, totalMarketCapUsd }));
 }
@@ -155,7 +155,7 @@ export function changes30dFromCaps(points: CapObservation[]): Change30d[] {
     if (isIsoDate(point.date) && finiteCap(point.totalMarketCapUsd)) map.set(point.date, point.totalMarketCapUsd);
   }
   const changes: Change30d[] = [];
-  for (const [date, cap] of [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  for (const [date, cap] of [...(map.entries() as unknown as Array<[string, number]>)].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     const prior = map.get(addUtcDays(date, -30));
     if (!finiteCap(prior)) continue;
     changes.push({ date, changeUsd: cap - prior });

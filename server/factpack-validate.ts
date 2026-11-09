@@ -162,7 +162,7 @@ export function validateTextAgainstFactPack(text: string, pack: FactPack | null 
 
   const badSentences = new Set(checks.filter(c => !c.ok).map(c => c.claim.sentence));
   const kept = splitSentences(raw).filter(s => !badSentences.has(s));
-  const dropped = [...badSentences];
+  const dropped = [...(badSentences as unknown as string[])];
   const cleanedText = kept.join(" ").trim();
   return {
     available: true,

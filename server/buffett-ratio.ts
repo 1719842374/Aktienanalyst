@@ -224,7 +224,7 @@ export function quarterlyFitSample(points: RatioObs[]): RatioObs[] {
     const quarter = Math.floor((month - 1) / 3) + 1;
     byQuarter.set(`${point.date.slice(0, 4)}-Q${quarter}`, point);
   }
-  return [...byQuarter.values()];
+  return [...(byQuarter.values() as unknown as RatioObs[])];
 }
 
 /**

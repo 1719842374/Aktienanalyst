@@ -44,7 +44,7 @@ export function multplCapeSeries(html: string): CapePoint[] {
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
   const out: CapePoint[] = [];
   for (const row of rows) {
-    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    const cells = [...(row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) as unknown as RegExpExecArray[])].map(match => htmlCell(match[1]));
     if (cells.length < 2) continue;
     const date = englishLongDate(cells[0]);
     const value = Number(cells[1].replace(/,/g, ""));

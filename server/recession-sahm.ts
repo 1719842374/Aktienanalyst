@@ -62,7 +62,7 @@ export function cleanFredMonthly(rows: Array<{ date: string; value: number | nul
   for (const date of dates) {
     byMonth.set(date.slice(0, 7), { date, value: byDate.get(date) as number });
   }
-  return [...byMonth.values()];
+  return [...(byMonth.values() as unknown as FredPoint[])];
 }
 
 function mean(xs: number[]): number {
@@ -177,7 +177,7 @@ function unemploymentByMonth(rows: Array<{ date: string; value: number | null }>
 }
 
 function monthsInSpan(byMonth: Map<string, number | null>): string[] {
-  const keys = [...byMonth.keys()].sort();
+  const keys = [...(byMonth.keys() as unknown as string[])].sort();
   if (keys.length === 0) return [];
   const out: string[] = [];
   let cursor = keys[0];

@@ -185,7 +185,7 @@ function fiscalNextUrl(current: string, link: string): string | null {
   if (link.startsWith("&") || link.startsWith("?")) {
     const url = new URL(current);
     const extra = new URLSearchParams(link.replace(/^[?&]/, ""));
-    for (const [key, value] of extra) url.searchParams.set(key, value);
+    for (const [key, value] of extra as unknown as Array<[string, string]>) url.searchParams.set(key, value);
     return url.toString();
   }
   try {
