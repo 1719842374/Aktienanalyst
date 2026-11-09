@@ -2,9 +2,16 @@
  * Earnings Beat/Miss (WORK_DASHBOARD_FEATURES §2).
  * Inline-Band = Median der absoluten Surprise in dieser Stichprobe.
  * Weniger als zwei verwertbare Surprises → kein Band, Ereignis bleibt n/a (nie 0 als Schwelle).
+ * Der Median lag in shared/distribution.ts (Commit 9e775062). Die Datei ist auf main nicht vorhanden
+ * und bleibt es; die Funktion steht hier, nur für dieses Band.
  */
 
-import { median } from "./distribution";
+function median(values: readonly number[]): number | null {
+  const xs = values.filter(v => Number.isFinite(v)).slice().sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 === 0 ? (xs[mid - 1] + xs[mid]) / 2 : xs[mid];
+}
 
 export type EarningsKind = "beat" | "miss" | "inline";
 
