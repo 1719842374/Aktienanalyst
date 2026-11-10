@@ -17,6 +17,7 @@ import {
   fmpBalanceSheet,
   fmpCashFlow,
   fmpIncomeStatement,
+  fmpObserved,
   fmpPeerCompanies,
   fmpProfile,
   fmpSegmentationRows,
@@ -34,6 +35,7 @@ import {
   OUTLINE_MISMATCH,
   OUTLINE_NO_IDENTITY,
   SEGMENT_CHILDREN_ROUTE,
+  SEGMENT_LIST_UNAVAILABLE,
   SEGMENT_UNKNOWN,
   childrenFromFmpRows,
   reportedParentRevenue,
@@ -217,6 +219,8 @@ export interface SegmentChildrenDeps {
   raw: (kind: "product" | "geographic", ticker: string) => Promise<unknown[]>;
   ki: (ticker: string, parent: string, kind: "product" | "geographic", siblings: readonly string[], identity?: OutlineIdentity) => Promise<unknown>;
   names?: (ticker: string, kind: "product" | "geographic") => Promise<string[]>;
+  /** N25: wie names, meldet zusätzlich, ob der FMP-Abruf der Liste fehlgeschlagen ist (429, 5xx, Netz). */
+  namesStatus?: (ticker: string, kind: "product" | "geographic") => Promise<{ names: string[]; failed: boolean }>;
   outline?: (ticker: string, kind: "product" | "geographic", identity: OutlineIdentity) => Promise<unknown>;
   identity?: (ticker: string) => Promise<OutlineIdentity | null>;
   /** N23: FMP-Peers mit Firmennamen für die Fremdmarken-Prüfung der KI-Kinder. */
@@ -267,14 +271,37 @@ export function namesFromDisplayedSources(input: {
   return names;
 }
 
-async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
-  const ownRows = await fmpSegmentationRows(kind, ticker, "annual");
-  const geoRows = kind === "product" ? await fmpSegmentationRows("geographic", ticker, "annual") : [];
+/**
+ * N25: Dieselben Jahreszeilen wie fmpSegmentationRows(kind, ticker, "annual"), aber mit Status.
+ * fmpSegmentationRows macht aus 429, 5xx und Netzfehlern still eine leere Liste.
+ * Das hier meldet diesen Fall, damit die Route kein „nicht in der Liste“ behauptet.
+ * 402/403/404 sind „keine Daten“, kein Ausfall.
+ */
+async function observedAnnualSegmentationRows(kind: "product" | "geographic", ticker: string): Promise<{ rows: unknown[]; failed: boolean }> {
+  const path = kind === "product" ? "/revenue-product-segmentation" : "/revenue-geographic-segmentation";
+  const result = await fmpObserved(path, { symbol: ticker });
+  if (result.status >= 200 && result.status < 300) {
+    const json = result.json as { data?: unknown } | unknown[] | null;
+    const rows = Array.isArray(json) ? json : Array.isArray((json as { data?: unknown } | null)?.data) ? (json as { data: unknown[] }).data : [];
+    return { rows, failed: false };
+  }
+  const failed = isFmpAvailable() && (result.status === 0 || result.status === 429 || result.status >= 500);
+  return { rows: [], failed };
+}
+
+async function defaultDisplayedNamesWithStatus(ticker: string, kind: "product" | "geographic"): Promise<{ names: string[]; failed: boolean }> {
+  const own = await observedAnnualSegmentationRows(kind, ticker);
+  const geo = kind === "product" ? await observedAnnualSegmentationRows("geographic", ticker) : { rows: [], failed: false };
   // Dieselbe Frist wie der Analyse-Disk-Cache (disk-cache.ts CACHE_TTL_DAYS = 7).
   // diskResearcherGet löscht nach einem Tag und würde die Zeile vor diesem Lesen entfernen.
   const secHit = diskResearcherGetWithTtl(`segments__${ticker.toUpperCase()}`, 7 * 24 * 60 * 60 * 1000);
   const secCache = (secHit?.data ?? null) as { segments?: { name?: string }[] } | null;
-  return namesFromDisplayedSources({ kind, ticker, ownRows, geoRows, secCache });
+  const names = namesFromDisplayedSources({ kind, ticker, ownRows: own.rows, geoRows: geo.rows, secCache });
+  return { names, failed: own.failed || geo.failed };
+}
+
+async function defaultDisplayedNames(ticker: string, kind: "product" | "geographic"): Promise<string[]> {
+  return (await defaultDisplayedNamesWithStatus(ticker, kind)).names;
 }
 
 const RAW_SKIP_KEYS = new Set([
@@ -500,6 +527,7 @@ export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
     fmpAvailable: isFmpAvailable,
     raw: (kind, ticker) => fmpSegmentationRows(kind, ticker, "annual"),
     names: defaultDisplayedNames,
+    namesStatus: defaultDisplayedNamesWithStatus,
     ki: defaultKiChildren,
     outline: defaultOutline,
     identity: loadOutlineIdentity,
@@ -626,12 +654,27 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     try {
       const rawRows = deps.fmpAvailable() ? await deps.raw(kind, ticker) : [];
       const rows = Array.isArray(rawRows) ? rawRows : [];
-      const listed = deps.names
-        ? await deps.names(ticker, kind)
-        : segmentNamesFromFmpRows(rows);
+      let listed: string[];
+      let listFailed = false;
+      if (deps.namesStatus) {
+        const status = await deps.namesStatus(ticker, kind);
+        listed = status.names;
+        listFailed = status.failed;
+      } else {
+        listed = deps.names
+          ? await deps.names(ticker, kind)
+          : segmentNamesFromFmpRows(rows);
+      }
       const hit = listed.find((name) => sameDisplayedName(kind, name, parent)) ?? null;
       const remembered = rememberedOutlineName(ticker, kind, parent, now);
-      if (!hit && !remembered) return res.status(400).json({ error: SEGMENT_UNKNOWN });
+      if (!hit && !remembered) {
+        // N25: Ausgefallene FMP-Liste ist kein Beleg, dass das Segment fehlt. Nicht gecacht.
+        if (listFailed) {
+          res.set("Retry-After", String(Math.ceil(CHILDREN_ERROR_CACHE_MS / 1000)));
+          return res.status(503).json({ error: SEGMENT_LIST_UNAVAILABLE });
+        }
+        return res.status(400).json({ error: SEGMENT_UNKNOWN });
+      }
       const fromNewestYear = hit ? newestMatchingRawKey(rows, kind, parent, listed) : null;
       const canonical = fromNewestYear ?? hit ?? remembered!;
       const siblings = listed.filter((name) => !sameDisplayedName(kind, name, canonical));

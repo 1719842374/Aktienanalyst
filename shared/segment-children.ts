@@ -34,6 +34,8 @@ export const KI_WITHOUT_SOURCE = "n/a — Schätzung ohne Quelle";
 export const OUTLINE_NO_IDENTITY = "n/a — Identität der Firma nicht belegt";
 export const OUTLINE_MISMATCH = "n/a — Antwort passt nicht zur Firma";
 export const SEGMENT_UNKNOWN = "n/a — Segment ist in der serverseitigen Liste nicht enthalten";
+/** N25: FMP-Segmentliste war beim Abruf nicht erreichbar (429, 5xx, Netz). Kein Urteil über das Segment. */
+export const SEGMENT_LIST_UNAVAILABLE = "n/a — FMP-Segmentliste gerade nicht erreichbar, bitte gleich erneut versuchen";
 export const BASIS_TEXT_MAX = 400;
 
 const SKIP_KEYS = new Set([
@@ -226,7 +228,7 @@ export function reviewKiChildren(
   const foreign: string[] = [];
   let filtered = 0;
   const brandScope = scope.companyName
-    ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", ...(scope.siblings ?? [])], scope.peerCompanies ?? [])
+    ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", ...(scope.siblings ?? [])], scope.peerCompanies ?? [], parent)
     : null;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
@@ -322,7 +324,10 @@ export interface PeerCompany {
 interface OwnBrandScope {
   companyName: string;
   tickerToken: string;
+  /** Belegtes eigenes Vokabular: Firma, Ticker, Profilbeschreibung, Geschwister. Nicht der Elternname. */
   own: Set<string>;
+  /** N25: erstes Wort des Elternsegments. Schützt nur gegen Ein-Wort-Treffer (Ticker, Kürzel, Erstwort). */
+  parentHead: string;
   peers: { symbolToken: string; symbolUpper: string; tokens: string[] }[];
 }
 
@@ -363,7 +368,7 @@ function containsTokenRun(have: readonly string[], wanted: readonly string[]): b
   return false;
 }
 
-function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly string[], peers: readonly PeerCompany[]): OwnBrandScope {
+function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly string[], peers: readonly PeerCompany[], parent = ""): OwnBrandScope {
   const tickerToken = tickerBase(ticker);
   const own = new Set<string>(brandTokens(companyName));
   if (tickerToken) own.add(tickerToken);
@@ -380,7 +385,7 @@ function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly s
     const symbolUpper = typeof peer?.symbol === "string" ? tickerUpper(peer.symbol) : "";
     foreignPeers.push({ symbolToken, symbolUpper, tokens: peerName ? brandTokens(peerName) : [] });
   }
-  return { companyName, tickerToken, own, peers: foreignPeers };
+  return { companyName, tickerToken, own, parentHead: brandTokens(parent)[0] ?? "", peers: foreignPeers };
 }
 
 function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
@@ -389,29 +394,44 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
 }
 
 /**
- * N23/N24: Name eines KI-Kinds nennt eine andere Firma oder Marke.
+ * N23/N24/N25: Name eines KI-Kinds nennt eine andere Firma oder Marke.
  * Eigene Firma oder eigener Ticker im Namen gehen vor.
- * 1) Der Firmenname eines FMP-Peers (ohne Rechtsform wie Inc, Corp, Holdings) steht als Wortfolge im Namen,
- *    außer alle seine Wörter gehören zum eigenen Vokabular.
- * 1b) Ein Peer-Ticker zählt allein nur ab PEER_TICKER_MIN_LENGTH Zeichen und nur, wenn er exakt in
- *    Großschreibung als eigenes Wort steht oder zugleich das erste Wort des Peer-Namens ist (DELL/„Dell“),
- *    jeweils nicht im eigenen Vokabular. Kürzere Ticker wirken nur über Firmenname oder brand.
- * 2) Die KI nennt in brand eine Marke, deren Wörter weder Firma, Ticker, Profilbeschreibung noch
- *    Geschwistersegmente enthalten. Der Elternname zählt nicht als eigenes Vokabular seiner Kinder.
+ * Starker Beleg (wirkt immer):
+ * 1) Der Firmenname eines FMP-Peers mit mindestens zwei Wörtern (ohne Rechtsform wie Inc, Corp, Holdings)
+ *    steht als Wortfolge im Namen, außer alle seine Wörter gehören zum eigenen Vokabular.
+ * 2) brand nennt eine Marke außerhalb des belegten eigenen Vokabulars (Firma, Ticker, Profilbeschreibung,
+ *    Geschwister). Der Elternname zählt dafür nicht. Eine Marke ist eigen, wenn ihr erstes Wort belegt eigen
+ *    ist, oder wenn sie im Namen steht und das erste Wort des Namens eine belegte eigene Produktfamilie ist
+ *    („AX“ in „Dynamics AX“, wenn „Dynamics“ im Profil steht).
+ * Ein-Wort-Beleg (Ticker, Kürzel, Erstwort, einwortiger Peer-Name) wirkt nur am Namensanfang:
+ * 3) Peer-Ticker ab PEER_TICKER_MIN_LENGTH Zeichen exakt in Großschreibung als erstes Wort („ANET Switches“),
+ * 4) das erste Wort des Namens ist zugleich Ticker und erstes Wort des Peer-Namens („Dell PowerEdge“), oder
+ * 5) es ist der ganze, einwortige Peer-Name („HP Servers“ bei „HP Inc.“),
+ *    jeweils nicht im eigenen Vokabular. Steht das erste Wort des Elternsegments im Namen, gilt kein Ein-Wort-Beleg
+ *    („Dynamics CRM“ unter „Dynamics …“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
  */
 function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
   if (namesOwnCompany(name, scope)) return false;
   const tokens = brandTokens(name);
   const raw = rawNameTokens(name);
+  const head = tokens[0] ?? "";
+  const rawHead = raw[0] ?? "";
+  const parentAnchored = scope.parentHead.length > 0 && tokens.includes(scope.parentHead);
   for (const peer of scope.peers) {
-    if (peer.tokens.length > 0 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
+    if (peer.tokens.length > 1 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
+    if (parentAnchored || !head || scope.own.has(head)) continue;
+    if (peer.tokens.length === 1 && peer.tokens[0] === head) return true;
     if (peer.symbolUpper.length < PEER_TICKER_MIN_LENGTH || !peer.symbolToken || scope.own.has(peer.symbolToken)) continue;
-    if (raw.includes(peer.symbolUpper)) return true;
-    if (peer.tokens[0] === peer.symbolToken && tokens.includes(peer.symbolToken)) return true;
+    if (rawHead === peer.symbolUpper) return true;
+    if (peer.tokens[0] === peer.symbolToken && head === peer.symbolToken) return true;
   }
   if (typeof brand !== "string" || !brand.trim()) return false;
   if (namesOwnCompany(brand, scope)) return false;
-  return brandTokens(brand).some((token) => !scope.own.has(token));
+  const brandParts = brandTokens(brand);
+  if (brandParts.every((token) => scope.own.has(token))) return false;
+  if (scope.own.has(brandParts[0] ?? "")) return false;
+  if (head && scope.own.has(head) && brandParts.every((token) => tokens.includes(token))) return false;
+  return true;
 }
 
 export interface SegmentOutlineItem {
