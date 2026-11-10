@@ -328,7 +328,13 @@ interface OwnBrandScope {
   own: Set<string>;
   /** N25: erstes Wort des Elternsegments. Schützt nur gegen Ein-Wort-Treffer (Ticker, Kürzel, Erstwort). */
   parentHead: string;
-  peers: { symbolToken: string; symbolUpper: string; tokens: string[] }[];
+  /** N28: distinct = unterscheidender Teil des Peer-Namens (ohne GENERIC_COMPANY_WORDS), raw = Wort vor dem Stamm. */
+  peers: { symbolToken: string; symbolUpper: string; tokens: string[]; distinct: BrandTokenPair[] }[];
+}
+
+interface BrandTokenPair {
+  stem: string;
+  raw: string;
 }
 
 /** N24: Ein Peer-Ticker zählt allein erst ab dieser Länge; kürzere (AI, ON, IT) sind normale Wörter oder Kürzel. */
@@ -343,6 +349,14 @@ const PEER_NAME_ANYWHERE_MIN_LENGTH = 5;
 const PEER_TICKER_ANYWHERE_MIN_LENGTH = 4;
 /** N27: Eine eigene Produktfamilie rettet fremde brand-Wörter nur bis zu dieser Länge (AX, NAV, CRM, 365), nicht „Cisco“ oder „Arista“. */
 const OWN_SUBBRAND_MAX_LENGTH = 4;
+/**
+ * N28: Generische Firmenwörter. Gegen Peer-Namen zählt nur der unterscheidende Teil des Firmennamens
+ * („Meta Platforms“ → meta, „Arista Networks“ → arista, „NetApp“ bleibt netapp), für den einwortigen Peer-Namen (N27)
+ * und für das brand-Wort im Peer-Namen (N26). Rechtsformen (Inc, Corp, SE fehlt) entfernt schon foldCompany.
+ * Die Wortfolge-Regel (mehrwortiger Peer-Name) bleibt beim vollen Namen.
+ */
+const GENERIC_COMPANY_WORDS = ["Platforms", "Networks", "Systems", "Technologies", "Technology", "Holdings", "Group", "Corporation", "Solutions"];
+const GENERIC_COMPANY_STEMS = new Set(GENERIC_COMPANY_WORDS.map((word) => stemBrandToken(word.toLowerCase())));
 
 /** Plural und -ing gleich behandeln: „Networks“ und „Networking“ ergeben „network“. */
 function stemBrandToken(token: string): string {
@@ -355,6 +369,14 @@ function brandTokens(value: string): string[] {
     .filter((token) => !COMPANY_FILLER.has(token))
     .map(stemBrandToken)
     .filter((token) => token.length > 0);
+}
+
+/** N28 (P3-S): wie brandTokens, aber mit dem Wort vor dem Stamm; Längen werden am Rohwort gemessen („Boeing“ = 6, nicht „boe“). */
+function brandTokenPairs(value: string): BrandTokenPair[] {
+  return companyMatchTokens(value)
+    .filter((token) => !COMPANY_FILLER.has(token))
+    .map((raw) => ({ stem: stemBrandToken(raw), raw }))
+    .filter((pair) => pair.stem.length > 0);
 }
 
 function tickerBase(ticker: string): string {
@@ -393,7 +415,9 @@ function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly s
     if (symbolToken && symbolToken === tickerToken) continue;
     if (peerName && (companyReferenced(peerName, companyName) || companyReferenced(companyName, peerName))) continue;
     const symbolUpper = typeof peer?.symbol === "string" ? tickerUpper(peer.symbol) : "";
-    foreignPeers.push({ symbolToken, symbolUpper, tokens: peerName ? brandTokens(peerName) : [] });
+    const pairs = peerName ? brandTokenPairs(peerName) : [];
+    const distinct = pairs.filter((pair) => !GENERIC_COMPANY_STEMS.has(pair.stem));
+    foreignPeers.push({ symbolToken, symbolUpper, tokens: pairs.map((pair) => pair.stem), distinct: distinct.length > 0 ? distinct : pairs });
   }
   return { companyName, tickerToken, own, parentHead: brandTokens(parent)[0] ?? "", peers: foreignPeers };
 }
@@ -420,7 +444,8 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
  * 5) es ist der ganze, einwortige Peer-Name („HP Servers“ bei „HP Inc.“),
  *    N27: ab PEER_NAME_ANYWHERE_MIN_LENGTH Zeichen auch an jeder anderen Stelle; ein Ticker, der zugleich erstes
  *    Peer-Wort ist, ab PEER_TICKER_ANYWHERE_MIN_LENGTH Zeichen an jeder Stelle (nur bei fremdem Kopf, ohne Elternbezug),
- *    jeweils nicht im eigenen Vokabular. Steht das erste Wort des Elternsegments im Namen, gelten 3) und 4) nicht
+ *    jeweils nicht im eigenen Vokabular. N28: Für 5) und das brand-Wort im Peer-Namen zählt nur der unterscheidende Teil
+ *    des Peer-Namens ohne GENERIC_COMPANY_WORDS; Längen von Peer-Namen und brand-Wörtern am Rohwort. Steht das erste Wort des Elternsegments im Namen, gelten 3) und 4) nicht
  *    („Dynamics CRM“ unter „Dynamics …“); 5) gilt weiter (N26: „NetApp Storage“ unter „Storage“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
  */
 function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
@@ -433,29 +458,35 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
   for (const peer of scope.peers) {
     if (peer.tokens.length > 1 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
     // N27: einwortiger Peer-Name an jeder Stelle („Windows Oracle Database“, „ProLiant NetApp Bundle“).
-    if (peer.tokens.length === 1 && peer.tokens[0].length >= PEER_NAME_ANYWHERE_MIN_LENGTH && !scope.own.has(peer.tokens[0]) && tokens.includes(peer.tokens[0])) return true;
+    // N28: einwortig nach Abzug generischer Firmenwörter („Surface Arista“ bei „Arista Networks“), Länge am Rohwort.
+    const single = peer.distinct.length === 1 ? peer.distinct[0] : null;
+    if (single && single.raw.length >= PEER_NAME_ANYWHERE_MIN_LENGTH && !scope.own.has(single.stem) && tokens.includes(single.stem)) return true;
     if (!head || scope.own.has(head)) continue;
     if (peer.tokens.length === 1 && peer.tokens[0] === head) return true;
     // N26: Der Elternbezug schützt nur gegen Ticker und Kürzel, nicht gegen einen einwortigen Peer-Namen („NetApp Storage“).
     if (parentAnchored) continue;
     if (peer.symbolUpper.length < PEER_TICKER_MIN_LENGTH || !peer.symbolToken || scope.own.has(peer.symbolToken)) continue;
     // N27: Ticker = erstes Peer-Wort an jeder Stelle, nur bei fremdem Namensanfang und ohne Elternbezug.
+    // N28: Länge bleibt am Ticker-Stamm („CARS“ → car), sonst fiele „Connected Cars“.
     if (peer.tokens[0] === peer.symbolToken && peer.symbolToken.length >= PEER_TICKER_ANYWHERE_MIN_LENGTH && tokens.includes(peer.symbolToken)) return true;
     if (rawHead === peer.symbolUpper) return true;
     if (peer.tokens[0] === peer.symbolToken && head === peer.symbolToken) return true;
   }
   if (typeof brand !== "string" || !brand.trim()) return false;
   if (namesOwnCompany(brand, scope)) return false;
-  const brandParts = brandTokens(brand);
+  const brandPairs = brandTokenPairs(brand);
+  const brandParts = brandPairs.map((pair) => pair.stem);
   if (brandParts.every((token) => scope.own.has(token))) return false;
   // N26: Ein fremdes brand-Wort aus einem geladenen Peer-Namen ist immer fremd, auch hinter einem eigenen Erstwort
   // („Surface Arista“, brand „Azure Arista“). Nur Peer-Namen, keine Ticker: „Dynamics CRM“ bleibt bei CRM-Peer.
-  if (brandParts.some((token) => !scope.own.has(token) && scope.peers.some((peer) => peer.tokens.includes(token)))) return true;
+  // N28: nur der unterscheidende Teil des Peer-Namens („Platform“ aus „Meta Platforms“ zählt nicht).
+  if (brandParts.some((token) => !scope.own.has(token) && scope.peers.some((peer) => peer.distinct.some((pair) => pair.stem === token)))) return true;
   // N27: Die eigene Familie rettet nur kurze fremde Untermarken-Wörter; „Surface Cisco“ (brand Cisco) bleibt fremd,
   // auch wenn Cisco nicht als Peer geladen ist (N23 brand-only-Abwehr).
-  const ownOrShort = (token: string) => scope.own.has(token) || token.length <= OWN_SUBBRAND_MAX_LENGTH;
-  if (scope.own.has(brandParts[0] ?? "") && brandParts.every(ownOrShort)) return false;
-  if (head && scope.own.has(head) && brandParts.every((token) => tokens.includes(token) && ownOrShort(token))) return false;
+  // N28 (P3-S): Länge am Rohwort („Corning“ = 7, nicht „corn“).
+  const ownOrShort = (pair: BrandTokenPair) => scope.own.has(pair.stem) || pair.raw.length <= OWN_SUBBRAND_MAX_LENGTH;
+  if (scope.own.has(brandParts[0] ?? "") && brandPairs.every(ownOrShort)) return false;
+  if (head && scope.own.has(head) && brandPairs.every((pair) => tokens.includes(pair.stem) && ownOrShort(pair))) return false;
   return true;
 }
 
