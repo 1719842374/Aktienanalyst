@@ -333,6 +333,16 @@ interface OwnBrandScope {
 
 /** N24: Ein Peer-Ticker zählt allein erst ab dieser Länge; kürzere (AI, ON, IT) sind normale Wörter oder Kürzel. */
 const PEER_TICKER_MIN_LENGTH = 3;
+/**
+ * N27 (DC-Vorschlag F3), Abgleich-Heuristiken, keine Wert-Caps:
+ * Ein einwortiger Peer-Name zählt an jeder Stelle des Namens erst ab dieser Länge („Oracle“, „NetApp“, „Salesforce“).
+ * Kürzere sind oft Alltagswörter („Box“ in „Set-Top Box“). Profil und eigenes Vokabular belegen das nicht, deshalb die Länge.
+ */
+const PEER_NAME_ANYWHERE_MIN_LENGTH = 5;
+/** N27: Ticker = erstes Wort des Peer-Namens zählt an jeder Stelle ab dieser Länge („Alletra Dell Migration“). */
+const PEER_TICKER_ANYWHERE_MIN_LENGTH = 4;
+/** N27: Eine eigene Produktfamilie rettet fremde brand-Wörter nur bis zu dieser Länge (AX, NAV, CRM, 365), nicht „Cisco“ oder „Arista“. */
+const OWN_SUBBRAND_MAX_LENGTH = 4;
 
 /** Plural und -ing gleich behandeln: „Networks“ und „Networking“ ergeben „network“. */
 function stemBrandToken(token: string): string {
@@ -408,6 +418,8 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
  * 3) Peer-Ticker ab PEER_TICKER_MIN_LENGTH Zeichen exakt in Großschreibung als erstes Wort („ANET Switches“),
  * 4) das erste Wort des Namens ist zugleich Ticker und erstes Wort des Peer-Namens („Dell PowerEdge“), oder
  * 5) es ist der ganze, einwortige Peer-Name („HP Servers“ bei „HP Inc.“),
+ *    N27: ab PEER_NAME_ANYWHERE_MIN_LENGTH Zeichen auch an jeder anderen Stelle; ein Ticker, der zugleich erstes
+ *    Peer-Wort ist, ab PEER_TICKER_ANYWHERE_MIN_LENGTH Zeichen an jeder Stelle (nur bei fremdem Kopf, ohne Elternbezug),
  *    jeweils nicht im eigenen Vokabular. Steht das erste Wort des Elternsegments im Namen, gelten 3) und 4) nicht
  *    („Dynamics CRM“ unter „Dynamics …“); 5) gilt weiter (N26: „NetApp Storage“ unter „Storage“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
  */
@@ -420,11 +432,15 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
   const parentAnchored = scope.parentHead.length > 0 && tokens.includes(scope.parentHead);
   for (const peer of scope.peers) {
     if (peer.tokens.length > 1 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
+    // N27: einwortiger Peer-Name an jeder Stelle („Windows Oracle Database“, „ProLiant NetApp Bundle“).
+    if (peer.tokens.length === 1 && peer.tokens[0].length >= PEER_NAME_ANYWHERE_MIN_LENGTH && !scope.own.has(peer.tokens[0]) && tokens.includes(peer.tokens[0])) return true;
     if (!head || scope.own.has(head)) continue;
     if (peer.tokens.length === 1 && peer.tokens[0] === head) return true;
     // N26: Der Elternbezug schützt nur gegen Ticker und Kürzel, nicht gegen einen einwortigen Peer-Namen („NetApp Storage“).
     if (parentAnchored) continue;
     if (peer.symbolUpper.length < PEER_TICKER_MIN_LENGTH || !peer.symbolToken || scope.own.has(peer.symbolToken)) continue;
+    // N27: Ticker = erstes Peer-Wort an jeder Stelle, nur bei fremdem Namensanfang und ohne Elternbezug.
+    if (peer.tokens[0] === peer.symbolToken && peer.symbolToken.length >= PEER_TICKER_ANYWHERE_MIN_LENGTH && tokens.includes(peer.symbolToken)) return true;
     if (rawHead === peer.symbolUpper) return true;
     if (peer.tokens[0] === peer.symbolToken && head === peer.symbolToken) return true;
   }
@@ -435,8 +451,11 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
   // N26: Ein fremdes brand-Wort aus einem geladenen Peer-Namen ist immer fremd, auch hinter einem eigenen Erstwort
   // („Surface Arista“, brand „Azure Arista“). Nur Peer-Namen, keine Ticker: „Dynamics CRM“ bleibt bei CRM-Peer.
   if (brandParts.some((token) => !scope.own.has(token) && scope.peers.some((peer) => peer.tokens.includes(token)))) return true;
-  if (scope.own.has(brandParts[0] ?? "")) return false;
-  if (head && scope.own.has(head) && brandParts.every((token) => tokens.includes(token))) return false;
+  // N27: Die eigene Familie rettet nur kurze fremde Untermarken-Wörter; „Surface Cisco“ (brand Cisco) bleibt fremd,
+  // auch wenn Cisco nicht als Peer geladen ist (N23 brand-only-Abwehr).
+  const ownOrShort = (token: string) => scope.own.has(token) || token.length <= OWN_SUBBRAND_MAX_LENGTH;
+  if (scope.own.has(brandParts[0] ?? "") && brandParts.every(ownOrShort)) return false;
+  if (head && scope.own.has(head) && brandParts.every((token) => tokens.includes(token) && ownOrShort(token))) return false;
   return true;
 }
 
