@@ -432,15 +432,25 @@ const BRAND_OWNER_UNKNOWN = new Set(["null", "none", "n/a", "na", "unklar", "unb
 
 /**
  * N29: brandOwner = Firma, der die Marke im Namen gehört (KI-Feld, optional).
- * "peer": nennt einen geladenen Peer (Name oder Ticker). "own": eigene Firma (Name ohne Rechtsform oder Ticker).
- * "foreign": eine andere Firma. "none": null, leer, Platzhalter oder kein Text.
+ * "peer": nennt einen geladenen Peer (Name oder Ticker). "own": eigene Firma (Name ohne Rechtsform oder Ticker),
+ * N30: nur wenn alle Wörter zur eigenen Firma oder zum Ticker gehören. "foreign": eine andere Firma.
+ * "none": null, leer, Platzhalter oder kein Text; N30 auch Tochter/Teilnennung, deren erstes unterscheidendes Wort eigen ist.
  */
 function brandOwnerVerdict(value: unknown, scope: OwnBrandScope): "peer" | "own" | "foreign" | "none" {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text || BRAND_OWNER_UNKNOWN.has(text.toLowerCase()) || companyMatchTokens(text).length === 0) return "none";
   const upper = text.toUpperCase();
   if (scope.peers.some((peer) => (peer.name && (companyReferenced(text, peer.name) || companyReferenced(peer.name, text))) || (peer.symbolUpper.length > 0 && upper === peer.symbolUpper))) return "peer";
-  if (namesOwnCompany(text, scope)) return "own";
+  // N30 (DC-Vorschlag G2): eigen nur, wenn alle Wörter von brandOwner zur eigenen Firma bzw. zum eigenen Ticker gehören
+  // und die Firma ganz oder der Ticker genannt ist (keine Teilnennung wie „GE HealthCare“, „Intel, not AMD“).
+  // Beginnt brandOwner mit eigenem Vokabular (Tochter: „LinkedIn Corporation“, „Aruba Networks“, „Xbox Game Studios“),
+  // gilt er als fehlend und N28 entscheidet.
+  const core = brandTokens(text);
+  const ownCore = brandTokens(scope.companyName);
+  const ownSet = new Set([...ownCore, ...(scope.tickerToken ? [scope.tickerToken] : [])]);
+  if (core.length > 0 && core.every((token) => ownSet.has(token)) && (ownCore.every((token) => core.includes(token)) || core.includes(scope.tickerToken))) return "own";
+  const firstDistinct = core.find((token) => !GENERIC_COMPANY_STEMS.has(token));
+  if (firstDistinct && scope.own.has(firstDistinct)) return "none";
   return "foreign";
 }
 
@@ -468,6 +478,8 @@ function brandOwnerVerdict(value: unknown, scope: OwnBrandScope): "peer" | "own"
  * a) brandOwner nennt einen geladenen Peer: verworfen. b) brandOwner ist die eigene Firma: bleibt, sticht die
  *    brand-Regeln (Unterbrands außerhalb des Profils, „Power Platform“). c) brandOwner ist eine andere Firma: verworfen,
  *    auch ohne geladenen Peer. d) brandOwner fehlt oder null: wie N28.
+ * N30: b) nur, wenn alle brandOwner-Wörter zur eigenen Firma oder zum Ticker gehören. Tochter mit eigenem Erstwort
+ *    („LinkedIn Corporation“, „Aruba Networks“) gilt als d); andere Teilnennung („GE HealthCare“ bei GE) ebenso.
  */
 function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope, brandOwner: unknown = null): boolean {
   if (namesOwnCompany(name, scope)) return false;

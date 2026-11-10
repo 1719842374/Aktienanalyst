@@ -85,6 +85,11 @@ export const SEGMENT_CHILDREN_PROMPT_VERSION = "n29-brandOwner";
 export function segmentChildrenCacheKey(ticker: string, kind: "product" | "geographic", parent: string): string {
   return `${SEGMENT_CHILDREN_PROMPT_VERSION}|${ticker.toUpperCase()}|${kind}|${parent.toLowerCase().replace(/\s+/g, " ").trim()}`;
 }
+
+/** N30 (Beleg 4): Prompt-Version in der 200-Antwort von /api/segment-children, dieselbe Konstante wie im Cache-Schlüssel. Der Client liest nur parent, children und reason. */
+export function withSegmentChildrenPromptVersion(body: SegmentChildrenResult): SegmentChildrenResult & { promptVersion: string } {
+  return { ...body, promptVersion: SEGMENT_CHILDREN_PROMPT_VERSION };
+}
 const rateBuckets = new Map<string, number[]>();
 
 const OUTLINE_NAME_TTL_MS = 24 * 60 * 60 * 1000;
@@ -643,7 +648,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     });
     for (let i = 0; i < expired.length; i++) childCache.delete(expired[i]);
     const hit = childCache.get(cacheKey);
-    if (hit && now - hit.at < hit.ttl) return res.json(hit.body);
+    if (hit && now - hit.at < hit.ttl) return res.json(withSegmentChildrenPromptVersion(hit.body));
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     if (!takeSegmentChildrenSlot(ip, now, limit.max, limit.windowMs)) {
       return res.status(429).json({ error: "Zu viele Abfragen" });
@@ -712,7 +717,7 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         if (oldestKey) childCache.delete(oldestKey);
       }
       childCache.set(cacheKey, { at: now, body, ttl });
-      return res.json(body);
+      return res.json(withSegmentChildrenPromptVersion(body));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Untersegmente fehlgeschlagen";
       return res.status(502).json({ error: message.slice(0, 200) });
