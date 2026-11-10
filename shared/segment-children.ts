@@ -400,15 +400,16 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
  * 1) Der Firmenname eines FMP-Peers mit mindestens zwei Wörtern (ohne Rechtsform wie Inc, Corp, Holdings)
  *    steht als Wortfolge im Namen, außer alle seine Wörter gehören zum eigenen Vokabular.
  * 2) brand nennt eine Marke außerhalb des belegten eigenen Vokabulars (Firma, Ticker, Profilbeschreibung,
- *    Geschwister). Der Elternname zählt dafür nicht. Eine Marke ist eigen, wenn ihr erstes Wort belegt eigen
+ *    Geschwister). Der Elternname zählt dafür nicht. N26: Steht ein nicht eigenes brand-Wort in einem geladenen
+ *    Peer-Namen, ist die Marke fremd (nur Namen, keine Ticker). Sonst ist eine Marke eigen, wenn ihr erstes Wort belegt eigen
  *    ist, oder wenn sie im Namen steht und das erste Wort des Namens eine belegte eigene Produktfamilie ist
  *    („AX“ in „Dynamics AX“, wenn „Dynamics“ im Profil steht).
  * Ein-Wort-Beleg (Ticker, Kürzel, Erstwort, einwortiger Peer-Name) wirkt nur am Namensanfang:
  * 3) Peer-Ticker ab PEER_TICKER_MIN_LENGTH Zeichen exakt in Großschreibung als erstes Wort („ANET Switches“),
  * 4) das erste Wort des Namens ist zugleich Ticker und erstes Wort des Peer-Namens („Dell PowerEdge“), oder
  * 5) es ist der ganze, einwortige Peer-Name („HP Servers“ bei „HP Inc.“),
- *    jeweils nicht im eigenen Vokabular. Steht das erste Wort des Elternsegments im Namen, gilt kein Ein-Wort-Beleg
- *    („Dynamics CRM“ unter „Dynamics …“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
+ *    jeweils nicht im eigenen Vokabular. Steht das erste Wort des Elternsegments im Namen, gelten 3) und 4) nicht
+ *    („Dynamics CRM“ unter „Dynamics …“); 5) gilt weiter (N26: „NetApp Storage“ unter „Storage“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
  */
 function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
   if (namesOwnCompany(name, scope)) return false;
@@ -419,8 +420,10 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
   const parentAnchored = scope.parentHead.length > 0 && tokens.includes(scope.parentHead);
   for (const peer of scope.peers) {
     if (peer.tokens.length > 1 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
-    if (parentAnchored || !head || scope.own.has(head)) continue;
+    if (!head || scope.own.has(head)) continue;
     if (peer.tokens.length === 1 && peer.tokens[0] === head) return true;
+    // N26: Der Elternbezug schützt nur gegen Ticker und Kürzel, nicht gegen einen einwortigen Peer-Namen („NetApp Storage“).
+    if (parentAnchored) continue;
     if (peer.symbolUpper.length < PEER_TICKER_MIN_LENGTH || !peer.symbolToken || scope.own.has(peer.symbolToken)) continue;
     if (rawHead === peer.symbolUpper) return true;
     if (peer.tokens[0] === peer.symbolToken && head === peer.symbolToken) return true;
@@ -429,6 +432,9 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
   if (namesOwnCompany(brand, scope)) return false;
   const brandParts = brandTokens(brand);
   if (brandParts.every((token) => scope.own.has(token))) return false;
+  // N26: Ein fremdes brand-Wort aus einem geladenen Peer-Namen ist immer fremd, auch hinter einem eigenen Erstwort
+  // („Surface Arista“, brand „Azure Arista“). Nur Peer-Namen, keine Ticker: „Dynamics CRM“ bleibt bei CRM-Peer.
+  if (brandParts.some((token) => !scope.own.has(token) && scope.peers.some((peer) => peer.tokens.includes(token)))) return true;
   if (scope.own.has(brandParts[0] ?? "")) return false;
   if (head && scope.own.has(head) && brandParts.every((token) => tokens.includes(token))) return false;
   return true;
