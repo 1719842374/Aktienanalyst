@@ -232,7 +232,7 @@ export function reviewKiChildren(
     : null;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown };
+    const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown; brandOwner?: unknown };
     const name = typeof rec.name === "string" ? rec.name.trim().slice(0, 80) : "";
     if (!name) continue;
     const basis = typeof rec.basis === "string" ? boundBasis(rec.basis) : "";
@@ -250,7 +250,7 @@ export function reviewKiChildren(
       foreign.push(name);
       continue;
     }
-    if (brandScope && namesForeignBrand(name, rec.brand, brandScope)) {
+    if (brandScope && namesForeignBrand(name, rec.brand, brandScope, rec.brandOwner)) {
       foreign.push(name);
       continue;
     }
@@ -329,7 +329,7 @@ interface OwnBrandScope {
   /** N25: erstes Wort des Elternsegments. Schützt nur gegen Ein-Wort-Treffer (Ticker, Kürzel, Erstwort). */
   parentHead: string;
   /** N28: distinct = unterscheidender Teil des Peer-Namens (ohne GENERIC_COMPANY_WORDS), raw = Wort vor dem Stamm. */
-  peers: { symbolToken: string; symbolUpper: string; tokens: string[]; distinct: BrandTokenPair[] }[];
+  peers: { name: string; symbolToken: string; symbolUpper: string; tokens: string[]; distinct: BrandTokenPair[] }[];
 }
 
 interface BrandTokenPair {
@@ -417,7 +417,7 @@ function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly s
     const symbolUpper = typeof peer?.symbol === "string" ? tickerUpper(peer.symbol) : "";
     const pairs = peerName ? brandTokenPairs(peerName) : [];
     const distinct = pairs.filter((pair) => !GENERIC_COMPANY_STEMS.has(pair.stem));
-    foreignPeers.push({ symbolToken, symbolUpper, tokens: pairs.map((pair) => pair.stem), distinct: distinct.length > 0 ? distinct : pairs });
+    foreignPeers.push({ name: peerName, symbolToken, symbolUpper, tokens: pairs.map((pair) => pair.stem), distinct: distinct.length > 0 ? distinct : pairs });
   }
   return { companyName, tickerToken, own, parentHead: brandTokens(parent)[0] ?? "", peers: foreignPeers };
 }
@@ -425,6 +425,23 @@ function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly s
 function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
   if (companyReferenced(text, scope.companyName)) return true;
   return scope.tickerToken.length > 0 && brandTokens(text).includes(scope.tickerToken);
+}
+
+/** N29: Platzhalter, die die KI statt null schreibt; gelten als „brandOwner fehlt“. */
+const BRAND_OWNER_UNKNOWN = new Set(["null", "none", "n/a", "na", "unklar", "unbekannt", "unknown", "-"]);
+
+/**
+ * N29: brandOwner = Firma, der die Marke im Namen gehört (KI-Feld, optional).
+ * "peer": nennt einen geladenen Peer (Name oder Ticker). "own": eigene Firma (Name ohne Rechtsform oder Ticker).
+ * "foreign": eine andere Firma. "none": null, leer, Platzhalter oder kein Text.
+ */
+function brandOwnerVerdict(value: unknown, scope: OwnBrandScope): "peer" | "own" | "foreign" | "none" {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || BRAND_OWNER_UNKNOWN.has(text.toLowerCase()) || companyMatchTokens(text).length === 0) return "none";
+  const upper = text.toUpperCase();
+  if (scope.peers.some((peer) => (peer.name && (companyReferenced(text, peer.name) || companyReferenced(peer.name, text))) || (peer.symbolUpper.length > 0 && upper === peer.symbolUpper))) return "peer";
+  if (namesOwnCompany(text, scope)) return "own";
+  return "foreign";
 }
 
 /**
@@ -447,8 +464,12 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
  *    jeweils nicht im eigenen Vokabular. N28: Für 5) und das brand-Wort im Peer-Namen zählt nur der unterscheidende Teil
  *    des Peer-Namens ohne GENERIC_COMPANY_WORDS; Längen von Peer-Namen und brand-Wörtern am Rohwort. Steht das erste Wort des Elternsegments im Namen, gelten 3) und 4) nicht
  *    („Dynamics CRM“ unter „Dynamics …“); 5) gilt weiter (N26: „NetApp Storage“ unter „Storage“). Wörter hinten im Namen („Connected Cars“, „Set-Top Box“) sind kein Beleg.
+ * N29 brandOwner, nach allen Peer-Belegen aus dem Namen (die verwerfen weiter immer):
+ * a) brandOwner nennt einen geladenen Peer: verworfen. b) brandOwner ist die eigene Firma: bleibt, sticht die
+ *    brand-Regeln (Unterbrands außerhalb des Profils, „Power Platform“). c) brandOwner ist eine andere Firma: verworfen,
+ *    auch ohne geladenen Peer. d) brandOwner fehlt oder null: wie N28.
  */
-function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
+function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope, brandOwner: unknown = null): boolean {
   if (namesOwnCompany(name, scope)) return false;
   const tokens = brandTokens(name);
   const raw = rawNameTokens(name);
@@ -472,6 +493,11 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): 
     if (rawHead === peer.symbolUpper) return true;
     if (peer.tokens[0] === peer.symbolToken && head === peer.symbolToken) return true;
   }
+  // N29: brandOwner nach den Peer-Belegen aus dem Namen, vor den brand-Regeln.
+  const ownerVerdict = brandOwnerVerdict(brandOwner, scope);
+  if (ownerVerdict === "peer") return true;
+  if (ownerVerdict === "own") return false;
+  if (ownerVerdict === "foreign") return true;
   if (typeof brand !== "string" || !brand.trim()) return false;
   if (namesOwnCompany(brand, scope)) return false;
   const brandPairs = brandTokenPairs(brand);
@@ -702,7 +728,7 @@ export function reviewSegmentOutline(
     : null;
   for (const item of rawList) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown };
+    const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown; brandOwner?: unknown };
     const name = (typeof rec.name === "string" && rec.name.trim() ? rec.name : typeof rec.segmentName === "string" ? rec.segmentName : "").trim().slice(0, 80);
     if (!name || seen.has(norm(name))) continue;
     const basisText = [rec.basis, rec.rationale, rec.formula].filter((part) => typeof part === "string" && part.trim()).join(" · ");
@@ -715,7 +741,7 @@ export function reviewSegmentOutline(
       const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
       const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
       const ownerForeign = (owner || ownerParent) && !companyReferenced(owner, companyName) && !companyReferenced(ownerParent, companyName);
-      if (ownerForeign || namesForeignBrand(name, rec.brand, brandScope)) {
+      if (ownerForeign || namesForeignBrand(name, rec.brand, brandScope, rec.brandOwner)) {
         seen.add(norm(name));
         foreign.push(name);
         continue;
