@@ -266,6 +266,21 @@ export interface FmpSegmentRow {
    *  dieser Wert komplett, obwohl prevRevenue pro Segment schon vorlag.
    *  undefined, wenn keine Vorperiode gefunden wurde (kein Fake-0). */
   prevPercentage?: number;
+  /** Berichtswährung der neuesten Segmentzeile, nur wenn das Feld dort steht. */
+  reportedCurrency?: string;
+}
+
+/** Vorjahresumsatz auch bei anderer Großschreibung, sonst bleibt das Fakt-YoY leer. */
+export function priorSegmentRevenue(name: string, prevMap: Record<string, number>): number | undefined {
+  const direct = prevMap[name];
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  const wanted = name.toLowerCase().replace(/\s+/g, " ").trim();
+  const keys = Object.keys(prevMap);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key.toLowerCase().replace(/\s+/g, " ").trim() === wanted) return prevMap[key];
+  }
+  return undefined;
 }
 
 /**
@@ -335,13 +350,16 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
     .sort((a, b) => curMap[b] - curMap[a])
     .map(name => {
       const revenue = curMap[name];
-      const prevRevenue = prevMap[name];
+      const prevRevenue = priorSegmentRevenue(name, prevMap);
       const hasPrev = typeof prevRevenue === "number" && isFinite(prevRevenue) && prevRevenue > 0;
       const growth = hasPrev
         ? Math.round(((revenue / prevRevenue) - 1) * 1000) / 10
         : null;
       const prevPercentage = hasPrev && prevTotal > 0
         ? Math.round((prevRevenue / prevTotal) * 1000) / 10
+        : undefined;
+      const reportedCurrency = typeof latest?.reportedCurrency === "string" && /^[A-Za-z]{3}$/.test(latest.reportedCurrency.trim())
+        ? latest.reportedCurrency.trim().toUpperCase()
         : undefined;
       return {
         name,
@@ -351,6 +369,7 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
         growth,
         ...(hasPrev ? { prevRevenue, prevDate: prevKey } : {}),
         ...(prevPercentage !== undefined ? { prevPercentage } : {}),
+        ...(reportedCurrency ? { reportedCurrency } : {}),
       };
     });
 }
@@ -681,6 +700,23 @@ export async function fmpPeers(symbol: string): Promise<any[]> {
     // Backward-compat: if a peersList wrapper is ever returned, honour it.
     const item = data as any;
     return item?.peersList || [];
+  } catch { return []; }
+}
+
+/**
+ * Dieselbe /stable/stock-peers-Antwort wie fmpPeers, mit companyName.
+ * Für die Fremdmarken-Prüfung der KI-Untersegmente. fmpPeers bleibt unverändert.
+ */
+export async function fmpPeerCompanies(symbol: string): Promise<Array<{ symbol: string; companyName: string }>> {
+  try {
+    const data = await fmpFetch(`/stock-peers`, { symbol });
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((row: any) => ({
+        symbol: typeof row?.symbol === "string" ? row.symbol.trim() : "",
+        companyName: typeof row?.companyName === "string" ? row.companyName.trim() : "",
+      }))
+      .filter((row: { symbol: string; companyName: string }) => row.symbol.length > 0);
   } catch { return []; }
 }
 
