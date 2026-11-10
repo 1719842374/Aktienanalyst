@@ -67,21 +67,25 @@ const CYCLICAL_TICKERS = new Set([
   'CF','MOS','NTR',
 ]);
 
-function OutlineRows({
+export function OutlineRows({
   ticker,
   kind,
   items,
+  note,
   open,
   setOpen,
 }: {
   ticker: string;
   kind: "product" | "geographic";
   items: OutlineItem[];
+  /** Grund aus /api/segment-outline, z. B. „n/a — Fremdmarke verworfen: …“, auch wenn Items übrig bleiben. */
+  note?: string | null;
   open: Record<string, boolean>;
   setOpen: (next: Record<string, boolean>) => void;
 }) {
   return (
     <div className="mt-2 space-y-1.5" data-testid={`segment-outline-${kind}`}>
+      {note ? <p className="text-[10px] text-muted-foreground" data-testid={`segment-outline-note-${kind}`}>{note}</p> : null}
       {items.map((item) => (
         <SegmentLine key={item.name} name={item.name} open={open[item.name] === true} onToggle={() => setOpen({ ...open, [item.name]: !open[item.name] })}>
           <div className="mb-0.5 flex items-center justify-between text-xs">
@@ -551,6 +555,8 @@ export function SegmentEstimateBlock({ data }: Props) {
   const [geoOutline, setGeoOutline] = useState<OutlineItem[] | null>(null);
   const [businessOutlineError, setBusinessOutlineError] = useState<string | null>(null);
   const [geoOutlineError, setGeoOutlineError] = useState<string | null>(null);
+  const [businessOutlineNote, setBusinessOutlineNote] = useState<string | null>(null);
+  const [geoOutlineNote, setGeoOutlineNote] = useState<string | null>(null);
   const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
   const tickerRef = useRef(data.ticker);
   const outlineTicket = useRef(0);
@@ -561,6 +567,8 @@ export function SegmentEstimateBlock({ data }: Props) {
     setGeoOutline(null);
     setBusinessOutlineError(null);
     setGeoOutlineError(null);
+    setBusinessOutlineNote(null);
+    setGeoOutlineNote(null);
     setOutlineLoading(null);
     setOpenBusiness({});
     setOpenGeo({});
@@ -588,8 +596,13 @@ export function SegmentEstimateBlock({ data }: Props) {
         setError(json?.reason || json?.error || "KI-Schätzung unvollständig — nichts übernommen");
         return;
       }
-      if (kind === "product") setBusinessOutline(json.items);
-      else setGeoOutline(json.items);
+      if (kind === "product") {
+        setBusinessOutline(json.items);
+        setBusinessOutlineNote(json.reason ?? null);
+      } else {
+        setGeoOutline(json.items);
+        setGeoOutlineNote(json.reason ?? null);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "KI-Schätzung fehlgeschlagen");
     } finally {
@@ -702,7 +715,7 @@ export function SegmentEstimateBlock({ data }: Props) {
                 {outlineLoading === "product" ? "…" : businessOutline ? "erneut schätzen" : "N/A mit KI schätzen"}
               </button>
               {businessOutlineError && <p className="mt-1 text-[10px] text-red-500" data-testid="segment-outline-error-product">{businessOutlineError}</p>}
-              {businessOutline && <OutlineRows ticker={data.ticker} kind="product" items={businessOutline} open={openBusiness} setOpen={setOpenBusiness} />}
+              {businessOutline && <OutlineRows ticker={data.ticker} kind="product" items={businessOutline} note={businessOutlineNote} open={openBusiness} setOpen={setOpenBusiness} />}
             </div>
           )
         )}
@@ -724,7 +737,7 @@ export function SegmentEstimateBlock({ data }: Props) {
                 {outlineLoading === "geographic" ? "…" : geoOutline ? "erneut schätzen" : "N/A mit KI schätzen"}
               </button>
               {geoOutlineError && <p className="mb-1 text-[10px] text-red-500" data-testid="segment-outline-error-geo">{geoOutlineError}</p>}
-              {geoOutline && <OutlineRows ticker={data.ticker} kind="geographic" items={geoOutline} open={openGeo} setOpen={setOpenGeo} />}
+              {geoOutline && <OutlineRows ticker={data.ticker} kind="geographic" items={geoOutline} note={geoOutlineNote} open={openGeo} setOpen={setOpenGeo} />}
             </>
           )}
           {data.geoSegments && data.geoSegments.length > 0 && (

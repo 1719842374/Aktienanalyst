@@ -226,7 +226,7 @@ export function reviewKiChildren(
   const foreign: string[] = [];
   let filtered = 0;
   const brandScope = scope.companyName
-    ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", parent, ...(scope.siblings ?? [])], scope.peerCompanies ?? [])
+    ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", ...(scope.siblings ?? [])], scope.peerCompanies ?? [])
     : null;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
@@ -323,8 +323,11 @@ interface OwnBrandScope {
   companyName: string;
   tickerToken: string;
   own: Set<string>;
-  peers: { symbolToken: string; tokens: string[] }[];
+  peers: { symbolToken: string; symbolUpper: string; tokens: string[] }[];
 }
+
+/** N24: Ein Peer-Ticker zählt allein erst ab dieser Länge; kürzere (AI, ON, IT) sind normale Wörter oder Kürzel. */
+const PEER_TICKER_MIN_LENGTH = 3;
 
 /** Plural und -ing gleich behandeln: „Networks“ und „Networking“ ergeben „network“. */
 function stemBrandToken(token: string): string {
@@ -342,6 +345,14 @@ function brandTokens(value: string): string[] {
 function tickerBase(ticker: string): string {
   const base = ticker.trim().split(/[.:\-]/)[0]?.toLowerCase() ?? "";
   return base.length >= 2 ? stemBrandToken(base) : "";
+}
+
+function tickerUpper(ticker: string): string {
+  return ticker.trim().split(/[.:\-]/)[0]?.toUpperCase() ?? "";
+}
+
+function rawNameTokens(value: string): string[] {
+  return value.split(/[^A-Za-z0-9]+/).filter((token) => token.length > 0);
 }
 
 function containsTokenRun(have: readonly string[], wanted: readonly string[]): boolean {
@@ -366,7 +377,8 @@ function ownBrandScope(companyName: string, ticker: string, ownTexts: readonly s
     if (!peerName && !symbolToken) continue;
     if (symbolToken && symbolToken === tickerToken) continue;
     if (peerName && (companyReferenced(peerName, companyName) || companyReferenced(companyName, peerName))) continue;
-    foreignPeers.push({ symbolToken, tokens: peerName ? brandTokens(peerName) : [] });
+    const symbolUpper = typeof peer?.symbol === "string" ? tickerUpper(peer.symbol) : "";
+    foreignPeers.push({ symbolToken, symbolUpper, tokens: peerName ? brandTokens(peerName) : [] });
   }
   return { companyName, tickerToken, own, peers: foreignPeers };
 }
@@ -377,17 +389,25 @@ function namesOwnCompany(text: string, scope: OwnBrandScope): boolean {
 }
 
 /**
- * N23: Name eines KI-Kinds nennt eine andere Firma oder Marke.
+ * N23/N24: Name eines KI-Kinds nennt eine andere Firma oder Marke.
  * Eigene Firma oder eigener Ticker im Namen gehen vor.
- * 1) Firmenname oder Ticker eines FMP-Peers steht im Namen, außer das Wort gehört zum eigenen Vokabular.
- * 2) Die KI nennt in brand eine Marke, deren Wörter weder Firma, Ticker, Profilbeschreibung noch Segmentnamen enthalten.
+ * 1) Der Firmenname eines FMP-Peers (ohne Rechtsform wie Inc, Corp, Holdings) steht als Wortfolge im Namen,
+ *    außer alle seine Wörter gehören zum eigenen Vokabular.
+ * 1b) Ein Peer-Ticker zählt allein nur ab PEER_TICKER_MIN_LENGTH Zeichen und nur, wenn er exakt in
+ *    Großschreibung als eigenes Wort steht oder zugleich das erste Wort des Peer-Namens ist (DELL/„Dell“),
+ *    jeweils nicht im eigenen Vokabular. Kürzere Ticker wirken nur über Firmenname oder brand.
+ * 2) Die KI nennt in brand eine Marke, deren Wörter weder Firma, Ticker, Profilbeschreibung noch
+ *    Geschwistersegmente enthalten. Der Elternname zählt nicht als eigenes Vokabular seiner Kinder.
  */
 function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope): boolean {
   if (namesOwnCompany(name, scope)) return false;
   const tokens = brandTokens(name);
+  const raw = rawNameTokens(name);
   for (const peer of scope.peers) {
     if (peer.tokens.length > 0 && !peer.tokens.every((token) => scope.own.has(token)) && containsTokenRun(tokens, peer.tokens)) return true;
-    if (peer.symbolToken && !scope.own.has(peer.symbolToken) && tokens.includes(peer.symbolToken)) return true;
+    if (peer.symbolUpper.length < PEER_TICKER_MIN_LENGTH || !peer.symbolToken || scope.own.has(peer.symbolToken)) continue;
+    if (raw.includes(peer.symbolUpper)) return true;
+    if (peer.tokens[0] === peer.symbolToken && tokens.includes(peer.symbolToken)) return true;
   }
   if (typeof brand !== "string" || !brand.trim()) return false;
   if (namesOwnCompany(brand, scope)) return false;
@@ -587,17 +607,26 @@ export function outlineStillCurrent(startedTicker: string, currentTicker: string
   return startedTicker.trim().toUpperCase() === currentTicker.trim().toUpperCase();
 }
 
-export function reviewSegmentOutline(payload: unknown, companyName = ""): { items: SegmentOutlineItem[]; reason: string | null } {
+export function reviewSegmentOutline(
+  payload: unknown,
+  companyName = "",
+  /** N24: dieselbe Fremdmarken-Prüfung wie bei den KI-Kindern. */
+  brand: { ticker?: string; description?: string; peerCompanies?: readonly PeerCompany[] } = {},
+): { items: SegmentOutlineItem[]; reason: string | null } {
   if (!payload || typeof payload !== "object") return { items: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
   const rawList = Array.isArray(record.children) ? record.children : Array.isArray(record.fills) ? record.fills : null;
   if (!rawList || rawList.length === 0) return { items: [], reason: NO_SEGMENT_CHILDREN };
   const items: SegmentOutlineItem[] = [];
   const notes: string[] = [];
+  const foreign: string[] = [];
   const seen = new Set<string>();
+  const brandScope = companyName
+    ? ownBrandScope(companyName, brand.ticker ?? "", [brand.description ?? ""], brand.peerCompanies ?? [])
+    : null;
   for (const item of rawList) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown };
+    const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown };
     const name = (typeof rec.name === "string" && rec.name.trim() ? rec.name : typeof rec.segmentName === "string" ? rec.segmentName : "").trim().slice(0, 80);
     if (!name || seen.has(norm(name))) continue;
     const basisText = [rec.basis, rec.rationale, rec.formula].filter((part) => typeof part === "string" && part.trim()).join(" · ");
@@ -605,6 +634,16 @@ export function reviewSegmentOutline(payload: unknown, companyName = ""): { item
     if (!basis) {
       notes.push(`${KI_WITHOUT_BASIS}: ${name}`);
       continue;
+    }
+    if (brandScope) {
+      const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
+      const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
+      const ownerForeign = (owner || ownerParent) && !companyReferenced(owner, companyName) && !companyReferenced(ownerParent, companyName);
+      if (ownerForeign || namesForeignBrand(name, rec.brand, brandScope)) {
+        seen.add(norm(name));
+        foreign.push(name);
+        continue;
+      }
     }
     const citation = (typeof rec.source === "string" && rec.source.trim() ? rec.source : typeof rec.tamSource === "string" ? rec.tamSource : "").trim();
     const share = outlineNumber(rec.shareOfParentPct);
@@ -634,8 +673,9 @@ export function reviewSegmentOutline(payload: unknown, companyName = ""): { item
   if (items.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
     return { items: [], reason: KI_SUM_EXCEEDS_PARENT };
   }
-  if (items.length === 0) return { items: [], reason: notes[0] ?? NO_SEGMENT_CHILDREN };
-  return { items, reason: notes.length > 0 ? notes.join(" ") : null };
+  const parts = [foreign.length > 0 ? `n/a — Fremdmarke verworfen: ${foreign.join(", ")}` : "", ...notes].filter((part) => part.length > 0);
+  if (items.length === 0) return { items: [], reason: parts[0] ?? NO_SEGMENT_CHILDREN };
+  return { items, reason: parts.length > 0 ? parts.join(" ") : null };
 }
 
 export function resolveSegmentChildren(

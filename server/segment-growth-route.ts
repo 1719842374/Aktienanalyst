@@ -484,7 +484,7 @@ async function defaultOutline(ticker: string, kind: "product" | "geographic", id
   try {
     const result = await callLLMJson({
       systemPrompt: "Antworte nur mit JSON. Schätze nur die genannte Firma. companyEcho muss den Firmennamen enthalten, industryEcho die Branche. Zahlen nur mit Dokumenttyp und Periode, sonst null. Echte 0 bleibt 0. Das Label ist KI-Schätzung, nicht FMP und nicht Override.",
-      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || ""}","children":[{"name":"","owner":"${identity.companyName}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. Echte 0 bleibt 0.`,
+      prompt: `${peerLine}\nFirma: ${identity.companyName}. Börse: ${identity.exchange || "n/a"}. Land: ${identity.country || "n/a"}. Sektor: ${identity.sector || "n/a"}. Branche: ${identity.industry || "n/a"}. Geschäftsjahr: ${identity.fiscalYear || "n/a"}. Währung: ${identity.currency || "n/a"}. Ticker ${ticker}. ${subject} Nenne drei bis sechs Namen dieser Firma, nicht einer anderen. brand nennt die Firma oder Marke, die im Namen steht, sonst leer. Keine Produkte oder Marken einer anderen Firma, auch keine Wettbewerber. Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst source null und die Zahl null. Kein Platzhalter als Quelle. Die Summe der Anteile darf 100 nicht übersteigen. Beispiel: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || ""}","children":[{"name":"","brand":"","owner":"${identity.companyName}","ownerParent":"","shareOfParentPct":null,"growthPct":null,"basis":"","source":null}]}. Echte 0 bleibt 0.`,
       maxTokens: 800,
       temperature: 0.2,
       signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
@@ -697,7 +697,20 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
         return res.json({ items: [], reason: OUTLINE_MISMATCH });
       }
-      const reviewed = reviewSegmentOutline(payload, identity.companyName);
+      let peerCompanies: readonly PeerCompany[] = [];
+      if (deps.peers && deps.fmpAvailable()) {
+        try {
+          const rows = await deps.peers(ticker);
+          peerCompanies = Array.isArray(rows) ? rows : [];
+        } catch {
+          peerCompanies = [];
+        }
+      }
+      const reviewed = reviewSegmentOutline(payload, identity.companyName, {
+        ticker,
+        description: identity.description,
+        peerCompanies,
+      });
       if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name), now);
       return res.json(reviewed);
     } catch (err: unknown) {
