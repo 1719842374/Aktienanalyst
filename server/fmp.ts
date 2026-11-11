@@ -838,6 +838,36 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   } catch { return []; }
 }
 
+/**
+ * P2-N29-2: nur /stable/search-name, mit HTTP-Status.
+ * fmpSearchTicker schluckt 429 und fragt zusätzlich search-symbol. Hier bleibt 429 sichtbar,
+ * damit der Aufrufer den Treffer nicht als „keine Firma“ behandelt.
+ */
+export async function fmpSearchCompanyName(query: string): Promise<{
+  status: number;
+  companies: Array<{ symbol: string; companyName: string }>;
+}> {
+  const trimmed = query.trim();
+  if (!trimmed) return { status: 200, companies: [] };
+  const result = await fmpObserved("/search-name", { query: trimmed });
+  if (result.status < 200 || result.status >= 300) return { status: result.status, companies: [] };
+  const rows = Array.isArray(result.json) ? result.json : [];
+  const seen = new Set<string>();
+  const companies: Array<{ symbol: string; companyName: string }> = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { symbol?: unknown; name?: unknown; companyName?: unknown };
+    const symbol = typeof rec.symbol === "string" ? rec.symbol.trim() : "";
+    const companyName = typeof rec.name === "string" && rec.name.trim()
+      ? rec.name.trim()
+      : typeof rec.companyName === "string" ? rec.companyName.trim() : "";
+    if (!symbol || seen.has(symbol)) continue;
+    seen.add(symbol);
+    companies.push({ symbol, companyName: companyName || symbol });
+  }
+  return { status: result.status, companies };
+}
+
 // Reference dataset for SEC 13F issuer-name resolution. Cache it to avoid
 // repeated API calls when several star-investor filings are screened together.
 let stockListCache: { value: Array<{ symbol: string; companyName: string }>; fetchedAt: number } | null = null;
