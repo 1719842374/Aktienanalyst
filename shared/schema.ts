@@ -1049,7 +1049,7 @@ export interface GoldAiscQuarterStep {
   quarter: string;
   /** Quartalsende YYYY-MM-DD */
   periodEnd: string;
-  /** Ab hier zeichnet der Chart die Stufe (Quartalsende + lagDays, Berichtsverzug). */
+  /** Ab hier gilt die Stufe: max(Quartalsende + lagDays, spätestes sourceDate der Firmen in der Stufe). */
   availableFrom: string;
   /** Ø USD/oz oder null (n/a: weniger als minCompanies belegte Werte) */
   aisc: number | null;
