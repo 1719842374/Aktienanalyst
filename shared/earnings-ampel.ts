@@ -28,8 +28,6 @@ export interface EarningsAmpelMetric {
   actual: number | null;
   estimate: number | null;
   reason: string | null;
-  shown: string | null;
-  sue: number | null;
 }
 
 export interface EarningsAmpelQuarter {
@@ -51,14 +49,6 @@ type MarkerFields = {
   epsActual: number | null;
   epsEstimate: number | null;
   epsSurprisePct: number | null;
-  revenueLamp?: EarningsAmpelLamp;
-  epsLamp?: EarningsAmpelLamp;
-  revenueShown?: string;
-  epsShown?: string;
-  revenueSue?: number | null;
-  epsSue?: number | null;
-  revenueReason?: string | null;
-  epsReason?: string | null;
 };
 
 export function classifyEarningsSurprise(
@@ -149,22 +139,6 @@ function metricOf(
     actual: finiteOrNull(actual),
     estimate: finiteOrNull(estimate),
     reason: lamp === "na" ? metricNaReason(label, actual, estimate) : null,
-    shown: null,
-    sue: null,
-  };
-}
-
-function metricFromMarker(marker: MarkerFields, side: "eps" | "revenue"): EarningsAmpelMetric | null {
-  const lamp = side === "eps" ? marker.epsLamp : marker.revenueLamp;
-  if (!lamp) return null;
-  return {
-    lamp,
-    surprisePct: finiteOrNull(side === "eps" ? marker.epsSurprisePct : marker.revenueSurprisePct),
-    actual: finiteOrNull(side === "eps" ? marker.epsActual : marker.revenueActual),
-    estimate: finiteOrNull(side === "eps" ? marker.epsEstimate : marker.revenueEstimate),
-    reason: lamp === "na" ? (side === "eps" ? marker.epsReason : marker.revenueReason) ?? "kein Konsens" : null,
-    shown: (side === "eps" ? marker.epsShown : marker.revenueShown) ?? null,
-    sue: (side === "eps" ? marker.epsSue : marker.revenueSue) ?? null,
   };
 }
 
@@ -174,8 +148,8 @@ export function buildEarningsAmpel(markers: readonly MarkerFields[]): EarningsAm
     index,
     quarter: {
       date: marker.date,
-      eps: metricFromMarker(marker, "eps") ?? metricOf("EPS", marker.epsActual, marker.epsEstimate, marker.epsSurprisePct, epsBeatPct, epsMissPct),
-      revenue: metricFromMarker(marker, "revenue") ?? metricOf("Umsatz", marker.revenueActual, marker.revenueEstimate, marker.revenueSurprisePct, revenueBeatPct, revenueMissPct),
+      eps: metricOf("EPS", marker.epsActual, marker.epsEstimate, marker.epsSurprisePct, epsBeatPct, epsMissPct),
+      revenue: metricOf("Umsatz", marker.revenueActual, marker.revenueEstimate, marker.revenueSurprisePct, revenueBeatPct, revenueMissPct),
     } satisfies EarningsAmpelQuarter,
   }));
   quarters.sort((a, b) => (a.quarter.date < b.quarter.date ? 1 : a.quarter.date > b.quarter.date ? -1 : a.index - b.index));

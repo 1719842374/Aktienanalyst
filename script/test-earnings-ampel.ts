@@ -109,9 +109,8 @@ const chartRows = buildEarningsMarkers([
   { date: "2024-06-30", revenueActual: 103, revenueEstimate: 100, epsActual: 1.06, epsEstimate: 1 },
 ]);
 assert.equal(chartRows.markers[0].basis, "revenue");
-assert.equal(chartRows.markers[0].kind, "beat");
-assert.equal(chartRows.markers[0].revenueLamp, "beat");
-assert.equal(chartRows.markers[0].epsLamp, "beat");
+assert.equal(chartRows.markers[0].kind, "inline");
+assert.equal(chartRows.inlineBandPct, 3);
 const lamps = buildEarningsAmpel(chartRows.markers);
 assert.equal(lamps.quarters.every(q => q.revenue.lamp === "beat" && q.eps.lamp === "beat"), true);
 assert.equal(lamps.quarters[0].revenue.surprisePct, chartRows.markers.find(m => m.date === lamps.quarters[0].date)?.revenueSurprisePct);

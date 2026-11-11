@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import { EARNINGS_LAMP_CONFIG } from "@shared/earnings-markers";
 import {
   buildEarningsAmpel,
   earningsAmpelCellPaint,
@@ -48,7 +47,7 @@ export function EarningsAmpelView({ model, notice }: { model: EarningsAmpelModel
             {earningsAmpelThresholdLine()}
           </p>
           <p className="text-[10px] text-muted-foreground mt-1 break-words">
-            Klassifikation aus buildEarningsMarkers. Modus {EARNINGS_LAMP_CONFIG.mode === "sue" ? "SUE" : "feste Totzone"}. Punktfarbe ist Umsatz, sonst EPS, nie eine Mischfarbe.
+            Chart-Klassifikation bleibt das Median-Band in buildEarningsMarkers (eine Basis, Umsatz vor EPS). Diese Lampen nutzen die Schwellen oben.
           </p>
         </div>
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-2">
@@ -139,21 +138,18 @@ function ValueCell({ metricLabel, field, metric }: {
   metric: EarningsAmpelMetric;
 }) {
   const caption = valueCaption(metricLabel, field, metric);
-  const hideConsensusColor = field === "estimate" && !EARNINGS_LAMP_CONFIG.colorConsensus;
-  const paintLamp: EarningsAmpelLamp = hideConsensusColor ? "na" : caption.lamp;
-  const paint = paintLamp === "na" ? null : earningsAmpelCellPaint(paintLamp);
+  const paint = caption.lamp === "na" ? null : earningsAmpelCellPaint(caption.lamp);
   const fieldName = `${metricLabel === "EPS" ? "eps" : "revenue"}-${field}`;
   const heading = field === "actual" ? `${metricLabel} Ist` : field === "estimate" ? `${metricLabel} Schätzung` : `${metricLabel} Δ`;
   return (
     <td
       data-ampel-cell={fieldName}
-      data-lamp={paintLamp}
+      data-lamp={caption.lamp}
       className="flex sm:table-cell items-baseline justify-between gap-3 py-0.5 sm:py-1.5 sm:pr-3 sm:align-top min-w-0"
     >
       <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">{heading}</span>
       {paint ? (
         <span
-          title={field === "surprise" && metric.sue != null ? `SUE ${metric.sue.toFixed(2)}` : undefined}
           className="earnings-ampel-value inline-block max-w-full rounded-sm px-1 py-0.5 tabular-nums whitespace-normal sm:whitespace-nowrap"
           style={{
             ["--ampel-color" as string]: paint.color,
@@ -163,7 +159,7 @@ function ValueCell({ metricLabel, field, metric }: {
             ["--ampel-wash-dark" as string]: paint.darkWash,
           }}
         >
-          {earningsAmpelSymbol(paintLamp)} {field === "surprise" && metric.shown ? metric.shown : caption.text}
+          {earningsAmpelSymbol(caption.lamp)} {caption.text}
         </span>
       ) : (
         <span className="tabular-nums text-foreground whitespace-normal break-words text-right sm:text-left sm:max-w-[11rem]">{caption.text}</span>
@@ -176,12 +172,11 @@ function valueCaption(label: "EPS" | "Umsatz", field: ValueField, metric: Earnin
   const raw = field === "actual" ? metric.actual : field === "estimate" ? metric.estimate : metric.surprisePct;
   const missing = raw == null || !Number.isFinite(raw) || (field === "estimate" && raw === 0);
   if (missing) {
-    const text = metric.reason
-      ?? (field === "actual"
-        ? `n/a — ${label}-Ist fehlt`
-        : field === "estimate"
-          ? `n/a — ${label}-Schätzung fehlt oder ist 0`
-          : `n/a — ${label}-Surprise nicht berechenbar`);
+    const text = field === "actual"
+      ? `n/a — ${label}-Ist fehlt`
+      : field === "estimate"
+        ? `n/a — ${label}-Schätzung fehlt oder ist 0`
+        : (metric.reason ?? `n/a — ${label}-Surprise nicht berechenbar`);
     return { text, lamp: "na" };
   }
   const formatted = field === "surprise" ? formatAmpelPct(raw) : formatAmpelNumber(raw);

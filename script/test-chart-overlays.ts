@@ -11,9 +11,8 @@ const { buildEarningsMarkers, attachEarningsToPoints } = await import("../shared
 const thin = buildEarningsMarkers([
   { date: "2024-01-01", revenueActual: 10, revenueEstimate: 9, epsActual: null, epsEstimate: null },
 ]);
-assert.equal(thin.markers[0].kind, "beat");
-assert.equal(thin.markers[0].revenueLamp, "beat");
-assert.match(thin.beatRateLabel, /^Revenue Beat 1\/1 \(100 %\)$/);
+assert.equal(thin.markers[0].kind, null);
+assert.match(thin.beatRateLabel, /n\/a/);
 
 const marks = buildEarningsMarkers([
   { date: "2024-01-01", revenueActual: 100, revenueEstimate: 100, epsActual: 1, epsEstimate: 1 },
