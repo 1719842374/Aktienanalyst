@@ -20,6 +20,7 @@ import {
   fmpObserved,
   fmpPeerCompanies,
   fmpProfile,
+  fmpSearchCompanyName,
   fmpSegmentationRows,
   isFmpAvailable,
   promoteNonGeoRowsToBusiness,
@@ -42,6 +43,8 @@ import {
   resolveSegmentChildren,
   reviewKiChildren,
   outlineEchoMatches,
+  brandSearchKey,
+  ownClaimBrandQueries,
   reviewSegmentOutline,
   segmentNamesFromFmpRows,
   type PeerCompany,
@@ -79,6 +82,8 @@ export const SEGMENT_CHILDREN_KI_TIMEOUT_MS = 15_000;
 const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const childCache = new Map<string, { at: number; ttl: number; body: SegmentChildrenResult }>();
+/** P2-N29-2: erfolgreiche Namenssuche. 429 und Netzfehler werden nicht als „keine Firma“ abgelegt. */
+const brandSearchCache = new Map<string, { at: number; companies: readonly PeerCompany[] }>();
 /** N29: Prompt-Version im Schlüssel der KI-Kinder; alte 24-h-Antworten ohne brandOwner werden nicht mehr gezeigt. */
 export const SEGMENT_CHILDREN_PROMPT_VERSION = "n29-brandOwner";
 
@@ -102,6 +107,7 @@ const statementFacts = new Map<string, { at: number; fiscalYear: string; currenc
 
 export function resetSegmentChildrenGuardsForTests(): void {
   childCache.clear();
+  brandSearchCache.clear();
   rateBuckets.clear();
   outlineNames.clear();
   identityCache.clear();
@@ -236,6 +242,8 @@ export interface SegmentChildrenDeps {
   identity?: (ticker: string) => Promise<OutlineIdentity | null>;
   /** N23: FMP-Peers mit Firmennamen für die Fremdmarken-Prüfung der KI-Kinder. */
   peers?: (ticker: string) => Promise<readonly PeerCompany[]>;
+  /** P2-N29-2: FMP /search-name pro brand. Status bleibt sichtbar, 429 ist kein leeres Ergebnis. */
+  brandSearch?: (query: string) => Promise<{ status: number; ok?: boolean; companies: readonly PeerCompany[] }>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
 }
@@ -543,7 +551,52 @@ export function defaultSegmentChildrenDeps(): SegmentChildrenDeps {
     outline: defaultOutline,
     identity: loadOutlineIdentity,
     peers: fmpPeerCompanies,
+    brandSearch: fmpSearchCompanyName,
   };
+}
+
+async function resolveBrandNameSearch(
+  queries: readonly string[],
+  deps: SegmentChildrenDeps,
+  now: number,
+): Promise<{ rows: { brand: string; ok: boolean; companies: readonly PeerCompany[] }[]; degraded: boolean }> {
+  if (!deps.brandSearch || !deps.fmpAvailable() || queries.length === 0) return { rows: [], degraded: false };
+  const rows: { brand: string; ok: boolean; companies: readonly PeerCompany[] }[] = [];
+  let degraded = false;
+  for (const brand of queries) {
+    const key = brandSearchKey(brand);
+    const cached = brandSearchCache.get(key);
+    if (cached && now - cached.at < CHILDREN_CACHE_MS) {
+      rows.push({ brand, ok: true, companies: cached.companies });
+      continue;
+    }
+    let outcome: { status: number; ok?: boolean; companies: readonly PeerCompany[] };
+    try {
+      outcome = await deps.brandSearch(brand);
+    } catch {
+      outcome = { status: 0, ok: false, companies: [] };
+    }
+    if (outcome.ok !== false && outcome.status >= 200 && outcome.status < 300) {
+      const companies = Array.isArray(outcome.companies) ? outcome.companies : [];
+      if (brandSearchCache.size >= CHILDREN_CACHE_MAX) {
+        let oldestKey: string | null = null;
+        let oldestAt = Number.POSITIVE_INFINITY;
+        brandSearchCache.forEach((entry, entryKey) => {
+          if (entry.at < oldestAt) {
+            oldestAt = entry.at;
+            oldestKey = entryKey;
+          }
+        });
+        if (oldestKey) brandSearchCache.delete(oldestKey);
+      }
+      brandSearchCache.set(key, { at: now, companies });
+      rows.push({ brand, ok: true, companies });
+    } else {
+      degraded = true;
+      rows.push({ brand, ok: false, companies: [] });
+    }
+  }
+  return { rows, degraded };
 }
 
 export async function loadSegmentChildren(
@@ -552,7 +605,8 @@ export async function loadSegmentChildren(
   kind: "product" | "geographic",
   deps: SegmentChildrenDeps = defaultSegmentChildrenDeps(),
   scope: SegmentChildrenScope = {},
-): Promise<SegmentChildrenResult> {
+  now = Date.now(),
+): Promise<SegmentChildrenResult & { brandSearchDegraded?: boolean }> {
   const label = parent.trim();
   let raw: unknown[] = [];
   if (deps.fmpAvailable()) {
@@ -593,15 +647,29 @@ export async function loadSegmentChildren(
       peerCompanies = [];
     }
   }
-  return reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label), {
-    kind,
-    siblings: scope.siblings,
-    businessNames: scope.businessNames,
-    companyName: identity?.companyName,
-    ticker,
-    description: identity?.description,
-    peerCompanies,
-  });
+  const queries = identity?.companyName
+    ? ownClaimBrandQueries(kiPayload, label, {
+      companyName: identity.companyName,
+      ticker,
+      description: identity.description,
+      siblings: scope.siblings,
+      peerCompanies,
+    })
+    : [];
+  const searched = await resolveBrandNameSearch(queries, deps, now);
+  return {
+    ...reviewKiChildren(label, kiPayload, reportedParentRevenue(raw, label), {
+      kind,
+      siblings: scope.siblings,
+      businessNames: scope.businessNames,
+      companyName: identity?.companyName,
+      ticker,
+      description: identity?.description,
+      peerCompanies,
+      brandNameSearch: searched.rows,
+    }),
+    ...(searched.degraded ? { brandSearchDegraded: true } : {}),
+  };
 }
 
 export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentChildrenDeps): void {
@@ -702,8 +770,9 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
           businessNames = [];
         }
       }
-      const body = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames });
-      const shortCache = body.children.length === 0;
+      const loaded = await loadSegmentChildren(ticker, canonical, kind, deps, { siblings, businessNames }, now);
+      const body: SegmentChildrenResult = { parent: loaded.parent, children: loaded.children, reason: loaded.reason };
+      const shortCache = body.children.length === 0 || loaded.brandSearchDegraded === true;
       const ttl = shortCache ? CHILDREN_ERROR_CACHE_MS : CHILDREN_CACHE_MS;
       if (childCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;
@@ -760,10 +829,18 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
           peerCompanies = [];
         }
       }
+      const queries = ownClaimBrandQueries(payload, "", {
+        companyName: identity.companyName,
+        ticker,
+        description: identity.description,
+        peerCompanies,
+      });
+      const searched = await resolveBrandNameSearch(queries, deps, now);
       const reviewed = reviewSegmentOutline(payload, identity.companyName, {
         ticker,
         description: identity.description,
         peerCompanies,
+        brandNameSearch: searched.rows,
       });
       if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name), now);
       return res.json(reviewed);
