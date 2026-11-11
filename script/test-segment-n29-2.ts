@@ -75,6 +75,28 @@ gap(
   `kept=${lie.children.map((row) => row.name).join(" | ") || "keine"} reason=${lie.reason ?? "null"}`,
 );
 
+const networking = review(hpe.profile, "HPE", "Networking", {
+  name: "Arista Networking",
+  brand: "Arista Networking",
+  brandOwner: "Hewlett Packard Enterprise",
+}, hpeProd, [{ brand: "Arista Networking", ok: true, companies: [{ symbol: "ANET", companyName: "Arista Networks, Inc." }] }]);
+gap(
+  "stem-networking-matches-networks (Arista Networking gegen Arista Networks, Inc.)",
+  networking.children.length === 0 && /Fremdmarke verworfen: Arista Networking/.test(networking.reason ?? ""),
+  `kept=${networking.children.map((row) => row.name).join(" | ") || "keine"} reason=${networking.reason ?? "null"}`,
+);
+
+const dynamics = review(msft.profile, "MSFT", "Dynamics", {
+  name: "Dynamics 365",
+  brand: "Dynamics",
+  brandOwner: "Microsoft",
+}, msft.peersObserved, [{ brand: "Dynamics", ok: true, companies: [{ symbol: "BOOM", companyName: "Dynamic Materials Inc." }] }]);
+gap(
+  "own-product-similar-stem-kept (MSFT Dynamics bleibt)",
+  dynamics.children.some((row) => row.name === "Dynamics 365"),
+  `reason=${dynamics.reason ?? "null"}`,
+);
+
 const netapp = review(hpe.profile, "HPE", "Storage", {
   name: "NetApp Storage",
   brand: "NetApp",
@@ -290,6 +312,102 @@ try {
   );
 } finally {
   await close(listServer);
+}
+
+const fmp = await import("../server/fmp");
+process.env.FMP_API_KEY = "p2-2-dummy";
+const realFetch = globalThis.fetch;
+let searchMode: "object" | "bad-json" | "empty-array" = "object";
+let nameSearchCalls = 0;
+globalThis.fetch = (async (input: RequestInfo | URL) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (!url.includes("/search-name")) return new Response("[]", { status: 200 });
+  nameSearchCalls += 1;
+  if (searchMode === "bad-json") return new Response("not-json", { status: 200 });
+  if (searchMode === "empty-array") return new Response("[]", { status: 200 });
+  return new Response(JSON.stringify({ error: "nope" }), { status: 200 });
+}) as typeof fetch;
+
+try {
+  const objectBody = await fmp.fmpSearchCompanyName("Arista Networking");
+  gap(
+    "non-array-200-is-not-ok",
+    objectBody.ok === false && objectBody.companies.length === 0,
+    `ok=${String(objectBody.ok)} status=${objectBody.status} n=${objectBody.companies.length}`,
+  );
+  searchMode = "bad-json";
+  const badJson = await fmp.fmpSearchCompanyName("Arista Networking");
+  gap(
+    "unreadable-json-200-is-not-ok",
+    badJson.ok === false && badJson.companies.length === 0,
+    `ok=${String(badJson.ok)} status=${badJson.status} n=${badJson.companies.length}`,
+  );
+  searchMode = "empty-array";
+  const emptyArray = await fmp.fmpSearchCompanyName("Alletra");
+  gap(
+    "empty-array-stays-ok",
+    emptyArray.ok === true && emptyArray.status === 200 && emptyArray.companies.length === 0,
+    `ok=${String(emptyArray.ok)} status=${emptyArray.status} n=${emptyArray.companies.length}`,
+  );
+} finally {
+  globalThis.fetch = realFetch;
+}
+
+route.resetSegmentChildrenGuardsForTests();
+let badClock = 1_700_000_000_000;
+let badMode: "object" | "bad-json" = "object";
+let badCalls = 0;
+globalThis.fetch = (async (input: RequestInfo | URL) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (!url.includes("/search-name")) return new Response("[]", { status: 200 });
+  badCalls += 1;
+  if (badMode === "bad-json") return new Response("{", { status: 200 });
+  return new Response(JSON.stringify({ companies: [] }), { status: 200 });
+}) as typeof fetch;
+const badRoute = mount((query) => fmp.fmpSearchCompanyName(query), () => badClock);
+try {
+  const first = await realFetch(`http://127.0.0.1:${badRoute.port}/api/segment-children/HPE?parent=Networking&kind=product`);
+  const firstBody = await first.json() as { children?: { name: string }[]; reason?: string | null };
+  gap(
+    "non-array-200-is-na-and-not-cached",
+    first.status === 200
+      && (firstBody.children?.length ?? 1) === 0
+      && /FMP-Namenssuche nicht belegbar: Arista Networking/.test(firstBody.reason ?? "")
+      && badCalls === 1,
+    `status=${first.status} calls=${badCalls} reason=${firstBody.reason ?? "null"}`,
+  );
+  const cached = await realFetch(`http://127.0.0.1:${badRoute.port}/api/segment-children/HPE?parent=Networking&kind=product`);
+  gap(
+    "non-array-200-not-served-as-clean-cache",
+    cached.status === 200 && badCalls === 1,
+    `status=${cached.status} calls=${badCalls}`,
+  );
+  badClock += 61_000;
+  const again = await realFetch(`http://127.0.0.1:${badRoute.port}/api/segment-children/HPE?parent=Networking&kind=product`);
+  const againBody = await again.json() as { reason?: string | null };
+  gap(
+    "non-array-200-retried",
+    again.status === 200 && badCalls === 2 && /FMP-Namenssuche nicht belegbar/.test(againBody.reason ?? ""),
+    `status=${again.status} calls=${badCalls} reason=${againBody.reason ?? "null"}`,
+  );
+  route.resetSegmentChildrenGuardsForTests();
+  badMode = "bad-json";
+  badCalls = 0;
+  badClock += 61_000;
+  const unreadable = await realFetch(`http://127.0.0.1:${badRoute.port}/api/segment-children/HPE?parent=Storage&kind=product`);
+  const unreadableBody = await unreadable.json() as { children?: { name: string }[]; reason?: string | null };
+  gap(
+    "unreadable-json-200-is-na",
+    unreadable.status === 200
+      && (unreadableBody.children?.length ?? 1) === 0
+      && /FMP-Namenssuche nicht belegbar: Arista Networking/.test(unreadableBody.reason ?? "")
+      && badCalls === 1,
+    `status=${unreadable.status} calls=${badCalls} reason=${unreadableBody.reason ?? "null"}`,
+  );
+} finally {
+  await close(badRoute.server);
+  globalThis.fetch = realFetch;
+  delete process.env.FMP_API_KEY;
 }
 
 if (gaps.length > 0) {

@@ -845,16 +845,18 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
  */
 export async function fmpSearchCompanyName(query: string): Promise<{
   status: number;
+  ok: boolean;
   companies: Array<{ symbol: string; companyName: string }>;
 }> {
   const trimmed = query.trim();
-  if (!trimmed) return { status: 200, companies: [] };
+  if (!trimmed) return { status: 200, ok: true, companies: [] };
   const result = await fmpObserved("/search-name", { query: trimmed });
-  if (result.status < 200 || result.status >= 300) return { status: result.status, companies: [] };
-  const rows = Array.isArray(result.json) ? result.json : [];
+  if (result.status < 200 || result.status >= 300 || !Array.isArray(result.json)) {
+    return { status: result.status, ok: false, companies: [] };
+  }
   const seen = new Set<string>();
   const companies: Array<{ symbol: string; companyName: string }> = [];
-  for (const row of rows) {
+  for (const row of result.json) {
     if (!row || typeof row !== "object") continue;
     const rec = row as { symbol?: unknown; name?: unknown; companyName?: unknown };
     const symbol = typeof rec.symbol === "string" ? rec.symbol.trim() : "";
@@ -865,7 +867,7 @@ export async function fmpSearchCompanyName(query: string): Promise<{
     seen.add(symbol);
     companies.push({ symbol, companyName: companyName || symbol });
   }
-  return { status: result.status, companies };
+  return { status: result.status, ok: true, companies };
 }
 
 // Reference dataset for SEC 13F issuer-name resolution. Cache it to avoid

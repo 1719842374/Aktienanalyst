@@ -243,7 +243,7 @@ export interface SegmentChildrenDeps {
   /** N23: FMP-Peers mit Firmennamen für die Fremdmarken-Prüfung der KI-Kinder. */
   peers?: (ticker: string) => Promise<readonly PeerCompany[]>;
   /** P2-N29-2: FMP /search-name pro brand. Status bleibt sichtbar, 429 ist kein leeres Ergebnis. */
-  brandSearch?: (query: string) => Promise<{ status: number; companies: readonly PeerCompany[] }>;
+  brandSearch?: (query: string) => Promise<{ status: number; ok?: boolean; companies: readonly PeerCompany[] }>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
 }
@@ -570,13 +570,13 @@ async function resolveBrandNameSearch(
       rows.push({ brand, ok: true, companies: cached.companies });
       continue;
     }
-    let outcome: { status: number; companies: readonly PeerCompany[] };
+    let outcome: { status: number; ok?: boolean; companies: readonly PeerCompany[] };
     try {
       outcome = await deps.brandSearch(brand);
     } catch {
-      outcome = { status: 0, companies: [] };
+      outcome = { status: 0, ok: false, companies: [] };
     }
-    if (outcome.status >= 200 && outcome.status < 300) {
+    if (outcome.ok !== false && outcome.status >= 200 && outcome.status < 300) {
       const companies = Array.isArray(outcome.companies) ? outcome.companies : [];
       if (brandSearchCache.size >= CHILDREN_CACHE_MAX) {
         let oldestKey: string | null = null;

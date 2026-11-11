@@ -575,8 +575,9 @@ function ownClaimNeedsSearch(name: string, brand: unknown, brandOwner: unknown, 
 
 /**
  * P2-N29-2: der Markenname steht als Firma in der Namenssuche, und es ist nicht die eigene Firma.
- * Dieselben Belege wie bei einem geladenen Peer: Wortfolge (companyReferenced) und die bestehende
- * Mindestlänge einwortiger Peer-Namen. Generische Firmenwörter allein sind kein Beleg.
+ * Dieselben Belege wie bei einem geladenen Peer: Wortfolge und die bestehende
+ * Mindestlänge einwortiger Peer-Namen. Der Vergleich nutzt stemBrandToken, damit
+ * „Networking“ und „Networks“ dieselbe Folge sind. Generische Firmenwörter allein sind kein Beleg.
  * Kein neuer Schwellenwert. Teilüberlappung ist kein Beleg.
  */
 function searchProvesForeign(brand: string, companies: readonly PeerCompany[], scope: OwnBrandScope): boolean {
@@ -584,6 +585,7 @@ function searchProvesForeign(brand: string, companies: readonly PeerCompany[], s
   const distinct = pairs.filter((pair) => !GENERIC_COMPANY_STEMS.has(pair.stem));
   if (distinct.length === 0) return false;
   if (pairs.length === 1 && pairs[0].raw.length < PEER_NAME_ANYWHERE_MIN_LENGTH) return false;
+  const wanted = pairs.map((pair) => pair.stem);
   for (const company of companies) {
     const name = typeof company?.companyName === "string" ? company.companyName.trim() : "";
     if (!name) continue;
@@ -591,7 +593,7 @@ function searchProvesForeign(brand: string, companies: readonly PeerCompany[], s
     if (symbolToken && symbolToken === scope.tickerToken) continue;
     if (namesOwnCompany(name, scope)) continue;
     if (companyReferenced(name, scope.companyName) || companyReferenced(scope.companyName, name)) continue;
-    if (companyReferenced(name, brand)) return true;
+    if (containsTokenRun(brandTokenPairs(name).map((pair) => pair.stem), wanted)) return true;
   }
   return false;
 }
