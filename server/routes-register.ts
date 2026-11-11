@@ -71,7 +71,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerPodcastTranscriptRoute(app);
   const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
   registerAttraktivNotifyRoute(app);
+  // GET /api/earnings-markers/:ticker (WORK_DASHBOARD_FEATURES §2, nur Anzeige, kein Score)
+  const { registerEarningsMarkersRoute } = await import("./earnings-markers-route");
+  registerEarningsMarkersRoute(app);
   // POST /api/balance-screen (FW-27, CSV im Body, nur Anzeige, kein Score)
   const { registerBalanceScreenRoute } = await import("./balance-screen-route");
   registerBalanceScreenRoute(app);
+  // GET /api/financial-history/:ticker und POST /api/segment-supplement.
+  // Nur Anzeige. Der Unterposten-Provider bleibt leer. Kein Score, kein LLM.
+  // Der Hype-Hunk von #466 steht weiter oben, direkt nach registerValueChainRoutes, und wird hier nicht angefasst.
+  const { registerFinancialHistoryRoute } = await import("./financial-history-route");
+  registerFinancialHistoryRoute(app);
+  const { registerSegmentSupplementRoute } = await import("./segment-supplement-route");
+  registerSegmentSupplementRoute(app);
 }

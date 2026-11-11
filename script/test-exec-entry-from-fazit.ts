@@ -12,7 +12,7 @@
  */
 import React from "react";
 (globalThis as any).React = React;
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";

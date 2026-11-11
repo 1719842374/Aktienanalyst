@@ -8,7 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createElement, type ReactElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import { MoatPorterSection } from "../client/src/components/sections/MoatPorterSection";
 import {
   clampPorterThreat,
