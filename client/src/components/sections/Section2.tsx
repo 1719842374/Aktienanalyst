@@ -14,6 +14,7 @@ import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
 import { SegmentChildrenPanel, SegmentLine } from "./SegmentChildren";
+import { SegmentGapPanel } from "./SegmentGapPanel";
 import { apiRequest } from "../../lib/queryClient";
 
 interface OutlineItem {
@@ -776,6 +777,7 @@ export function SegmentEstimateBlock({ data }: Props) {
             </p>
           )}
         </div>
+        <SegmentGapPanel ticker={data.ticker} />
     </>
   );
 }
