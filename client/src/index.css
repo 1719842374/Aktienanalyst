@@ -271,4 +271,13 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;             /* Chrome, Safari, Opera */
   }
+
+  .earnings-ampel-value {
+    color: var(--ampel-ink);
+    background-color: var(--ampel-wash);
+  }
+  .dark .earnings-ampel-value {
+    color: var(--ampel-ink-dark);
+    background-color: var(--ampel-wash-dark);
+  }
 }
