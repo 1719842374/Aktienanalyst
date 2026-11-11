@@ -62,7 +62,8 @@ export function cleanFredMonthly(rows: Array<{ date: string; value: number | nul
   for (const date of dates) {
     byMonth.set(date.slice(0, 7), { date, value: byDate.get(date) as number });
   }
-  return [...byMonth.values()];
+  // Beleg: byMonth enthält nur FredPoint aus den Zeilen darüber. Der Spread bleibt der Map-Iterator; die Assertion gilt nur für target < ES2015.
+  return [...(byMonth.values() as unknown as FredPoint[])];
 }
 
 function mean(xs: number[]): number {
@@ -177,7 +178,8 @@ function unemploymentByMonth(rows: Array<{ date: string; value: number | null }>
 }
 
 function monthsInSpan(byMonth: Map<string, number | null>): string[] {
-  const keys = [...byMonth.keys()].sort();
+  // Beleg: Schlüssel sind die Monatsstrings, die unemploymentByMonth in dieselbe Map schreibt. Spread bleibt der Iterator.
+  const keys = [...(byMonth.keys() as unknown as string[])].sort();
   if (keys.length === 0) return [];
   const out: string[] = [];
   let cursor = keys[0];

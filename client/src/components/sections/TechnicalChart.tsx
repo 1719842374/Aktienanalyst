@@ -16,6 +16,8 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { attachEarningsToPoints, beatRateLabelForWindow, type EarningsMarker } from "@shared/earnings-markers";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
 import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
@@ -43,6 +45,12 @@ import {
 } from "@shared/symmetric-ampel";
 
 export type { TimeRange };
+
+/**
+ * Peer-Overlay ist der Stand von main (#380): Chip `button-fund-peer`,
+ * Kurs als Median-Index auf dataKey `_peerPx`, ROIC auf `_peerRoic`.
+ * Earnings-Marker liegen zusätzlich auf demselben Kurs.
+ */
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -252,6 +260,19 @@ export function TechnicalChart({
   // Szenario-Kegel: nur Anzeige. Default aus, Reset je Ticker — aus = keine Serie und keine Achsenänderung.
   const [showCone, setShowCone] = useState(false);
   useEffect(() => { setShowCone(false); }, [data.ticker]);
+  // Earnings Beat/Miss: nur Anzeige, Default aus. Der Szenario-Kegel bleibt unverändert.
+  const [showEarnings, setShowEarnings] = useState(false);
+  useEffect(() => { setShowEarnings(false); }, [data.ticker]);
+  const earningsQuery = useQuery({
+    queryKey: ["earnings-markers", data.ticker],
+    enabled: showEarnings,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/earnings-markers/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{ markers: EarningsMarker[]; beatRateLabel: string; note: string | null }>;
+    },
+  });
+  const earningsMarkers = showEarnings ? earningsQuery.data?.markers ?? null : null;
   // Earnings Yield und ROIC 5Y: nur Anzeige, Default aus, Reset je Ticker. Kein Score.
   const [showEy, setShowEy] = useState(false);
   const [showRoic, setShowRoic] = useState(false);
@@ -396,6 +417,13 @@ export function TechnicalChart({
   );
   const phaseByDateMap = symmetric.phases;
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
+  const earningsBadge = !showEarnings
+    ? null
+    : earningsQuery.isLoading
+      ? "Earnings: werden geladen …"
+      : earningsQuery.isError
+        ? "n/a — Abruf fehlgeschlagen"
+        : beatRateLabelForWindow(earningsQuery.data?.markers ?? [], aBuilt.points.map(p => p.date));
   const scenarioCone = useMemo(() => {
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
@@ -891,6 +919,14 @@ export function TechnicalChart({
               {showReal10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               {REAL10Y_OVERLAY.label}
             </button>
+            <button type="button" onClick={() => setShowEarnings(v => !v)} data-testid="button-earnings" aria-pressed={showEarnings}
+              title="Earnings Beat/Miss auf dem Kurs. Nur Anzeige, kein Score."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showEarnings ? "border-emerald-500 text-emerald-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showEarnings ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Earnings
+            </button>
             <button type="button" onClick={() => setShowCone(v => !v)} data-testid="button-scenario-cone" aria-pressed={showCone}
               aria-label="Szenario-Kegel"
               title="Szenario-Kegel ab dem letzten Close. Nur Anzeige, kein Score. Standard aus."
@@ -1122,6 +1158,8 @@ export function TechnicalChart({
                 cone={scenarioCone}
                 fund={fundOverlay}
                 phases={phaseByDateMap}
+                earnings={earningsMarkers}
+                earningsBadge={earningsBadge}
               />
             </div>
             {narrow && showVolume && (
@@ -1161,6 +1199,8 @@ export function TechnicalChart({
               ccy={ccy}
               priceFactor={priceFactor}
               cone={scenarioCone}
+              earnings={earningsMarkers}
+              earningsBadge={earningsBadge}
               widthScale={CONE_VIEWPORT_SCALE}
               scrollToEnd={showCone}
               alignedPoints={aAligned}
@@ -1269,6 +1309,13 @@ export function TechnicalChart({
         </div>
       )}
 
+      {showEarnings && showKursA && !chartEmpty && (
+        <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
+          {earningsQuery.isLoading && "Earnings: werden geladen …"}
+          {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
+          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · Grün Beat, Rot Miss, Grau Inline · kein Score</>}
+        </div>
+      )}
       {showDividend && showKursA && !chartEmpty && (
         <DividendOverlayStatus
           series={dividendOverlay}
@@ -1747,11 +1794,42 @@ function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: C
   );
 }
 
+type EarningsTipFields = {
+  _earnKind?: string;
+  _earnRevActual?: number | null;
+  _earnRevEst?: number | null;
+  _earnRev?: number | null;
+  _earnEps?: number | null;
+  _earnReason?: string | null;
+};
+
+function formatReported(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "n/a";
+  return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value);
+}
+
+function EarningsTooltipRows({ p }: { p: EarningsTipFields }) {
+  if (!p._earnKind) return null;
+  const surprise = (value: number | null | undefined) => (
+    value == null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(1)} %`
+  );
+  return (
+    <div className="mt-1 max-w-[240px] whitespace-normal border-t border-border pt-1" data-testid="earnings-tooltip" data-kind={p._earnKind}>
+      <div>Earnings {p._earnKind}</div>
+      <div>Revenue Actual {formatReported(p._earnRevActual)}</div>
+      <div>Revenue Estimate {formatReported(p._earnRevEst)}</div>
+      <div>Surprise {surprise(p._earnRev)}</div>
+      <div>EPS Surprise {surprise(p._earnEps)}</div>
+      {p._earnReason ? <div>{p._earnReason}</div> : null}
+    </div>
+  );
+}
+
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
-  priceFactor = 1, cone = null, fund = null, phases = null,
+  priceFactor = 1, cone = null, fund = null, phases = null, earnings = null, earningsBadge = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1790,6 +1868,10 @@ function PricePane({
   fund?: FundJoinPoint[] | null;
   /** Phasenfarbe der Kurslinie. null = eine Farbe, wie bisher. */
   phases?: Map<string, TaPhase | null> | null;
+  /** Beat/Miss-Marker. null = keine Punkte, Kegel-Daten bleiben die Referenz. */
+  earnings?: EarningsMarker[] | null;
+  /** Beat-Rate oben rechts. null = kein Badge. */
+  earningsBadge?: string | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1800,11 +1882,12 @@ function PricePane({
     const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
-  const painted = useMemo(
-    () => (showAmpel && phases ? paintPhaseRows(chartData, phases) : null),
-    [chartData, phases, showAmpel],
+  const plotted = useMemo(() => attachEarningsToPoints(chartData, earnings), [chartData, earnings]);
+  const phasePainted = useMemo(
+    () => (showAmpel && phases ? paintPhaseRows(plotted, phases) : null),
+    [plotted, phases, showAmpel],
   );
-  const plotData = painted ?? chartData;
+  const plotData = phasePainted ?? plotted;
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1830,7 +1913,13 @@ function PricePane({
     if (next) setLabelShift(next);
   }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
-    <div ref={plotRef} className="h-full w-full">
+    <div ref={plotRef} className="relative h-full w-full">
+    {earningsBadge && (
+      <div
+        className="pointer-events-none absolute right-2 top-1 z-10 max-w-[calc(100%-1rem)] truncate rounded border border-border bg-background/85 px-1.5 py-0.5 text-[10px] font-semibold text-foreground"
+        data-testid="earnings-beat-badge"
+      >{earningsBadge}</div>
+    )}
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
         data={plotData}
@@ -1950,6 +2039,7 @@ function PricePane({
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
               {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} cone={cone} priceSymbol={ccy} priceFactor={priceFactor} />}
+              <EarningsTooltipRows p={dp as WindowPoint & EarningsTipFields} />
               {fund && (dp.close != null && Number.isFinite(dp.close)
                 ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
                 : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
@@ -2023,7 +2113,24 @@ function PricePane({
           </>
         )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.75} dot={false} connectNulls isAnimationActive={false} />
-        {painted && (
+        {earnings && (
+          <Line
+            yAxisId="price"
+            type="monotone"
+            dataKey="_earn"
+            name="Earnings"
+            stroke="none"
+            legendType="none"
+            isAnimationActive={false}
+            dot={(props: any) => {
+              const kind = props?.payload?._earnKind as string | undefined;
+              if (!kind || props.cx == null || props.cy == null) return <g key={props.key} />;
+              const fill = kind === "beat" ? "#22c55e" : kind === "miss" ? "#ef4444" : "#94a3b8";
+              return <circle key={props.key} cx={props.cx} cy={props.cy} r={3.5} fill={fill} stroke="none" />;
+            }}
+          />
+        )}
+        {phasePainted && (
           <>
             <Line yAxisId="price" type="monotone" dataKey="_phA" name="ATTRAKTIV" stroke={TA_PHASE_STROKE.ATTRAKTIV} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="_phN" name="NEUTRAL" stroke={TA_PHASE_STROKE.NEUTRAL} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
@@ -2308,7 +2415,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
-  priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
+  priceFactor = 1, cone = null, earnings = null, earningsBadge = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
 }: {
   label: string;
   labelClassName: string;
@@ -2344,6 +2451,8 @@ function BandStack({
   ccy?: string;
   priceFactor?: number;
   cone?: ScenarioCone | null;
+  earnings?: EarningsMarker[] | null;
+  earningsBadge?: string | null;
   widthScale?: number;
   scrollToEnd?: boolean;
   alignedPoints?: WindowPoint[];
@@ -2391,6 +2500,8 @@ function BandStack({
               ccy={ccy}
               priceFactor={priceFactor}
               cone={cone}
+              earnings={earnings}
+              earningsBadge={earningsBadge}
               phases={phases}
               showAmpel={showAmpel}
             />

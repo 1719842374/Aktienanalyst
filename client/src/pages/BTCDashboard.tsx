@@ -154,7 +154,7 @@ interface BTCAnalysis {
   currentSignal: number | null;
   fearGreedHistory: { date: string; value: number; classification: string; }[];
   fearGreedStats: { avg30: number | null; avg90: number | null; avg365: number | null; yearHigh: number | null; yearLow: number | null; };
-  historicalVol?: {
+  historicalVol: {
     vol30d: number; vol90d: number; vol365d: number;
     volAnn30d: number; volAnn90d: number; volAnn365d: number;
   };

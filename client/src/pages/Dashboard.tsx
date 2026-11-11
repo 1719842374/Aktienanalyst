@@ -36,7 +36,7 @@ import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
 import { isYahooOnly } from "@shared/data-source";
 import { isEtfOrFund } from "@shared/conflict-matrix";
 import { Section1 } from "@/components/sections/Section1";
-import { Section2 } from "@/components/sections/Section2";
+import { Section2, YahooSection3 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
 import { Section3 } from "@/components/sections/Section3";
 import { Section4 } from "@/components/sections/Section4";
@@ -678,7 +678,7 @@ export default function Dashboard() {
             </div>
           ) : data ? (
             // data exists — show sections even while re-analyzing (optimistic: keep old content visible)
-            <div className="relative max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+            <div className="relative p-3 sm:p-4 space-y-3" data-testid="analysis-column">
               {/* Loading overlay when re-analyzing with existing data */}
               {analyzeMutation.isPending && (
                 <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-4 py-2 bg-background/90 backdrop-blur border-b border-border/50 flex items-center gap-2 text-xs text-muted-foreground">
@@ -695,7 +695,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { void invalidateCrossModuleQueries(queryClient); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooSection3 data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
@@ -704,11 +704,11 @@ export default function Dashboard() {
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
-              {/* Sektion 12 füllt die Main-Spalte. Sidebar ist w-52 (13rem); die übrigen Sektionen bleiben max-w-5xl. */}
+              {/* Ab lg dieselbe Main-Spalte wie die übrigen Sektionen. Sidebar ist w-52 (13rem); kein eigener Ausbruch. */}
               <div
                 ref={setSectionRef(12)}
                 data-testid="section-12-wide"
-                className="min-w-0 max-w-full lg:w-[calc(100vw-13rem-2rem)] lg:max-w-none lg:ml-[calc((100%-(100vw-13rem-2rem))/2)] lg:mr-[calc((100%-(100vw-13rem-2rem))/2)]"
+                className="min-w-0 max-w-full"
               ><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} monteCarlo={sharedMonteCarlo ? { terminalPrices: sharedMonteCarlo.terminalPrices, horizonDays: sharedMonteCarlo.horizonDays } : null} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
