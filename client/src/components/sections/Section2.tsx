@@ -8,12 +8,12 @@ import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, s
 import { useEffect, useMemo, useRef, useState } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
 import { annotationByName } from "../../../../shared/segment-growth-calc";
-import { outlineStillCurrent } from "../../../../shared/segment-children";
+import { concreteSource, outlineStillCurrent } from "../../../../shared/segment-children";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
-import { SegmentChildrenPanel, SegmentLine } from "./SegmentChildren";
+import { SegmentChildrenPanel, SegmentLine, visibleBasis } from "./SegmentChildren";
 import { apiRequest } from "../../lib/queryClient";
 
 interface OutlineItem {
@@ -97,7 +97,12 @@ export function OutlineRows({
               <span className="font-mono text-[10px] tabular-nums text-muted-foreground" title={item.basis}>
                 {item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}%` : "n/a"}
               </span>
-              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200">KI-Schätzung</span>
+              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200" data-testid="segment-outline-label">KI-Schätzung</span>
+              {concreteSource(item.basis) ? (
+                <span className="max-w-[12rem] truncate text-[10px] text-muted-foreground" data-testid="segment-outline-source" title={item.basis}>{visibleBasis(item.basis)}</span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground" data-testid="segment-outline-source-missing">n/a — ohne Quelle</span>
+              )}
             </div>
           </div>
           {item.shareOfParentPct != null && (
@@ -116,6 +121,17 @@ export function OutlineRows({
 
 export function segmentEstimateButtonVisible(segments: readonly unknown[] | null | undefined): boolean {
   return !segments || segments.length === 0;
+}
+
+/** Gleiche Regel wie der Button: ohne Zeilen bleibt der Grund sichtbar, nichts wird übernommen. */
+export function outlineFailureMessage(
+  ok: boolean,
+  json: { items?: unknown; reason?: unknown; error?: unknown } | null,
+): string | null {
+  if (ok && json && Array.isArray(json.items) && json.items.length > 0) return null;
+  const reason = json && typeof json.reason === "string" ? json.reason : "";
+  const error = json && typeof json.error === "string" ? json.error : "";
+  return reason || error || "KI-Schätzung unvollständig — nichts übernommen";
 }
 
 /**
@@ -592,8 +608,9 @@ export function SegmentEstimateBlock({ data }: Props) {
       const res = await apiRequest("POST", "/api/segment-outline", { ticker: started, kind });
       if (!current()) return;
       const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
-      if (!res.ok || !json || !Array.isArray(json.items) || json.items.length === 0) {
-        setError(json?.reason || json?.error || "KI-Schätzung unvollständig — nichts übernommen");
+      const message = outlineFailureMessage(res.ok, json);
+      if (message || !json?.items) {
+        setError(message ?? "KI-Schätzung unvollständig — nichts übernommen");
         return;
       }
       if (kind === "product") {
