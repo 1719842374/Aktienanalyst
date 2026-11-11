@@ -149,3 +149,10 @@ Services & Other                    13,2 %   +18,9 % YoY
 - Hinweise: H3 Merge-Kommentar 6760620940 nennt N29-15 ms fälschlich „Ablesefehler von DC“ (nicht korrigiert). H4 Drafts #381/#394 durch #465 neu konfliktbehaftet und fachlich überholt (Entscheid Stabschef). #448/#461 Konflikt wie vorher.
 - Ersetzt 07:25-Hinweis „Post-Merge DC/Prod-Tester nicht belegt“. Neu abgeschlossen: keine Spec. Offen außerdem: #480, Country-Macro-Pulse-Header/Nav, §2 Earnings-Restlücken, guard-180/326-Mutationstests.
 - Do-not-touch: Miner, PEG, invertierter DCF, Sentiment, Portfolio F.2; fertig_/Fertig_ nicht auf Offen_ drehen; Spec-Dateien nicht umbenennen.
+
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #483 @727ca998 · HEAD main `fb5546ea`
+
+- erledigt @`727ca998`: Elternsegment nicht mehr als eigenes Kind (NVDA „Data Center Segment“, HPE „Hybrid Cloud Segment“). `productChildKey` in `shared/segment-children.ts`. Kette UI → `GET /api/segment-children/:ticker` → Server → shared auf main `fb5546ea9768140679e72185ba7ff50860e506de` geprüft.
+- erledigt @`dd30e8b7`: Jahres-Tabelle, Sankey, Segment-YoY, KI-Untersegmente mit Fremdmarken-Prüfung. Der Vollblock steht im Nachtrag 10.11. darüber (Docs #481); hier nur der Fortschritt.
+- Offen: P2-3 fail-open; eigene Unterbrands; UNTESTED-Flaggschiffe (24-h-KI-Cache); P2-N29-2 FMP-Namenssuche pro brand.
+- Spec bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
