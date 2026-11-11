@@ -308,12 +308,13 @@ function euroAreaGeneration(code: string): number {
 /**
  * Euro-area unemployment from a statistics dataset cube.
  * The aggregate is the geo whose label starts with "Euro area".
- * When several compositions are published, the highest EA generation is used.
- * No geo code is chosen in this module.
+ * EA20 is used when that composition has values. Otherwise the highest EA generation is used.
  */
 export function euroAreaUnemploymentFromEurostat(payload: EurostatDataset): {
   geo: string | null;
   rows: Array<{ date: string; value: number | null }>;
+  ea20PointCount: number;
+  ea20Stale: boolean;
 } {
   const ids = payload.id ?? [];
   const size = payload.size ?? [];
@@ -322,23 +323,37 @@ export function euroAreaUnemploymentFromEurostat(payload: EurostatDataset): {
   const geoIndex = payload.dimension?.geo?.category?.index ?? {};
   const geoLabel = payload.dimension?.geo?.category?.label ?? {};
   const timeIndex = payload.dimension?.time?.category?.index ?? {};
-  if (geoPos < 0 || timePos < 0 || size.length !== ids.length) return { geo: null, rows: [] };
-  if (size.some((length, index) => index !== geoPos && index !== timePos && length !== 1)) {
-    return { geo: null, rows: [] };
-  }
-  const candidates = Object.keys(geoIndex).filter(code => /^Euro area\b/i.test(geoLabel[code] ?? ""));
-  if (candidates.length === 0) return { geo: null, rows: [] };
-  const geo = candidates.slice().sort((a, b) => euroAreaGeneration(b) - euroAreaGeneration(a) || a.localeCompare(b))[0];
+  const empty = { geo: null, rows: [] as Array<{ date: string; value: number | null }>, ea20PointCount: 0, ea20Stale: false };
+  if (geoPos < 0 || timePos < 0 || size.length !== ids.length) return empty;
+  if (size.some((length, index) => index !== geoPos && index !== timePos && length !== 1)) return empty;
   const stride: number[] = new Array(size.length).fill(1);
   for (let i = size.length - 2; i >= 0; i--) stride[i] = stride[i + 1] * size[i + 1];
-  const geoAt = geoIndex[geo];
   const values = payload.value ?? {};
-  const rows = Object.entries(timeIndex)
-    .sort((a, b) => a[1] - b[1])
-    .map(([period, timeAt]) => {
-      const raw = values[String(geoAt * stride[geoPos] + timeAt * stride[timePos])];
-      const value = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-      return { date: period.length === 7 ? `${period}-01` : period, value };
-    });
-  return { geo, rows };
+  const rowsFor = (geo: string): Array<{ date: string; value: number | null }> => {
+    const geoAt = geoIndex[geo];
+    if (geoAt == null) return [];
+    return Object.entries(timeIndex)
+      .sort((a, b) => a[1] - b[1])
+      .map(([period, timeAt]) => {
+        const raw = values[String(geoAt * stride[geoPos] + timeAt * stride[timePos])];
+        const value = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+        return { date: period.length === 7 ? `${period}-01` : period, value };
+      });
+  };
+  const finiteCount = (rows: Array<{ value: number | null }>) => rows.filter(row => row.value != null && Number.isFinite(row.value)).length;
+  const lastFinite = (rows: Array<{ date: string; value: number | null }>) => {
+    for (let i = rows.length - 1; i >= 0; i--) if (rows[i].value != null) return rows[i].date;
+    return null;
+  };
+  const ea20Rows = Object.prototype.hasOwnProperty.call(geoIndex, "EA20") ? rowsFor("EA20") : [];
+  const ea21Rows = Object.prototype.hasOwnProperty.call(geoIndex, "EA21") ? rowsFor("EA21") : [];
+  const ea20PointCount = finiteCount(ea20Rows);
+  const ea20Last = lastFinite(ea20Rows);
+  const ea21Last = lastFinite(ea21Rows);
+  const ea20Stale = ea20PointCount > 0 && ea20Last != null && ea21Last != null && ea20Last < ea21Last;
+  if (ea20PointCount > 0) return { geo: "EA20", rows: ea20Rows, ea20PointCount, ea20Stale };
+  const candidates = Object.keys(geoIndex).filter(code => /^Euro area\b/i.test(geoLabel[code] ?? ""));
+  if (candidates.length === 0) return { ...empty, ea20PointCount, ea20Stale: false };
+  const geo = candidates.slice().sort((a, b) => euroAreaGeneration(b) - euroAreaGeneration(a) || a.localeCompare(b))[0];
+  return { geo, rows: rowsFor(geo), ea20PointCount, ea20Stale: false };
 }

@@ -504,6 +504,7 @@ export interface YahooTimeseriesOpts {
   currency?: string | null;
   name?: string | null;
   exchangeName?: string | null;
+  signal?: AbortSignal;
 }
 
 const tsCache = new Map<string, { value: YahooTimeseriesFundamentals; at: number }>();
@@ -523,6 +524,7 @@ export async function fetchYahooTimeseriesFundamentals(symbol: string, opts: Yah
   const hit = tsCache.get(cacheKey);
   if (hit && Date.now() - hit.at < (hit.value.status === "ok" || hit.value.status === "partial" ? YAHOO_CACHE_TTL_MS : YAHOO_FAIL_TTL_MS)) return hit.value;
   const value = await fetchYahooTimeseriesFundamentalsUncached(sym, opts);
+  if (opts.signal?.aborted) return value;
   tsCache.set(cacheKey, { value, at: Date.now() });
   return value;
 }
@@ -533,7 +535,7 @@ async function fetchYahooTimeseriesFundamentalsUncached(sym: string, opts: Yahoo
   let name = opts.name ?? null;
   let exchangeName = opts.exchangeName ?? null;
   if (price == null || currency == null) {
-    const m = await fetchYahooChartMetaWithPrice(sym);
+    const m = await fetchYahooChartMetaWithPrice(sym, opts.signal);
     if (m) {
       // Meta-Kurs ist in der Meta-Währung; Minor (GBp) → Major (GBP), damit Kurs, MCap und Währung zusammenpassen.
       const mu = m.currency ? chartMetaMinorUnit(m.currency) : null;
@@ -552,7 +554,8 @@ async function fetchYahooTimeseriesFundamentalsUncached(sym: string, opts: Yahoo
     await spaceYahooCall();
     const nowSec = Math.floor(Date.now() / 1000);
     const url = `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${TIMESERIES_TYPES.join(",")}&period1=${nowSec - 2 * 366 * 86400}&period2=${nowSec}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" } });
+    const timeout = AbortSignal.timeout(10000);
+    const resp = await fetch(url, { signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout, headers: { "User-Agent": UA, Accept: "application/json" } });
     if (!resp.ok) {
       yahooDiag(sym, "timeseries", resp.status, `nicht ok${statusHint(resp.status)}${redirectNote(resp)}: ${await bodySnippet(resp)} → MCap/KGV/EPS n/a`);
       return { ...base, status: "http_error", httpStatus: resp.status };
@@ -579,11 +582,14 @@ async function fetchYahooTimeseriesFundamentalsUncached(sym: string, opts: Yahoo
 }
 
 /** Chart-Meta inkl. regularMarketPrice (für den Standalone-Aufruf ohne Snapshot). */
-async function fetchYahooChartMetaWithPrice(symbol: string): Promise<(YahooChartMeta & { price: number | null }) | null> {
+async function fetchYahooChartMetaWithPrice(symbol: string, signal?: AbortSignal): Promise<(YahooChartMeta & { price: number | null }) | null> {
+  if (signal?.aborted) return null;
   try {
     await spaceYahooCall();
+    if (signal?.aborted) return null;
+    const timeout = AbortSignal.timeout(10000);
     const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
-      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout, headers: { "User-Agent": UA, Accept: "application/json" },
     });
     if (!resp.ok) return null;
     const json: any = await resp.json();

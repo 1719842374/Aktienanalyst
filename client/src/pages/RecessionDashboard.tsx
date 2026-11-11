@@ -130,7 +130,7 @@ export default function RecessionDashboard() {
         </div>
       </header>
 
-      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-28 sm:pb-0">
         {!data && !analyzeMutation.isPending ? (
           <WelcomeScreen onStart={startAnalysis} />
         ) : analyzeMutation.isPending ? (
@@ -185,7 +185,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
         <ProbabilityEstimates subgroups={data.subgroups} />
       </SectionCard>
       {regions && (
-        <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
+        <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Asien)">
           <RegionalCatalogSection catalogs={regions} />
         </SectionCard>
       )}

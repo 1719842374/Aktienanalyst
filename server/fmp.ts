@@ -43,7 +43,7 @@ async function spaceOutgoingCall(): Promise<void> {
   _lastFmpCallAt = Date.now();
 }
 
-async function fmpFetch(path: string, params: Record<string, string> = {}): Promise<any> {
+async function fmpFetch(path: string, params: Record<string, string> = {}, signal?: AbortSignal): Promise<any> {
   const key = getApiKey();
   if (!key) throw new Error("FMP_API_KEY not set");
   const url = new URL(`${FMP_BASE}${path}`);
@@ -56,8 +56,9 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
     // Track BEFORE the request — a rate-limited call still consumed your quota upstream.
     trackFmpCall(1);
     try {
+      const timeout = AbortSignal.timeout(15000);
       const resp = await fetch(url.toString(), {
-        signal: AbortSignal.timeout(15000),
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
         headers: { "User-Agent": "StockAnalystPro/1.0" },
       });
       if (resp.status === 429 || resp.status === 503) {
@@ -73,6 +74,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
       return resp.json();
     } catch (err: any) {
       lastErr = err;
+      if (signal?.aborted) throw err;
       // Retry only on network/timeout errors (AbortError), not on client errors.
       if (attempt < FMP_CONFIG.maxRetries && (err?.name === "AbortError" || err?.name === "TimeoutError")) {
         const wait = 500 * Math.pow(2, attempt);
@@ -207,13 +209,13 @@ export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
   }
 }
 
-export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
+export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string, signal?: AbortSignal) {
   const params: Record<string, string> = { symbol };
   if (from) params.from = from;
   if (to) params.to = to;
   // GET /stable/historical-price-eod/full?symbol=AAPL&from=...&to=...
   // Returns a flat array (no .historical wrapper in /stable).
-  const data = await fmpFetch(`/historical-price-eod/full`, params);
+  const data = await fmpFetch(`/historical-price-eod/full`, params, signal);
   if (Array.isArray(data)) return data;
   return data?.historical || [];
 }
@@ -731,9 +733,9 @@ export async function fmpRatiosQuarterly(symbol: string, limit = 40) {
   return fmpFetch(`/ratios`, { symbol, period: "quarter", limit: String(limit) });
 }
 
-export async function fmpRatiosTtm(symbol: string) {
+export async function fmpRatiosTtm(symbol: string, signal?: AbortSignal) {
   // GET /stable/ratios-ttm?symbol=AAPL — priceToEarningsRatioTTM
-  return fmpFetch(`/ratios-ttm`, { symbol });
+  return fmpFetch(`/ratios-ttm`, { symbol }, signal);
 }
 
 export async function fmpKeyMetrics(symbol: string, limit = 5) {

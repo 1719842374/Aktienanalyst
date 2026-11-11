@@ -38,7 +38,7 @@ check("S8: Sektion 8 = regionen (mit Regionen)", rec.sections.find((s: any) => s
 check("S8: Regionswerte wie Kachel (60%/55%/×0.70)", /Katalog Rez\. 60%, Katalog Korr\. 55%, Gewicht ×0\.70/.test(String(s8.region_US)) && hReg.includes("60%") && hReg.includes("×0.70"), String(s8.region_US));
 check("S8: fehlender Wert = n/a (Anzeige N/A)", /Katalog Korr\. n\/a/.test(String(s8.region_JP)) && hReg.includes("N/A"));
 check("S8: Slot-Score wie Anzeige (+2/4, -4/4, —/0)", /a: 1\.2 \| z \| Score \+2\/4/.test(String(s8.slots_US)) && /Score -4\/4/.test(String(s8.slots_EZ)) && /Score —\/0/.test(String(s8.slots_JP)) && hReg.includes("+2"));
-check("S8: Mischung + Gewichte wie Anzeige", s8.gewichteteRezession12MPct === 60 && s8.gewichteteKorrektur12MPct === 50 && s8.gewichte === "US 0.70 / EZ 0.20 / JP 0.10" && hReg.includes("US 0.70 / EZ 0.20 / JP 0.10"));
+check("S8: Mischung + Gewichte wie Anzeige", s8.gewichteteRezession12MPct === 60 && s8.gewichteteKorrektur12MPct === 50 && s8.gewichte === "US 0.70 / EZ 0.20 / Asien 0.10" && hReg.includes("US 0.70 / EZ 0.20 / Asien 0.10"));
 check("S8: kein Hinweis statt Werten mehr", s8.hinweis === undefined);
 const recNo = cc.buildRecessionChatContext(RECESSION_FALLBACK_DATA, { hasRegions: false });
 check("ohne Regionen: keine S8-Regionen-Sektion", !recNo.sections.some((s: any) => s.key === "regionen"));
