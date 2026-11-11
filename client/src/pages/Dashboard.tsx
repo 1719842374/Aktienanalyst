@@ -716,6 +716,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF">{isYahooOnly(data) ? <YahooNoValuationCard number={16} title="REVERSE DCF" data={data} /> : <ReverseDCFSection data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren">{isYahooOnly(data) ? <YahooNoValuationCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)" data={data} /> : <CatalystsSection
                 data={data}
+                onReloadAnalysis={() => startAnalyze({ ticker: data.ticker, llm: useLLMRef.current, force: false })}
                 onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
                   // additive Uebernahme der sofort neu generierten These aus

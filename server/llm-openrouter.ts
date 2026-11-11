@@ -147,9 +147,51 @@ export interface CombinedLLMResult {
   completionTokens?: number;
 }
 
+export type OpenRouterLimitReason = "402" | "429";
+
+/** Nur gesetzt, wenn der Enrich-Handler den OpenRouter-Status durchreichen will. Der Analyze-Pfad übergibt keinen Sink. */
+export type LlmSkipSink = { llmSkipReason: OpenRouterLimitReason | null };
+
+export function openRouterLimitReason(status: unknown): OpenRouterLimitReason | null {
+  const code = typeof status === "string" && status.trim() !== "" ? Number(status) : status;
+  if (code === 402) return "402";
+  if (code === 429) return "429";
+  return null;
+}
+
+export function assignOpenRouterLimit(sink: LlmSkipSink | undefined, status: unknown): OpenRouterLimitReason | null {
+  const reason = openRouterLimitReason(status);
+  if (sink) sink.llmSkipReason = reason;
+  return reason;
+}
+
+export function takeOpenRouterLimit(sink: LlmSkipSink): OpenRouterLimitReason | null {
+  const reason = sink.llmSkipReason === "402" || sink.llmSkipReason === "429" ? sink.llmSkipReason : null;
+  sink.llmSkipReason = null;
+  return reason;
+}
+
+export function catalystEnrichSkipBody(catalysts: unknown, reason: OpenRouterLimitReason | null): {
+  _llmSkipped: true;
+  catalysts: unknown;
+  modelUsed: null;
+  llmSkipReason?: OpenRouterLimitReason;
+} {
+  const body: {
+    _llmSkipped: true;
+    catalysts: unknown;
+    modelUsed: null;
+    llmSkipReason?: OpenRouterLimitReason;
+  } = { _llmSkipped: true, catalysts, modelUsed: null };
+  if (reason) body.llmSkipReason = reason;
+  return body;
+}
+
 export async function generateCatalystsAndMatchNews(
-  input: CombinedLLMInput
+  input: CombinedLLMInput,
+  sink?: LlmSkipSink,
 ): Promise<CombinedLLMResult | null> {
+  if (sink) sink.llmSkipReason = null;
   const client = getClient();
   if (!client) return null;
 
@@ -342,8 +384,9 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
     const msg = err?.message || String(err);
-    if (status === 402) {
-      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    const reason = assignOpenRouterLimit(sink, status);
+    if (reason) {
+      console.warn(`[LLM] ${reason} token budget exhausted — skipping LLM`);
     } else {
       console.error(`[LLM] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
     }
