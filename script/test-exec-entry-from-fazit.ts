@@ -7,7 +7,7 @@
  * Server-Code aus attachExecSummary erzeugt):
  *  - die Exec-Sätze (Handlung, CRV) nennen dieselbe Max-Entry-Zahl wie die S20-Fazit-Tabelle
  *  - CRV Base/risikoadjustiert im Exec-CRV-Satz = Fazit-Faktoren
- *  - Exec-Entry = PDF-S6-Entry (fazitEntryForExport) = prepareFazitMetrics.dcfBeiCRV3; fazit-signal.ts unverändert
+ *  - Exec-Entry = PDF-S6-Entry (fazitEntryForExport) = prepareFazitMetrics.dcfBeiCRV3
  *  - der Server-Payload (execSummary, maxEntryCrv3) bleibt unverändert
  */
 import React from "react";
@@ -86,9 +86,14 @@ await check("Ohne berechenbare Fazit-Werte: Server-Sätze bleiben (kein Erfinden
   // Karte darf nicht abstürzen; entweder Server-Satz oder gar keine Karte (fazit null).
   assert.ok(typeof h === "string");
 });
-await check("Server-, Score- und Fazit-Dateien unverändert (exec-summary, exec-summary-attach, analyze-route, fazit-signal, bias-fixes, fazit-entry)", () => {
+await check("Score-Dateien unverändert (analyze-route, bias-fixes, fazit-entry, schema)", () => {
+  // #336 (cc2b6890, Philip) hat die Byte-Sperre als Regressionscheck des Entry-Fixes gesetzt,
+  // nicht als die 8-Datei-Wächterliste aus test-buffett-robust.ts.
+  // PR-Body #336: „fazit-signal.ts bleibt unverändert“, „Score, Rating und analyze-route bleiben unberührt.“
+  // Label-PR #475 ändert exec-summary.ts, exec-summary-attach.ts und fazit-signal.ts. Diese drei sind hier frei.
+  // analyze-route, bias-fixes, fazit-entry und schema bleiben gesperrt.
   const mb = execSync("git merge-base HEAD origin/main").toString().trim();
-  execSync(`git diff --quiet ${mb} -- server/exec-summary.ts server/exec-summary-attach.ts server/analyze-route.ts client/src/lib/fazit-signal.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
+  execSync(`git diff --quiet ${mb} -- server/analyze-route.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
 });
 
 console.log(`\n${pass}/${pass + fail} passed`);

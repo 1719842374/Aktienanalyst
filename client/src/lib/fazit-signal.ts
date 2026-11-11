@@ -163,16 +163,21 @@ export function prepareFazitMetrics(
 
 /** Vier Technik-Flags als Anzeigetext. Ändert nicht, welcher Faktor positiv, negativ oder neutral zählt. */
 export function technicalFlagLabels(status: {
-  priceAboveMA200?: boolean;
-  ma50AboveMA200?: boolean;
-  macdAboveZero?: boolean;
-  macdRising?: boolean;
+  priceAboveMA200?: boolean | null;
+  ma50AboveMA200?: boolean | null;
+  macdAboveZero?: boolean | null;
+  macdRising?: boolean | null;
 }): string[] {
+  const text = (value: boolean | null | undefined, yes: string, no: string, missing: string): string => {
+    if (value === true) return yes;
+    if (value === false) return no;
+    return missing;
+  };
   return [
-    status.priceAboveMA200 ? "Kurs > MA200" : "Kurs < MA200",
-    status.ma50AboveMA200 ? "MA50 > MA200 (Golden Cross)" : "MA50 < MA200 (Death Cross)",
-    status.macdAboveZero ? "MACD > 0" : "MACD < 0",
-    status.macdRising ? "MACD steigend" : "MACD nicht steigend",
+    text(status.priceAboveMA200, "Kurs > MA200", "Kurs < MA200", "Kurs vs. MA200 n/a — Boolean fehlt"),
+    text(status.ma50AboveMA200, "MA50 > MA200 (Golden Cross)", "MA50 < MA200 (Death Cross)", "MA50 vs. MA200 n/a — Boolean fehlt"),
+    text(status.macdAboveZero, "MACD > 0", "MACD < 0", "MACD vs. 0 n/a — Boolean fehlt"),
+    text(status.macdRising, "MACD steigend", "MACD nicht steigend", "MACD-Richtung n/a — Boolean fehlt"),
   ];
 }
 

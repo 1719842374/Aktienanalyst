@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execLageFromFazit } from "../client/src/lib/execLageFromFazit";
+import { technicalFlagLabels } from "../client/src/lib/fazit-signal";
 import { buildCrossLine, buildFazit, type ExecSummaryInput } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import { applyBiasFix, buildBiasDecision } from "../shared/bias-fixes";
@@ -118,6 +119,25 @@ check("S-07: ohne MACD-Flags kein erfundener MACD-Satz", () => {
 
 check("S-07: ohne MA50-Flag bleibt die Zeile leer", () => {
   assert.equal(buildCrossLine({ ...base, ma50AboveMA200: null }), "");
+});
+
+check("S-07: fehlender Boolean je Flag ist n/a mit Grund, nur false ist Negativtext", () => {
+  const flags = [
+    ["priceAboveMA200", "Kurs < MA200", "Kurs vs. MA200 n/a — Boolean fehlt"],
+    ["ma50AboveMA200", "MA50 < MA200 (Death Cross)", "MA50 vs. MA200 n/a — Boolean fehlt"],
+    ["macdAboveZero", "MACD < 0", "MACD vs. 0 n/a — Boolean fehlt"],
+    ["macdRising", "MACD nicht steigend", "MACD-Richtung n/a — Boolean fehlt"],
+  ] as const;
+  for (const [key, negative, missing] of flags) {
+    for (const absent of [undefined, null]) {
+      const labels = technicalFlagLabels({ [key]: absent });
+      const text = labels[flags.findIndex((row) => row[0] === key)];
+      assert.equal(text, missing, `${key}=${String(absent)}: ${text}`);
+      assert.equal(text.includes(negative), false, text);
+    }
+    const whenFalse = technicalFlagLabels({ [key]: false });
+    assert.equal(whenFalse[flags.findIndex((row) => row[0] === key)], negative, key);
+  }
 });
 
 check("S-07: Fazit-Klammer nennt dieselben vier Flags, die Bucket-Schwelle bleibt length >= 2", () => {
