@@ -20,6 +20,7 @@ import PortfolioPage from "@/pages/PortfolioPage";
 import ValueChainDashboard from "@/pages/ValueChainDashboard";
 import ThesisLabDashboard from "@/pages/ThesisLabDashboard";
 import CalibrationPage from "@/pages/CalibrationPage";
+import EarningsAmpelPreview from "@/pages/EarningsAmpelPreview";
 import NotFound from "@/pages/not-found";
 
 function subscribeToHash(onStoreChange: () => void) {
@@ -69,6 +70,7 @@ function AppRouter() {
       <Route path="/lab" component={ThesisLabDashboard} />
       <Route path="/calibration" component={CalibrationPage} />
       <Route path="/balance-screen" component={BalanceScreenPage} />
+      <Route path="/earnings-ampel" component={EarningsAmpelPreview} />
       <Route component={NotFound} />
     </Switch>
   );
