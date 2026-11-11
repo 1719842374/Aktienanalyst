@@ -48,8 +48,16 @@ function norm(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * P3 #465: „Data Center Segment“ ist das Elternsegment „Data Center“, „Hybrid Cloud Segment“ ist „Hybrid Cloud“.
+ * Das angehängte Wort Segment ändert den Produktnamen nicht. Geografie bleibt beim exakten Namen.
+ */
+function productChildKey(name: string): string {
+  return norm(prettifyProductSegmentName(name)).replace(/ segment$/, "");
+}
+
 function sameChildName(kind: "product" | "geographic", left: string, right: string): boolean {
-  if (kind === "product") return norm(prettifyProductSegmentName(left)) === norm(prettifyProductSegmentName(right));
+  if (kind === "product") return productChildKey(left) === productChildKey(right);
   return norm(left) === norm(right);
 }
 
