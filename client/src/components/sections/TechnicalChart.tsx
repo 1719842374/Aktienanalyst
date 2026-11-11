@@ -1831,7 +1831,7 @@ function EarningsTooltipRows({ p }: { p: EarningsTipFields }) {
     <div className="mt-1 max-w-[240px] whitespace-normal border-t border-border pt-1" data-testid="earnings-tooltip" data-kind={p._earnKind}>
       <div style={{ color }}>Earnings {p._earnKind}</div>
       <div style={{ color }}>Revenue Actual {formatReported(p._earnRevActual)}</div>
-      <div style={{ color }}>Revenue Estimate {formatReported(p._earnRevEst)}</div>
+      <div>Revenue Estimate {formatReported(p._earnRevEst)}</div>
       <div style={{ color }}>Surprise <span style={{ color }}>{surprise(p._earnRev)}</span></div>
       <div style={{ color }}>EPS Surprise <span style={{ color }}>{surprise(p._earnEps)}</span></div>
       {p._earnReason ? <div style={{ color }}>{p._earnReason}</div> : null}
