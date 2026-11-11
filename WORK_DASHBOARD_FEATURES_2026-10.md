@@ -197,5 +197,12 @@ Agents können die Prioritäten abarbeiten. Die Aktien-Chatbot-Basis sollte vor 
 
 - erledigt @`727ca998`: Elternsegment nicht mehr als eigenes Kind (NVDA „Data Center Segment“, HPE „Hybrid Cloud Segment“). `productChildKey` in `shared/segment-children.ts`. Kette UI → `GET /api/segment-children/:ticker` → Server → shared auf main `fb5546ea9768140679e72185ba7ff50860e506de` geprüft.
 - erledigt @`dd30e8b7`: Jahres-Tabelle, Sankey, Segment-YoY, KI-Untersegmente mit Fremdmarken-Prüfung. Der Vollblock steht im Nachtrag 10.11. darüber (Docs #481); hier nur der Fortschritt.
-- Offen: P2-3 fail-open; eigene Unterbrands; UNTESTED-Flaggschiffe (24-h-KI-Cache); P2-N29-2 FMP-Namenssuche pro brand.
+- Offen: P2-3 fail-open; eigene Unterbrands; UNTESTED-Flaggschiffe (24-h-KI-Cache). P2-N29-2 erledigt @`63a5cbcf` (FMP-Namenssuche pro brand).
 - Spec bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #482 @63a5cbcf · HEAD main `63a5cbcf`
+
+- #482 (https://github.com/1719842374/Aktienanalyst/pull/482) Squash `63a5cbcf30805280ca921dac3aca1a3ee66f2b2e`. DC Post-Merge KLAR mit Hinweisen (`test-segment-n29-2.ts` 22 PASS). Tester PASS @`6856db4a`: HPE Networking „n/a — Fremdmarke verworfen“, Arista kein Kind. UNTESTED: ungültige FMP-Namenssuche live, Alletra. Ampel 🟡 TEILWEISE.
+- Kette auf main geprüft: `SegmentChildrenPanel` → GET `/api/segment-children/:ticker` (`segment-growth-route.ts:701`) → `fmpSearchCompanyName` (`server/fmp.ts`) → `ownClaimBrandQueries` / `reviewKiChildren` (`shared/segment-children.ts`).
+- Offen: P2-3 fail-open; eigene Unterbrands; Flaggschiffe (24-h-KI-Cache); P3 Obergrenze `ownClaimBrandQueries` (270 s gegen 90 s).
+- Der Abschnitt bei Z.189 bleibt der historische #465-Stand und bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
