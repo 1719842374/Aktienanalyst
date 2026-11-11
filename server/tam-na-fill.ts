@@ -50,6 +50,8 @@ export interface TamNaFillArgs {
   fiscalYear?: string | null;
   /** Gesamtumsatz in derselben Einheit wie segmentRevenue. */
   totalRevenue?: number | null;
+  /** Median aus /api/segment-supplement. Eine vorhandene Rate wird nicht neu geschätzt. */
+  supplementGrowth?: { name: string; nextYearGrowthPct: number; observations: number; source?: string | null }[];
   segments: TamNaFillRequestSegment[];
 }
 
@@ -146,6 +148,10 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
   const fiscalYear = clip(args.fiscalYear, 12) || "n/a";
   const totalRevenue = typeof args.totalRevenue === "number" && Number.isFinite(args.totalRevenue) ? String(args.totalRevenue) : "n/a";
   const anchor = args.peerAnchor;
+  const history = (args.supplementGrowth ?? [])
+    .filter((row) => typeof row.nextYearGrowthPct === "number" && Number.isFinite(row.nextYearGrowthPct))
+    .map((row) => `FMP-Segmenthistorie ${row.name}: Median YoY ${row.nextYearGrowthPct}% aus ${row.observations} Jahresraten. Quelle: ${row.source || "FMP revenue-product-segmentation"}. Nicht überschreiben.`)
+    .join("\n");
   const peerLine = anchor && anchor.medianRevenueYoyPct != null
     ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
     : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
@@ -154,7 +160,7 @@ ${peerLine}
 
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
-${profile ? `PROFIL: ${profile}\n` : ""}Währung der Segmentumsätze: ${currency}. Geschäftsjahr: ${fiscalYear}. Gesamtumsatz: ${totalRevenue}.
+${profile ? `PROFIL: ${profile}\n` : ""}${history ? `${history}\n` : ""}Währung der Segmentumsätze: ${currency}. Geschäftsjahr: ${fiscalYear}. Gesamtumsatz: ${totalRevenue}.
 TABELLE Segment-TAM-Analyse
 Spalten: ${TAM_NA_COLUMN_HEADER}
 ${rest}
@@ -179,6 +185,18 @@ export async function requestTamNaFills(
   deps: { isLLMAvailable: () => boolean; callLLMJson: LlmJson } = { isLLMAvailable, callLLMJson },
 ): Promise<TamNaFillResult> {
   const ticker = clip(args.ticker, 16);
+  const historyByName = new Map<string, number>();
+  for (const row of args.supplementGrowth ?? []) {
+    if (typeof row.nextYearGrowthPct === "number" && Number.isFinite(row.nextYearGrowthPct)) {
+      historyByName.set(row.name.trim(), row.nextYearGrowthPct);
+    }
+  }
+  const segments = args.segments.map((seg) => {
+    if (typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth)) return seg;
+    const known = historyByName.get((seg.segmentName ?? "").trim());
+    return known == null ? seg : { ...seg, segmentGrowth: known };
+  });
+  args = { ...args, ticker, segments };
   if (!TICKER_RE.test(ticker)) {
     return { ok: false, status: 400, error: "ticker fehlt oder ist ungültig", code: "BAD_REQUEST" };
   }

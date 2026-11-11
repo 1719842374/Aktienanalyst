@@ -87,8 +87,15 @@ export function hasPositiveSegmentRevenue(revenue: unknown): revenue is number {
   return typeof revenue === "number" && Number.isFinite(revenue) && revenue > 0;
 }
 
-export function deriveTamShare(segmentRevenueB: number, tamSizeB: number): number {
-  return Math.round((segmentRevenueB / tamSizeB) * 10000) / 100;
+/** Dieselbe Milliarden-Umrechnung wie sector-data.ts (`revenue / 1e9`), keine neue Schwelle. */
+const TAM_BILLION = 1e9;
+
+export function revenueBillions(revenue: number): number {
+  return Math.abs(revenue) >= TAM_BILLION ? revenue / TAM_BILLION : revenue;
+}
+
+export function deriveTamShare(segmentRevenue: number, tamSizeB: number): number {
+  return Math.round((revenueBillions(segmentRevenue) / tamSizeB) * 10000) / 100;
 }
 
 /** null when growth or CAGR is missing — do not invent either input. */
@@ -192,20 +199,19 @@ export function scopeNaCells(
   const factGrowth = growthOrNull(seg.segmentGrowth);
   const kiGrowth = factGrowth == null && fill ? parseEstimatedGrowth(fill.segmentGrowth) : null;
   const growth = factGrowth ?? kiGrowth;
-  const unmatched = seg.matched === false;
   const factTam = factTamSize(seg);
   const factCagr = factTamCagr(seg);
-  const kiTam = unmatched && fill && finite(fill.tamSize) !== null && (fill.tamSize as number) > 0
+  const kiTam = factTam === null && fill && finite(fill.tamSize) !== null && (fill.tamSize as number) > 0
     ? (fill.tamSize as number)
     : null;
-  const kiCagr = unmatched && fill && finite(fill.tamCAGR) !== null ? (fill.tamCAGR as number) : null;
+  const kiCagr = factCagr === null && fill && finite(fill.tamCAGR) !== null ? (fill.tamCAGR as number) : null;
   const revenueOk = finite(seg.segmentRevenue) !== null && (seg.segmentRevenue as number) >= 0;
   return {
     growth: growth === null,
-    tam: unmatched && kiTam === null,
-    cagr: unmatched && kiCagr === null,
-    share: unmatched && (kiTam === null || !revenueOk),
-    vs: growth === null || (unmatched ? kiCagr === null : factCagr === null),
+    tam: factTam === null && kiTam === null,
+    cagr: factCagr === null && kiCagr === null,
+    share: (factTam === null && kiTam === null) || !revenueOk,
+    vs: growth === null || (factCagr === null && kiCagr === null),
   };
 }
 
