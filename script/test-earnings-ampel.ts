@@ -14,6 +14,8 @@ import {
   EARNINGS_AMPEL_THRESHOLDS,
   buildEarningsAmpel,
   classifyEarningsSurprise,
+  earningsAmpelCellPaint,
+  earningsAmpelContrast,
 } from "../shared/earnings-ampel.ts";
 import { EarningsAmpelView } from "../client/src/components/sections/EarningsAmpelBlock.tsx";
 
@@ -24,7 +26,9 @@ assert.equal(T.epsBeatPct, 5);
 assert.equal(T.epsMissPct, -5);
 assert.equal(T.revenueBeatPct, 2);
 assert.equal(T.revenueMissPct, -2);
-assert.equal(T.inlineColor, "#eab308");
+assert.equal(T.inline.color, "#eab308");
+assert.equal(T.beat.color, "#22c55e");
+assert.equal(T.miss.color, "#ef4444");
 
 function marker(partial: Partial<EarningsMarker> & Pick<EarningsMarker, "date">): EarningsMarker {
   return {
@@ -151,6 +155,60 @@ assert.match(html, /Miss ab −2 %/);
 const naRow = html.split('data-testid="earnings-ampel-row"')[1] ?? "";
 assert.match(naRow, /n\/a — EPS-Ist fehlt/);
 assert.doesNotMatch(naRow, /0,00 %/);
+
+const painted = buildEarningsAmpel([
+  marker({ date: "2024-06-30", epsActual: 1, epsEstimate: 1, epsSurprisePct: 0, revenueActual: 100, revenueEstimate: 100, revenueSurprisePct: 0 }),
+  marker({ date: "2024-09-30", epsActual: 1.06, epsEstimate: 1, epsSurprisePct: 6, revenueActual: 103, revenueEstimate: 100, revenueSurprisePct: 3 }),
+  marker({ date: "2024-12-31", epsActual: 0.94, epsEstimate: 1, epsSurprisePct: -6, revenueActual: 97, revenueEstimate: 100, revenueSurprisePct: -3 }),
+  marker({ date: "2025-03-31", epsActual: null, epsEstimate: 1.2, epsSurprisePct: null, revenueActual: 80, revenueEstimate: null, revenueSurprisePct: null }),
+]);
+const paintedHtml = renderToStaticMarkup(React.createElement(EarningsAmpelView, { model: painted }));
+const rowOf = (date: string) => paintedHtml.split('data-testid="earnings-ampel-row"').find(part => part.includes(`>${date}<`) && part.includes("data-ampel-cell=")) ?? "";
+const cellOf = (rowHtml: string, field: string) => {
+  const marker = `data-ampel-cell="${field}"`;
+  const start = rowHtml.indexOf(marker);
+  assert.ok(start >= 0, field);
+  return rowHtml.slice(start, rowHtml.indexOf("data-ampel-cell=", start + marker.length) === -1 ? undefined : rowHtml.indexOf("data-ampel-cell=", start + marker.length));
+};
+const valueFields = ["revenue-actual", "revenue-estimate", "revenue-surprise", "eps-actual", "eps-estimate", "eps-surprise"] as const;
+for (const field of valueFields) {
+  const beat = cellOf(rowOf("2024-09-30"), field);
+  assert.match(beat, /data-lamp="beat"/);
+  assert.match(beat, /▲/);
+  assert.match(beat, /#22c55e/i);
+  const miss = cellOf(rowOf("2024-12-31"), field);
+  assert.match(miss, /data-lamp="miss"/);
+  assert.match(miss, /▼/);
+  assert.match(miss, /#ef4444/i);
+  const inline = cellOf(rowOf("2024-06-30"), field);
+  assert.match(inline, /data-lamp="inline"/);
+  assert.match(inline, /●/);
+  assert.match(inline, /#eab308/i);
+}
+const naEps = cellOf(rowOf("2025-03-31"), "eps-actual");
+assert.match(naEps, /data-lamp="na"/);
+assert.match(naEps, /n\/a — EPS-Ist fehlt/);
+assert.doesNotMatch(naEps, /[▲●▼]/);
+assert.doesNotMatch(naEps, /#22c55e|#eab308|#ef4444/i);
+const naEstimate = cellOf(rowOf("2025-03-31"), "revenue-estimate");
+assert.match(naEstimate, /data-lamp="na"/);
+assert.match(naEstimate, /n\/a/);
+assert.doesNotMatch(naEstimate, /[▲●▼]/);
+assert.doesNotMatch(naEstimate, /#22c55e|#eab308|#ef4444/i);
+assert.equal(EARNINGS_AMPEL_THRESHOLDS.beat.symbol, "▲");
+assert.equal(EARNINGS_AMPEL_THRESHOLDS.inline.symbol, "●");
+assert.equal(EARNINGS_AMPEL_THRESHOLDS.miss.symbol, "▼");
+assert.equal(EARNINGS_AMPEL_THRESHOLDS.inline.color, "#eab308");
+assert.doesNotMatch(readFileSync("client/src/components/sections/EarningsAmpelBlock.tsx", "utf8"), /#22c55e|#ef4444|#eab308|▲|▼|●/);
+for (const lamp of ["beat", "inline", "miss"] as const) {
+  const paint = earningsAmpelCellPaint(lamp);
+  assert.equal(paint.color, EARNINGS_AMPEL_THRESHOLDS[lamp].color);
+  assert.equal(paint.symbol, EARNINGS_AMPEL_THRESHOLDS[lamp].symbol);
+  assert.ok(earningsAmpelContrast(paint.lightInk, paint.lightWash) >= T.minContrast, `${lamp} light`);
+  assert.ok(earningsAmpelContrast(paint.darkInk, paint.darkWash) >= T.minContrast, `${lamp} dark`);
+}
+assert.equal(earningsAmpelCellPaint("inline").darkInk, "#eab308");
+assert.equal(earningsAmpelCellPaint("beat").darkInk, "#22c55e");
 
 const emptyHtml = renderToStaticMarkup(React.createElement(EarningsAmpelView, { model: empty, notice: "n/a — keine Quartale" }));
 assert.match(emptyHtml, /n\/a — keine Quartale/);

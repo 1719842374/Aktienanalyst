@@ -1,11 +1,14 @@
 import type { CSSProperties } from "react";
 import {
   buildEarningsAmpel,
+  earningsAmpelCellPaint,
   earningsAmpelColor,
   earningsAmpelLabel,
+  earningsAmpelSymbol,
   earningsAmpelThresholdLine,
   formatAmpelNumber,
   formatAmpelPct,
+  type EarningsAmpelLamp,
   type EarningsAmpelMetric,
   type EarningsAmpelModel,
   type EarningsAmpelQuarter,
@@ -105,17 +108,20 @@ function Lamp({ testId, title, metric, quarter, fallbackReason }: {
 function QuarterRow({ quarter }: { quarter: EarningsAmpelQuarter }) {
   return (
     <tr className="block sm:table-row border-t border-border/60 py-2 sm:py-0" data-testid="earnings-ampel-row">
-      <Cell label="Quartal" value={quarter.date} mono />
-      <Cell label="Umsatz Ist" value={formatAmpelNumber(quarter.revenue.actual)} />
-      <Cell label="Umsatz Schätzung" value={formatAmpelNumber(quarter.revenue.estimate)} />
-      <Cell label="Umsatz Δ" value={formatAmpelPct(quarter.revenue.surprisePct)} />
+      <td className="flex sm:table-cell items-baseline justify-between gap-3 py-0.5 sm:py-1.5 sm:pr-3 font-mono sm:whitespace-nowrap text-foreground">
+        <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">Quartal</span>
+        <span>{quarter.date}</span>
+      </td>
+      <ValueCell metricLabel="Umsatz" field="actual" metric={quarter.revenue} />
+      <ValueCell metricLabel="Umsatz" field="estimate" metric={quarter.revenue} />
+      <ValueCell metricLabel="Umsatz" field="surprise" metric={quarter.revenue} />
       <td className="flex sm:table-cell items-start justify-between gap-3 py-0.5 sm:py-1.5 sm:pr-3">
         <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">Umsatz</span>
         <MetricLamp metric={quarter.revenue} />
       </td>
-      <Cell label="EPS Ist" value={formatAmpelNumber(quarter.eps.actual)} />
-      <Cell label="EPS Schätzung" value={formatAmpelNumber(quarter.eps.estimate)} />
-      <Cell label="EPS Δ" value={formatAmpelPct(quarter.eps.surprisePct)} />
+      <ValueCell metricLabel="EPS" field="actual" metric={quarter.eps} />
+      <ValueCell metricLabel="EPS" field="estimate" metric={quarter.eps} />
+      <ValueCell metricLabel="EPS" field="surprise" metric={quarter.eps} />
       <td className="flex sm:table-cell items-start justify-between gap-3 py-0.5 sm:py-1.5">
         <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">EPS</span>
         <MetricLamp metric={quarter.eps} />
@@ -124,13 +130,58 @@ function QuarterRow({ quarter }: { quarter: EarningsAmpelQuarter }) {
   );
 }
 
-function Cell({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+type ValueField = "actual" | "estimate" | "surprise";
+
+function ValueCell({ metricLabel, field, metric }: {
+  metricLabel: "EPS" | "Umsatz";
+  field: ValueField;
+  metric: EarningsAmpelMetric;
+}) {
+  const caption = valueCaption(metricLabel, field, metric);
+  const paint = caption.lamp === "na" ? null : earningsAmpelCellPaint(caption.lamp);
+  const fieldName = `${metricLabel === "EPS" ? "eps" : "revenue"}-${field}`;
+  const heading = field === "actual" ? `${metricLabel} Ist` : field === "estimate" ? `${metricLabel} Schätzung` : `${metricLabel} Δ`;
   return (
-    <td className={`flex sm:table-cell items-baseline justify-between gap-3 py-0.5 sm:py-1.5 sm:pr-3 text-foreground ${mono ? "font-mono" : "tabular-nums"} sm:whitespace-nowrap`}>
-      <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span>{value}</span>
+    <td
+      data-ampel-cell={fieldName}
+      data-lamp={caption.lamp}
+      className="flex sm:table-cell items-baseline justify-between gap-3 py-0.5 sm:py-1.5 sm:pr-3 sm:align-top min-w-0"
+    >
+      <span className="sm:hidden text-[10px] uppercase tracking-wide text-muted-foreground">{heading}</span>
+      {paint ? (
+        <span
+          className="earnings-ampel-value inline-block max-w-full rounded-sm px-1 py-0.5 tabular-nums whitespace-normal sm:whitespace-nowrap"
+          style={{
+            ["--ampel-color" as string]: paint.color,
+            ["--ampel-ink" as string]: paint.lightInk,
+            ["--ampel-ink-dark" as string]: paint.darkInk,
+            ["--ampel-wash" as string]: paint.lightWash,
+            ["--ampel-wash-dark" as string]: paint.darkWash,
+          }}
+        >
+          {earningsAmpelSymbol(caption.lamp)} {caption.text}
+        </span>
+      ) : (
+        <span className="tabular-nums text-foreground whitespace-normal break-words text-right sm:text-left sm:max-w-[11rem]">{caption.text}</span>
+      )}
     </td>
   );
+}
+
+function valueCaption(label: "EPS" | "Umsatz", field: ValueField, metric: EarningsAmpelMetric): { text: string; lamp: EarningsAmpelLamp } {
+  const raw = field === "actual" ? metric.actual : field === "estimate" ? metric.estimate : metric.surprisePct;
+  const missing = raw == null || !Number.isFinite(raw) || (field === "estimate" && raw === 0);
+  if (missing) {
+    const text = field === "actual"
+      ? `n/a — ${label}-Ist fehlt`
+      : field === "estimate"
+        ? `n/a — ${label}-Schätzung fehlt oder ist 0`
+        : (metric.reason ?? `n/a — ${label}-Surprise nicht berechenbar`);
+    return { text, lamp: "na" };
+  }
+  const formatted = field === "surprise" ? formatAmpelPct(raw) : formatAmpelNumber(raw);
+  if (metric.lamp === "na") return { text: formatted, lamp: "na" };
+  return { text: formatted, lamp: metric.lamp };
 }
 
 function MetricLamp({ metric }: { metric: EarningsAmpelMetric }) {
