@@ -48,8 +48,16 @@ function norm(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * P3 #465: „Data Center Segment“ ist das Elternsegment „Data Center“, „Hybrid Cloud Segment“ ist „Hybrid Cloud“.
+ * Das angehängte Wort Segment ändert den Produktnamen nicht. Geografie bleibt beim exakten Namen.
+ */
+function productChildKey(name: string): string {
+  return norm(prettifyProductSegmentName(name)).replace(/ segment$/, "");
+}
+
 function sameChildName(kind: "product" | "geographic", left: string, right: string): boolean {
-  if (kind === "product") return norm(prettifyProductSegmentName(left)) === norm(prettifyProductSegmentName(right));
+  if (kind === "product") return productChildKey(left) === productChildKey(right);
   return norm(left) === norm(right);
 }
 
@@ -204,6 +212,8 @@ export function reviewKiChildren(
     description?: string;
     /** N23: dieselbe FMP-Peer-Liste wie der Peer-Anker (/stable/stock-peers), mit Firmennamen. */
     peerCompanies?: readonly PeerCompany[];
+    /** P2-N29-2: FMP-Namenssuche pro brand. Fehlt der Eintrag, bleibt die N29-Entscheidung. */
+    brandNameSearch?: readonly BrandNameSearch[];
   } = {},
 ): SegmentChildrenResult {
   if (!payload || typeof payload !== "object") return { parent, children: [], reason: NO_SEGMENT_CHILDREN };
@@ -230,6 +240,8 @@ export function reviewKiChildren(
   const brandScope = scope.companyName
     ? ownBrandScope(scope.companyName, scope.ticker ?? "", [scope.description ?? "", ...(scope.siblings ?? [])], scope.peerCompanies ?? [], parent)
     : null;
+  const brandIndex = brandSearchIndex(scope.brandNameSearch);
+  const unproven: string[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const rec = item as { name?: unknown; revenue?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; basis?: unknown; source?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown; brandOwner?: unknown };
@@ -249,6 +261,17 @@ export function reviewKiChildren(
     if (companyName && !ownerOk) {
       foreign.push(name);
       continue;
+    }
+    if (brandScope) {
+      const searched = ownClaimSearchVerdict(name, rec.brand, rec.brandOwner, brandScope, brandIndex);
+      if (searched === "foreign") {
+        foreign.push(name);
+        continue;
+      }
+      if (searched === "unproven") {
+        unproven.push(name);
+        continue;
+      }
     }
     if (brandScope && namesForeignBrand(name, rec.brand, brandScope, rec.brandOwner)) {
       foreign.push(name);
@@ -309,7 +332,8 @@ export function reviewKiChildren(
     return { parent, children: [], reason: KI_SUM_EXCEEDS_PARENT };
   }
   const foreignNote = foreign.length > 0 ? `n/a — Fremdmarke verworfen: ${foreign.join(", ")}` : "";
-  const parts = [foreignNote, filtered > 0 && kept.length === 0 ? KI_FILTERED : "", ...notes].filter((part) => part.length > 0);
+  const unprovenNote = unproven.length > 0 ? `n/a — FMP-Namenssuche nicht belegbar: ${unproven.join(", ")}` : "";
+  const parts = [foreignNote, unprovenNote, filtered > 0 && kept.length === 0 ? KI_FILTERED : "", ...notes].filter((part) => part.length > 0);
   if (kept.length === 0) {
     return { parent, children: [], reason: parts.join(" ") || NO_SEGMENT_CHILDREN };
   }
@@ -319,6 +343,13 @@ export function reviewKiChildren(
 export interface PeerCompany {
   symbol: string;
   companyName: string;
+}
+
+/** P2-N29-2: eine Namenssuche für ein brand. ok=false heißt, der Abruf lieferte keinen Beleg (429, 5xx, Netz). */
+export interface BrandNameSearch {
+  brand: string;
+  ok: boolean;
+  companies: readonly PeerCompany[];
 }
 
 interface OwnBrandScope {
@@ -528,6 +559,99 @@ function namesForeignBrand(name: string, brand: unknown, scope: OwnBrandScope, b
   return true;
 }
 
+export function brandSearchKey(brand: string): string {
+  return brand.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function brandSearchIndex(rows: readonly BrandNameSearch[] | undefined): Map<string, BrandNameSearch> | null {
+  if (!rows) return null;
+  const index = new Map<string, BrandNameSearch>();
+  for (const row of rows) {
+    if (typeof row?.brand !== "string" || !row.brand.trim()) continue;
+    index.set(brandSearchKey(row.brand), row);
+  }
+  return index;
+}
+
+/** Die eigene brandOwner-Angabe ist der einzige Grund, das Kind zu behalten. Genau diese Lücke sucht P2-N29-2. */
+function ownClaimNeedsSearch(name: string, brand: unknown, brandOwner: unknown, scope: OwnBrandScope): boolean {
+  if (typeof brand !== "string" || !brand.trim()) return false;
+  if (brandOwnerVerdict(brandOwner, scope) !== "own") return false;
+  if (namesForeignBrand(name, brand, scope, brandOwner)) return false;
+  return namesForeignBrand(name, brand, scope, null);
+}
+
+/**
+ * P2-N29-2: der Markenname steht als Firma in der Namenssuche, und es ist nicht die eigene Firma.
+ * Dieselben Belege wie bei einem geladenen Peer: Wortfolge und die bestehende
+ * Mindestlänge einwortiger Peer-Namen. Der Vergleich nutzt stemBrandToken, damit
+ * „Networking“ und „Networks“ dieselbe Folge sind. Generische Firmenwörter allein sind kein Beleg.
+ * Kein neuer Schwellenwert. Teilüberlappung ist kein Beleg.
+ */
+function searchProvesForeign(brand: string, companies: readonly PeerCompany[], scope: OwnBrandScope): boolean {
+  const pairs = brandTokenPairs(brand);
+  const distinct = pairs.filter((pair) => !GENERIC_COMPANY_STEMS.has(pair.stem));
+  if (distinct.length === 0) return false;
+  if (pairs.length === 1 && pairs[0].raw.length < PEER_NAME_ANYWHERE_MIN_LENGTH) return false;
+  const wanted = pairs.map((pair) => pair.stem);
+  for (const company of companies) {
+    const name = typeof company?.companyName === "string" ? company.companyName.trim() : "";
+    if (!name) continue;
+    const symbolToken = typeof company.symbol === "string" ? tickerBase(company.symbol) : "";
+    if (symbolToken && symbolToken === scope.tickerToken) continue;
+    if (namesOwnCompany(name, scope)) continue;
+    if (companyReferenced(name, scope.companyName) || companyReferenced(scope.companyName, name)) continue;
+    if (containsTokenRun(brandTokenPairs(name).map((pair) => pair.stem), wanted)) return true;
+  }
+  return false;
+}
+
+function ownClaimSearchVerdict(
+  name: string,
+  brand: unknown,
+  brandOwner: unknown,
+  scope: OwnBrandScope,
+  index: Map<string, BrandNameSearch> | null,
+): "foreign" | "unproven" | "skip" {
+  if (!index || !ownClaimNeedsSearch(name, brand, brandOwner, scope) || typeof brand !== "string") return "skip";
+  const row = index.get(brandSearchKey(brand));
+  if (!row) return "skip";
+  if (!row.ok) return "unproven";
+  return searchProvesForeign(brand, row.companies, scope) ? "foreign" : "skip";
+}
+
+export function ownClaimBrandQueries(
+  payload: unknown,
+  parent: string,
+  input: {
+    companyName: string;
+    ticker?: string;
+    description?: string;
+    siblings?: readonly string[];
+    peerCompanies?: readonly PeerCompany[];
+  },
+): string[] {
+  if (!payload || typeof payload !== "object" || !input.companyName.trim()) return [];
+  const record = payload as { children?: unknown; fills?: unknown };
+  const rawList = Array.isArray(record.children) ? record.children : Array.isArray(record.fills) ? record.fills : null;
+  if (!rawList) return [];
+  const scope = ownBrandScope(input.companyName, input.ticker ?? "", [input.description ?? "", ...(input.siblings ?? [])], input.peerCompanies ?? [], parent);
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  for (const item of rawList) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { name?: unknown; segmentName?: unknown; brand?: unknown; brandOwner?: unknown };
+    const name = (typeof rec.name === "string" && rec.name.trim() ? rec.name : typeof rec.segmentName === "string" ? rec.segmentName : "").trim();
+    if (!name || !ownClaimNeedsSearch(name, rec.brand, rec.brandOwner, scope)) continue;
+    const brand = typeof rec.brand === "string" ? rec.brand.trim() : "";
+    const key = brandSearchKey(brand);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    queries.push(brand);
+  }
+  return queries;
+}
+
 export interface SegmentOutlineItem {
   name: string;
   shareOfParentPct: number | null;
@@ -725,7 +849,7 @@ export function reviewSegmentOutline(
   payload: unknown,
   companyName = "",
   /** N24: dieselbe Fremdmarken-Prüfung wie bei den KI-Kindern. */
-  brand: { ticker?: string; description?: string; peerCompanies?: readonly PeerCompany[] } = {},
+  brand: { ticker?: string; description?: string; peerCompanies?: readonly PeerCompany[]; brandNameSearch?: readonly BrandNameSearch[] } = {},
 ): { items: SegmentOutlineItem[]; reason: string | null } {
   if (!payload || typeof payload !== "object") return { items: [], reason: NO_SEGMENT_CHILDREN };
   const record = payload as { children?: unknown; fills?: unknown };
@@ -738,6 +862,8 @@ export function reviewSegmentOutline(
   const brandScope = companyName
     ? ownBrandScope(companyName, brand.ticker ?? "", [brand.description ?? ""], brand.peerCompanies ?? [])
     : null;
+  const brandIndex = brandSearchIndex(brand.brandNameSearch);
+  const unproven: string[] = [];
   for (const item of rawList) {
     if (!item || typeof item !== "object") continue;
     const rec = item as { name?: unknown; segmentName?: unknown; shareOfParentPct?: unknown; growthPct?: unknown; segmentGrowth?: unknown; basis?: unknown; rationale?: unknown; formula?: unknown; source?: unknown; tamSource?: unknown; owner?: unknown; ownerParent?: unknown; brand?: unknown; brandOwner?: unknown };
@@ -753,9 +879,15 @@ export function reviewSegmentOutline(
       const owner = typeof rec.owner === "string" ? rec.owner.trim() : "";
       const ownerParent = typeof rec.ownerParent === "string" ? rec.ownerParent.trim() : "";
       const ownerForeign = (owner || ownerParent) && !companyReferenced(owner, companyName) && !companyReferenced(ownerParent, companyName);
-      if (ownerForeign || namesForeignBrand(name, rec.brand, brandScope, rec.brandOwner)) {
+      const searched = ownClaimSearchVerdict(name, rec.brand, rec.brandOwner, brandScope, brandIndex);
+      if (ownerForeign || searched === "foreign" || namesForeignBrand(name, rec.brand, brandScope, rec.brandOwner)) {
         seen.add(norm(name));
         foreign.push(name);
+        continue;
+      }
+      if (searched === "unproven") {
+        seen.add(norm(name));
+        unproven.push(name);
         continue;
       }
     }
@@ -787,7 +919,11 @@ export function reviewSegmentOutline(
   if (items.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
     return { items: [], reason: KI_SUM_EXCEEDS_PARENT };
   }
-  const parts = [foreign.length > 0 ? `n/a — Fremdmarke verworfen: ${foreign.join(", ")}` : "", ...notes].filter((part) => part.length > 0);
+  const parts = [
+    foreign.length > 0 ? `n/a — Fremdmarke verworfen: ${foreign.join(", ")}` : "",
+    unproven.length > 0 ? `n/a — FMP-Namenssuche nicht belegbar: ${unproven.join(", ")}` : "",
+    ...notes,
+  ].filter((part) => part.length > 0);
   if (items.length === 0) return { items: [], reason: parts[0] ?? NO_SEGMENT_CHILDREN };
   return { items, reason: parts.length > 0 ? parts.join(" ") : null };
 }

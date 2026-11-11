@@ -8,7 +8,7 @@
  *    sind nicht eigen. Die N29-Fälle mit der Mutter als brandOwner bleiben.
  * 4) /api/segment-children liefert promptVersion (gleiche Konstante wie der Cache-Schlüssel); der Client liest
  *    nur parent, children und reason, die Darstellung bleibt gleich.
- * Offen (nicht gebaut): P2-N29-2 Lüge ohne geladenen Peer („Arista Networking“ mit brandOwner HPE).
+ * P2-N29-2 (Lüge ohne geladenen Peer, „Arista Networking“ mit brandOwner HPE) steht in script/test-segment-n29-2.ts.
  * Kein Live-FMP und kein Live-LLM. Profile von NVDA/AAPL: DC-Proxy-Texte (script/fixtures/nvda-aapl-profile-proxy-n29.json).
  *
  * Aufruf: npx tsx script/test-segment-n30.ts
