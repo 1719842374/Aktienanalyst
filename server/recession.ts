@@ -1765,6 +1765,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       usRecession12m: pRezFull,
       usCorrection12m: pCorrFull,
       today: recessionAsOf(),
+      usLiveSubgroups: subgroups,
       scorers: {
         money: yoy => m2Reading(yoy),
         credit: spread => creditReading(spread),
