@@ -54,12 +54,14 @@ await check("Ohne Fazit-Wert: Server-Satz bleibt (kein Erfinden)", () => {
   const h = renderToStaticMarkup(React.createElement(ExecSummaryCard, { data: { ...shel, currentPrice: NaN } }));
   assert.ok(typeof h === "string");
 });
-await check("Score-/Server-Dateien unverändert (exec-summary, attach, analyze-route, fazit-signal, bias-fixes, fazit-entry, schema)", () => {
+await check("Score-Dateien unverändert (analyze-route, bias-fixes, fazit-entry, schema)", () => {
   // Basis: aktueller main-Stand nach #326 (c256ec9c und später), nicht die feste Vor-#326-Basis 9aff468d.
   // Gegen 9aff468d weichen nur die freigegebenen #326-Zeilen in analyze-route.ts und schema.ts ab.
+  // Label-Auftrag S-01/S-02/S-07 ändert den Satz in exec-summary, attach und fazit-signal.
+  // Scores, Schwellen und die DCF-Basis bleiben in den hier gesperrten Dateien.
   const mb = execSync("git merge-base HEAD origin/main").toString().trim();
   execSync(`git merge-base --is-ancestor c256ec9c4815a5041421781843aabe2bcf42889e ${mb}`);
-  execSync(`git diff --quiet ${mb} -- server/exec-summary.ts server/exec-summary-attach.ts server/analyze-route.ts client/src/lib/fazit-signal.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
+  execSync(`git diff --quiet ${mb} -- server/analyze-route.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
 });
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);

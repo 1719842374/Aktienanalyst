@@ -161,6 +161,26 @@ export function prepareFazitMetrics(
   };
 }
 
+/** Vier Technik-Flags als Anzeigetext. Ändert nicht, welcher Faktor positiv, negativ oder neutral zählt. */
+export function technicalFlagLabels(status: {
+  priceAboveMA200?: boolean | null;
+  ma50AboveMA200?: boolean | null;
+  macdAboveZero?: boolean | null;
+  macdRising?: boolean | null;
+}): string[] {
+  const text = (value: boolean | null | undefined, yes: string, no: string, missing: string): string => {
+    if (value === true) return yes;
+    if (value === false) return no;
+    return missing;
+  };
+  return [
+    text(status.priceAboveMA200, "Kurs > MA200", "Kurs < MA200", "Kurs vs. MA200 n/a — Boolean fehlt"),
+    text(status.ma50AboveMA200, "MA50 > MA200 (Golden Cross)", "MA50 < MA200 (Death Cross)", "MA50 vs. MA200 n/a — Boolean fehlt"),
+    text(status.macdAboveZero, "MACD > 0", "MACD < 0", "MACD vs. 0 n/a — Boolean fehlt"),
+    text(status.macdRising, "MACD steigend", "MACD nicht steigend", "MACD-Richtung n/a — Boolean fehlt"),
+  ];
+}
+
 /** Build Ampel rating + factor lists — identical logic to S17 Fazit IIFE. */
 export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   const {
@@ -252,12 +272,13 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     if (techStatus.macdAboveZero && techStatus.macdRising) techBull.push('MACD > 0 & steigend');
     else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
 
+    const flagText = technicalFlagLabels(techStatus).join(", ");
     if (techStatus.buySignal) {
-      positive.push(`Technisch: BUY-Signal (${techBull.join(', ')})`);
+      positive.push(`Technisch: BUY-Signal (${flagText})`);
     } else if (techBear.length >= 2) {
-      negative.push(`Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
+      negative.push(`Technisch: KEIN Buy-Signal (${flagText})`);
     } else {
-      neutral.push(`Technisch gemischt: ${[...techBull, ...techBear].join(', ')}`);
+      neutral.push(`Technisch gemischt: ${flagText}`);
     }
   }
 
