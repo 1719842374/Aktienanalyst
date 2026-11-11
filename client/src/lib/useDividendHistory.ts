@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  dividendAdaptiveThreshold,
   dividendNotableHint,
   dividendYieldSpan,
   peerDividendMedian,
   sectorDividendMedian,
+  type DividendAdaptiveThreshold,
   type DividendHistoryResponse,
   type DividendMedianResult,
   type DividendYieldSpan,
@@ -47,6 +49,7 @@ export function useDividendYieldContext(data: DividendYieldContextInput): {
   span: DividendYieldSpan;
   peer: DividendMedianResult;
   sector: DividendMedianResult;
+  threshold: DividendAdaptiveThreshold;
   hint: string | null;
 } {
   const q = useDividendHistory(data.ticker);
@@ -61,5 +64,6 @@ export function useDividendYieldContext(data: DividendYieldContextInput): {
   const peers = data.peerComparison?.peers;
   const peer = peerDividendMedian(peers ? peers.map(p => p.dividendYield) : null, Array.isArray(peers));
   const sector = sectorDividendMedian(data.peerComparison?.sectorMedian?.dividendYield ?? null);
-  return { span, peer, sector, hint: dividendNotableHint(span) };
+  const threshold = dividendAdaptiveThreshold(span, peer);
+  return { span, peer, sector, threshold, hint: dividendNotableHint(span, peer) };
 }
