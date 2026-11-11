@@ -30,6 +30,8 @@ import {
 } from "../shared/tam-na-fill";
 
 const MAX_SEGMENTS = 24;
+/** Obergrenze für den Historienblock im Prompt, Zeichen inklusive Zeilenumbrüche. */
+export const HISTORY_PROMPT_MAX = 1200;
 
 export interface TamNaFillRequestSegment extends TamNaSegmentRef {
   segmentShare?: number;
@@ -92,6 +94,27 @@ function echoCoverage(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function historyPrompt(rows: TamNaFillArgs["supplementGrowth"]): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const row of rows ?? []) {
+    if (typeof row.nextYearGrowthPct !== "number" || !Number.isFinite(row.nextYearGrowthPct)) continue;
+    const name = clip(row.name, 80);
+    if (!name) continue;
+    const source = clip(row.source, 160) || "FMP revenue-product-segmentation";
+    const observations = typeof row.observations === "number" && Number.isFinite(row.observations) ? row.observations : 0;
+    const line = `FMP-Segmenthistorie ${name}: Median YoY ${row.nextYearGrowthPct}% aus ${observations} Jahresraten. Quelle: ${source}. Nicht überschreiben.`;
+    const extra = lines.length > 0 ? 1 : 0;
+    if (used + extra + line.length > HISTORY_PROMPT_MAX) {
+      if (lines.length === 0) lines.push(line.slice(0, HISTORY_PROMPT_MAX));
+      break;
+    }
+    lines.push(line);
+    used += extra + line.length;
+  }
+  return lines.join("\n");
+}
+
 function asRef(seg: TamNaFillRequestSegment): TamNaSegmentRef | null {
   const name = typeof seg.segmentName === "string" ? seg.segmentName.trim() : "";
   if (!name) return null;
@@ -148,10 +171,7 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
   const fiscalYear = clip(args.fiscalYear, 12) || "n/a";
   const totalRevenue = typeof args.totalRevenue === "number" && Number.isFinite(args.totalRevenue) ? String(args.totalRevenue) : "n/a";
   const anchor = args.peerAnchor;
-  const history = (args.supplementGrowth ?? [])
-    .filter((row) => typeof row.nextYearGrowthPct === "number" && Number.isFinite(row.nextYearGrowthPct))
-    .map((row) => `FMP-Segmenthistorie ${row.name}: Median YoY ${row.nextYearGrowthPct}% aus ${row.observations} Jahresraten. Quelle: ${row.source || "FMP revenue-product-segmentation"}. Nicht überschreiben.`)
-    .join("\n");
+  const history = historyPrompt(args.supplementGrowth);
   const peerLine = anchor && anchor.medianRevenueYoyPct != null
     ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
     : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
