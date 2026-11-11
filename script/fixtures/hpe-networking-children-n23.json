@@ -1,0 +1,95 @@
+{
+ "_note": "N23 Fixture. tester: API-Antwort /api/segment-children/HPE?parent=Networking&kind=product (Preview 4307333d, 09.11.2026 23:30 Europe/Madrid, /workspace/dod-465-4307333d/api/HPE_preview_4_segment-children.json). profile: companyName/exchange/country/sector/industry/description aus dem FMP-Profil (Prod /api/analyze HPE, gecacht, 09.11.2026). ki: KI-Antwort in der Prompt-Form mit den Kindnamen und der basis aus der Tester-Antwort. owner steht nicht in der API-Antwort; er ist hier auf die Firma gesetzt, weil der bestehende Owner-Check das Kind sonst schon verworfen haette. peers: synthetisch in der Form von FMP /stable/stock-peers; WDC und NTAP stehen in peerComparison der Prod-Analyse, ANET ist gesetzt, um die Peer-Regel zu pruefen, HPE prueft den Selbstausschluss.",
+ "profile": {
+  "companyName": "Hewlett Packard Enterprise Company",
+  "exchange": "NYSE",
+  "country": "US",
+  "sector": "Technology",
+  "industry": "Computer Hardware",
+  "description": "Hewlett Packard Enterprise (HPE) is a global technology firm that provides comprehensive solutions, empowering clients across the Americas, Europe, the Middle East, Africa, Asia Pacific, and Japan to efficiently capture, analyze, and utilize their data. The company's diverse product range features adaptable servers for various computing demands, including general-purpose, workload-optimized, and specific lines like HPE ProLiant rack and tower servers, HPE BladeSystem, and HPE Synergy. HPE also offers a full suite of storage solutions, from traditional tape and storage networking to advanced disk products such as HPE Modular Storage Arrays and HPE XP. Additionally, its portfolio includes specialized high-performance computing (HPC) offerings like HPE Apollo and Cray, alongside critical infrastructure platforms such as HPE Superdome Flex, HPE Nonstop, HPE Integrity, and HPE Edgeline. Through its HPE Aruba division, HPE delivers extensive networking capabilities, encompassing wired and wireless local area network (LAN) hardware—including Wi-Fi access points, switches, routers, and sensors—and a range of software and services for cloud management, network access control, analytics, and location services. HPE further provides professional and support services, along with flexible as-a-service and consumption models for its intelligent edge products. To streamline technology acquisition and deployment, HPE offers various financial services, including leasing, financing, IT consumption programs, and asset management. These services enable customers to procure complete IT solutions, spanning hardware, software, and services, from both HPE and other providers. The company strategically invests in communications and media solutions and has a key partnership with Striim, Inc., to deliver high-performance, mission-critical solutions with real-time analytics. HPE serves a broad clientele, including commercial and large enterprise groups in both the business and public sectors, reaching them through an extensive network of partners such as resellers, distributors, original equipment manufacturers (OEMs), independent software vendors (ISVs), system integrators (SIs), and advisory firms. Established in 1939, Hewlett Packard Enterprise Company is headquartered in Houston, Texas."
+ },
+ "tester": {
+  "parent": "Networking",
+  "children": [
+   {
+    "parent": "Networking",
+    "name": "Arista Networking",
+    "revenue": null,
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "source": "KI",
+    "basis": "KI-Schätzung"
+   },
+   {
+    "parent": "Networking",
+    "name": "Networking Switches and Routers",
+    "revenue": null,
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "source": "KI",
+    "basis": "KI-Schätzung"
+   },
+   {
+    "parent": "Networking",
+    "name": "Networking Security Solutions",
+    "revenue": null,
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "source": "KI",
+    "basis": "KI-Schätzung"
+   }
+  ],
+  "reason": null
+ },
+ "ki": {
+  "companyEcho": "Hewlett Packard Enterprise Company",
+  "industryEcho": "Computer Hardware",
+  "children": [
+   {
+    "name": "Arista Networking",
+    "owner": "Hewlett Packard Enterprise Company",
+    "ownerParent": "",
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "basis": "KI-Schätzung",
+    "source": null
+   },
+   {
+    "name": "Networking Switches and Routers",
+    "owner": "Hewlett Packard Enterprise Company",
+    "ownerParent": "",
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "basis": "KI-Schätzung",
+    "source": null
+   },
+   {
+    "name": "Networking Security Solutions",
+    "owner": "Hewlett Packard Enterprise Company",
+    "ownerParent": "",
+    "shareOfParentPct": null,
+    "growthPct": null,
+    "basis": "KI-Schätzung",
+    "source": null
+   }
+  ]
+ },
+ "peers": [
+  {
+   "symbol": "ANET",
+   "companyName": "Arista Networks, Inc."
+  },
+  {
+   "symbol": "NTAP",
+   "companyName": "NetApp, Inc."
+  },
+  {
+   "symbol": "WDC",
+   "companyName": "Western Digital Corporation"
+  },
+  {
+   "symbol": "HPE",
+   "companyName": "Hewlett Packard Enterprise Company"
+  }
+ ]
+}

@@ -7,6 +7,7 @@ export interface SegmentGrowthResponse {
   business: SegmentGrowthAnnotation[];
   geographic: SegmentGrowthAnnotation[];
   source: string;
+  currency?: string | null;
   error?: string;
 }
 
