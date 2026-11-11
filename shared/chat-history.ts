@@ -7,6 +7,14 @@ import { CHAT_CONTEXT_BUDGET, CHAT_DASHBOARDS, CHAT_LIMITS, type ChatDashboard, 
 
 export const CHAT_SESSION_HEADER = "x-chat-session";
 
+/**
+ * Schreibstand eines PUT oder DELETE. Die Epoche ist ein Seitenlauf
+ * (Reload und zweiter Tab zählen neu). Der Server vergleicht Epoche und Zahl,
+ * nicht die Ankunftszeit. Fehlen die Header, gewinnt der letzte Aufruf.
+ */
+export const CHAT_WRITE_REVISION_HEADER = "x-chat-write-revision";
+export const CHAT_WRITE_EPOCH_HEADER = "x-chat-write-epoch";
+
 /** Sichtbare Länge einer Verlaufs-Zeile. Anzeige, kein Schwellenwert. */
 export const CHAT_THREAD_TITLE_CHARS = 80;
 
