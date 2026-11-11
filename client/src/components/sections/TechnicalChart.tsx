@@ -46,6 +46,19 @@ import {
 
 export type { TimeRange };
 
+/** Earnings-Punkte und der Text dazu. marker.kind bleibt die Klassifikation. */
+const EARNINGS_POINT_COLOR = {
+  beat: "#22c55e",
+  miss: "#ef4444",
+  inline: "#94a3b8",
+} as const;
+
+function earningsPointColor(kind: string | null | undefined): string {
+  if (kind === "beat") return EARNINGS_POINT_COLOR.beat;
+  if (kind === "miss") return EARNINGS_POINT_COLOR.miss;
+  return EARNINGS_POINT_COLOR.inline;
+}
+
 /**
  * Peer-Overlay ist der Stand von main (#380): Chip `button-fund-peer`,
  * Kurs als Median-Index auf dataKey `_peerPx`, ROIC auf `_peerRoic`.
@@ -1321,7 +1334,7 @@ export function TechnicalChart({
         <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
           {earningsQuery.isLoading && "Earnings: werden geladen …"}
           {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
-          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · Grün Beat, Rot Miss, Grau Inline · kein Score</>}
+          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · <span style={{ color: EARNINGS_POINT_COLOR.beat }}>Grün</span> Beat, <span style={{ color: EARNINGS_POINT_COLOR.miss }}>Rot</span> Miss, <span style={{ color: EARNINGS_POINT_COLOR.inline }}>Grau</span> Inline · kein Score</>}
         </div>
       )}
       {showDividend && showKursA && !chartEmpty && (
@@ -1818,18 +1831,31 @@ function formatReported(value: number | null | undefined): string {
 
 function EarningsTooltipRows({ p }: { p: EarningsTipFields }) {
   if (!p._earnKind) return null;
+  const color = earningsPointColor(p._earnKind);
   const surprise = (value: number | null | undefined) => (
     value == null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(1)} %`
   );
   return (
     <div className="mt-1 max-w-[240px] whitespace-normal border-t border-border pt-1" data-testid="earnings-tooltip" data-kind={p._earnKind}>
-      <div>Earnings {p._earnKind}</div>
-      <div>Revenue Actual {formatReported(p._earnRevActual)}</div>
+      <div style={{ color }}>Earnings {p._earnKind}</div>
+      <div style={{ color }}>Revenue Actual {formatReported(p._earnRevActual)}</div>
       <div>Revenue Estimate {formatReported(p._earnRevEst)}</div>
-      <div>Surprise {surprise(p._earnRev)}</div>
-      <div>EPS Surprise {surprise(p._earnEps)}</div>
-      {p._earnReason ? <div>{p._earnReason}</div> : null}
+      <div style={{ color }}>Surprise <span style={{ color }}>{surprise(p._earnRev)}</span></div>
+      <div style={{ color }}>EPS Surprise <span style={{ color }}>{surprise(p._earnEps)}</span></div>
+      {p._earnReason ? <div style={{ color }}>{p._earnReason}</div> : null}
     </div>
+  );
+}
+
+function EarningsBeatCount({ label }: { label: string }) {
+  const match = /^(.*?\bBeat )(\d+)(\/.*)$/.exec(label);
+  if (!match) return <>{label}</>;
+  return (
+    <>
+      {match[1]}
+      <span style={{ color: EARNINGS_POINT_COLOR.beat }}>{match[2]}</span>
+      {match[3]}
+    </>
   );
 }
 
@@ -1926,7 +1952,7 @@ function PricePane({
       <div
         className="pointer-events-none absolute right-2 top-1 z-10 max-w-[calc(100%-1rem)] truncate rounded border border-border bg-background/85 px-1.5 py-0.5 text-[10px] font-semibold text-foreground"
         data-testid="earnings-beat-badge"
-      >{earningsBadge}</div>
+      ><EarningsBeatCount label={earningsBadge} /></div>
     )}
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
@@ -2133,7 +2159,7 @@ function PricePane({
             dot={(props: any) => {
               const kind = props?.payload?._earnKind as string | undefined;
               if (!kind || props.cx == null || props.cy == null) return <g key={props.key} />;
-              const fill = kind === "beat" ? "#22c55e" : kind === "miss" ? "#ef4444" : "#94a3b8";
+              const fill = earningsPointColor(kind);
               return <circle key={props.key} cx={props.cx} cy={props.cy} r={3.5} fill={fill} stroke="none" />;
             }}
           />
