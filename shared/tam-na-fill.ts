@@ -87,8 +87,15 @@ export function hasPositiveSegmentRevenue(revenue: unknown): revenue is number {
   return typeof revenue === "number" && Number.isFinite(revenue) && revenue > 0;
 }
 
-export function deriveTamShare(segmentRevenueB: number, tamSizeB: number): number {
-  return Math.round((segmentRevenueB / tamSizeB) * 10000) / 100;
+/** Dieselbe Milliarden-Umrechnung wie sector-data.ts (`revenue / 1e9`), keine neue Schwelle. */
+const TAM_BILLION = 1e9;
+
+export function revenueBillions(revenue: number): number {
+  return Math.abs(revenue) >= TAM_BILLION ? revenue / TAM_BILLION : revenue;
+}
+
+export function deriveTamShare(segmentRevenue: number, tamSizeB: number): number {
+  return Math.round((revenueBillions(segmentRevenue) / tamSizeB) * 10000) / 100;
 }
 
 /** null when growth or CAGR is missing — do not invent either input. */
@@ -192,20 +199,19 @@ export function scopeNaCells(
   const factGrowth = growthOrNull(seg.segmentGrowth);
   const kiGrowth = factGrowth == null && fill ? parseEstimatedGrowth(fill.segmentGrowth) : null;
   const growth = factGrowth ?? kiGrowth;
-  const unmatched = seg.matched === false;
   const factTam = factTamSize(seg);
   const factCagr = factTamCagr(seg);
-  const kiTam = unmatched && fill && finite(fill.tamSize) !== null && (fill.tamSize as number) > 0
+  const kiTam = factTam === null && fill && finite(fill.tamSize) !== null && (fill.tamSize as number) > 0
     ? (fill.tamSize as number)
     : null;
-  const kiCagr = unmatched && fill && finite(fill.tamCAGR) !== null ? (fill.tamCAGR as number) : null;
+  const kiCagr = factCagr === null && fill && finite(fill.tamCAGR) !== null ? (fill.tamCAGR as number) : null;
   const revenueOk = finite(seg.segmentRevenue) !== null && (seg.segmentRevenue as number) >= 0;
   return {
     growth: growth === null,
-    tam: unmatched && kiTam === null,
-    cagr: unmatched && kiCagr === null,
-    share: unmatched && (kiTam === null || !revenueOk),
-    vs: growth === null || (unmatched ? kiCagr === null : factCagr === null),
+    tam: factTam === null && kiTam === null,
+    cagr: factCagr === null && kiCagr === null,
+    share: (factTam === null && kiTam === null) || !revenueOk,
+    vs: growth === null || (factCagr === null && kiCagr === null),
   };
 }
 
@@ -343,9 +349,14 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
       const cagr = finite(rec.tamCAGR);
       const label = cleanText(rec.tamLabel, 120);
       const source = cleanText(rec.tamSource, 160);
-      if (size !== null && size > 0 && size <= TAM_SIZE_MAX_BN && cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX) {
+      const formula = cleanText(rec.formula, 180);
+      const rationale = cleanText(rec.rationale, 140);
+      const cagrOk = cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX;
+      const sizeOk = size !== null && size > 0 && size <= TAM_SIZE_MAX_BN;
+      const sourcedWithoutCagr = sizeOk && cagr === null && Boolean(source) && Boolean(formula || rationale);
+      if (sizeOk && (cagrOk || sourcedWithoutCagr)) {
         tamSize = size;
-        tamCAGR = cagr;
+        if (cagrOk) tamCAGR = cagr;
         if (label) tamLabel = label;
         if (source) tamSource = source;
       }
@@ -364,10 +375,10 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     const formula = cleanText(rec.formula, 180);
     if (formula) fill.formula = formula;
     if (estimatedGrowth !== null) fill.segmentGrowth = estimatedGrowth;
-    if (tamSize !== undefined && tamCAGR !== undefined) {
+    if (tamSize !== undefined) {
       const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
       fill.tamSize = tamSize;
-      fill.tamCAGR = tamCAGR;
+      if (tamCAGR !== undefined) fill.tamCAGR = tamCAGR;
       if (tamLabel) fill.tamLabel = tamLabel;
       if (tamSource) fill.tamSource = tamSource;
       fill.marketShare = marketShare;

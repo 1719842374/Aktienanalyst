@@ -30,6 +30,8 @@ import {
 } from "../shared/tam-na-fill";
 
 const MAX_SEGMENTS = 24;
+/** Obergrenze für den Historienblock im Prompt, Zeichen inklusive Zeilenumbrüche. */
+export const HISTORY_PROMPT_MAX = 1200;
 
 export interface TamNaFillRequestSegment extends TamNaSegmentRef {
   segmentShare?: number;
@@ -45,6 +47,13 @@ export interface TamNaFillArgs {
   coveragePct?: number | null;
   /** Optionaler Peer-Median. Fehlt er, schätzt der Prompt nicht relativ. */
   peerAnchor?: PeerGrowthAnchor | null;
+  /** Währung der Segmentumsätze, wie sie in der Tabelle stehen. */
+  currency?: string | null;
+  fiscalYear?: string | null;
+  /** Gesamtumsatz in derselben Einheit wie segmentRevenue. */
+  totalRevenue?: number | null;
+  /** Median aus /api/segment-supplement. Eine vorhandene Rate wird nicht neu geschätzt. */
+  supplementGrowth?: { name: string; nextYearGrowthPct: number; observations: number; source?: string | null }[];
   segments: TamNaFillRequestSegment[];
 }
 
@@ -83,6 +92,27 @@ function clip(v: unknown, max: number): string {
 
 function echoCoverage(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function historyPrompt(rows: TamNaFillArgs["supplementGrowth"]): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const row of rows ?? []) {
+    if (typeof row.nextYearGrowthPct !== "number" || !Number.isFinite(row.nextYearGrowthPct)) continue;
+    const name = clip(row.name, 80);
+    if (!name) continue;
+    const source = clip(row.source, 160) || "FMP revenue-product-segmentation";
+    const observations = typeof row.observations === "number" && Number.isFinite(row.observations) ? row.observations : 0;
+    const line = `FMP-Segmenthistorie ${name}: Median YoY ${row.nextYearGrowthPct}% aus ${observations} Jahresraten. Quelle: ${source}. Nicht überschreiben.`;
+    const extra = lines.length > 0 ? 1 : 0;
+    if (used + extra + line.length > HISTORY_PROMPT_MAX) {
+      if (lines.length === 0) lines.push(line.slice(0, HISTORY_PROMPT_MAX));
+      break;
+    }
+    lines.push(line);
+    used += extra + line.length;
+  }
+  return lines.join("\n");
 }
 
 function asRef(seg: TamNaFillRequestSegment): TamNaSegmentRef | null {
@@ -137,7 +167,11 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
     ? `Rest-Zeile (sichtbar): ${REST_ROW_LABEL}\n`
     : "";
   const profile = clip(args.description, 500);
+  const currency = clip(args.currency, 8) || "n/a";
+  const fiscalYear = clip(args.fiscalYear, 12) || "n/a";
+  const totalRevenue = typeof args.totalRevenue === "number" && Number.isFinite(args.totalRevenue) ? String(args.totalRevenue) : "n/a";
   const anchor = args.peerAnchor;
+  const history = historyPrompt(args.supplementGrowth);
   const peerLine = anchor && anchor.medianRevenueYoyPct != null
     ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
     : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
@@ -146,7 +180,7 @@ ${peerLine}
 
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
-${profile ? `PROFIL: ${profile}\n` : ""}
+${profile ? `PROFIL: ${profile}\n` : ""}${history ? `${history}\n` : ""}Währung der Segmentumsätze: ${currency}. Geschäftsjahr: ${fiscalYear}. Gesamtumsatz: ${totalRevenue}.
 TABELLE Segment-TAM-Analyse
 Spalten: ${TAM_NA_COLUMN_HEADER}
 ${rest}
@@ -159,7 +193,7 @@ Antworte ausschließlich mit JSON. segmentName ist exakt der Wert aus der Spalte
 REGELN:
 - Jede Zeile mit n/a in Wachstum, TAM oder CAGR soll in fills stehen, soweit eine belegbare Zahl vorliegt. Zeilen ohne Beleg weglassen; die übrigen fills bleiben gültig.
 - segmentGrowth mappt auf Wachstum. Nur wenn die Zelle n/a ist. Das ist das Segment-YoY in Prozent, nicht die Branchen-CAGR. Eine Fact-Zahl nicht ersetzen.
-- tamSize mappt auf TAM, tamCAGR auf CAGR. Nur wenn die Zelle n/a ist. tamSize ist die Marktgröße in Milliarden USD, nicht Rev.
+- tamSize mappt auf TAM, tamCAGR auf CAGR. Nur wenn die Zelle n/a ist. tamSize ist die Marktgröße in Milliarden der genannten Währung, nicht Rev. Fehlt die CAGR, bleibt sie n/a; die belegte TAM-Zahl bleibt.
 - Anteil am TAM und vs. TAM sind lokale Formeln. Nicht schätzen und nicht ins JSON schreiben. Kein Über, kein Unter.
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
 - Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
@@ -171,6 +205,18 @@ export async function requestTamNaFills(
   deps: { isLLMAvailable: () => boolean; callLLMJson: LlmJson } = { isLLMAvailable, callLLMJson },
 ): Promise<TamNaFillResult> {
   const ticker = clip(args.ticker, 16);
+  const historyByName = new Map<string, number>();
+  for (const row of args.supplementGrowth ?? []) {
+    if (typeof row.nextYearGrowthPct === "number" && Number.isFinite(row.nextYearGrowthPct)) {
+      historyByName.set(row.name.trim(), row.nextYearGrowthPct);
+    }
+  }
+  const segments = args.segments.map((seg) => {
+    if (typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth)) return seg;
+    const known = historyByName.get((seg.segmentName ?? "").trim());
+    return known == null ? seg : { ...seg, segmentGrowth: known };
+  });
+  args = { ...args, ticker, segments };
   if (!TICKER_RE.test(ticker)) {
     return { ok: false, status: 400, error: "ticker fehlt oder ist ungültig", code: "BAD_REQUEST" };
   }
