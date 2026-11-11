@@ -573,6 +573,7 @@ export function SegmentEstimateBlock({ data }: Props) {
   const [geoOutlineError, setGeoOutlineError] = useState<string | null>(null);
   const [businessOutlineNote, setBusinessOutlineNote] = useState<string | null>(null);
   const [geoOutlineNote, setGeoOutlineNote] = useState<string | null>(null);
+  const [geoFills, setGeoFills] = useState<Record<string, OutlineItem>>({});
   const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
   const tickerRef = useRef(data.ticker);
   const outlineTicket = useRef(0);
@@ -585,6 +586,7 @@ export function SegmentEstimateBlock({ data }: Props) {
     setGeoOutlineError(null);
     setBusinessOutlineNote(null);
     setGeoOutlineNote(null);
+    setGeoFills({});
     setOutlineLoading(null);
     setOpenBusiness({});
     setOpenGeo({});
@@ -605,7 +607,37 @@ export function SegmentEstimateBlock({ data }: Props) {
       else setGeoOutlineError(message);
     };
     try {
-      const res = await apiRequest("POST", "/api/segment-outline", { ticker: started, kind });
+      const knownRows = kind === "geographic"
+        ? (data.geoSegments ?? []).map((seg) => ({
+          name: seg.name,
+          revenue: seg.revenue,
+          share: seg.percentage,
+          growth: typeof seg.growth === "number" ? seg.growth : null,
+        }))
+        : [];
+      const res = await apiRequest("POST", "/api/segment-outline", {
+        ticker: started,
+        kind,
+        rows: knownRows.length > 0 ? knownRows : undefined,
+        yahoo: {
+          description: data.description,
+          currency: data.currency,
+          fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
+            ?? data.geoSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
+            ?? "",
+          totalRevenue: typeof data.revenue === "number" ? data.revenue : null,
+          segments: (data.revenueSegments ?? []).map((seg) => ({
+            name: seg.name,
+            revenue: seg.revenue,
+            growth: typeof seg.growth === "number" ? seg.growth : null,
+          })),
+          regions: (data.geoSegments ?? []).map((seg) => ({
+            name: seg.name,
+            revenue: seg.revenue,
+            growth: typeof seg.growth === "number" ? seg.growth : null,
+          })),
+        },
+      });
       if (!current()) return;
       const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
       const message = outlineFailureMessage(res.ok, json);
@@ -616,6 +648,11 @@ export function SegmentEstimateBlock({ data }: Props) {
       if (kind === "product") {
         setBusinessOutline(json.items);
         setBusinessOutlineNote(json.reason ?? null);
+      } else if ((data.geoSegments?.length ?? 0) > 0) {
+        const next: Record<string, OutlineItem> = {};
+        for (const item of json.items) next[item.name] = item;
+        setGeoFills(next);
+        setGeoOutlineNote(json.reason ?? null);
       } else {
         setGeoOutline(json.items);
         setGeoOutlineNote(json.reason ?? null);
@@ -741,7 +778,24 @@ export function SegmentEstimateBlock({ data }: Props) {
             non-geo duplicates. geoSegmentsNote is the spelled footnote when
             that removal happened. */}
         <div>
-          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+            {(data.geoSegments?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                data-testid="button-segment-outline-geo"
+                disabled={outlineLoading !== null || data.geoSegments!.every((seg) => typeof seg.growth === "number")}
+                title={data.geoSegments!.every((seg) => typeof seg.growth === "number") ? "Keine N/A-Zellen" : "N/A mit KI schätzen"}
+                onClick={() => { void estimateOutline("geographic"); }}
+                className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+              >
+                {outlineLoading === "geographic" ? "…" : "N/A mit KI schätzen"}
+              </button>
+            )}
+          </div>
+          {geoOutlineNote && (data.geoSegments?.length ?? 0) > 0 && (
+            <p className="mb-1 text-[10px] text-muted-foreground" data-testid="segment-outline-note-geo">{geoOutlineNote}</p>
+          )}
           {!(data.geoSegments && data.geoSegments.length > 0) && (
             <>
               <button
@@ -771,6 +825,14 @@ export function SegmentEstimateBlock({ data }: Props) {
                         fact={seg.growth}
                         annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
                       />
+                      {geoFills[seg.name] && (
+                        <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200" data-testid={`region-ki-${seg.name}`}>
+                          KI-Schätzung
+                          {concreteSource(geoFills[seg.name].basis)
+                            ? ` ${visibleBasis(geoFills[seg.name].basis)}`
+                            : " n/a — ohne Quelle"}
+                        </span>
+                      )}
                       <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                     </div>
                   </div>

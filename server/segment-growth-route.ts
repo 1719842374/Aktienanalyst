@@ -229,9 +229,9 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
 export interface SegmentFactRow {
   name: string;
   revenue: number;
-  revenueOrigin: "FMP" | "SEC";
+  revenueOrigin: "FMP" | "SEC" | "Yahoo";
   yoy: number | null;
-  yoyOrigin: "FMP" | "BERECHNET" | "n/a";
+  yoyOrigin: "FMP" | "BERECHNET" | "Yahoo" | "n/a";
 }
 
 export interface SegmentEstimateFacts {
@@ -502,6 +502,84 @@ export function factsFromSegmentation(input: {
     business: business.length > 0 ? business : secFactRows(input.secSegments),
     regions: factRowsFromSnapshots(input.geoRows),
   };
+}
+
+function yahooFactRows(rows: unknown): SegmentFactRow[] {
+  if (!Array.isArray(rows)) return [];
+  const out: SegmentFactRow[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { name?: unknown; revenue?: unknown; growth?: unknown };
+    const name = typeof rec.name === "string" ? rec.name.trim() : "";
+    const revenue = typeof rec.revenue === "number" && Number.isFinite(rec.revenue) && rec.revenue > 0 ? rec.revenue : null;
+    if (!name || revenue == null) continue;
+    const growth = typeof rec.growth === "number" && Number.isFinite(rec.growth) ? rec.growth : null;
+    out.push({
+      name,
+      revenue,
+      revenueOrigin: "Yahoo",
+      yoy: growth,
+      yoyOrigin: growth == null ? "n/a" : "Yahoo",
+    });
+  }
+  return out;
+}
+
+function textField(value: unknown, max: number): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+/** Yahoo-Zahlen füllen nur, was FMP und SEC nicht geliefert haben. */
+export function mergeYahooFacts(facts: SegmentEstimateFacts, yahoo: unknown): SegmentEstimateFacts {
+  if (!yahoo || typeof yahoo !== "object") return facts;
+  const rec = yahoo as {
+    description?: unknown;
+    currency?: unknown;
+    fiscalYear?: unknown;
+    totalRevenue?: unknown;
+    segments?: unknown;
+    regions?: unknown;
+  };
+  const total = typeof rec.totalRevenue === "number" && Number.isFinite(rec.totalRevenue) ? rec.totalRevenue : null;
+  return {
+    profile: facts.profile || textField(rec.description, 600),
+    fiscalYear: facts.fiscalYear || textField(rec.fiscalYear, 12),
+    currency: facts.currency || textField(rec.currency, 8),
+    totalRevenue: facts.totalRevenue ?? total,
+    business: facts.business.length > 0 ? facts.business : yahooFactRows(rec.segments),
+    regions: facts.regions.length > 0 ? facts.regions : yahooFactRows(rec.regions),
+  };
+}
+
+interface KnownRegionRow {
+  name: string;
+  revenue: number | null;
+  share: number | null;
+  growth: number | null;
+}
+
+function knownRegionRows(value: unknown): KnownRegionRow[] {
+  if (!Array.isArray(value)) return [];
+  const out: KnownRegionRow[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { name?: unknown; revenue?: unknown; share?: unknown; growth?: unknown };
+    const name = typeof rec.name === "string" ? rec.name.trim() : "";
+    if (!name) continue;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    out.push({ name, revenue: num(rec.revenue), share: num(rec.share), growth: num(rec.growth) });
+  }
+  return out;
+}
+
+function regionFillPrompt(facts: SegmentEstimateFacts, rows: KnownRegionRow[], identity: OutlineIdentity, ticker: string): string {
+  const lines = rows.map((row) => `${row.name}: Umsatz ${row.revenue ?? "n/a"}, Anteil ${row.share ?? "n/a"}, YoY ${row.growth ?? "n/a"}`).join("; ");
+  return `${segmentFactBlock(facts)}
+Bekannte Regionen: ${lines}.
+Firma: ${identity.companyName}. Ticker ${ticker}. Branche: ${identity.industry || identity.sector || "n/a"}.
+Schätze nur Zeilen mit YoY n/a. Eine Zeile mit einer YoY-Zahl bleibt unverändert und kommt nicht in children.
+Antwortform: {"companyEcho":"${identity.companyName}","industryEcho":"${identity.industry || identity.sector || ""}","children":[{"name":"","owner":"${identity.companyName}","shareOfParentPct":null,"growthPct":null,"basis":"Begründung der Lücke","source":null}]}.
+basis nennt die Lücke und darf nicht leer sein. Eine Zahl nur mit Quelle, sonst null.`;
 }
 
 export function segmentFactBlock(facts: SegmentEstimateFacts): string {
@@ -968,8 +1046,21 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     try {
       const identity = deps.identity ? await deps.identity(ticker) : await loadOutlineIdentity(ticker);
       if (!identity?.companyName) return res.json({ items: [], reason: OUTLINE_NO_IDENTITY });
-      const facts = await resolveSegmentFacts(ticker, identity, deps);
-      const payload = await (deps.outline ?? defaultOutline)(ticker, kind, identity, facts, deps.llm);
+      const facts = mergeYahooFacts(await resolveSegmentFacts(ticker, identity, deps), req.body?.yahoo);
+      const known = kind === "geographic" ? knownRegionRows(req.body?.rows) : [];
+      const gaps = known.filter((row) => row.growth == null);
+      if (known.length > 0 && gaps.length === 0) {
+        return res.json({ items: [], reason: "Keine N/A-Zellen" });
+      }
+      const payload = known.length > 0
+        ? await (deps.llm ?? callLLMJson)({
+          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlendes Regionenwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung.",
+          prompt: regionFillPrompt(facts, known, identity, ticker),
+          maxTokens: 800,
+          temperature: 0.2,
+          signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+        }).then((result) => result?.data ?? null).catch(() => null)
+        : await (deps.outline ?? defaultOutline)(ticker, kind, identity, facts, deps.llm);
       if (process.env.SEGMENT_OUTLINE_DEBUG === "1") {
         const rawJson = JSON.stringify(payload ?? null);
         console.log(`[OUTLINE-RAW] ${ticker} ${kind} ${rawJson.slice(0, 2000)}`);
@@ -989,11 +1080,14 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       }
       const reviewed = reviewSegmentOutline(payload, identity.companyName, {
         ticker,
-        description: identity.description,
+        description: identity.description || facts.profile,
         peerCompanies,
       });
-      if (reviewed.items.length > 0) rememberOutlineNames(ticker, kind, reviewed.items.map((item) => item.name), now);
-      return res.json(reviewed);
+      const items = known.length > 0
+        ? reviewed.items.filter((item) => gaps.some((row) => row.name.toLowerCase() === item.name.toLowerCase()))
+        : reviewed.items;
+      if (items.length > 0) rememberOutlineNames(ticker, kind, items.map((item) => item.name), now);
+      return res.json({ items, reason: reviewed.reason });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Segment-Schätzung fehlgeschlagen";
       return res.status(502).json({ error: message.slice(0, 200) });

@@ -343,9 +343,14 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
       const cagr = finite(rec.tamCAGR);
       const label = cleanText(rec.tamLabel, 120);
       const source = cleanText(rec.tamSource, 160);
-      if (size !== null && size > 0 && size <= TAM_SIZE_MAX_BN && cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX) {
+      const formula = cleanText(rec.formula, 180);
+      const rationale = cleanText(rec.rationale, 140);
+      const cagrOk = cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX;
+      const sizeOk = size !== null && size > 0 && size <= TAM_SIZE_MAX_BN;
+      const sourcedWithoutCagr = sizeOk && cagr === null && Boolean(source) && Boolean(formula || rationale);
+      if (sizeOk && (cagrOk || sourcedWithoutCagr)) {
         tamSize = size;
-        tamCAGR = cagr;
+        if (cagrOk) tamCAGR = cagr;
         if (label) tamLabel = label;
         if (source) tamSource = source;
       }
@@ -364,10 +369,10 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     const formula = cleanText(rec.formula, 180);
     if (formula) fill.formula = formula;
     if (estimatedGrowth !== null) fill.segmentGrowth = estimatedGrowth;
-    if (tamSize !== undefined && tamCAGR !== undefined) {
+    if (tamSize !== undefined) {
       const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
       fill.tamSize = tamSize;
-      fill.tamCAGR = tamCAGR;
+      if (tamCAGR !== undefined) fill.tamCAGR = tamCAGR;
       if (tamLabel) fill.tamLabel = tamLabel;
       if (tamSource) fill.tamSource = tamSource;
       fill.marketShare = marketShare;

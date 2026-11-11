@@ -6,7 +6,7 @@ import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScope
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
-import { formatNumber } from "../../lib/formatters";
+import { currencySymbol, formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
@@ -137,6 +137,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         industry: data.industry,
         description: data.description,
         coveragePct: typeof tam.coveragePct === "number" ? tam.coveragePct : null,
+        currency: data.currency,
+        fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear ?? null,
+        totalRevenue: typeof tam.companyRevenue === "number" ? tam.companyRevenue : null,
         segments: visibleTamSegments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
@@ -428,7 +431,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                             <span title="Marktanteil > 25% des KI-TAM — mit Vorsicht interpretieren" className="text-amber-500 ml-1">⚠</span>
                           )}
                         </td>
-                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{currencySymbol(data.currency)}{formatNumber(seg.segmentRevenue, 1)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
                         {row.growth === null ? (
                           <td
