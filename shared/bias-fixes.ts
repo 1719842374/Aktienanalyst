@@ -15,6 +15,7 @@
  */
 import type { Catalyst, StockAnalysis } from "./schema";
 import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF } from "./valuation-signal";
+import { applyMoatRivalryToScore, scoringAdditionsFromAnalysis, type ScoringAdditions } from "./scoring-additions";
 
 export const WACC_UPLIFT_PP_2 = 0.625;
 export const WACC_UPLIFT_PP_3 = 1.05;
@@ -132,6 +133,11 @@ export interface BiasFixPayload {
   overallScoreUncapped: number;
   /** A2/A3: Death Cross + RSL < 105 + schwacher Moat gleichzeitig → Gesamtscore höchstens NEUTRAL. */
   techMoatOverride: TechMoatOverride;
+  /**
+   * WORK_SECTORAL_MOAT_DAMPING / WORK_HYBRID_CLASSIFICATION / WORK_SCORING_ADDITIONS_MSFT.
+   * null, solange der Flag aus ist: der Score bleibt dann exakt der bisherige.
+   */
+  scoringAdditions: ScoringAdditions | null;
   redFlags: string[];
   narrative: string[];
   politicalGovMention: boolean;
@@ -694,6 +700,7 @@ function emptyPayload(data: Partial<StockAnalysis>, reason: string): BiasFixPayl
       capScore: null,
       detail: `nicht aktiv: ${reason}`,
     },
+    scoringAdditions: null,
     redFlags: [reason],
     narrative: [
       `${data.companyName || data.ticker || "Titel"}: Bias-Basis nicht berechenbar (${reason}).`,
@@ -803,7 +810,10 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     ruleMoat: moat,
     llmMoatRating: data.moatAssessment?.overallRating ?? data.moatRating ?? null,
   });
-  const overallScore = techMoat.capScore != null ? Math.min(score.overallScore, techMoat.capScore) : score.overallScore;
+  const cappedScore = techMoat.capScore != null ? Math.min(score.overallScore, techMoat.capScore) : score.overallScore;
+  const additionsOn = data.scoringAdditions === true;
+  const scoringAdditions = additionsOn ? scoringAdditionsFromAnalysis(data, true, { rating: moat.rating, score: moat.score }) : null;
+  const overallScore = applyMoatRivalryToScore(cappedScore, scoringAdditions?.moatRivalry ?? null, additionsOn);
   const overallRating = overallScore === score.overallScore ? score.overallRating : overallRatingFromScore(overallScore);
   const politicalGovMention = facts.politicalExposureHigh && facts.governmentExposurePct >= 25;
   const redFlags: string[] = [];
@@ -814,6 +824,9 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
   if (facts.governmentExposurePct >= 25) redFlags.push(`Government Exposure ${facts.governmentExposurePct.toFixed(0)}%`);
   if (adj.triggers.find(t => t.id === "dcf_divergence")?.active) redFlags.push("DCF-Upside weicht stark vom Analysten-Upside ab");
   if (techMoat.active) redFlags.push(`Tech-Moat-Override: ${techMoat.detail}`);
+  if (additionsOn && scoringAdditions?.moatRivalry?.available && scoringAdditions.moatRivalry.factor < 1) {
+    redFlags.push(scoringAdditions.moatRivalry.detail);
+  }
 
   const tech = data.technicalIndicators?.currentStatus;
   const techSentence = !tech
@@ -827,6 +840,9 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
   const business = `${data.companyName || data.ticker} (${data.ticker}): Moat ${moat.rating} (Score ${moat.score.toFixed(1)}${moat.notes.length ? `; ${moat.notes.slice(0, 3).join(", ")}` : ""}).`;
   const mode = catalystsModeLabel(source, timestamp);
   const narrative = [business, valuationSentence, techSentence, mode];
+  if (additionsOn && scoringAdditions?.moatRivalry?.heritageNoted) {
+    narrative.push("Heritage-Moat erkannt: die Beschreibung nennt Heritage oder Premium Brand.");
+  }
   if (redFlags.length > 0 || politicalGovMention) {
     const bits = [...redFlags];
     if (politicalGovMention) bits.push("Political ist hoch und Government Exposure liegt bei mindestens 25%");
@@ -866,6 +882,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     overallRating,
     overallScoreUncapped: score.overallScore,
     techMoatOverride: techMoat,
+    scoringAdditions,
     redFlags,
     narrative: narrative.slice(0, 5),
     politicalGovMention,
