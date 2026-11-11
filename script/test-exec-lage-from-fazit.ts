@@ -6,7 +6,6 @@
  */
 import React from "react";
 (globalThis as any).React = React;
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
@@ -21,10 +20,6 @@ import { calculateGBMParams, gbmMonteCarlo } from "../client/src/lib/calculation
 
 let pass = 0, fail = 0;
 const check = async (name: string, fn: () => void | Promise<void>) => { try { await fn(); pass++; console.log("  ✓", name); } catch (e: any) { fail++; console.log("  ✗", name, "—", String(e.message).split("\n")[0]); } };
-function renderExec(node: React.ReactElement): string {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, node));
-}
 const strip = (h: string) => h.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'");
 const byTestId = (h: string, id: string) => strip((h.match(new RegExp(`data-testid="${id}"[^>]*>([\\s\\S]*?)</p>`)) ?? [])[1] ?? "");
 const de2 = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -38,7 +33,7 @@ for (const [label, d, ccyWord, pxWord] of [["SHEL.L", shel, "Pfund", "Pfund"], [
   const gp = calculateGBMParams(data.historicalPrices.map((p: any) => p.close));
   const mc = gbmMonteCarlo({ currentPrice: data.currentPrice, mu: gp.mu, sigma: gp.sigma, iterations: 2000, tradingDays: 252 }, data.analystPT.median);
   const ratingBefore = JSON.stringify(buildFazitSignal({ data, ...prepareFazitMetrics(data, mc) }));
-  const exec = renderExec(React.createElement(ExecSummaryCard, { data, sharedMonteCarlo: mc }));
+  const exec = renderToStaticMarkup(React.createElement(ExecSummaryCard, { data, sharedMonteCarlo: mc }));
   const lage = byTestId(exec, "exec-summary-lage");
   const s6 = strip(renderToStaticMarkup(React.createElement(Section6 as any, { data })));
   const s6Label = formatCurrency(fe.fairValue, 2, fe.currency);
@@ -56,7 +51,7 @@ for (const [label, d, ccyWord, pxWord] of [["SHEL.L", shel, "Pfund", "Pfund"], [
   });
 }
 await check("Ohne Fazit-Wert: Server-Satz bleibt (kein Erfinden)", () => {
-  const h = renderExec(React.createElement(ExecSummaryCard, { data: { ...shel, currentPrice: NaN } }));
+  const h = renderToStaticMarkup(React.createElement(ExecSummaryCard, { data: { ...shel, currentPrice: NaN } }));
   assert.ok(typeof h === "string");
 });
 await check("Score-Dateien unverändert (analyze-route, bias-fixes, fazit-entry, schema)", () => {
