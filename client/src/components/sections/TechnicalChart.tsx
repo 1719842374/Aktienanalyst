@@ -981,6 +981,14 @@ export function TechnicalChart({
               Messen
             </button>
             {extraChips}
+            {showCone ? (
+              <div
+                className="ml-auto shrink-0 flex items-center basis-full sm:basis-auto justify-end"
+                data-testid="ta-ampel-toolbar-slot"
+              >
+                <ChartAmpelBadge snap={symmetric.last} lineEndPhase={lineEndPhase} buyScore={buyScore} placement="toolbar" />
+              </div>
+            ) : null}
           </div>
           {showPeerFund && (
             <div className={FUNDAMENTAL_PEER_ROW_CLASS} data-testid="row-fund-peer">
@@ -1140,7 +1148,7 @@ export function TechnicalChart({
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={ampelBadge}>
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={showCone ? undefined : ampelBadge}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -1234,7 +1242,7 @@ export function TechnicalChart({
               measurement={measurement}
               phases={phaseByDateMap}
               showAmpel={showAmpel}
-              overlay={ampelBadge}
+              overlay={showCone ? undefined : ampelBadge}
             />
           )}
           {showKursB && (
@@ -2554,19 +2562,33 @@ const PHASE_MEANING: Record<TaPhase, string> = {
   VORSICHTIG: "Unattraktiv",
 };
 
-function ChartAmpelBadge({ snap, lineEndPhase, buyScore }: {
+function ChartAmpelBadge({ snap, lineEndPhase, buyScore, placement = "overlay" }: {
   snap: SymmetricSnapshot | null;
   lineEndPhase: TaPhase | null;
   buyScore: number;
+  placement?: "overlay" | "toolbar";
 }) {
   const phase = snap?.paint ?? null;
   const meaning = snap?.meaning ?? null;
   const lineAgrees = phase == null || lineEndPhase == null || phase === lineEndPhase;
+  const tone = phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground";
+  let frame: string;
+  switch (placement) {
+    case "overlay":
+      frame = "pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
+      break;
+    case "toolbar":
+      frame = "pointer-events-none inline-flex h-7 max-h-7 items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
+      break;
+    default: {
+      const unreachable: never = placement;
+      frame = unreachable;
+      break;
+    }
+  }
   return (
     <div
-      className={`pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${
-        phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground"
-      }`}
+      className={`${frame} ${tone}`}
       data-testid="chart-ampel-label"
       data-phase={snap?.color ?? ""}
       data-meaning={meaning ?? ""}
