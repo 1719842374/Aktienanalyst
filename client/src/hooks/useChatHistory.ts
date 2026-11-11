@@ -3,6 +3,8 @@
  * Kette: sessionStorage (lokal) und apiRequest → GET/PUT/DELETE /api/chat/history
  * → server/routes.ts → chat-history-route. Kein Supabase.
  * Eine Antwort, deren Auftrag vor dem Löschen begann, schreibt den Chat nicht zurück.
+ * Lehnt der Server einen PUT mit 200 {rejected:"stale-write"} ab, fällt genau dieser
+ * Thread aus sessionStorage und State, danach lädt derselbe Hook den Serverstand neu.
  * Dieselbe Schreibfolge geht mit PUT und DELETE an den Server. Ein späteres Lesen zeigt dessen Stand.
  */
 import { useCallback, useEffect, useState } from "react";
@@ -17,7 +19,8 @@ let memorySession = "";
 
 /**
  * Schreibfolge nur in diesem Seitenlauf. Reload und ein zweiter Tab haben eine neue Epoche.
- * `deletedAtRevision` gilt nur für verspätete Antworten in diesem Fenster.
+ * `deletedAtRevision` gilt für verspätete Antworten in diesem Fenster und sperrt einen
+ * Thread, den der Server gerade als stale-write abgelehnt hat, gegen ältere GET-Antworten.
  */
 const historyEpoch = newChatId();
 let historyRevision = 0;
@@ -111,10 +114,24 @@ export function useChatHistory(dashboard: string, entity: string | null) {
         messages: thread.messages,
       }, 15000, revisionHeaders(sessionId, issuedAt));
       if (!res.ok) return;
-      const body = await res.json().catch(() => null) as { thread?: ChatThread } | null;
+      const body = await res.json().catch(() => null) as { thread?: ChatThread; rejected?: unknown } | null;
+      if (body?.rejected === "stale-write") {
+        const droppedAt = ++historyRevision;
+        deletedAtRevision.set(thread.id, droppedAt);
+        const next = readThreads(sessionId).filter(t => t.id !== thread.id);
+        writeThreads(sessionId, next);
+        setThreads(next);
+        const params = new URLSearchParams({ dashboard });
+        if (entity) params.set("entity", entity);
+        const fresh = await apiRequest("GET", `/api/chat/history?${params.toString()}`, undefined, 15000, { [CHAT_SESSION_HEADER]: sessionId });
+        if (!fresh.ok) return;
+        const listed = await fresh.json().catch(() => null) as { threads?: ChatThread[] } | null;
+        if (Array.isArray(listed?.threads)) remember(listed.threads, droppedAt);
+        return;
+      }
       if (body?.thread) remember([body.thread], issuedAt);
-    } catch { /* lokaler Cache bleibt */ }
-  }, [remember, sessionId]);
+    } catch { /* lokaler Cache bleibt, außer der stale-write-Thread ist schon verworfen */ }
+  }, [dashboard, entity, remember, sessionId]);
 
   const remove = useCallback(async (id: string) => {
     const deletedAt = ++historyRevision;
