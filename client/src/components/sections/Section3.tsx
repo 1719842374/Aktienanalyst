@@ -1,8 +1,11 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateRSL } from "../../lib/calculations";
+import { calculateRSL, RSL_MIN_PRICES } from "../../lib/calculations";
 
 interface Props { data: StockAnalysis }
+
+// Anzeige, wenn calculateRSL null liefert. Die Grenze ist RSL_MIN_PRICES.
+const RSL_UNAVAILABLE_LABEL = `RSL n/a — weniger als ${RSL_MIN_PRICES} Kurse`;
 
 export function Section3({ data }: Props) {
   const sp = data.sectorProfile;
@@ -56,7 +59,12 @@ export function Section3({ data }: Props) {
         let phaseIcon = '';
         let phaseDetail = '';
 
-        if (isAboveMA200 && isGolden && macdPos && rsl > 110) {
+        if (rsl == null) {
+          phase = RSL_UNAVAILABLE_LABEL;
+          phaseColor = 'text-muted-foreground bg-muted/30 border-border/50';
+          phaseIcon = '\u2014';
+          phaseDetail = 'Keine Zyklusphase, weil der RSL nicht vorliegt (' + RSL_UNAVAILABLE_LABEL + ').';
+        } else if (isAboveMA200 && isGolden && macdPos && rsl > 110) {
           phase = 'Sp\u00e4tzyklus / \u00dcberhitzung';
           phaseColor = 'text-red-400 bg-red-500/10 border-red-500/20';
           phaseIcon = '\u26a0';
@@ -101,7 +109,7 @@ export function Section3({ data }: Props) {
                 <span className={isAboveMA200 ? 'text-emerald-500' : 'text-red-500'}>Kurs vs MA200: {isAboveMA200 ? 'Dar\u00fcber' : 'Darunter'}</span>
                 <span className={isGolden ? 'text-emerald-500' : 'text-red-500'}>{isGolden ? 'Golden Cross' : 'Death Cross'}</span>
                 <span className={macdPos ? 'text-emerald-500' : 'text-red-500'}>MACD: {macdPos ? '> 0' : '< 0'}</span>
-                <span className="text-muted-foreground">RSL: {rsl.toFixed(0)}</span>
+                <span className="text-muted-foreground">RSL: {rsl == null ? RSL_UNAVAILABLE_LABEL : rsl.toFixed(0)}</span>
               </div>
             </div>
           </div>
