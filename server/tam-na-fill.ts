@@ -25,6 +25,7 @@ import {
   hasPositiveSegmentRevenue,
   segmentNeedsLlm,
   validateTamNaFills,
+  type PeerSegmentEvidence,
   type TamNaFill,
   type TamNaSegmentRef,
 } from "../shared/tam-na-fill";
@@ -45,6 +46,10 @@ export interface TamNaFillArgs {
   coveragePct?: number | null;
   /** Optionaler Peer-Median. Fehlt er, schätzt der Prompt nicht relativ. */
   peerAnchor?: PeerGrowthAnchor | null;
+  /** Zweiter Abruf: der erste hat zu wenige belegte Zellen geliefert. */
+  repeatBecauseThin?: boolean;
+  /** Peer-Segmente mit Umsatz und Marktanteil. Fehlt das Feld, lädt die Schätz-Route sie. */
+  peerEvidence?: PeerSegmentEvidence[];
   segments: TamNaFillRequestSegment[];
 }
 
@@ -73,7 +78,7 @@ type LlmJson = (opts: {
 }) => Promise<{ data: unknown; modelUsed: string } | null>;
 
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,14}$/i;
-const INCOMPLETE_ERROR = "KI-Schätzung unvollständig — nichts übernommen";
+export const INCOMPLETE_ERROR = "KI-Schätzung unvollständig — nichts übernommen";
 const REST_ROW_LABEL = "Other / nicht segmentiert";
 
 function clip(v: unknown, max: number): string {
@@ -140,9 +145,13 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
   const anchor = args.peerAnchor;
   const peerLine = anchor && anchor.medianRevenueYoyPct != null
     ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
-    : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
+    : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zelle nur mit eigener tamSource und formula setzen. Ohne Beleg das Feld weglassen; andere belegte Felder derselben Antwort bleiben gültig.";
+  const retryLine = args.repeatBecauseThin
+    ? "Die vorige Antwort hat zu wenige belegte Zellen geliefert. segmentName exakt aus der Spalte Segment. Jede Zelle einzeln mit Quelle und Formel, oder weglassen. Kein Mittelwert und keine Interpolation aus Nachbarsegmenten.\n"
+    : "";
   return `Schätze nur die n/a-Zellen der Tabelle Segment-TAM-Analyse. Fact-Zahlen nicht überschreiben.
 ${peerLine}
+${retryLine}
 
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
@@ -163,7 +172,10 @@ REGELN:
 - Anteil am TAM und vs. TAM sind lokale Formeln. Nicht schätzen und nicht ins JSON schreiben. Kein Über, kein Unter.
 - Rev. und Anteil (Mix) nicht schätzen und nicht überschreiben.
 - Nur Segment-Namen aus der Tabelle. Keine zusätzlichen Zeilen.
-- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.`;
+- formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.
+- tamSource nennt eine Marktgröße (Gartner, IDC, Geschäftsbericht, Pressemitteilung) und ein Jahr, keine Wachstumsrate und kein Peer-CAGR.
+- Segment-Wachstum unter 0% ist nicht der Markt-CAGR. tamCAGR dann nur mit Verlag und Jahr, sonst das Feld weglassen.
+- Ein Marktanteil braucht Quelle und Datum. Umsatz geteilt durch einen Katalog-TAM ist kein Marktanteil.`;
 }
 
 export async function requestTamNaFills(
