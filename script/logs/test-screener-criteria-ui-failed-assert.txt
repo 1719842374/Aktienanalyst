@@ -1,0 +1,7 @@
+First UI run failed before the assertion was corrected.
+Exit 1.
+The dashboard error state did render. JSON.stringify split the text node
+"Fehler beim Laden: " and the child "netz-stub", so the regex
+/Fehler beim Laden: netz-stub/ did not match.
+The assertion was changed to check both fragments.
+The rerun in test-screener-criteria-ui.txt exits 0.
