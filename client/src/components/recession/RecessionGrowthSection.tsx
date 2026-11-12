@@ -35,6 +35,11 @@ function signedPct(v: number): string {
   return `${deNum(v, 1)} %`;
 }
 
+function holdingWeightPct(weight: number, indexWeight: number): string {
+  const asPct = indexWeight > 1 ? weight : weight * 100;
+  return `${deNum(asPct, 2)} %`;
+}
+
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
@@ -230,6 +235,38 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               <p className="break-words text-sm text-foreground">{gaps.fazit.text}</p>
               <p className="break-words text-[11px] text-muted-foreground">{gaps.fazit.formula}</p>
             </div>
+            {gaps.forward.lines && gaps.forward.lines.length > 0 && (
+              <div className="rounded-md border border-border px-3 py-2" data-testid="recession-growth-holdings">
+                <p className="text-[10px] text-muted-foreground">
+                  t = Tage bis FY-Ende + 182. Technische Stabilisierung: Gewicht = Index-Gewicht × min(1, t/365) × Huber(MAD-z). g ist ungedämpft.
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {gaps.forward.lines.map(line => (
+                    <li key={line.symbol} className="break-words text-[11px] text-foreground" data-testid={`recession-growth-holding-${line.symbol}`}>
+                      {line.symbol}
+                      {" · g "}
+                      {line.gAnnPct != null ? signedPct(line.gAnnPct) : (line.excludeReason ?? "n/a")}
+                      {" · Gewicht "}
+                      {line.weight != null ? holdingWeightPct(line.weight, line.indexWeight) : `raus (Index ${holdingWeightPct(line.indexWeight, line.indexWeight)})`}
+                      {" · t "}
+                      {line.tDays != null ? `${Math.round(line.tDays)} Tage` : "n/a"}
+                      {" · Quelle "}
+                      {line.source ?? "n/a"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {gaps.forward.available && gaps.forward.coverageWarn && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-coverage">
+                {gaps.forward.coverageWarn}
+              </p>
+            )}
+            {!gaps.forward.available && gaps.forward.reason.includes("minCoverage") && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-coverage">
+                {gaps.forward.reason}
+              </p>
+            )}
             {gaps.growthGap.available && gaps.growthGap.warn && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground" data-testid="recession-growth-warn">
                 Warnung: |Growth Gap| ≥ {GROWTH_GAP_PARAMS.coneSigma}σ. {gapMeaning(gaps.growthGap.direction)}
@@ -246,13 +283,19 @@ export function RecessionGrowthSection({ number }: { number: number }) {
               />
               <Reading
                 testId="recession-growth-forward"
-                label="Forward-Konsens"
+                label="g_fwd (Forward-Konsens)"
                 value={gaps.forward.available ? signedPct(gaps.forward.gFwdPct) : gaps.forward.reason}
                 detail={gaps.forward.available
                   ? `${gaps.forward.formula} · Stand ${gaps.forward.asOf} · ${gaps.forward.source}`
                   : "n/a"}
               />
-              <GapCard testId="recession-growth-gap" label="Growth Gap" gap={gaps.growthGap} formula="g_fwd − g_realized" />
+              <GapCard
+                testId="recession-growth-gap"
+                label="Growth Gap (g_fwd − g_realized)"
+                gap={gaps.growthGap}
+                formula="g_fwd − g_realized"
+                naLead={gaps.forward.available ? "g_fwd ist gesetzt. g_realized fehlt, die Differenz bleibt n/a." : undefined}
+              />
               <GapCard testId="recession-growth-implied" label="Implied Gap" gap={gaps.impliedGap} formula="g* − g_realized" />
               <Reading
                 testId="recession-growth-gstar"
@@ -305,16 +348,23 @@ function Reading({ testId, label, value, detail }: { testId: string; label: stri
   );
 }
 
-function GapCard({ testId, label, gap, formula }: { testId: string; label: string; gap: GapReading; formula: string }) {
+function GapCard({ testId, label, gap, formula, naLead }: {
+  testId: string;
+  label: string;
+  gap: GapReading;
+  formula: string;
+  naLead?: string;
+}) {
   const na = gap as NaReading;
+  const naValue = naLead ? `${naLead} ${na.reason}` : na.reason;
   return (
     <Reading
       testId={testId}
       label={label}
-      value={gap.available ? signedPct(gap.gapPp) : na.reason}
+      value={gap.available ? signedPct(gap.gapPp) : naValue}
       detail={gap.available
         ? `${formula} · z ${deNum(gap.z, 2)} · ${gapMeaning(gap.direction)}${gap.warn ? " · Warnung" : ""}`
-        : "n/a"}
+        : formula}
     />
   );
 }

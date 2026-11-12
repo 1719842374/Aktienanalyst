@@ -1,5 +1,5 @@
 import { getProbColor, getScoreBg, getScoreColor } from "./recessionDashboardShared";
-import type { RegionCatalog, RegionSlot, RegionalCatalogs } from "@shared/recession-regions";
+import { CATALOG_MISSING_INPUT, type RegionCatalog, type RegionSlot, type RegionalCatalogs } from "@shared/recession-regions";
 
 function pct(value: number | null): string {
   return value == null ? "N/A" : `${value}%`;
@@ -52,6 +52,13 @@ function CatalogTile({ region }: { region: RegionCatalog }) {
           </span>
         </span>
       </div>
+      {(region.recessionDropped?.length || region.correctionDropped?.length) ? (
+        <p className="mb-2 text-[10px] text-muted-foreground" data-testid={`catalog-renorm-${region.id}`}>
+          {region.missingInputPolicy ?? CATALOG_MISSING_INPUT}: fehlende Inputs zählen weder im Netto noch im Max.
+          {region.recessionDropped?.length ? ` Rezession ohne ${region.recessionDropped.join(", ")}.` : ""}
+          {region.correctionDropped?.length ? ` Korrektur ohne ${region.correctionDropped.join(", ")}.` : ""}
+        </p>
+      ) : null}
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
           <thead>
