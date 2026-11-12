@@ -24,6 +24,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerFiscalDiscoveryRoute(app);
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
+  // POST /api/valuechain/hype — FMP-Proxy aus PR 390, nur Anzeige, kein Score, kein Trends.
+  const { registerHypeCycleRoute } = await import("./hype-cycle-route");
+  registerHypeCycleRoute(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
   registerRecessionMarketRoutes(app);
   const { registerRecessionTaRoute } = await import("./recession-ta-route");

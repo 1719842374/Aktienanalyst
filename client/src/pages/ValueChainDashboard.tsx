@@ -30,6 +30,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { StageColumn } from "@/components/valuechain/StageColumn";
 import { ValueChainFlow } from "@/components/valuechain/ValueChainFlow";
 import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
+import { HypeCyclePanel } from "@/components/valuechain/HypeCyclePanel";
 import type { ValueChainResponse, Region } from "@/lib/valueChainTypes";
 
 interface IndustryOption {
@@ -157,6 +158,15 @@ export default function ValueChainDashboard() {
   const currentIndustryLabel = useMemo(() => {
     return industries.find((i) => i.key === industry)?.label ?? industry;
   }, [industries, industry]);
+
+  const hypeTickers = useMemo(() => {
+    if (!data) return [];
+    return Array.from(new Set(data.stages.flatMap((s) => s.companies.map((c) => c.ticker)).filter(Boolean)));
+  }, [data]);
+
+  const hypeSelectionKey = data
+    ? `${data.industry}|${data.region}|${data.generatedAt}|${hypeTickers.join(",")}`
+    : "";
 
   const datenstand = data
     ? new Date(data.generatedAt).toLocaleString("de-DE", {
@@ -393,6 +403,14 @@ export default function ValueChainDashboard() {
           <div className="mb-6">
             <ValueChainKpiTiles stages={data.stages} />
           </div>
+        )}
+
+        {data && (
+          <HypeCyclePanel
+            tickers={hypeTickers}
+            selectionKey={hypeSelectionKey}
+            selectionLabel={`${currentIndustryLabel} · ${data.region}`}
+          />
         )}
 
         {/* Footer */}
