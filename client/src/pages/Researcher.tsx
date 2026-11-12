@@ -11,6 +11,7 @@ import {
   Zap, Flame, ListPlus, Mic
 } from "lucide-react";
 import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
+import { podcastRunStillCurrent } from "@/lib/podcast-browser-speech";
 import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { toBriefingKeyEvent } from "@shared/briefing-key-event";
@@ -110,13 +111,27 @@ export default function Researcher() {
   const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
   const [podcastError, setPodcastError] = useState<string | null>(null);
+  // Sichtbare Tab/Region-Ansicht. Nicht die Symbolmenge aus data und briefingData:
+  // der Walk ist auf 12 begrenzt und bleibt beim Umschalten zweier geladener Ansichten gleich.
+  const podcastViewId = `${activeTab}:${region}`;
+  const podcastRun = useRef(0);
+  useEffect(() => {
+    podcastRun.current += 1;
+    setPodcastPhase("idle");
+    setPodcastResult(null);
+    setPodcastError(null);
+  }, [podcastViewId]);
 
   async function runPodcast() {
+    const run = ++podcastRun.current;
     setPodcastPhase("loading");
     setPodcastError(null);
+    setPodcastResult(null);
     try {
       const res = await apiRequest("POST", "/api/podcast/brief", { symbols: symbolsInResearcherView(data, briefingData) }, PODCAST_REQUEST_TIMEOUT_MS);
+      if (!podcastRunStillCurrent(run, podcastRun.current)) return;
       const body = await res.json().catch(() => null);
+      if (!podcastRunStillCurrent(run, podcastRun.current)) return;
       if (!res.ok || !body || typeof body !== "object") {
         setPodcastPhase("error");
         setPodcastError(`n/a — Podcast-Abruf HTTP ${res.status}`);
@@ -125,6 +140,7 @@ export default function Researcher() {
       setPodcastResult(body as PodcastProbeResult);
       setPodcastPhase("done");
     } catch (err: unknown) {
+      if (!podcastRunStillCurrent(run, podcastRun.current)) return;
       setPodcastPhase("error");
       setPodcastError(err instanceof Error ? err.message : "n/a — Podcast-Abruf fehlgeschlagen");
     }
@@ -376,7 +392,7 @@ export default function Researcher() {
       <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
         {podcastPhase !== "idle" && (
           <div className="mb-4 min-w-0">
-            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+            <PodcastProbePanel playbackId={podcastViewId} state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
           </div>
         )}
         {activeTab === "macro" && (

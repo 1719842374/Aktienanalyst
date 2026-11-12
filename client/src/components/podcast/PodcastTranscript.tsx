@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { BrowserSpeechControls } from "@/components/podcast/BrowserSpeechControls";
 import { apiRequest } from "@/lib/queryClient";
 import { paragraphsOf, PODCAST_MARKET_SYMBOL, type PodcastTranscript } from "@shared/podcast-transcript";
 
 /**
  * Economist-Lesetext für ein lokal gecachtes Transkript.
- * Kein Player-Audio: dafür steht n/a. 375 px bleibt im Fluss, 1440 px in der Spaltenbreite.
+ * Eine Audiodatei bleibt n/a. Vorhandener Text geht an die Browser-Stimme.
+ * 375 px bleibt im Fluss, 1440 px in der Spaltenbreite.
  */
 export function PodcastTranscript({ symbol }: { symbol: string }) {
   const q = useQuery({
@@ -25,6 +27,13 @@ export function PodcastTranscript({ symbol }: { symbol: string }) {
         <span className="text-[10px] text-foreground">{symbol === PODCAST_MARKET_SYMBOL ? "Lokaler Cache · Markt-Skript der Pipeline" : `Lokaler Cache · ${symbol}`}</span>
       </div>
       <div className="mt-2 text-[11px] text-foreground" data-testid="podcast-player">n/a — keine Audiodatei im lokalen Cache</div>
+      <div className="mt-2">
+        <BrowserSpeechControls
+          sourceId={symbol}
+          text={q.isSuccess ? text : null}
+          pending={q.isLoading}
+        />
+      </div>
       {q.isLoading && <p className="mt-3 text-sm text-foreground">Transkript wird gelesen …</p>}
       {q.isError && <p className="mt-3 text-sm text-foreground">n/a — Transkript nicht erreichbar</p>}
       {q.data && !text && <p className="mt-3 font-serif text-sm leading-7 text-foreground" data-testid="podcast-transcript-na">{q.data.reason ?? "n/a — kein Transkript im lokalen Cache"}</p>}

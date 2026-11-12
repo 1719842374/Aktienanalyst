@@ -3,6 +3,8 @@
  * Der Block bricht um, damit 375 und 1440 nicht seitlich überlaufen.
  */
 import React from "react";
+import { BrowserSpeechControls } from "@/components/podcast/BrowserSpeechControls";
+import { speechSourceFromBrief } from "@/lib/podcast-browser-speech";
 import type { PodcastProbeResult } from "../../../../server/podcast-pipeline";
 
 export const PODCAST_REQUEST_TIMEOUT_MS = 120_000;
@@ -22,8 +24,10 @@ function driverValueLine(driver: { value: number; unit: string | null; asOf: str
 export function PodcastProbePanel({
   viewportWidth,
   state,
+  playbackId = "researcher",
 }: {
   viewportWidth?: number;
+  playbackId?: string;
   state: {
     phase: "idle" | "loading" | "done" | "error";
     result?: PodcastProbeResult | null;
@@ -31,6 +35,7 @@ export function PodcastProbePanel({
   };
 }) {
   const result = state.result;
+  const speech = result ? speechSourceFromBrief(playbackId, result) : null;
   return (
     <section
       data-testid="podcast-probe"
@@ -115,6 +120,12 @@ export function PodcastProbePanel({
           <p className="text-[11px] text-foreground break-words" data-testid="podcast-audio">
             Audio: {result.audio.reason}
           </p>
+          {speech && (
+            <BrowserSpeechControls
+              sourceId={speech.sourceId}
+              text={state.phase === "done" ? speech.text : null}
+            />
+          )}
         </div>
       )}
     </section>
