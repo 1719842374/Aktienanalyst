@@ -212,14 +212,22 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
           {earningsBrief !== undefined && (
             <div className="shrink-0 max-h-28 overflow-y-auto break-words border-b border-border/60 px-3 py-2 text-[11px] leading-relaxed" data-testid="chat-earnings-brief">
               <div className="font-medium text-foreground">Letzter Earnings Call{earningsBrief?.date ? ` · ${earningsBrief.date}` : ""}{earningsBrief?.year != null && earningsBrief.quarter != null ? ` · FY${earningsBrief.year} Q${earningsBrief.quarter}` : ""}</div>
-              <p className="mt-1 text-muted-foreground">
-                {earningsBrief?.summary
+              <div className="mt-1 text-muted-foreground" data-testid="chat-earnings-text">
+                <ChatMarkdown content={earningsBrief?.summary
                   ?? earningsBrief?.excerpt
                   ?? earningsBrief?.reason
-                  ?? "n/a — Earnings-Call noch nicht geladen"}
-              </p>
+                  ?? "n/a — Earnings-Call noch nicht geladen"} />
+              </div>
               {earningsBrief?.summary && earningsBrief.reason && (
                 <p className="mt-1 text-muted-foreground/80">{earningsBrief.reason}</p>
+              )}
+              {earningsBrief?.status === "ok" && earningsBrief.source && (
+                <p className="mt-1 text-muted-foreground/80" data-testid="chat-earnings-source">
+                  {earningsBrief.kind === "earnings-release" ? "Earnings Release, kein Call-Transkript · " : ""}Quelle:{" "}
+                  {earningsBrief.sourceUrl && /^https?:\/\//i.test(earningsBrief.sourceUrl)
+                    ? <a href={earningsBrief.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">{earningsBrief.source}</a>
+                    : earningsBrief.source}
+                </p>
               )}
             </div>
           )}
@@ -248,6 +256,9 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[88%] min-w-0 rounded-lg px-2.5 py-1.5 break-words ${m.role === "assistant" && !m.error ? "" : "whitespace-pre-wrap"} ${m.role === "user" ? "bg-primary text-primary-foreground" : m.error ? "bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400" : "bg-muted"}`} data-testid={m.role === "user" ? "chat-msg-user" : "chat-msg-assistant"}>
                   {m.role === "assistant" && !m.error ? <ChatMarkdown content={m.content} /> : m.content}
+                  {m.fallbackReason && (
+                    <div className="mt-1 text-[10px] text-muted-foreground" data-testid="chat-fallback-reason">Antwort über {m.model ?? "Fallback-Modell"} · Fallback, weil {m.fallbackReason}</div>
+                  )}
                   {m.sectionRefs && m.sectionRefs.length > 0 && onJumpToSection && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {m.sectionRefs.map(id => (

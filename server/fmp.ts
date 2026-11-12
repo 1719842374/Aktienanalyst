@@ -43,6 +43,22 @@ async function spaceOutgoingCall(): Promise<void> {
   _lastFmpCallAt = Date.now();
 }
 
+/** Länge des FMP-Fehlertexts, der als `fmpMessage` am Error hängt (z. B. Plan-Hinweis bei 402). */
+export const FMP_ERROR_MESSAGE_MAX_CHARS = 240;
+
+/** Fehlertext aus der FMP-Antwort ("Error Message"/"message"), ohne Key. null, wenn leer. */
+async function fmpErrorText(resp: Response): Promise<string | null> {
+  const raw = await resp.text().catch(() => "");
+  if (!raw.trim()) return null;
+  let text = raw;
+  try {
+    const j = JSON.parse(raw);
+    const m = j?.["Error Message"] ?? j?.message ?? j?.error;
+    if (typeof m === "string") text = m;
+  } catch { /* kein JSON: Rohtext */ }
+  return text.replace(/apikey=[^&\s"]+/gi, "apikey=***").replace(/\s+/g, " ").trim().slice(0, FMP_ERROR_MESSAGE_MAX_CHARS) || null;
+}
+
 async function fmpFetch(path: string, params: Record<string, string> = {}): Promise<any> {
   const key = getApiKey();
   if (!key) throw new Error("FMP_API_KEY not set");
@@ -69,7 +85,10 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
           continue;
         }
       }
-      if (!resp.ok) throw Object.assign(new Error(`FMP ${resp.status}: ${path}`), { fmpStatus: resp.status });
+      if (!resp.ok) {
+        const fmpMessage = await fmpErrorText(resp);
+        throw Object.assign(new Error(`FMP ${resp.status}: ${path}`), { fmpStatus: resp.status, fmpMessage });
+      }
       return resp.json();
     } catch (err: any) {
       lastErr = err;
