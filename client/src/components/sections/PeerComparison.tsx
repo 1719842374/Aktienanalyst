@@ -68,7 +68,7 @@ export function missingAddedPeers(activeAdd: readonly string[], peers: ReadonlyA
 export default function PeerComparison({ data, onOverridesChange, kiPeers = [], peerBusy = false }: {
   data: StockAnalysis;
   onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
-  /** Session-only KI names. FMP metrics stay on the side list, not in the scored table. */
+  /** Session-only KI names. Dieselben Spalten, nicht in Ø Peers und nicht score-wirksam. */
   kiPeers?: PeerNaFill[];
   /** True while the parent re-runs /api/analyze with the new peer overrides. */
   peerBusy?: boolean;
@@ -158,7 +158,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     />
   ) : null;
 
-  if (!pc || !pc.peers || pc.peers.length === 0) {
+  if (!pc?.subject) {
     return (
       <div className="space-y-3" data-testid="peer-empty">
         {overrideControls && (
@@ -167,14 +167,28 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           </div>
         )}
         {overrideControls}
-        <KiSideList peers={kiPeers} />
+        <KiSameTable peers={kiPeers} trailingCell={!!onOverridesChange} />
       </div>
     );
   }
 
-  const { subject, peers, peerAvg, sectorMedian } = pc;
+  const { subject, peerAvg, sectorMedian } = pc;
+  const peers = Array.isArray(pc.peers) ? pc.peers : [];
   const scoredTickers = new Set(peers.map((p) => p.ticker.toUpperCase()));
   const sideKi = kiPeers.filter((row) => !scoredTickers.has(row.ticker.toUpperCase()));
+
+  if (peers.length === 0 && sideKi.length === 0) {
+    return (
+      <div className="space-y-3" data-testid="peer-empty">
+        {overrideControls && (
+          <div className="text-xs text-muted-foreground" data-testid="peer-empty-note">
+            Keine Wettbewerber mit Kennzahlen. Ticker hinzufügen, um Peers zu ergänzen.
+          </div>
+        )}
+        {overrideControls}
+      </div>
+    );
+  }
 
   const handleRemove = (ticker: string) => {
     if (!onOverridesChange) return;
@@ -412,7 +426,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               </tr>
             ))}
 
-            {sortedPeers.length === 0 && (
+            {sortedPeers.length === 0 && sideKi.length === 0 && (
               <tr data-testid="peer-view-empty">
                 <td colSpan={cols.length + 2 + (onOverridesChange ? 1 : 0)} className="py-2 px-1.5 text-[10px] text-foreground/40">
                   Keine Peers in dieser Ansicht (fehlende Daten zählen als n/a)
@@ -420,12 +434,23 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               </tr>
             )}
 
+            {sideKi.length > 0 && (
+              <tr data-testid="peer-ki-in-table">
+                <td colSpan={cols.length + 2 + (onOverridesChange ? 1 : 0)} className="py-1.5 px-1.5 text-[10px] text-violet-700 dark:text-violet-300">
+                  KI-Vorschlag in derselben Tabelle · nicht in Ø Peers · Relativ-Score unverändert
+                </td>
+              </tr>
+            )}
+            {sideKi.map(p => (
+              <KiPeerRow key={p.ticker} peer={p} cols={cols} trailingCell={!!onOverridesChange} />
+            ))}
+
             {/* Peer Average row */}
             <tr className="border-t-2 border-border bg-muted/10 font-medium">
               <td className="py-1.5 px-1.5 text-muted-foreground">Ø Peers</td>
               <td className="py-1.5 px-1 text-right text-muted-foreground text-[11px]">—</td>
               {cols.map(c => {
-                const avgVal = (peerAvg as any)[c.key] as number | null;
+                const avgVal = peerAvg ? (peerAvg as any)[c.key] as number | null : null;
                 return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground">{fmtMetric(c.key, avgVal, c.decimals, c.suffix)}</td>;
               })}
               {onOverridesChange && <td></td>}
@@ -476,7 +501,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
         {cols.map(c => {
           const sVal = sanitizedMetricValue(c.key, (subject as any)[c.key] as number | null);
-          const aVal = sanitizedMetricValue(c.key, (peerAvg as any)[c.key] as number | null);
+          const aVal = sanitizedMetricValue(c.key, peerAvg ? (peerAvg as any)[c.key] as number | null : null);
           const prem = premiumPct(sVal, aVal);
           const color = premColor(sVal, aVal, c.lowerIsBetter);
           const bgColor = color.includes("emerald") ? "bg-emerald-500/8 border-emerald-500/20" :
@@ -493,8 +518,6 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           );
         })}
       </div>
-
-      <KiSideList peers={sideKi} />
     </div>
   );
 }
@@ -628,19 +651,27 @@ function KiBadge({ testId }: { testId?: string }) {
   );
 }
 
+function kiMetric(key: string, value: number | null | undefined, decimals: number, suffix: string): string {
+  const sanitized = sanitizedMetricValue(key, value);
+  if (sanitized == null) return "n/a — keine FMP-Kennzahl";
+  return `${fmt(sanitized, decimals)}${suffix}`;
+}
+
 function KiPeerRow({ peer, cols, trailingCell }: { peer: PeerNaFill; cols: PeerCol[]; trailingCell: boolean }) {
   return (
-    <tr className="bg-violet-500/5" data-testid={`row-peer-ki-${peer.ticker}`}>
+    <tr className="bg-violet-500/5" data-testid={`row-peer-ki-${peer.ticker}`} title="KI-Vorschlag. Kennzahlen von FMP, nicht in Ø Peers und nicht score-wirksam.">
       <td className="py-1.5 px-1.5 text-violet-700 dark:text-violet-200">
         {peer.ticker}
         <KiBadge testId={`badge-peer-ki-${peer.ticker}`} />
       </td>
-      <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">{fmtCap(peer.marketCap)}</td>
+      <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">
+        {peer.marketCap == null || !Number.isFinite(peer.marketCap) ? "n/a — keine FMP-Kennzahl" : fmtCap(peer.marketCap)}
+      </td>
       {cols.map(c => {
         const val = (peer as unknown as Record<string, number | null | undefined>)[c.key];
         return (
           <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">
-            {fmtMetric(c.key, val, c.decimals, c.suffix)}
+            {kiMetric(c.key, val, c.decimals, c.suffix)}
           </td>
         );
       })}
@@ -649,7 +680,7 @@ function KiPeerRow({ peer, cols, trailingCell }: { peer: PeerNaFill; cols: PeerC
   );
 }
 
-const KI_ONLY_COLS: PeerCol[] = [
+const KI_TABLE_COLS: PeerCol[] = [
   { key: "pe", label: "P/E", lowerIsBetter: true, decimals: 1, suffix: "" },
   { key: "peg", label: "PEG", lowerIsBetter: true, decimals: 2, suffix: "" },
   { key: "ps", label: "P/S", lowerIsBetter: true, decimals: 1, suffix: "" },
@@ -660,33 +691,32 @@ const KI_ONLY_COLS: PeerCol[] = [
   { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
 ];
 
-function KiSideList({ peers }: { peers: PeerNaFill[] }) {
+/** Kein Peer-Set und kein Subjekt: dieselben Spalten, ohne erfundene Ø- oder Subjektzahlen. */
+function KiSameTable({ peers, trailingCell }: { peers: PeerNaFill[]; trailingCell: boolean }) {
   if (peers.length === 0) return null;
-  return (
-    <div className="space-y-1" data-testid="peer-ki-side-list">
-      <div className="text-[10px] text-violet-700 dark:text-violet-300">
-        KI-Namen · nicht in der Peer-Tabelle · Kennzahlen von FMP
-      </div>
-      <KiOnlyPeerTable peers={peers} />
-    </div>
-  );
-}
-
-function KiOnlyPeerTable({ peers }: { peers: PeerNaFill[] }) {
+  const span = KI_TABLE_COLS.length + 2 + (trailingCell ? 1 : 0);
   return (
     <div className="overflow-x-auto -mx-1">
-      <table className="w-full text-[11px]">
+      <table className="w-full text-[11px]" data-testid="peer-scored-table">
         <thead>
           <tr className="border-b border-border">
             <th className="text-left py-1.5 px-1.5 text-muted-foreground font-medium">Ticker</th>
             <th className="text-right py-1.5 px-1 text-muted-foreground font-medium">Mkt Cap</th>
-            {KI_ONLY_COLS.map(c => (
+            {KI_TABLE_COLS.map(c => (
               <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium">{c.label}</th>
             ))}
+            {trailingCell ? <th className="w-6"></th> : null}
           </tr>
         </thead>
         <tbody className="divide-y divide-border/40">
-          {peers.map(p => <KiPeerRow key={p.ticker} peer={p} cols={KI_ONLY_COLS} trailingCell={false} />)}
+          <tr data-testid="peer-ki-in-table">
+            <td colSpan={span} className="py-1.5 px-1.5 text-[10px] text-violet-700 dark:text-violet-300">
+              KI-Vorschlag in derselben Tabelle · nicht in Ø Peers · Relativ-Score unverändert
+            </td>
+          </tr>
+          {peers.map(peer => (
+            <KiPeerRow key={peer.ticker} peer={peer} cols={KI_TABLE_COLS} trailingCell={trailingCell} />
+          ))}
         </tbody>
       </table>
     </div>
