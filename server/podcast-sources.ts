@@ -10,7 +10,7 @@ import { BTC_LIQUIDITY_LABELS, BTC_LIQUIDITY_SERIES } from "../shared/btc-liquid
 import type { EarningsCallBrief } from "../shared/chat-earnings";
 import { buildEarningsBrief } from "./chat-earnings-route";
 import { fredCsvObservations } from "./fred-csv";
-import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates } from "./fmp";
+import { fetchTranscript, fetchTranscriptDates } from "./earnings-call-source";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { FRED_HISTORY_PARAMS, FRED_HISTORY_SERIES } from "./recession-fred-history-route";
 import { DRIVER_SERIES } from "./recession-drivers";
@@ -571,8 +571,8 @@ export async function defaultPodcastDeps(requestedSymbols: string[] = []): Promi
         ...symbolsFromResearcherCache(readResearcherCacheFiles()),
       ]);
       return earningsBriefFromEndpoint(symbols, (symbol) => buildEarningsBrief(symbol, {
-        dates: (s) => fmpEarningCallTranscriptDates(s),
-        transcript: (s, year, quarter) => fmpEarningCallTranscript(s, year, quarter),
+        dates: (s) => fetchTranscriptDates(s),
+        transcript: (s, year, quarter) => fetchTranscript(s, year, quarter),
         llmAvailable: isLLMAvailable,
         llm: callLLMJson,
       }));

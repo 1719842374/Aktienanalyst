@@ -58,10 +58,12 @@ const MODEL_FALLBACK_CHAIN = [
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean; signal?: AbortSignal },
+  opts?: { online?: boolean; signal?: AbortSignal; model?: string },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
-  const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
+  const base = override ? [override] : MODEL_FALLBACK_CHAIN;
+  // Ein benannter Modellwunsch steht vorn; fällt er aus (402/404/429), gilt die bisherige Kette.
+  const chain = opts?.model ? [opts.model, ...base.filter(m => m !== opts.model)] : base;
   let lastErr: any;
   for (const model of chain) {
     const variants = opts?.online && !model.endsWith(":online") ? [`${model}:online`, model] : [model];
@@ -810,6 +812,8 @@ export async function callLLMJson(opts: {
   online?: boolean;
   /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
   signal?: AbortSignal;
+  /** OpenRouter-Modell-ID, die zuerst versucht wird. Ohne Angabe bleibt die bestehende Kette. */
+  model?: string;
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -822,7 +826,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online, signal: opts.signal });
+    }, { online: opts.online, signal: opts.signal, model: opts.model });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {

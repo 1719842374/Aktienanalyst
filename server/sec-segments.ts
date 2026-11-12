@@ -40,7 +40,7 @@
 
 import { callLLMJson } from "./llm-openrouter";
 
-const SEC_USER_AGENT = "StockAnalystPro contact@stockanalyst-pro.app";
+export const SEC_USER_AGENT = "StockAnalystPro contact@stockanalyst-pro.app";
 const TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json";
 
 export interface SecRevenueSegment {
@@ -196,7 +196,7 @@ const SEGMENT_KEYWORDS = [
   /revenue.{0,20}disaggregation/i,
 ];
 
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
