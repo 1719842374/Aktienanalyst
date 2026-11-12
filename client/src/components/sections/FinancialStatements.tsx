@@ -10,7 +10,8 @@ import { AnnualFinancials } from "./AnnualFinancials";
 interface Props { data: StockAnalysis }
 
 /** JOB 23: Statement-Beträge in Statement-Währung (statementCurrency: USD nur nach Server-Umrechnung), nicht fest "$". */
-const fmt = (v: number, decimals = 1, ccy?: string | null) => {
+const fmt = (v: number | null | undefined, decimals = 1, ccy?: string | null) => {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "n/a";
   const s = currencySymbol(ccy);
   if (Math.abs(v) >= 1e12) return `${s}${(v / 1e12).toFixed(decimals)}T`;
   if (Math.abs(v) >= 1e9) return `${s}${(v / 1e9).toFixed(decimals)}B`;
@@ -94,10 +95,10 @@ export function FinancialStatements({ data }: Props) {
           </h4>
           <div className="space-y-1.5 text-[10px]">
             <Row label="Total Assets" value={fmt(bs.totalAssets, 1, statementCurrency(data))} />
-            <Row label="Total Equity" value={fmt(bs.totalEquity, 1, statementCurrency(data))} sub={`${bs.totalAssets > 0 ? ((bs.totalEquity / bs.totalAssets) * 100).toFixed(0) : 0}% der Assets`} />
+            <Row label="Total Equity" value={fmt(bs.totalEquity, 1, statementCurrency(data))} sub={bs.totalAssets == null || bs.totalEquity == null ? "n/a" : `${bs.totalAssets > 0 ? ((bs.totalEquity / bs.totalAssets) * 100).toFixed(0) : 0}% der Assets`} />
             <Row label="Total Debt" value={fmt(bs.totalDebt, 1, statementCurrency(data))} subColor="text-red-500" />
             <Row label="Cash & Equiv." value={fmt(bs.cashEquivalents, 1, statementCurrency(data))} subColor="text-emerald-500" />
-            <Row label="Net Debt" value={fmt(bs.netDebt, 1, statementCurrency(data))} sub={bs.netDebt < 0 ? 'Netto-Cash' : 'Netto-Verschuldet'} subColor={bs.netDebt < 0 ? 'text-emerald-500' : 'text-amber-500'} />
+            <Row label="Net Debt" value={fmt(bs.netDebt, 1, statementCurrency(data))} sub={bs.netDebt == null ? "n/a" : bs.netDebt < 0 ? 'Netto-Cash' : 'Netto-Verschuldet'} subColor={bs.netDebt == null ? "text-muted-foreground" : bs.netDebt < 0 ? 'text-emerald-500' : 'text-amber-500'} />
             <Row label="Debt/Equity" value={bs.debtToEquity.toFixed(2)} sub={bs.debtToEquity < 0.5 ? 'Konservativ' : bs.debtToEquity < 1.5 ? 'Moderat' : 'Hoch'} subColor={bs.debtToEquity < 0.5 ? 'text-emerald-500' : bs.debtToEquity < 1.5 ? 'text-amber-500' : 'text-red-500'} />
           </div>
         </div>
@@ -109,7 +110,7 @@ export function FinancialStatements({ data }: Props) {
           </h4>
           <div className="space-y-1.5 text-[10px]">
             <Row label="Operating CF" value={fmt(cf.operatingCashFlow, 1, statementCurrency(data))} />
-            <Row label="CapEx" value={`-${fmt(Math.abs(cf.capex), 1, statementCurrency(data))}`} subColor="text-red-500" />
+            <Row label="CapEx" value={cf.capex == null ? "n/a" : `-${fmt(Math.abs(cf.capex), 1, statementCurrency(data))}`} subColor="text-red-500" />
             <Row
               label="Free Cash Flow"
               value={data.fcfAvailable === false ? "n/a" : fmt(cf.fcf, 1, statementCurrency(data))}

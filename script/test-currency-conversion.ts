@@ -39,6 +39,15 @@ import { convertFmpRowToUsd, convertFmpRowsToUsd, getFxRateToUsd, fmpRatios, fmp
 let failures = 0;
 let networkErrors = 0;
 
+function rateOf(value: unknown): number | null {
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object" && "rate" in value) {
+    const rate = (value as { rate: unknown }).rate;
+    return typeof rate === "number" ? rate : null;
+  }
+  return null;
+}
+
 function assertClose(label: string, actual: number, expected: number, tolerancePct: number) {
   const diffPct = Math.abs(actual - expected) / Math.abs(expected) * 100;
   if (diffPct > tolerancePct) {
@@ -59,8 +68,8 @@ async function runUnitChecks() {
   // shape (reportedCurrency, revenue, eps). The rate is injected via a real
   // getFxRateToUsd() call so this also smoke-tests the live-rate path once,
   // but the row itself is synthetic so the assertion is exact, not a range.
-  const dkkRate = await getFxRateToUsd("DKK");
-  if (dkkRate === 1) {
+  const dkkRate = rateOf(await getFxRateToUsd("DKK"));
+  if (dkkRate == null || dkkRate === 1) {
     console.warn("[SKIP] DKK rate fetch failed (network?) — skipping exact-value unit check");
     networkErrors++;
   } else {
@@ -102,8 +111,8 @@ async function runUnitChecks() {
 
   // Array variant: convertFmpRowsToUsd should convert every row in the array
   // using a single fetched rate for the first row's currency.
-  const eurRate = await getFxRateToUsd("EUR");
-  if (eurRate === 1) {
+  const eurRate = rateOf(await getFxRateToUsd("EUR"));
+  if (eurRate == null || eurRate === 1) {
     console.warn("[SKIP] EUR rate fetch failed (network?) — skipping array unit check");
     networkErrors++;
   } else {

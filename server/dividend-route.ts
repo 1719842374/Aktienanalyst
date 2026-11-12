@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { fmpDividends, fmpProfile, getFxRateToUsd } from "./fmp";
+import { fmpDividends, fmpProfile, getFxRateToUsd, latestFxRateDetail } from "./fmp";
 import { currencyFromTickerSuffix, dividendsToMajor, dividendsToUsd, isMinorUnitListingTicker, minorUnitInfo } from "../shared/listing-units";
 import { fetchYahooFxToUsd } from "./yahoo-fetcher";
 import {
@@ -52,8 +52,9 @@ async function listingCurrencyOf(ticker: string): Promise<string | null> {
 
 /** DCF-FX: Major → USD, FMP zuerst, Yahoo als Ersatz; null wenn keiner einen Kurs liefert (nie 1 raten). */
 async function fxToUsd(major: string): Promise<number | null> {
-  const r = await getFxRateToUsd(major).catch(() => 1);
-  if (r > 0 && r !== 1) return r;
+  const fx = await getFxRateToUsd(major).catch(() => null);
+  const r = fx?.rate ?? null;
+  if (r != null && r > 0 && r !== 1) return r;
   return fetchYahooFxToUsd(major).catch(() => null);
 }
 
@@ -88,8 +89,17 @@ export async function loadDividendHistory(
   if (!cur || cur.toUpperCase() === "USD") return res;
   const rate = await deps.fxToUsd(cur.toUpperCase()).catch(() => null);
   const usd = dividendsToUsd(res.events, cur, rate);
+  const detail = latestFxRateDetail(cur);
+  const stale = detail?.fxStale === true && detail.rate === rate;
   if (!usd) return { ...res, currency: cur, note: [res.note, `FX ${cur.toUpperCase()}USD fehlt – Beträge in ${cur}`].filter(Boolean).join(", ") };
-  return { ...res, events: usd.events, currency: "USD", note: [res.note, `Beträge ${cur} → USD @ ${usd.rate.toFixed(4)}`].filter(Boolean).join(", ") };
+  const ageNote = stale ? `Cache-Kurs, Alter ${detail?.fxAgeMs} ms` : null;
+  return {
+    ...res,
+    events: usd.events,
+    currency: "USD",
+    note: [res.note, `Beträge ${cur} → USD @ ${usd.rate.toFixed(4)}`, ageNote].filter(Boolean).join(", "),
+    ...(stale ? { fxStale: true, fxAgeMs: detail?.fxAgeMs ?? null } : {}),
+  };
 }
 
 async function loadDividendHistoryListing(ticker: string, deps: DividendDeps): Promise<DividendHistoryResponse> {

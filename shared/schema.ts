@@ -385,6 +385,23 @@ export interface CurrencyInfo {
   fxPair: string; // e.g. "EURUSD"
   converted: boolean; // true if financials were converted
   note: string; // explanation for user
+  /** true, wenn ein abgelaufener Cache-Kurs verwendet wurde. Fehlt auf dem frischen Pfad. */
+  fxStale?: boolean;
+  /** Alter des Cache-Kurses in ms. Nur zusammen mit fxStale. */
+  fxAgeMs?: number | null;
+  /** true, wenn reportedCurrency nicht USD ist und der verwendete Kurs 1 ist. */
+  fxRateOneWarning?: boolean;
+}
+
+/** K-04: sichtbar, wenn die FX-Umrechnung nicht der frische Live-Kurs ist oder fehlt. */
+export interface FxConversionNotice {
+  reportedCurrency: string;
+  rate: number | null;
+  fxStale: boolean;
+  fxAgeMs: number | null;
+  fxRateOneWarning: boolean;
+  /** Gesetz, wenn Geldbeträge wegen fehlendem Kurs n/a sind. */
+  naReason: string | null;
 }
 
 // === PESTEL Analysis ===
@@ -662,6 +679,8 @@ export interface StockAnalysis {
 
   // NEW: Currency conversion info (for non-USD reporting companies)
   currencyInfo?: CurrencyInfo;
+  /** K-04: Statement-FX (z. B. NVO DKK). Fehlt, wenn der frische Kurs verwendet wurde. */
+  fxConversion?: FxConversionNotice;
 
   /** FMP-ADR (#265 v2): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das
    *  US-/ADR-Symbol bekommt (SAP.DE→SAP, VOW3.DE→VWAPY, Rückfall VWAGY = Proxy Stammaktie). Kurs und Chart vom
