@@ -242,6 +242,32 @@ interface TechnicalConfirmation {
 - [ ] BTC-Funding/OI/Liquidationen wirken nicht auf Einzelaktien-Scores.
 - [ ] Nur Unit-/Regressionstests und manuelle historische Faktenprüfung; kein quantitativer Strategie-Backtest.
 
+### 15. Frühere Chat-Ausgangsbeobachtung (nicht als verifizierter Live-Fakt behandeln)
+
+Im ersten Beitrag des Gesprächs wurden zusätzlich folgende Marktbeobachtungen und Erklärungshypothesen genannt. Sie werden hier der Vollständigkeit halber dokumentiert, aber **nicht als eigenständig bestätigte Live-Fakten oder kausale Erklärungen** übernommen:
+
+- BTC sei unter wichtige Unterstützungszonen und insbesondere unter **76.000 USD** gefallen. Dies ist eine im Chat genannte Preis-/Markenbeobachtung mit Verweis auf zwei YouTube-Beiträge; der genaue Veröffentlichungs-/Snapshot-Zeitpunkt und die Datenquelle sind vor Nutzung zu prüfen.
+- Milliardenhohe Long-Liquidationen könnten durch gehebelte Positionen eine Abwärtsspirale ausgelöst haben. Im späteren CoinGlass-Snapshot vom 13.11.2026 wurden rund **919,15 Mio. USD** 24h-Liquidationen mit **95 % Long-Anteil** genannt (siehe Abschnitt 8); das ist ein zeitgebundener Aggregator-Snapshot, keine allgemeine Aussage über alle Börsen.
+- US-Bitcoin-Spot-ETF-Abflüsse wurden als möglicher Nachfragegegenwind genannt. Der im Chat spezifizierte Snapshot vom 12.11.2026 betrug **−47,70 Mio. USD**, war aber als **partial** gekennzeichnet. Nicht final gemeldete Flows dürfen nicht als abgeschlossene Tageswerte dargestellt werden.
+- Nachlassende Liquidität bzw. Umschichtung in KI-/Tech-Aktien wurden als mögliche Erklärung genannt. Das ist eine zu prüfende Makro-/Allokationshypothese, kein aus den genannten BTC-Derivatewerten ableitbarer Fakt.
+- Geopolitische Unsicherheit und Zinserwartungen / Fed-Politik wurden als weitere mögliche Risikofaktoren genannt. Die technische Analyse darf diese nur mit konkreten, datierten Makro-/Marktdaten als aktuelle Faktoren kennzeichnen.
+- Die Nutzerthese lautete, dass algorithmische Systeme historische BTC-Muster von 2022 in 2026 zeitlich vorwegnehmen könnten, inklusive Golden-Cross-/Death-Cross-Signalen vor zusätzlichen Marktbestätigungen. Dies bleibt eine **Research-Hypothese**. Erkanntes Muster, Cross-Ereignis, Vorlauf und unabhängige Bestätigungen sind separat zu zeigen; keine algorithmische Ursache als bewiesen ausgeben.
+- Die mögliche Folge einer einseitigen Positionierung ist spiegelbildlich zu betrachten: Nach Long-Liquidationen können neue Shorts crowded werden; eine spätere Erholung könnte Short-Eindeckungen auslösen. Dies ist ein Risikoszenario, nicht die Behauptung, ein Short Squeeze stehe unmittelbar bevor.
+
+Chat-verlinkte Quellen zu den Ausgangsbehauptungen (Zeitpunkt/inhaltlichen Scope vor Verwendung prüfen):
+- https://www.youtube.com/shorts/8neb9WjyVLI
+- https://www.youtube.com/watch?v=nCy4VP_cce0&t=170
+- https://www.xtb.com/de/Marktanalysen/Trading-News/bitcoin-faellt-um-3-setzt-sich-der-krypto-ausverkauf-fort-doppeltief-im-visier
+- https://www.stuttgarter-zeitung.de/wirtschaft/kryptowaehrungen-brechen-ein-warum-ist-der-bitcoin-gefallen-das-setzt-den-kurs-wieder-unter-druck-79681945.html
+- https://www.sparkasse.de/pk/ratgeber/finanzplanung/investieren/bitcoin.html
+- https://www.tagesschau.de/wirtschaft/finanzen/bitcoin-absturz-krypto-100.html
+- https://cryptoticker.io/de/warum-fallen-kryptowaehrungen-krypto-crash-gruende/
+- https://www.youtube.com/watch?v=tGQ6SsZ_AN8
+
+**Implementierungsregel:** Keine dieser frühen Chat-Aussagen (insbesondere 76.000 USD, ETF-Abflüsse, Liquiditätsumschichtung, Fed-/Geopolitik-Erklärung) darf als hart codierter Schwellenwert, aktueller Status oder automatische Gate-Bedingung verwendet werden. Produktive Signale werden aus dem aktuellen, instrumentgerechten und datierten Datenfeed abgeleitet.
+
+---
+
 ### 14. Vorrang bei abweichenden Textstellen
 
 Dieser Abschnitt und Abschnitt A–G der am 13.11.2026 ergänzten WORK.md sind die maßgebliche Umsetzungsanweisung. Die separate Datei `WORK_BTC_CYCLE_MARKET_STRUCTURE_SCORING.md` dient nur als ergänzender Research-/Quellenanhang für BTC-Marktstruktur, OI, Funding und Liquidationen. Ältere Abschnitte über quantitative Backtests, Renditeoptimierung, neue Score-Gewichte, harte Caps oder eine separate Engine sind **nicht Teil des aktuellen Auftrags** und dürfen nicht implementiert werden, sofern sie diesem Long-only-Scope widersprechen.
