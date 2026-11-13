@@ -1,5 +1,150 @@
 # WORK.md — Index
 
+## NEU 13.11.2026 — SOLL/IST: Technische Signalbestätigung für Long-only-Investments (BTC + Aktien Sektion 12)
+
+**Status: OFFEN / nur Spezifikation, kein App-Code umgesetzt.** Detaillierter Research- und Datenanhang: [WORK_BTC_CYCLE_MARKET_STRUCTURE_SCORING.md](./WORK_BTC_CYCLE_MARKET_STRUCTURE_SCORING.md). Diese aktualisierte WORK.md-Spezifikation ist für die Umsetzung maßgeblich, soweit die ältere Research-Spec quantitative Trading-Backtests, neue harte Caps oder eine separate Engine vorsieht. **Kein Python, keine Tradingstrategie, kein quantitativer Strategie-Backtest, keine Optimierung auf historische Renditen.** Ziel ist ein **Long-only-Investmentfilter**, der technische Signale erklärt, bestätigt oder als widersprüchlich kennzeichnet, ohne die Fundamentalanalyse zu überschreiben.
+
+### A. Repository-IST (am 13.11.2026 geprüft)
+
+| Funktion | IST / Codebeleg | SOLL |
+|---|---|---|
+| Technische Aktiensektion | `client/src/components/sections/TechnicalChart.tsx`, `sectionNumber=12`, Titel `Technische Analyse`; Komponente bereits ca. 160.813 Zeichen | Bestehende Sektion erweitern, nicht ersetzen. |
+| Technische MAs | `MA_LINES`: MA200 und MA50 standardmäßig sichtbar; MA20/100 und EMA9/12/26 optional | Bestehende MAs unverändert; zusätzliche Cross-Qualität. |
+| 4/4-Kaufbedingungen | ca. Zeilen 525–545 und 695–745: Kurs > MA200, MA50 > MA200, MACD > 0, MACD steigend | 4/4-Zähler **unverändert** lassen; eigenständigen Bestätigungsstatus daneben zeigen. |
+| Statuslabels | 4/4: „Alle Kaufbedingungen erfüllt“; 3/4 „fast kaufbereit“; 2/4 neutral; 1/4 Warnung; 0/4 kein Kaufsignal | Klarer Zusatz „4/4 technische Bedingungen ≠ unabhängig bestätigter Investment-Einstieg“; optional bestehende Copy vorsichtig präzisieren, ohne Zähleränderung. |
+| Cross-Erkennung | ca. Zeilen 1089–1131: SMA50 kreuzt SMA200 von unten/oben; jüngstes Ereignis und Kalendertage seit Cross | Zusätzlich Signalalter in Handelstagen, `CONFIRMED/PARTIAL/UNCONFIRMED/CONFLICTED/SUPERSEDED/UNAVAILABLE`. |
+| Kurze Historie | `ti.maData.length < 200` → Hinweis, Cross nicht zuverlässig berechenbar | Bestehenden Guard behalten; keine falschen Cross-Labels. |
+| RSI/MACD/Volumen | Bereits Chart-Overlays und Oszillatoren vorhanden | Daten für Erklärung/Bestätigung wiederverwenden; keine parallele Berechnung. |
+| BTC-Technik | `client/src/lib/btcAnalysis.ts` (SMA/EMA/RSI/MACD, BTC-Cross- und Makro-Kontext), `client/src/pages/BTCDashboard.tsx` | Gemeinsame reine Cross-Confirmation-Funktion; BTC-spezifische Derivatedaten nur bei verlässlichem Provider. |
+| Scoring-Basis | `server/scoring-integration.ts`: `TREND_RULES.UPTREND=1.10`, `NEUTRAL=1.00`, `DOWNTREND=0.90` | **Phase 1 keine Änderung** am Trendmultiplikator. |
+| Fundamentale Gate-Caps | `server/scoring-gates.ts`: Pricing Power 55, Relative Growth 60, DCF Reality 65, Inventory 70 | **Keine Änderung** der bestehenden Caps; keine neuen harten Market-Structure-Caps. |
+
+**Wichtig:** Der technische 4/4-Score ist **nicht** der fundamentale Quality Score. Drei der vier Bedingungen (Preis/MA/MACD) sind preisabgeleitet und korreliert. Ein 4/4-Score ist keine vierfach unabhängige Nachfragebestätigung.
+
+### B. SOLL: zweite, erklärende Bewertungsebene direkt in Sektion 12
+
+Anzeige direkt neben bzw. unter dem vorhandenen 4/4-Block und dem Golden-/Death-Cross-Banner:
+
+- **Technischer Zustand:** 4/4 wie bisher, MA50/MA200-Werte, letzter Cross-Typ und Cross-Datum.
+- **Cross-Alter:** Handelstage seit Ereignis (zusätzlich zu bestehenden Kalendertagen); historische Cross-Marker bleiben sichtbar.
+- **Bestätigungsstatus:** `CONFIRMED`, `PARTIAL`, `UNCONFIRMED`, `CONFLICTED`, `SUPERSEDED`, `UNAVAILABLE`.
+- **Unabhängige Evidenz:** Preisstruktur, Momentum, Volumen, Relative Stärke vs. Sektor/Benchmark, optional Marktbreite. Preisstruktur + MACD allein reichen ausdrücklich nicht für „bestätigt“.
+- **Long-only-Einordnung:** „Technischer Rückenwind“, „Trend noch unbestätigt“, „erhöhtes Drawdown-/Timing-Risiko“, „Fundamentale Investmentthese separat bewerten“ — **keine automatischen Kauf-/Verkaufsempfehlungen**.
+- **Transparenz:** Datenstand, Quelle, fehlende Inputs und konkrete erfüllte/nicht erfüllte Regeln.
+
+### C. Konkrete Regeln (konfigurierbare Startwerte, nicht als Rendite-Prognose validiert)
+
+**Cross-Ereignis:**
+- Golden Cross bei `SMA50[t] > SMA200[t]` und `SMA50[t-1] <= SMA200[t-1]`.
+- Death Cross bei `SMA50[t] < SMA200[t]` und `SMA50[t-1] >= SMA200[t-1]`.
+- Nur abgeschlossene Handelstage, keine Intraday-Scheinkreuzungen; Split-/Dividend-Adjustierung konsistent zur bestehenden OHLCV-Pipeline.
+- Ein Cross bleibt historisch, ist aber bei nachfolgendem Gegen-Cross `SUPERSEDED`. Kein „aktives“ Signal allein wegen alter Marker.
+
+**Bestätigungsfamilien (nicht zu einem weiteren 0–100-Score summieren):**
+
+| Familie | Startregel | Typ / Unabhängigkeit |
+|---|---|---|
+| Preisstabilität | Mindestens **3 von 5** letzten abgeschlossenen Handelstagen über MA200 für Golden; spiegelbildlich unter MA200 für Death | Preisbasiert |
+| Momentum | MACD-Histogramm verbessert sich über **3** abgeschlossene Bars (Golden), verschlechtert sich (Death) | Preisbasiert; nicht als unabhängig von Preis zählen |
+| Volumen | Volumen relativ zum **20-Tage**-Durchschnitt und Up-/Down-Volume-Verteilung prüfen; konkreter Schwellenwert erst nach Datenqualitätsprüfung festlegen | Nicht rein preisbasiert |
+| Relative Stärke | **20-Handelstage**-Relative-Return gegen Sektor oder geeignete Benchmark positiv (Golden) bzw. negativ (Death) | Relativ zum Markt, kann teilweise korrelieren |
+| Marktbreite | Geeignete Advance/Decline- oder Sektor-Breite, sofern verfügbar; keine erfundenen Daten | Breiter Marktkontext |
+
+**Statusentscheidung (deterministisch):**
+- `CONFIRMED`: Cross aktuell gültig + Preisstabilität erfüllt + mindestens **2 weitere Bestätigungsfamilien**, darunter mindestens **eine nicht rein preisbasierte**.
+- `PARTIAL`: Cross aktuell gültig + Preisstabilität erfüllt + genau **1 weitere Familie**.
+- `UNCONFIRMED`: Cross vorhanden, aber zusätzliche Bestätigung fehlt; keine starke Gegen-Evidenz.
+- `CONFLICTED`: Cross formal vorhanden, aber mindestens **2 belastbare Gegensignale** (z. B. Relative Stärke und Volumen) oder Preisstruktur klar invalidiert.
+- `SUPERSEDED`: nachfolgendes gegenteiliges Cross; früheres Ereignis bleibt im Verlauf.
+- `UNAVAILABLE`: Cross oder notwendige Daten wegen kurzer Historie/Fehler/Staleness nicht verlässlich bestimmbar.
+- `false` = geprüft und nicht erfüllt; `null` = nicht verfügbar. Fehlende Daten niemals als negative Bestätigung oder 0 zählen.
+- Signalalter ist Kontext, kein automatischer Countdown zum Kauf: **20 Handelstage** können als Anzeigegrenze „frisch“ dienen, nicht als universeller Verfallstag.
+
+**Long-only-Interpretation:**
+- Bestätigtes Golden Cross: technischer Rückenwind, kein Kaufzwang.
+- Unbestätigtes Golden Cross: kein zusätzliches bullisches Vertrauenssignal; fundamentale Attraktivität bleibt separat.
+- Bestätigtes Death Cross: erhöhtes technisches Abwärts-/Drawdown-Risiko, **kein automatischer Verkauf**.
+- Unbestätigtes Death Cross: Vorsicht, möglicher nachlaufender Indikator; Stabilisierung und Relative Stärke prüfen.
+- `CONFLICTED`: Erklärung, welche Familien sich widersprechen, statt ein vereinfachtes bull/bear-Urteil.
+
+### D. BTC-Sonderfall: Zyklusvorlauf, Crowding und Liquidationen
+
+BTC erhält **zusätzlichen Kontext**, keine Übertragung seiner Futures-Daten auf Einzeltitel:
+- historisches Ereignis relativ zu **explizit definiertem Zyklusanker** (Halving, Peak, lokales Low); Vorlauf in Tagen und ggf. normalisiert auf Zykluslänge;
+- Funding-Rate mit Börse/Intervall (z. B. **8 h**), USD-Open-Interest **und** BTC-/Kontrakt-Open-Interest getrennt;
+- Long-/Short-Liquidationen, jeweils **1 h / 4 h / 24 h** getrennt;
+- Spot-Taker-Flow, ETF-Flows nur bei BTC, Partial-/Final-Status;
+- „algorithmische Vorwegnahme“ **Hypothese, nicht bewiesene Kausalität**;
+- „Liquidation Flush“ ist ein Stressereignis, **kein Boden- oder Kaufsignal**.
+
+**Historischer Faktenblock / Snapshot (aus vorherigem Research, erneut gegen Originalanbieter zu prüfen):**
+
+| Kennzahl | Referenz 2022 / Snapshot 13.11.2026 | Einordnung |
+|---|---|---|
+| BTC-Jahrestief 2022 | **15.599 USD, 21.11.2022** | Nicht erst Dezember; Jahresendkurs **16.547,5 USD**, Jahresperformance ca. **−64,27 %**. |
+| BTC-Monatsschluss Oktober/November/Dezember 2022 | **20.495,8 / 17.168,6 / 16.547,5 USD** | Monatsclose nicht mit Intraday-Low verwechseln. |
+| BTC-Kurs 13.11.2026 (Momentaufnahme) | ca. **68.828 USD**, **−6,40 % / 24 h** | Kein Tagesendkurs, nicht als aktueller Live-Wert hardcoden. |
+| Futures-OI 13.11.2026 | ca. **47,86 Mrd. USD**, **−5,92 % USD-OI / 24 h** | Dollar-OI kann allein wegen Preisrückgang sinken. |
+| BTC-/Kontrakt-OI 13.11.2026 | ca. **+0,51 % / 24 h** | Widerspruch zu USD-OI kann auf neue Positionen statt pauschalen Long-Abbau hinweisen. |
+| Liquidationen 13.11.2026 | ca. **919,15 Mio. USD / 24 h**, davon **95 % Longs** | Starke einseitige Long-Liquidation, aber keine sichere Bodenbestätigung. |
+| Funding 13.11.2026 | ca. **−0,0004 % je 8 h**, OI-gewichtet | Nahe neutral; nicht automatisch Short-Crowding. |
+| BTC-Liquidationen 14.06.2022 | ca. **532 Mio. USD**, OI ca. **−7 % / 24 h** | Historisches Stressereignis, anderer Scope/Marktstruktur. |
+| Spot-Taker-Nettofluss 13.11.2026 | ca. **−626,76 Mio. USD** | Snapshot/Provider-Abdeckung prüfen. |
+| ETF-Nettofluss 12.11.2026 | ca. **−47,70 Mio. USD**, als **partial** gemeldet | Kein finaler Tagesschlusswert. |
+
+Quellen/Verifikation:
+- https://www.coinglass.com/currencies/BTC/futures
+- https://www.coinglass.com/currencies/BTC/historical-data/2022
+- https://www.coinglass.com/de/currencies/BTC?tab=onchain
+- https://www.coindesk.com/markets/2022/06/14/bitcoin-liquidations-top-532m-as-open-interest-falls-7
+- Vollständige Quellen-/Scope-Hinweise in [WORK_BTC_CYCLE_MARKET_STRUCTURE_SCORING.md](./WORK_BTC_CYCLE_MARKET_STRUCTURE_SCORING.md).
+
+**Keine 1:1-Übertragung auf Aktien:** Aktien erhalten relative Stärke, Sektor-/Benchmarktrend, Volumen und Marktbreite. Instrumentbezogenes Short Interest/Optionen nur mit eigener valider Quelle. BTC-Funding, BTC-OI und BTC-Liquidationen sind **kein** firmenspezifischer Aktien-Gate-Input.
+
+### E. Scoring-Gates: IST vs. SOLL und Nicht-Ziele
+
+`server/scoring-integration.ts` hat aktuell **UPTREND 1,10**, **NEUTRAL 1,00**, **DOWNTREND 0,90**. `server/scoring-gates.ts` verwendet bestehende Caps **55/60/65/70** für Pricing Power/Relative Growth/DCF Reality/Inventory.
+
+**SOLL Phase 1:**
+1. Bestätigungsstatus als **separate erklärende Technical-Information**.
+2. Warn-IDs `TECH_CROSS_UNCONFIRMED`, `TECH_CROSS_CONFLICTED`, `TECH_DEATH_CROSS_CONFIRMED`, `CYCLE_TIMING_ADVANCE` (BTC-only), `MARKET_CROWDING` und `LIQUIDATION_STRESS` (nur bei passenden Daten).
+3. **Warn-only:** Keine zusätzlichen harten Caps, keine neuen Gewichte, keine Änderung von `qualityScore`, `trendMultiplier`, `finalScore`, bestehenden Gate-Caps oder bestehenden 4/4-Bedingungen.
+4. Keine doppelte Bestrafung: Ein bestätigter Abwärtstrend ist bereits im 0,90-Multiplikator berücksichtigt.
+5. Optionaler späterer Eingriff in den Bull-Bonus **nur nach separater Produktentscheidung**, nicht Bestandteil dieses Auftrags.
+
+### F. Minimal-invasive Umsetzung statt neuer Engine
+
+| Datei | Änderung |
+|---|---|
+| `shared/technical-confirmation.ts` (neu) | Reine Funktionen für Cross-Event, Signalalter, Confirmation/Conflict-Status und nachvollziehbare Reasons. |
+| `client/src/components/sections/TechnicalChart.tsx` | Bestehenden 4/4-Block und Cross-Banner erhalten; Bestätigungs-Karte, Status und Long-only-Erklärung ergänzen. |
+| `client/src/lib/btcAnalysis.ts`, `client/src/pages/BTCDashboard.tsx` | Gemeinsame Confirmation-Funktion wiederverwenden; BTC-spezifische Marktstruktur nur bei validen Daten. |
+| `shared/schema.ts` | Optionales, rückwärtskompatibles `technicalConfirmation`-Feld nur falls serverseitiger Verbraucher nötig. |
+| `server/scoring-gates.ts`, `server/scoring-integration.ts` | Erst nach Bedarf Warnungs-/Konfliktintegration, **keine Score-Änderung**. |
+| `script/test-technical-confirmation.ts` (neu) | Deterministische Tests; kein Python, kein Strategie-Backtest. |
+
+**Umsetzung in 3 kleinen PRs:** (1) Shared-Funktion + Tests, (2) Aktien-Sektion 12 UI, (3) BTC-UI und optional Warn-Gate-Verdrahtung. Keine neue Datenbank, keine parallele Market-Structure-Engine.
+
+### G. Abnahme / Regression
+
+- [ ] Bestehende 4/4-Kaufbedingungen sind für dieselben OHLCV-Daten vor/nach Änderung identisch.
+- [ ] Golden und Death Cross behalten korrekte Daten/Marker; Kalendertage und Handelstage korrekt unterschieden.
+- [ ] Golden 4/4 kann ausdrücklich **UNCONFIRMED** oder **CONFLICTED** sein.
+- [ ] Death Cross führt nicht automatisch zu Verkauf oder fundamentalem Score-Cap.
+- [ ] `CONFIRMED` verlangt mindestens eine nicht rein preisbasierte Bestätigung.
+- [ ] Fehlende Volume-/Benchmark-/Breadth-Daten bleiben `null`/„n/a“, nicht 0.
+- [ ] Nachfolgendes Gegen-Cross setzt früheres Ereignis auf `SUPERSEDED`.
+- [ ] BTC-Derivatedaten beeinflussen keine einzelnen Aktien-Scores.
+- [ ] Bestehende Gate-Caps **55/60/65/70** und Trendmultiplikatoren **0,90/1,00/1,10** bleiben identisch.
+- [ ] Keine quantitative Trading-Strategie, kein Python-Backtest, keine Backtest-Optimierung.
+- [ ] Nur deterministische Unit-/Regressionstests und manuelle historische Plausibilitätsfälle.
+- [ ] Implementierungsstatus erst nach tatsächlichen Code-Commits und Tests von OFFEN auf erledigt setzen.
+
+**Interpretation:** Die neue Logik beurteilt die *Verlässlichkeit eines technischen Signals für Long-only-Entscheidungen*. Sie prognostiziert weder einen exakten Boden noch behauptet sie eine nachgewiesene algorithmische Steuerung.
+
+---
+
+
 > Stand: 11.10.2026 | Tip `a0979593fe13792fd13aa7eaf183cb808b396791` (#209 Gold-Chart im BTC-Design, parent `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2` #206 Ampel Gold MA50; Feature-Tip Gold `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` #201; Index davor Tip `8add9ed1e6d599283368896127711486955855f3` #200) | Keep-Alive / `RENDER_URL` ist auf der Production-Umgebung bereits grün und **kein Ampel-ROT**.
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
