@@ -9,6 +9,24 @@
 
 ---
 
+## CHAT-SCOPE-KLARSTELLUNG (13.11.2026) — maßgeblicher Produktumfang
+
+Diese Datei bleibt der **BTC-Research- und Datenanhang**. Für Produktimplementierung und Long-only-Scope ist `WORK.md` maßgeblich, insbesondere „CHAT-ERGÄNZUNG 13.11.2026“. Die beiden Dateien dürfen nicht als Aufforderung zu einer quantitativen Handelsstrategie gelesen werden.
+
+**Verbindlicher Scope:**
+- Kein Python, keine Tradingstrategie, kein quantitativer Rendite-Backtest oder Parameter-Fitting.
+- Keine separate große Market-Structure-Engine: Wiederverwendung der bestehenden technischen Daten und der Cross-Logik.
+- Aktien-Sektion 12: Signalbestätigung / Konfliktstatus für Golden und Death Cross, Volumen, Relative Stärke gegen Sektor/Benchmark, Marktbreite sofern verfügbar.
+- Der bestehende 4/4-Score, Fundamental Quality Score, Trendmultiplikatoren und Gate-Caps bleiben im ersten Release unverändert.
+- BTC-spezifische Funding-, Open-Interest-, Liquidations- und ETF-Daten bleiben BTC-Kontext und werden nicht auf Einzeltitel-Scores übertragen.
+- Deterministische Softwaretests und manuelle historische Plausibilitätsprüfung sind erwünscht und sind ausdrücklich **keine** Trading-Backtests.
+
+**Korrektur zur ursprünglichen Research-Roadmap:** Die früheren Abschnitte „Backtest- und Validierungsplan“, „Walk-forward“, Renditeoptimierung sowie vorgeschlagene zusätzliche Score-Caps sind Research-Ideen aus der ersten Fassung und **nicht Teil des aktuellen freigegebenen Umsetzungsumfangs**. Sie dürfen nicht gegen die Long-only-Anweisung in `WORK.md` umgesetzt werden.
+
+**Fakten-/Datenhinweis:** Alle BTC-Werte im Snapshot vom 13.11.2026 sind historische Momentaufnahmen aus den im Abschnitt 17 aufgeführten Aggregatorquellen. Sie sind keine Live-Werte, die im Code hardcodiert werden dürfen. Der Wert „BTC-OI in BTC/Kontrakten +0,51 %“ ist getrennt vom USD-OI (−5,92 %) zu führen. Liquidationsanteil (95 % Longs) beschreibt realisierte Liquidationen, nicht die vollständige offene Marktpositionierung.
+
+---
+
 ## 1. Auftrag und Zusammenfassung
 
 Die technische Analyse und die Scoring-Gate-Logik sollen künftig zwischen folgenden Sachverhalten unterscheiden:
