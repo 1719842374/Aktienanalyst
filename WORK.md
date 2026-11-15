@@ -558,3 +558,178 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [Future_4_Google_Trends_Conflict_and_Fixes.md](./Future_4_Google_Trends_Conflict_and_Fixes.md) | 🟢 Konflikt Score-0 bei SerpApi-Fehler (#200, Tip `8add9ed1`). Dateiname bleibt `Future_4`. Soll: Last-Good 6–12h, UI-Kennzeichnung, ohne Wert in 48h nicht verfügbar. Ist: Last-Good 48h, `closedIndicator` danach, Gewicht ×1,7 bleibt. Zonen unberührt |
 | [Future_5_Google_Trends_Cache_Implementation.md](./Future_5_Google_Trends_Cache_Implementation.md) | 🟢 Cache-Umsetzung (#200, Tip `8add9ed1`). Dateiname bleibt `Future_5`. Soll-Datei `server/cache/google-trends-cache.ts` liegt. Ist: In-Memory, frisch 12h, `ageHours`/`isStale` (Schwelle 24h, Skizze `> 6` nicht). UI `client/src/components/recession/recessionDashboardPartsB1.tsx` und `recessionDashboardPartsB2.tsx`. Redis nicht gebaut |
 | [Future_Work.md](./Future_Work.md) | Roadmap |
+
+## NEU 15.11.2026 — NVO Yield Interaction: Dividend Yield × Earnings Yield × Kursentwicklung
+
+**Status:** verbindlicher fachlicher Implementierungsauftrag für die bestehende Aktienanalyse / technische Chart-Sektion 12. Spezifikationserweiterung auf dem aktuellen PR-Branch; noch keine Produktionscode-Änderung durch diesen Abschnitt. Nutzerbeobachtung aus dem NVO-Chart: In Phasen verbesserter Profitabilität und steigender Kursbewertung war die Dividendenrendite rückläufig, während die Earnings Yield positiv blieb. In mehreren sichtbaren Phasen stiegen Dividend Yield und Earnings Yield gleichzeitig, während der NVO-Kurs deutlich fiel. Diese historische Beobachtung ist ein Research-Ausgangspunkt; die Häufigkeit („fast jedes Mal“) ist ohne Rohzeitreihe nicht als statistisch bestätigte Regel festzuschreiben.
+
+### 1. Bestehender Repository-IST-Stand (erneut geprüft 15.11.2026)
+
+| Datei | Bereits vorhandene Funktion | Konsequenz |
+|---|---|---|
+| `shared/dividends.ts` | Historische TTM-Dividendenrendite je Kurstag: `Σ Dividenden TTM / Close`; Dividendenevents, Ex-Date-Glättung, Sonderdividendenkennzeichnung, Währungsschutz | Wiederverwenden; keine neue Dividend-History-Berechnung. |
+| `shared/earnings-yield-roic.ts` | Historische Earnings Yield: TTM-EPS / Kurstag; Filing-as-of; Quarter-Gap-Guard; Währungs-/FX-Guard; ROIC-Serien | Wiederverwenden; keine zweite EPS-/EY-Pipeline. |
+| `client/src/components/sections/TechnicalChart.tsx` | Vorhandene Toggles `Div. Yield`, `Earnings Yield`, `ROIC`, Peer; Dividend- und EY-Linien liegen auf separaten rechten %-Achsen; Tooltips und Quellenhinweise vorhanden | Neuer Interaktions-Toggle und Interpretationskarte; keine dritte Chart-Yield-Linie. |
+| `server/catalyst-engine.ts` | `LynchClass`: `slow_grower`, `stalwart`, `fast_grower`, `cyclical`, `turnaround`, `asset_play`; `classifyLynch()` | Lynch-Typ als Regime-Kontext verwenden, nicht im Chart neu erfinden. |
+| `client/src/components/sections/Section2.tsx` | Peter-Lynch-Klassifikation wird in der UI zusätzlich über eigene Heuristik dargestellt | Vor Nutzung Klassifikationskonsistenz mit `data.lynchClass` prüfen; nicht stillschweigend widersprüchliche Lynch-Typen verwenden. |
+| `shared/bias-fixes.ts` | Reverse-g*, DCF/Analyst-Divergenz, Expected Damage, Moat, Government Exposure, vorhandene Gates, WACC-/Growth-Härtung | Vorhandene Anti-Bias-Ergebnisse darstellen; keine zweite Bewertungsstrafe. |
+| `server/scoring-gates.ts` | DCF-Reality-, Growth-, Share-Loss-, Pricing-Power- und Inventory-Gates | Unverändert lassen; Yield-Interpretation zunächst Display-only. |
+| `shared/valuation-signal.ts` | Reverse DCF / implizites Wachstum und relative Einordnung | Vorhandene Quelle von g* wiederverwenden. |
+
+**Datenqualitätsbelege der bestehenden Funktionen:**
+- Dividend Yield wird über die TTM-Dividenden im Fenster und den jeweiligen Kursschluss gebildet. Die Dividend-Historie enthält einen Ex-Date-Drift-Ausgleich. Sonderdividenden werden markiert, nicht stillschweigend aus den Cashflows entfernt.
+- Der vorhandene Kommentar in `shared/dividends.ts` dokumentiert bei NVO eine verschobene Ex-Dividendenzahlung 30.03.2026 vs. 31.03.2025 und einen rohen TTM-Spike von etwa **8,3 %**, der durch den nachvollziehbaren Fenster-Ausgleich geglättet wird.
+- Earnings Yield ist `TTM-EPS / Kurs`; Quartals-EPS wird erst ab dem Filing-/As-of-Datum verwendet. Quartalslücken werden nicht künstlich aufgefüllt. Währungen werden nicht ohne passenden FX-Faktor vermischt.
+- Die bestehenden Chart-Linien verwenden getrennte rechte Prozentachsen. Visuelle Linienhöhen dürfen nicht als direkter Wertvergleich interpretiert werden; immer Werte am gleichen Datum aus Tooltips/Serien vergleichen.
+
+### 2. Fachliche Hypothese aus dem NVO-Chart
+
+Zwei unterschiedliche Regime sollen getrennt erkannt werden:
+
+**Regime A — Profitabilitäts-/Wachstumsphase:**
+- EPS/operative Profitabilität verbessert sich.
+- Kurs steigt, weil der Markt die höhere Ertragskraft bewertet.
+- Dividend Yield kann sinken, weil die Dividende langsamer als der Aktienkurs steigt.
+- Earnings Yield kann positiv bleiben oder sinken, wenn der Kurs schneller als EPS steigt; sie kann auch steigen, wenn EPS schneller als der Kurs zunimmt.
+- Eine sinkende Dividend Yield ist bei einem profitablen Fast Grower kein automatisches Warnsignal. Prüfen, ob einbehaltene Gewinne eine ausreichende Reinvestitionsrendite/ROIC erzielen.
+
+**Regime B — gemeinsamer Yield-Anstieg / Kurs-Neubewertung:**
+- Dividend Yield und Earnings Yield steigen gleichzeitig.
+- Im NVO-Chart ist dies in mehreren sichtbaren Phasen mit deutlichen Kursrückgängen zusammengefallen.
+- Da beide Renditen den Aktienkurs im Nenner enthalten, ist dies zunächst ein Preis-/Bewertungs-Repricing-Hinweis, keine unabhängige Bestätigung künftiger Verluste.
+- Prüfen, ob EPS und Dividend je Aktie stabil/wachsend sind oder ob Gewinnrevisionen, EPS und FCF selbst sinken.
+- Ergebnis je nach Ursache: `VALUATION_REPRICING`, `EARNINGS_STRESS` oder `PAYOUT_STRESS`, nicht automatisch „bearish“.
+
+**Wichtige Korrektur:** Es ist mathematisch möglich, dass bei steigendem Aktienkurs beide Renditen steigen, sofern EPS und DPS schneller wachsen als der Kurs. Ebenso ist eine steigende Earnings Yield nicht automatisch negativ. Die Engine darf nicht nur Richtungen der Yield-Linien klassifizieren; sie muss die Zähler (EPS/DPS) und den gemeinsamen Nenner (Preis) separat zerlegen.
+
+### 3. Mathematische Definitionen
+
+Für denselben Stichtag (t), dieselbe Aktie/ADR-Einheit und dieselbe Währung:
+
+```
+DividendYield_t = DPS_TTM_t / Price_t * 100
+EarningsYield_t = EPS_TTM_t / Price_t * 100
+PayoutRatio_t = DividendYield_t / EarningsYield_t * 100
+             = DPS_TTM_t / EPS_TTM_t * 100
+```
+
+Payout Ratio nur berechnen, wenn EPS und DPS dieselbe Aktie-/ADR-Basis, Währung und Periodenbasis haben und EPS positiv sowie aussagekräftig ist. Bei EPS <= 0, fehlender EPS-Historie oder inkonsistenter Währung: `n/a`, keine Ratio.
+
+Veränderungszerlegung, bevorzugt über identische Vergleichsfenster und logarithmische Renditen:
+
+```
+dLogDY = dLogDPS_TTM - dLogPrice
+dLogEY = dLogEPS_TTM - dLogPrice
+dLogDPS = log(DPS_TTM_t / DPS_TTM_previous)
+dLogEPS = log(EPS_TTM_t / EPS_TTM_previous)
+dLogPrice = log(Price_t / Price_previous)
+```
+
+Wenn Werte null/negativ sind oder Logs nicht definiert sind, auf absolute Prozentpunkt-/Wachstumsdifferenzen ausweichen oder Ergebnis `unavailable` ausgeben; keine stillen Kappungen.
+
+**Interpretation:**
+- Beide Yields steigen + Kurs fällt: Kursverlust überwiegt die Veränderung der Zähler; Repricing-Prüfung.
+- Beide Yields steigen + Kurs steigt: EPS und DPS sind schneller als Kurs gestiegen; kann positiv sein, kein negativer Automatismus.
+- DY sinkt + EY positiv: isoliert kein Signal; EPS-/DPS-Wachstum und Kursrendite prüfen.
+- DY sinkt + EY sinkt + Kurs steigt: Kurs wächst schneller als die jeweiligen Zähler; Bewertungsmultiple expandiert. Bei moderaten Erwartungen kann gesund, bei hoher Reverse-DCF-Lücke fragil.
+- DY steigt stärker als EY: Payout Ratio steigt; Ausschüttungsdruck/Reinvestitionsfähigkeit prüfen.
+- EY steigt stärker als DY: Gewinnrendite steigt relativ zur Dividende; kann durch EPS-Wachstum oder Kursrückgang entstehen. Numerator-/Price-Decomposition zwingend.
+- EY bleibt positiv bedeutet nur positives TTM-EPS relativ zum Kurs; keine Garantie künftiger Gewinne, nachhaltiger Margen oder positiver FCF.
+
+### 4. Zusätzliche Daten-/Kennzahlen (nur wo belastbar vorhanden)
+
+| Kennzahl | Definition | Zweck |
+|---|---|---|
+| DPS Growth 3Y / 5Y | CAGR der regulären Dividende je Aktie | Ausschüttungsentwicklung |
+| EPS Growth 3Y / 5Y | vergleichbarer EPS-CAGR | Ertragsentwicklung |
+| TTM Payout Ratio | DPS TTM / EPS TTM | Gewinnanteil ausgeschüttet |
+| FCF Payout Ratio | TTM Cash Dividends / TTM Free Cash Flow | Ausschüttung aus Cashflow gedeckt? |
+| ROIC TTM / 5Y | bestehende ROIC-Daten | Qualität des Reinvestments |
+| Forward EPS Revision | Änderung des Analystenkonsenses über definiertes Fenster | Richtung der Gewinnserwartung |
+| Reverse DCF g* | vorhandenes implizites Wachstum | Markterwartung |
+| Realized Growth 8Q | vorhandenes reales Wachstum | historische operative Lieferung |
+
+FCF Payout nur dann berechnen, wenn TTM Total Cash Dividends und TTM FCF für denselben Zeitraum verfügbar sind und FCF > 0. DPS/EPS-Payout und FCF-Payout nicht verwechseln. Bei negativem FCF als „nicht durch FCF gedeckt“ kennzeichnen; keine positive Prozentzahl aus negativem Nenner darstellen. Aktienrückkäufe getrennt von Dividenden halten. Sonderdividenden kennzeichnen und für reguläre Ausschüttungs-CAGR nicht mit wiederkehrenden Dividenden vermischen.
+
+### 5. Yield Interaction Status (Display-only, keine neuen Scores/Gates)
+
+Die reine Richtungsmatrix liefert Kandidaten, aber der endgültige Status benötigt Kurs- und Zählerzerlegung:
+
+| Status-ID | Bedingungen / erforderliche Evidenz | Interpretation |
+|---|---|---|
+| `HEALTHY_COMPOUNDING` | Kurs/EPS steigen; operative Entwicklung/ROIC stützt Wachstum; Ausschüttung wächst nachhaltig; Payout/FCF bleiben tragfähig | Gesundes Compounding |
+| `REINVESTMENT_COMPOUNDING` | EPS wächst schneller als DPS; DY kann fallen; zurückbehaltene Gewinne erzielen attraktive ROIC/Investitionsrendite | Reinvestitionsmodell plausibel |
+| `VALUATION_REPRICING` | Kurs schwach/fallend und DY+EY steigen; EPS/DPS sind stabil oder fallen weniger als Kurs | Bewertungs-Multiple komprimiert; Zukunftserwartungen neu prüfen |
+| `EARNINGS_STRESS` | Kurs schwach, EY steigt, zugleich EPS-TTM/Forward-EPS/Analystenrevisionen oder Margen verschlechtern sich | Höhere EY kann Value Trap statt Chance sein |
+| `PAYOUT_STRESS` | DY steigt relativ zu EY; Payout steigt, FCF-Payout/FCF-Deckung verschlechtert sich | Dividenden-Tragfähigkeit/Reinvestition prüfen |
+| `MULTIPLE_EXPANSION` | Kurs steigt, DY und EY fallen; Preis wächst schneller als DPS/EPS und Reverse DCF zeigt hohe Erwartungen | Gesunde Rally oder Fragilität je nach Erwartungslücke |
+| `MIXED` | Richtungen oder Zähler-/Nenner-Komponenten widersprechen sich | Keine eindeutige Interpretation |
+| `UNAVAILABLE` | Unzureichende gemeinsame Datenbasis/History, Währungs-/Split-/ADR-Mismatch | Keine Einstufung |
+
+**Keine universellen Schwellen aus dem NVO-Einzelfall ableiten.** Startfenster für UI-Vergleiche können 3/6/12 Monate sowie 3Y/5Y Fundamentals umfassen. Sie sind Vergleichsansichten, keine optimierten Signalparameter. Schwellen für „stark steigend“ erst nach Prüfung der Datenfrequenz, Unternehmensklasse und Kennzahl festlegen; vorerst Veränderungswerte und Trendrichtungen transparent darstellen.
+
+### 6. Peter-Lynch-Klassifikation als Interpretationskontext
+
+Bereits vorhandene Klassen in `server/catalyst-engine.ts`: `slow_grower`, `stalwart`, `fast_grower`, `cyclical`, `turnaround`, `asset_play`. Die zentrale, serverseitige Klassifikation ist zu verwenden. UI-Heuristik in `Section2.tsx` kann abweichen; vor Implementierung prüfen, ob `data.lynchClass` und die UI-Klassifikation übereinstimmen. Keine dritte abweichende Klassifikation anlegen.
+
+| Lynch-Klasse | Yield-Interpretation |
+|---|---|
+| Fast Grower | Niedrige/sinkende DY ist nicht negativ, wenn EPS-Wachstum, ROIC und Reinvestitionsrendite stark sind. Dividendenerhöhung allein ist kein Qualitätsbeweis. EPS/EY, Forward Growth und Reinvestitionsbedarf stehen im Vordergrund. |
+| Stalwart | EPS-, DPS- und FCF-Wachstum sowie Payout Ratio gemeinsam beurteilen. Nachhaltiges Ausschüttungswachstum erwünscht. |
+| Slow Grower | Dividende ist zentraler Teil der These; DY, Payout und FCF-Deckung besonders wichtig. |
+| Cyclical | TTM-EY kann bei Peak Earnings künstlich günstig erscheinen. Mid-Cycle-/normalisierte Gewinne vorrangig; Payout im Zyklus beurteilen. |
+| Turnaround | Bei negativen/volatilen EPS keine konventionelle EY-/Payout-Interpretation erzwingen. Liquidität, normalisierter FCF und Erholung separat. |
+| Asset Play | Substanzwert/Asset Realization hat Vorrang; Yield-Overlay als Kontext, nicht als primäres Urteil. |
+
+Zusätzlich: Wenn die Klasse unbekannt oder widersprüchlich ist, generische Yield-Metriken zeigen und Lynch-spezifische Interpretation auslassen.
+
+### 7. UI-Platzierung und Interaktion in Sektion 12
+
+- Bestehende Dividend-Yield-, Earnings-Yield- und ROIC-Linien bleiben erhalten.
+- Neuer Toggle `Yield Interaction` in der existierenden Indikator-Chip-Reihe neben `Div. Yield` / `Earnings Yield`.
+- Detailkarte direkt nach den Chart-Steuerungen und vor dem eigentlichen Preis-Chart bzw. im bestehenden Fundamental-Overlay-Bereich platzieren. Bei kompakter Ansicht ein Status-Badge; bei Aktivierung Detailansicht.
+- Kein weiterer Kursachsen-Overlay und keine zusätzliche Yield-Linie: DY und EY haben bereits separate Prozentachsen; die gemeinsame Interpretation gehört in eine Karte.
+- Zeige zum gleichen Stichtag: Price Return, DPS TTM, EPS TTM, DY, EY, Payout Ratio, DPS-/EPS-Wachstum, FCF-Payout sofern verfügbar, Lynch-Klasse und Status mit Begründung.
+- Zeige Komponentenpfeile / Kurs- und Zählerzerlegung: „Preis“, „TTM-EPS“, „TTM-Dividende“. So ist klar, warum Yield steigt/sinkt.
+- Tooltip muss Formel, Stichtag, Quelle, EPS-Filing-As-of, Dividenden-Ex-Date, Currency und ggf. FX-/ADR-Konversion angeben.
+- Kein Ampelstatus allein aus DY/EY-Richtung. Status muss Zähler/Nenner, operative Daten und Lynch-Klasse berücksichtigen.
+
+### 8. Scoring-Schutz / Integration
+
+- Version 1 ist **Display-only**: keine Änderung an Quality Score, 4/4-Kaufbedingungen, Trendmultiplikator, fundamentalen Gate-Caps oder bestehender Anti-Bias-Pipeline.
+- Bestehendes `DCF_REALITY_CHECK`, `biasFix.triggers`, `biasFix.switched`, `biasFix.redFlags`, Reverse DCF und Realized Growth werden angezeigt/verlinkt, nicht dupliziert.
+- Die Anzeige erklärt, wenn eine Erwartungslücke bereits vom vorhandenen DCF-/Anti-Bias-Gate berücksichtigt wurde.
+- Yield-Interaktion ist kein zweites DCF-Gate und keine doppelte Bestrafung.
+- Kein positiver Scorebonus allein wegen hoher EY oder DY.
+- Kein negativer Scoreabzug allein wegen sinkender DY bei Fast Grower.
+- Neue Gates/Score-Wirkung nur nach separater fachlicher Entscheidung; nicht Teil dieses Auftrags.
+
+### 9. NVO-Chart als Plausibilitätsfall, nicht als statistischer Beweis
+
+Das vom Nutzer bereitgestellte Chart soll als manueller Plausibilitätsfall verwendet werden:
+- In der historisch dargestellten Phase verbesserter Profitabilität/Yield-Kompression ist sinkende Dividend Yield bei positiver Earnings Yield als potenziell gesundes Wachstums-/Bewertungsregime zu erkennen.
+- In den später dargestellten Phasen, in denen beide Renditen zugleich steigen und der Kurs fällt, muss der Status mindestens eine Repricing-Prüfung auslösen.
+- Die Engine soll anschließend unterscheiden, ob EPS/DPS stabil bleiben (primär Multiple-Kompression), EPS/Forward Estimates nachgeben (Earnings Stress) oder Payout/FCF Coverage kippen (Payout Stress).
+- Screenshot ohne vollständig lesbare Legende/Rohdaten beweist keine exakten Datenwerte, Schwellen oder Häufigkeiten. Werte müssen aus den vorhandenen historischen Serien und Tooltips stammen; keine Werte aus Bildpixeln ableiten oder hardcodieren.
+
+### 10. Deterministische Test- und Abnahmekriterien (kein Trading-Backtest)
+
+- [ ] DY- und EY-Formeln sowie Payout-Identität `DY / EY = DPS / EPS` bei gleicher Basis testen.
+- [ ] Kurs fällt, EPS/DPS stabil und beide Yields steigen → `VALUATION_REPRICING`, nicht automatisch `EARNINGS_STRESS`.
+- [ ] Kurs fällt und EPS/Forward Estimates fallen mit → `EARNINGS_STRESS`.
+- [ ] Dividend Growth > EPS Growth und FCF-Payout verschlechtert sich → `PAYOUT_STRESS`.
+- [ ] Fast Grower mit sinkender DY und steigender EPS-/ROIC-Entwicklung → kein automatischer Malus.
+- [ ] Stalwart mit nachhaltiger DPS-/EPS-/FCF-Entwicklung → Ausschüttung als positives/neutral tragfähiges Merkmal.
+- [ ] Cyclical mit Peak EPS → keine irreführende günstige TTM-EY-Einstufung ohne Mid-Cycle-Kontext.
+- [ ] Negative EPS / fehlender FCF / Sonderdividende / Datenlücke → n/a oder spezieller Status, niemals erfundener Prozentsatz.
+- [ ] Split-/ADR-/FX-Einheiten und as-of-Daten stimmen überein; keine Lookahead-Daten.
+- [ ] Bestehende Dividend-Yield-, Earnings-Yield-, ROIC-Linien und Tooltips bleiben identisch.
+- [ ] Bestehende 4/4-Ampel, Reverse DCF, Anti-Bias-Trigger, Score und Gates ändern sich nicht.
+- [ ] NVO-Screenshot dient nur als manueller Plausibilitätsfall; keine Schwelle wird aus einem einzigen Titel abgeleitet.
+
+### 11. Vorrangige Umsetzungsentscheidung
+
+Zuerst eine kleine, reine Funktion in `shared/yield-interaction.ts` (oder passend in vorhandener gemeinsamer Datei) plus Tests. Danach Toggle und Karte in `TechnicalChart.tsx`. Bestehende Serien werden konsumiert. Kein neuer Provider, kein neues DB-Schema, keine neue Scoring-Pipeline, kein quantitativer Trading-Backtest. Lynch-Klasse kommt aus dem bestehenden Analyseobjekt; Klassifikationskonsistenz zwischen Server und Section 2 wird vor Verwendung geprüft.
+
+---
+
