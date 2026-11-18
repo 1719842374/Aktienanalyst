@@ -60,6 +60,7 @@ export class FakeElement extends FakeNode {
   querySelector() { return null; }
   querySelectorAll() { return []; }
   getElementsByTagName() { return []; }
+  getElementsByClassName() { return []; }
   closest() { return null; }
   matches() { return false; }
   focus() {} blur() {} click() {} scrollIntoView() {} scrollTo() {}
@@ -88,6 +89,7 @@ export class FakeDocument extends FakeNode {
   querySelector() { return null; }
   querySelectorAll() { return []; }
   getElementsByTagName() { return []; }
+  getElementsByClassName() { return []; }
   hasFocus() { return true; }
 }
 export class MemoryStorage {

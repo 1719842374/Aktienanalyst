@@ -88,7 +88,10 @@ for (const r of ["FMP-Quote GCUSD fehlt", "FMP-Historie GCUSD leer", "Spot-Preis
 }
 check("Route wählt TTL nach partial", srcAll.includes("value.analysis.partial ? GOLD_ANALYSIS_PARTIAL_TTL_MS : GOLD_ANALYSIS_CACHE_TTL_MS"));
 const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
-check("Aktualisieren-Button sendet ?fresh=1", dash.includes('onClick={() => { freshRef.current = true; refetch(); }}') && dash.includes('fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold"'));
+check("Aktualisieren-Button sendet ?fresh=1",
+  /const reloadLive = useCallback\(\(\) => \{\s*freshRef\.current = true;\s*void refetch\(\);/.test(dash) &&
+  /onClick=\{reloadLive\}[\s\S]{0,240}data-testid="gold-refresh"[\s\S]{0,800}Aktualisieren/.test(dash) &&
+  dash.includes('fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold"'));
 check("UI-Hinweis bei partial", dash.includes("{data.partial && (") && dash.includes("Teilweise Ersatzwerte: {(data.partialReasons ?? []).join(\" · \")"));
 const schema = readFileSync(new URL("../shared/gold-schema.ts", import.meta.url), "utf8");
 check("Schema: partial/partialReasons optional", schema.includes("partial?: true;") && schema.includes("partialReasons?: string[];"));

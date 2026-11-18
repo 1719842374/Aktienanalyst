@@ -4,7 +4,7 @@
 // Falls back to a no-op if SQLite cannot open (e.g. read-only FS).
 import Database from "better-sqlite3";
 import path from "path";
-import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
+import { currencyFromTickerSuffix, isMinorUnitListingTicker, minorUnitInfo } from "../shared/listing-units";
 
 const DB_PATH = path.resolve(process.cwd(), "data.db");
 const CACHE_TTL_DAYS = 7;
@@ -123,10 +123,18 @@ function lookupAnalysisRow(d: Database.Database, key: string): { data: string; u
  */
 export function isPreDcfFxEntry(ticker: string, data: any): boolean {
   if (!data || typeof data !== "object") return false;
+  const symbol = typeof data.ticker === "string" && data.ticker.trim() ? data.ticker : ticker;
+  const ccy = typeof data.currency === "string" ? data.currency : "";
+  // .L/.JO/.TA gehören in die Major-Einheit (GBP/ZAR/ILS). USD ist die DCF-FX-Überumrechnung
+  // (SHEL.L live 01.11.2026: currency USD, currencyInfo.reportedCurrency GBP) und wird neu gebaut.
+  // GBP ohne currencyInfo ist der Soll-Stand und bleibt im Cache (kein Schema-Bump, VOW3/SAP/MSFT unberührt).
+  if (isMinorUnitListingTicker(symbol) && ccy.toUpperCase() === "USD") return true;
   // FX fehlte beim Rechnen (converted:false) → beim nächsten Abruf neu versuchen, wie #244 bei Minor Units.
   if (data.currencyInfo) return data.currencyInfo.converted === false;
-  const ccy = typeof data.currency === "string" ? data.currency : "";
-  if (ccy && ccy !== "USD") return true;
+  if (ccy && ccy !== "USD") {
+    if (isMinorUnitListingTicker(symbol) && !minorUnitInfo(ccy)) return false;
+    return true;
+  }
   const sfx = currencyFromTickerSuffix(ticker);
   return data.dataSource === "yahoo" && !!sfx && sfx !== "USD";
 }

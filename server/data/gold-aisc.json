@@ -1,8 +1,8 @@
 {
-  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2). Lookahead: 15 von 30 Werten (alle 2024er NEM/B/AEM aus Vorjahresspalten, NEM 2025-Q1–Q3 aus dem Release vom 19.02.2026) sind nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung (je Wert in note).",
+  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2). Lookahead: 15 von 30 Werten (alle 2024er NEM/B/AEM aus Vorjahresspalten, NEM 2025-Q1–Q3 aus dem Release vom 19.02.2026) sind nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung (je Wert in note). Historie vor 2024-Q1, abgerufen 2026-11-02: Quartals-AISC aus den zeitgleichen SEC-Earnings-Exhibits (by-product, NEM/B/AEM). FMP führt kein AISC-Feld (income-statement/key-metrics). Fehlt eine Firma, fehlt der Eintrag; der Ø entsteht erst ab zwei belegten Firmen, nichts wird interpoliert. Barrick 2020-Q2, 2020-Q4 und 2022-Q2 stehen nur in der Vergleichsspalte des Folgeberichts und tragen die Lookahead-Note.",
   "unit": "USD/oz",
   "basis": "by-product",
-  "retrievedAt": "2026-10-18",
+  "retrievedAt": "2026-11-02",
   "companies": {
     "NEM": {
       "name": "Newmont",
@@ -12,6 +12,7 @@
     "B": {
       "name": "Barrick",
       "ticker": "B",
+      "aliases": ["GOLD"],
       "metric": "Gold AISC ($/oz), by-product, je verkaufter Unze (Barrick-Anteil)"
     },
     "AEM": {
@@ -21,6 +22,665 @@
     }
   },
   "values": [
+    {
+      "company": "NEM",
+      "quarter": "2016-Q3",
+      "aisc": 935,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752316007034/a51447706ex99_1.htm",
+      "sourceTitle": "Newmont 2016 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2016-10-26"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2016-Q4",
+      "aisc": 914,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752317000559/a51513555ex99_1.htm",
+      "sourceTitle": "Newmont 2016 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2017-02-21"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2017-Q1",
+      "aisc": 881,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752317001143/a51545956ex99_1.htm",
+      "sourceTitle": "Newmont 2017 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2017-04-24"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2017-Q2",
+      "aisc": 869,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752317002051/a51595059ex99_1.htm",
+      "sourceTitle": "Newmont 2017 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2017-07-25"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2017-Q3",
+      "aisc": 917,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752317002806/a51705675_ex991.htm",
+      "sourceTitle": "Newmont 2017 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2017-10-26"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2017-Q4",
+      "aisc": 944,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752318000390/a51761887_ex991.htm",
+      "sourceTitle": "Newmont 2017 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2018-02-22"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2018-Q1",
+      "aisc": 957,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752318000815/a51795441ex99_1.htm",
+      "sourceTitle": "Newmont 2018 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2018-04-26"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2018-Q2",
+      "aisc": 1002,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752318001534/a51843111ex99_1.htm",
+      "sourceTitle": "Newmont 2018 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2018-07-26"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2018-Q3",
+      "aisc": 915,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752318002139/a51888653ex99_1.htm",
+      "sourceTitle": "Newmont 2018 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2018-10-25"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2018-Q4",
+      "aisc": 835,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752319000406/a51943855ex99_1.htm",
+      "sourceTitle": "Newmont 2018 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2019-02-21"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2019-Q1",
+      "aisc": 896,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752319000886/a51974292_ex991.htm",
+      "sourceTitle": "Newmont 2019 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2019-04-25"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2019-Q2",
+      "aisc": 1047,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752319001578/a52018256_ex991.htm",
+      "sourceTitle": "Newmont 2019 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2019-07-25"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2019-Q3",
+      "aisc": 997,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752319002190/a52123028ex99_1.htm",
+      "sourceTitle": "Newmont 2019 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2019-11-05"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2019-Q4",
+      "aisc": 954,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752320000234/a52176631ex99_1.htm",
+      "sourceTitle": "Newmont 2019 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2020-02-20"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2020-Q1",
+      "aisc": 1040,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752320000647/a52214383ex99_1.htm",
+      "sourceTitle": "Newmont 2020 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2020-05-05"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2020-Q2",
+      "aisc": 1104,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752320001062/a52258116ex99_1.htm",
+      "sourceTitle": "Newmont 2020 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2020-07-30"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2020-Q3",
+      "aisc": 940,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752320001374/a52316426ex99_1.htm",
+      "sourceTitle": "Newmont 2020 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2020-10-29"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2020-Q4",
+      "aisc": 957,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752321000209/a52380917ex99_1.htm",
+      "sourceTitle": "Newmont 2020 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2021-02-18"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2021-Q1",
+      "aisc": 953,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752321000532/a52420316ex99_1.htm",
+      "sourceTitle": "Newmont 2021 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2021-04-29"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2021-Q2",
+      "aisc": 918,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752321000900/a52463960ex991.htm",
+      "sourceTitle": "Newmont 2021 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2021-07-22"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2021-Q3",
+      "aisc": 1041,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752321001269/a52516925ex99_1.htm",
+      "sourceTitle": "Newmont 2021 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2021-10-28"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2021-Q4",
+      "aisc": 965,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752322000249/a52584477ex99_1.htm",
+      "sourceTitle": "Newmont 2021 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2022-02-24"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2022-Q1",
+      "aisc": 1036,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752322000461/a52693640ex99_1.htm",
+      "sourceTitle": "Newmont 2022 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2022-04-22"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2022-Q2",
+      "aisc": 1261,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752322000888/a52789249ex991.htm",
+      "sourceTitle": "Newmont 2022 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2022-07-25"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2022-Q3",
+      "aisc": 1268,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752322001452/a52955822_ex991.htm",
+      "sourceTitle": "Newmont 2022 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2022-11-01"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2022-Q4",
+      "aisc": 1211,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752323000340/a53340839_ex991.htm",
+      "sourceTitle": "Newmont 2022 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2023-02-23"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2023-Q1",
+      "aisc": 1354,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752323000631/a53388436ex99_1.htm",
+      "sourceTitle": "Newmont 2023 Q1 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2023-04-27"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2023-Q2",
+      "aisc": 1531,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752323001113/a53468942ex99_1.htm",
+      "sourceTitle": "Newmont 2023 Q2 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2023-07-20"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2023-Q3",
+      "aisc": 1467,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000115752323001555/a53687147ex99_1.htm",
+      "sourceTitle": "Newmont 2023 Q3 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2023-10-26"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2023-Q4",
+      "aisc": 1540,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472724000006/newmontq42023earningsand20.htm",
+      "sourceTitle": "Newmont 2023 Q4 Results (8-K Ex. 99.1), Total Gold AISC per ounce (by-product), Spalte des Quartals",
+      "sourceDate": "2024-02-22"
+    },
+    {
+      "company": "B",
+      "quarter": "2016-Q3",
+      "aisc": 704,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312516749485/d246071dex991.htm",
+      "sourceTitle": "Barrick 2016 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2016-10-27"
+    },
+    {
+      "company": "B",
+      "quarter": "2017-Q1",
+      "aisc": 772,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312517137054/d314880dex991.htm",
+      "sourceTitle": "Barrick 2017 Q1 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2017-04-26"
+    },
+    {
+      "company": "B",
+      "quarter": "2017-Q2",
+      "aisc": 710,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312517238483/d429608dex991.htm",
+      "sourceTitle": "Barrick 2017 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2017-07-27"
+    },
+    {
+      "company": "B",
+      "quarter": "2018-Q1",
+      "aisc": 804,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312518128798/d575519dex991.htm",
+      "sourceTitle": "Barrick 2018 Q1 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2018-04-24"
+    },
+    {
+      "company": "B",
+      "quarter": "2018-Q2",
+      "aisc": 856,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312518227887/d671737dex991.htm",
+      "sourceTitle": "Barrick 2018 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2018-07-26"
+    },
+    {
+      "company": "B",
+      "quarter": "2018-Q3",
+      "aisc": 785,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312518307879/d637760dex991.htm",
+      "sourceTitle": "Barrick 2018 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2018-10-25"
+    },
+    {
+      "company": "B",
+      "quarter": "2019-Q3",
+      "aisc": 984,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312519285780/d829685dex991.htm",
+      "sourceTitle": "Barrick 2019 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2019-11-06"
+    },
+    {
+      "company": "B",
+      "quarter": "2020-Q1",
+      "aisc": 954,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312520135003/d792939dex991.htm",
+      "sourceTitle": "Barrick 2020 Q1 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2020-05-06"
+    },
+    {
+      "company": "B",
+      "quarter": "2020-Q2",
+      "aisc": 1031,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312520287884/d38885dex991.htm",
+      "sourceTitle": "Barrick 2020 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2020-11-06",
+      "note": "Lookahead: Quelle eingereicht 06.11.2020, nach der Chart-Stufe ab 29.08.2020 (Vergleichsspalte im Q3-2020-Bericht). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
+    },
+    {
+      "company": "B",
+      "quarter": "2020-Q3",
+      "aisc": 966,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312520287884/d38885dex991.htm",
+      "sourceTitle": "Barrick 2020 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2020-11-06"
+    },
+    {
+      "company": "B",
+      "quarter": "2020-Q4",
+      "aisc": 929,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312521151919/d138491dex991.htm",
+      "sourceTitle": "Barrick 2020 Q4 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2021-05-05",
+      "note": "Lookahead: Quelle eingereicht 05.05.2021, nach der Chart-Stufe ab 01.03.2021 (Vergleichsspalte im Q1-2021-Bericht). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
+    },
+    {
+      "company": "B",
+      "quarter": "2021-Q1",
+      "aisc": 1018,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312521151919/d138491dex991.htm",
+      "sourceTitle": "Barrick 2021 Q1 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2021-05-05"
+    },
+    {
+      "company": "B",
+      "quarter": "2021-Q2",
+      "aisc": 1087,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312521240554/d181316dex991.htm",
+      "sourceTitle": "Barrick 2021 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2021-08-09"
+    },
+    {
+      "company": "B",
+      "quarter": "2021-Q3",
+      "aisc": 1034,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312521320495/d161850dex991.htm",
+      "sourceTitle": "Barrick 2021 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2021-11-05"
+    },
+    {
+      "company": "B",
+      "quarter": "2021-Q4",
+      "aisc": 971,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312522044545/d191140dex991.htm",
+      "sourceTitle": "Barrick 2021 Q4 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2022-02-17"
+    },
+    {
+      "company": "B",
+      "quarter": "2022-Q2",
+      "aisc": 1212,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312522277128/d388122dex991.htm",
+      "sourceTitle": "Barrick 2022 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2022-11-04",
+      "note": "Lookahead: Quelle eingereicht 04.11.2022, nach der Chart-Stufe ab 29.08.2022 (Vergleichsspalte im Q3-2022-Bericht). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
+    },
+    {
+      "company": "B",
+      "quarter": "2022-Q3",
+      "aisc": 1269,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312522277128/d388122dex991.htm",
+      "sourceTitle": "Barrick 2022 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2022-11-04"
+    },
+    {
+      "company": "B",
+      "quarter": "2022-Q4",
+      "aisc": 1242,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312523040263/d441831dex991.htm",
+      "sourceTitle": "Barrick 2022 Q4 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2023-02-15"
+    },
+    {
+      "company": "B",
+      "quarter": "2023-Q1",
+      "aisc": 1370,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312523133185/d481455dex991.htm",
+      "sourceTitle": "Barrick 2023 Q1 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2023-05-03"
+    },
+    {
+      "company": "B",
+      "quarter": "2023-Q2",
+      "aisc": 1355,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312523206350/d470594dex991.htm",
+      "sourceTitle": "Barrick 2023 Q2 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2023-08-08"
+    },
+    {
+      "company": "B",
+      "quarter": "2023-Q3",
+      "aisc": 1255,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312523269404/d572113dex991.htm",
+      "sourceTitle": "Barrick 2023 Q3 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2023-11-02"
+    },
+    {
+      "company": "B",
+      "quarter": "2023-Q4",
+      "aisc": 1364,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312524036626/d647461dex991.htm",
+      "sourceTitle": "Barrick 2023 Q4 Results (6-K Ex. 99.1), Gold All-in sustaining costs ($ per ounce), by-product (Kupfer als Credit), Group-Zeile",
+      "sourceDate": "2024-02-14"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2016-Q3",
+      "aisc": 821,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465916152858/a16-20588_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2016 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2016-10-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2016-Q4",
+      "aisc": 832,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465917010046/a17-4614_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2016 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2017-02-17"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2017-Q1",
+      "aisc": 741,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465917029274/a17-12268_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2017 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2017-05-03"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2017-Q2",
+      "aisc": 785,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746917004810/a2232771zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2017 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2017-07-27"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2017-Q3",
+      "aisc": 789,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746917006574/a2233637zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2017 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2017-10-26"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2017-Q4",
+      "aisc": 905,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465918010221/a18-6243_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2017 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2018-02-16"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2018-Q1",
+      "aisc": 889,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746918003285/a2235443zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2018 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2018-04-27"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2018-Q2",
+      "aisc": 921,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746918005198/a2236286zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2018 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2018-07-26"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2018-Q3",
+      "aisc": 848,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746918006858/a2236956zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2018 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2018-10-25"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2018-Q4",
+      "aisc": 852,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465919009196/a19-4871_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2018 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2019-02-19"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2019-Q1",
+      "aisc": 836,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746919002610/a2238546zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2019 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2019-04-26"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2019-Q2",
+      "aisc": 953,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746919004371/a2239320zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2019 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2019-07-25"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2019-Q3",
+      "aisc": 903,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746919005881/a2239903zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2019 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2019-10-24"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2019-Q4",
+      "aisc": 1039,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465920022277/a20-8158_1ex99d1.htm",
+      "sourceTitle": "Agnico Eagle 2019 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2020-02-18"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2020-Q1",
+      "aisc": 1099,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746920002746/a2241472zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2020 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2020-04-30"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2020-Q2",
+      "aisc": 1142,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746920004310/a2242129zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2020 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2020-07-29"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2020-Q3",
+      "aisc": 1016,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746920005321/a2242563zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2020 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2020-10-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2020-Q4",
+      "aisc": 985,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465921023483/tm214428d1_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2020 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2021-02-16"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2021-Q1",
+      "aisc": 1007,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000104746921001062/a2243227zex-99_1.htm",
+      "sourceTitle": "Agnico Eagle 2021 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2021-04-29"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2021-Q2",
+      "aisc": 1037,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465921097041/tm2121456d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2021 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2021-07-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2021-Q3",
+      "aisc": 1059,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465921130548/tm2129214d1_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2021 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2021-10-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2021-Q4",
+      "aisc": 1136,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465922027214/tm222650d1_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2021 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2022-02-25"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2022-Q1",
+      "aisc": 1079,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465922052399/tm2211395d1_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2022 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2022-04-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2022-Q2",
+      "aisc": 1026,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465922083229/tm2220357d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2022 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2022-07-27"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2022-Q3",
+      "aisc": 1106,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465922111609/tm2226859d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2022 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2022-10-26"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2022-Q4",
+      "aisc": 1231,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465923023723/tm234901d1_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2022 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2023-02-21"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2023-Q1",
+      "aisc": 1125,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465923051489/tm2310410d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2023 Q1 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2023-04-27"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2023-Q2",
+      "aisc": 1150,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465923084368/tm2318988d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2023 Q2 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2023-07-26"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2023-Q3",
+      "aisc": 1210,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465923111470/tm2326479d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2023 Q3 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2023-10-25"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2023-Q4",
+      "aisc": 1227,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465924025342/tm242398d2_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle 2023 Q4 Results (6-K Ex. 99.1), All-in sustaining costs per ounce of gold produced (by-product basis), Spalte des Quartals",
+      "sourceDate": "2024-02-20"
+    },
     {
       "company": "NEM",
       "quarter": "2024-Q1",
@@ -277,6 +937,35 @@
       "sourceTitle": "Agnico Eagle Q2 2026 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q2 2026",
       "sourceDate": "2026-07-30",
       "note": "Ab 2026 revidierte Zusammensetzung (NTI-Zahlungen Meadowbank); laut Q4/FY2025-Bericht FY2025 neu 1.313 statt 1.339 $/oz. Nicht zurückgerechnet."
+    }
+  ],
+  "mapOnly": [
+    {
+      "code": "KGC",
+      "quarter": "2026-Q3",
+      "aisc": 1917,
+      "sourceUrl": "https://www.kinross.com/English/news-and-investors/news-releases/press-release-details/2026/Kinross-reports-2026-third-quarter-results/default.aspx",
+      "sourceTitle": "Kinross Q3 2026 results, attributable AISC per ounce sold on a by-product basis",
+      "sourceDate": "2026-10-28",
+      "metricNote": "Miner, gleiche By-Product-Basis wie NEM/B/AEM: attributable all-in sustaining cost per Au oz sold on a by-product basis, Q3 2026, 1917 USD/oz. Quelle: Kinross-Pressemitteilung 28.10.2026. Nicht in der Chart-Linie aus NEM/B/AEM."
+    },
+    {
+      "code": "WPM",
+      "quarter": "2026-Q2",
+      "aisc": 568,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1323404/000119312526338641/d15525dex991.htm",
+      "sourceTitle": "Wheaton Precious Metals Q2 2026, Exhibit 99.1, average cash costs per GEO",
+      "sourceDate": "2026-08-06",
+      "metricNote": "Streamer, kein WGC-AISC. AISC-Äquivalent hier: average cash cost je GEO. Formel der Quelle: (Cost of sales − depletion − cost of sales related to delay ounces) / verkaufte Mengen, von Wheaton auf GEO umgerechnet. Q2 2026: 568 USD je GEO. Ohne Sustaining-Capex eines Minenbetreibers."
+    },
+    {
+      "code": "FNV",
+      "quarter": "2026-Q2",
+      "aisc": 347,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1456346/000110465926094181/fnv-20260630xex99d2.htm",
+      "sourceTitle": "Franco-Nevada Q2 2026 MD&A, Cash Costs per GEO sold",
+      "sourceDate": "2026-08-11",
+      "metricNote": "Royalty/Stream, kein WGC-AISC. AISC-Äquivalent hier: Cash Costs per GEO sold = Cash Costs / GEO sold. Q2 2026: 347 USD je GEO. Das sind die direkten Kosten der Verkäufe, nicht die All-in-Sustaining-Kosten eines Minenbetreibers."
     }
   ]
 }

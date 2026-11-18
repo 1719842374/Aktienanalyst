@@ -11,9 +11,10 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
-  CHAT_DASHBOARDS, CHAT_LIMITS,
-  type ChatContext, type ChatRequestBody, type ChatResponseBody,
+  CHAT_DASHBOARDS, CHAT_LIMITS, chatContextTrimReport, fitChatContextBudget,
+  type ChatContext, type ChatContextTrimEntry, type ChatRequestBody, type ChatResponseBody,
 } from "../shared/chat-context";
+import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 
 /** Eigenes Zeitlimit für den Chat-Call (liegt unter dem apiRequest-Client-Timeout von 90 s). */
 export const CHAT_LLM_TIMEOUT_MS = 30_000;
@@ -46,9 +47,9 @@ export const chatRequestSchema = z.object({
     })).max(CHAT_LIMITS.maxSections),
     gates: z.array(z.object({
       id: z.string().max(60), active: z.boolean(), cap: z.number().finite().nullable(),
-      severity: z.string().max(30), rationale: z.string().max(CHAT_LIMITS.maxFactValueChars),
+      severity: z.string().max(30), rationale: z.string().max(CHAT_LIMITS.maxRationaleChars),
     })).max(CHAT_LIMITS.maxGates),
-    notes: z.array(z.string().max(CHAT_LIMITS.maxFactValueChars)).max(CHAT_LIMITS.maxNotes),
+    notes: z.array(z.string().max(CHAT_LIMITS.maxNoteChars)).max(CHAT_LIMITS.maxNotes),
   }),
   messages: z.array(z.object({
     role: z.enum(["user", "assistant"]),
@@ -57,12 +58,28 @@ export const chatRequestSchema = z.object({
 }).strict();
 
 function reply(status: ChatResponseBody["status"], extra: Partial<ChatResponseBody> = {}): ChatResponseBody {
-  return { ok: status === "ok", answer: null, sectionRefs: [], model: null, status, error: null, ...extra };
+  const body: ChatResponseBody = { ok: status === "ok", answer: null, sectionRefs: [], model: null, status, error: null, ...extra };
+  if (!body.contextTrimmed?.length) delete body.contextTrimmed;
+  return body;
+}
+
+/** Kürzt Fakt-Text, Rationale und Notes auf das gemeinsame Budget, bevor Zod prüft. */
+function softenChatRequest(raw: unknown): { value: unknown; contextTrimmed?: ChatContextTrimEntry[] } {
+  if (!raw || typeof raw !== "object") return { value: raw };
+  const body = raw as { context?: unknown };
+  const ctx = body.context;
+  if (!ctx || typeof ctx !== "object") return { value: raw };
+  const c = ctx as { sections?: unknown; gates?: unknown; notes?: unknown };
+  if (!Array.isArray(c.sections) || !Array.isArray(c.gates) || !Array.isArray(c.notes)) return { value: raw };
+  const before = ctx as ChatContext;
+  const fitted = fitChatContextBudget(before);
+  return { value: { ...body, context: fitted }, contextTrimmed: chatContextTrimReport(before, fitted) };
 }
 
 /** Prüft Form, Grenzen und Konsistenz. Liefert entweder den Body oder einen Fehlertext. */
-export function validateChatRequest(raw: unknown): { ok: true; body: ChatRequestBody } | { ok: false; error: string } {
-  const parsed = chatRequestSchema.safeParse(raw);
+export function validateChatRequest(raw: unknown): { ok: true; body: ChatRequestBody; contextTrimmed?: ChatContextTrimEntry[] } | { ok: false; error: string } {
+  const softened = softenChatRequest(raw);
+  const parsed = chatRequestSchema.safeParse(softened.value);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     return { ok: false, error: `Ungültige Anfrage: ${first?.path.join(".") || "body"} ${first?.message ?? ""}`.trim().slice(0, 200) };
@@ -74,7 +91,7 @@ export function validateChatRequest(raw: unknown): { ok: true; body: ChatRequest
     return { ok: false, error: "Ungültige Anfrage: gebundene Sektion nicht im Kontext" };
   }
   if (JSON.stringify(body.context).length > CHAT_LIMITS.maxContextChars) return { ok: false, error: "Ungültige Anfrage: Kontext zu groß" };
-  return { ok: true, body };
+  return softened.contextTrimmed ? { ok: true, body, contextTrimmed: softened.contextTrimmed } : { ok: true, body };
 }
 
 const DASHBOARD_NAME: Record<string, string> = { stock: "Aktien-Analyse", btc: "Bitcoin-Dashboard", gold: "Gold-Dashboard", recession: "Rezessions-Dashboard" };
@@ -101,12 +118,33 @@ export const CHAT_SYSTEM_PROMPT = [
   "Was-wäre-wenn-Fragen beantwortest du nur qualitativ als Gedankenexperiment; du änderst keine Scores, Gates oder Bewertungen und gibst keine neuen Score-Werte aus.",
   "Jede Sektion kann ein Feld \"auffaelligkeiten\" haben: mögliche Schwächen oder Auffälligkeiten, abgeleitet nur aus vorhandenen Daten, Flags und Gates. Nenne sie, wenn nach Schwächen, Risiken oder Auffälligkeiten einer Sektion gefragt wird, und erkläre sie mit den Zahlen der Sektion; erfinde keine weiteren.",
   "Du machst keine Änderungsvorschläge an Parametern und keine Overrides.",
+  "Betrifft die Frage die Lage des Assets und steht keine AUFGABE für die ganze Analyse im Prompt, gliedere die Antwort in die Abschnitte Catalysts, Assumptions und Risks. Nur Werte aus dem KONTEXT, Fehlendes als n/a.",
+  "Liegt im Nutzerprompt eine AUFGABE für die ganze Analyse, halte ihre Blockreihenfolge ein. PESTEL nur, wenn pestelStark=ja. Thesis immer als dominante Klasse, ohne Wachstumsschwelle.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
+].join(" ");
+
+/** Ganze Analyse: kohärentes Bild, keine Sektionsliste. WORK_KI_CHAT_SCHEMA + SCHEMA_UPDATE. */
+export const CHAT_BIG_PICTURE_TASK = [
+  "Ordne die Daten zu einem Bild. Liste nicht Sektion für Sektion auf.",
+  "Blöcke in dieser Reihenfolge, jeder Block nur aus dem KONTEXT:",
+  "1. Wachstumstreiber: größtes Segment und das, was der letzte Earnings Call als Treiber nennt. Steht earningsCallHinweis, nenne den Grund und erfinde keinen Call.",
+  "2. Financials: was die Kennzahlen in S4 zeigen.",
+  "3. Moat / Ökosystem: Burggraben und Bindung aus S13. Peers nur, wenn sie im Kontext stehen.",
+  "4. PESTEL: nur wenn pestelStark=ja. Sonst diesen Block weglassen.",
+  "5. Technical: Momentum aus S11/S12 (RSL, Cross). Fehlende Client-Werte als n/a mit dem genannten Grund.",
+  "6. Bewertung: was der Preis impliziert (DCF, g*, Ampel). Keine neue Score-Zahl.",
+  "7. Management: Delivery und Kapitalallokation aus S19 inklusive kiAntwort, falls vorhanden. Fehlt der Score: n/a mit Grund.",
+  "8. Thesis: immer die dominante Klasse (thesisDominanteKlasse, größter Anteil). Keine Wachstumsschwelle. Fehlt die Klasse: n/a — Thesis-Klassen nicht geladen.",
+  "9. Fazit: zwei bis vier Sätze.",
+  "News aus newsTop einordnen, nicht nur aufzählen. newsPositiv und newsNegativ nur verwenden, wenn sie keine n/a-Zeile sind.",
+  "Analysten: Buy/Hold/Sell aus S1. Narrative Thesen nur, wenn analystenThesen keine n/a-Zeile ist. Beat/Miss aus beatMiss, wenn das keine n/a-Zeile ist; sonst nur, was die Earnings-Zusammenfassung dazu sagt. Steht es dort nicht: n/a.",
+  "Steht kiAntwort in einer Sektion, beziehe dich darauf. Fehlt sie, wurde die KI-Analyse dieser Sektion nicht ausgeführt.",
 ].join(" ");
 
 export function buildChatPrompt(body: ChatRequestBody): string {
   const history = body.messages.map(m => `${m.role === "user" ? "Nutzer" : "Assistent"}: ${m.content}`).join("\n");
-  return `KONTEXT:\n${formatContextForPrompt(body.context, body.sectionId)}\n\nVERLAUF:\n${history}\n\nAntworte auf die letzte Nutzer-Nachricht.`;
+  const task = body.sectionId == null ? `\n\nAUFGABE (ganze Analyse):\n${CHAT_BIG_PICTURE_TASK}` : "";
+  return `KONTEXT:\n${formatContextForPrompt(body.context, body.sectionId)}\n\nVERLAUF:\n${history}${task}\n\nAntworte auf die letzte Nutzer-Nachricht.`;
 }
 
 const TIMEOUT = Symbol("chat-timeout");
@@ -119,8 +157,9 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIM
 export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: number; body: ChatResponseBody }> {
   const v = validateChatRequest(raw);
   if (!v.ok) return { http: 400, body: reply("invalid", { error: v.error }) };
+  const trim = v.contextTrimmed?.length ? { contextTrimmed: v.contextTrimmed } : {};
   if (!deps.llmAvailable()) {
-    return { http: 200, body: reply("no-key", { error: "KI nicht verfügbar: Auf diesem Server ist kein OpenRouter-Key konfiguriert. Es wird keine Antwort erzeugt." }) };
+    return { http: 200, body: reply("no-key", { error: OPENROUTER_NO_KEY_MESSAGE, ...trim }) };
   }
   const body = v.body;
   const timeoutMs = deps.timeoutMs ?? CHAT_LLM_TIMEOUT_MS;
@@ -131,7 +170,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
     const raced = await withTimeout(call, timeoutMs);
     if (raced === TIMEOUT) {
       console.warn(`[CHAT] Timeout nach ${timeoutMs} ms (dashboard=${body.dashboard})`);
-      return { http: 200, body: reply("timeout", { error: `KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet. Bitte erneut versuchen.` }) };
+      return { http: 200, body: reply("timeout", { error: `KI hat nicht innerhalb von ${Math.round(timeoutMs / 1000)} s geantwortet. Bitte erneut versuchen.`, ...trim }) };
     }
     res = raced;
   } catch {
@@ -140,12 +179,12 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   const answer = typeof res?.data?.answer === "string" ? res.data.answer.trim().slice(0, 8000) : "";
   if (!res || !answer) {
     console.warn(`[CHAT] LLM-Fehler oder leere Antwort (dashboard=${body.dashboard})`);
-    return { http: 200, body: reply("llm-error", { error: "KI-Antwort fehlgeschlagen oder leer. Bitte erneut versuchen." }) };
+    return { http: 200, body: reply("llm-error", { error: "KI-Antwort fehlgeschlagen oder leer. Bitte erneut versuchen.", ...trim }) };
   }
   const known = new Set(body.context.sections.map(s => s.id));
   const refs = Array.isArray(res.data.sectionRefs) ? res.data.sectionRefs : [];
   const sectionRefs = Array.from(new Set<number>(refs.filter((n: unknown): n is number => typeof n === "number" && known.has(n)))).slice(0, 10);
-  return { http: 200, body: reply("ok", { answer, sectionRefs, model: res.modelUsed ?? null }) };
+  return { http: 200, body: reply("ok", { answer, sectionRefs, model: res.modelUsed ?? null, ...trim }) };
 }
 
 const hits = new Map<string, number[]>();

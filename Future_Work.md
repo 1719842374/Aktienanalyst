@@ -54,8 +54,8 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 
 ### 3. Cache- & Modul-Kommunikation
 
-- Gecachte Analysen (Aktienanalyse ↔ Researcher ↔ Portfolio) müssen **vollständig miteinander kommunizieren** und manuell refreshbar sein.  
-  Teilweise Bridge existiert (`portfolioBridge`, Watchlist, „Aus Analyse übernehmen“), aber volle bidirektionale Synchronisation + konsistenter Cross-Modul-Refresh ist noch offen.
+- Gecachte Analysen (Aktienanalyse ↔ Researcher ↔ Portfolio) müssen **vollständig miteinander kommunizieren** und manuell refreshbar sein. **Status: 🟡 teilweise.**  
+  Teilweise Bridge existiert (`portfolioBridge`, Watchlist, „Aus Analyse übernehmen“). #400 386fd0ab: gemeinsamer Refresh + Fehlerzeile umgesetzt; bidirektionale Daten-Sync fehlt (offen).
 
 ### 3.1 NEU (19.08.2026) — Researcher Sector Opportunity: fehlende Portfolio-/Watchlist-Add-Buttons
 
@@ -251,7 +251,7 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 
 | Item | Aufwand (Schätzung) | Status | Hinweis |
 |------|---------------------|--------|--------|
-| Fiscal-Bridge an echten Discovery-Workflow anschließen | ~1 Tag | ⬜ offen | Modul fertig (`server/fiscal-bridge.ts`), nur Anschluss fehlt |
+| Fiscal-Bridge an echten Discovery-Workflow anschließen | ~1 Tag | ✅ | Modul fertig (`server/fiscal-bridge.ts`). erledigt in #400, Squash 386fd0ab (Doublecheck GO Soft, Tester PASS Soft @914f2d38) |
 | `inCapitulation` vs. `minerZone.zone` Namensklärung / Konsistenz | ~2 h | ⬜ offen | Dokumentierte Inkonsistenz, kein Crash |
 | **Gold Multi-Faktor-Modell Phase 2 (WALCL, DXY, Multi-OLS) + QE/QT-Regime** | 1–2 Tage | ⬜ offen | Explizit als TODO in `gold-realyield-model.ts` + neu detailliert für BTC und Gold (19.08.2026) |
 | Screener-Gates + Backtesting (Vollversion) | 2–3 Tage | 🟡 teilweise | Kern-Gate-System läuft |

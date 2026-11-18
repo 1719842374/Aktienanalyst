@@ -109,6 +109,14 @@ In Sektion 17 einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzuf
 
 **Aufwand:** ~8–10 Stunden.
 
+### Status 18.11.2026 · HEAD main `f6b88795d93bca042676a8f81dfb6dec3f443c9e` · §4b bleibt OFFEN
+
+- Soll: „Event hinzufügen“ in Sektion 17, Berechnung per KI-Schema, Fluss in den DCF. Abschnitt und Dateiname `WORK_DASHBOARD_FEATURES_2026-10.md` bleiben. Kein `fertig_`/`Fertig_`.
+- Ist #494 (https://github.com/1719842374/Aktienanalyst/pull/494) „fix(s15): Katalysator-Enrich lädt die Analyse bei Cache-404 einmal neu“. Squash `58f6c237198c026197349e76ea8e03308b69008f` über `2bc8e7bd`. 7 Dateien +786/−50: `client/src/components/sections/CatalystsSection.tsx`, `client/src/lib/catalystEnrichFlow.ts` (neu), `client/src/pages/Dashboard.tsx`, `server/analyze-route.ts`, `server/llm-openrouter.ts`, `script/test-catalyst-enrich-reload.ts`, `script/test-catalyst-follow-up-ticker.ts`.
+- Kette auf `58f6c237` (Ancestor von `f6b88795`): Sektion 17 `CatalystsSection` → `apiRequest` POST `/api/catalyst-enrich` → `server/analyze-route.ts` (404 ohne Cache-Eintrag; `llmSkipReason` am Skip). Bei diesem 404 einmal `onReloadAnalysis` → `Dashboard.tsx` `startAnalyze` (`force: false`) → `apiRequest` POST `/api/analyze` → `server/routes.ts` `registerAnalyzeRoute` → derselbe Analyze-Handler. Nachzug nur über `applyCatalystFollowUp` beim gleichen Ticker. `researcher.ts`, Schema und `scoring-*` unberührt. Plausibel für diesen Cache-404-Nachzug. §4b ist damit nicht abgeschlossen.
+- Doublecheck Post-Merge KLAR (1 Parent, blob-identisch zu PR-Head `c8a3e571`, keine Deletes, keine Konflikt-Marker). Pins `2bc8e7bd`→`58f6c237` unverändert: VOW3 4.735718, SAP 5.174758, MSFT 4.058138, Buffett MSFT 5.638130. Ratings unverändert. tsc 76/76. Build rc 0. Render LIVE `58f6c237`. Stabschef-Freigabe: Ampel #494 🟢 mit SHA `58f6c237`.
+- Offen: §4b bleibt OFFEN. Rest-Punkt `llmEnrichedCatalysts` wird beim Tickerwechsel nicht zurückgesetzt, also nicht erledigt; separater Fix-Agent `bc-5e3f11e0`. Prod-Smoke #494+#489 auf `f6b88795` durch Tester steht aus. `fertig_WORK_BIAS_FIXES_INVERSE_DCF` bleibt `fertig_` und ist in diesem Nachtrag nicht angefasst. Kein Rename. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
 ---
 
 ## 4c. Vollständige interaktive KI-Chatbot-Anbindung für alle Assets
@@ -179,3 +187,30 @@ Die interaktive Chatbot-Logik (Sektions-Erklärung + Szenario-Override + Event-H
 
 **Nächster Schritt:**  
 Agents können die Prioritäten abarbeiten. Die Aktien-Chatbot-Basis sollte vor der Übertragung auf die anderen Assets stehen.
+
+## Soll-Ist-Nachtrag 10.11.2026 – #465 @dd30e8b7
+## 07:50 Europe/Berlin (10.11.2026) · HEAD main `dd30e8b7` · Ampel 🟡 · #465 TEILWEISE umgesetzt (Lanes belegt)
+- #465 (https://github.com/1719842374/Aktienanalyst/pull/465) squash `dd30e8b7a3faf6b13da29c7257ba07c3ce52c540` über Parent `1a8791bb`, PR-Head `88d72a0d`. Tree `bd705da7` = merge-tree = Merge-Probe `61dce036` = GitHub pull/465/merge `c090184a`. 38 Files +7958/−137 (25 A, 13 M, 0 D, 0 R), 0 Konflikt-Marker, keine Trunkierung, Minuszeilen echte Ersetzungen. Wächter 8/8 Blobs gleich (researcher `fee6d637` bytegleich, #180 erhalten; schema `89bafb1d`). Hunk-Vergleich #479/#472/#386/#180: 0 fehlend, 0 doppelt, 0 zurück.
+- Datenkette (DC): index.ts:110 → routes-register.ts:8 → routes.ts:582 (segment-growth :608, children :633, outline :727) + routes-register.ts:84 financial-history / :86 segment-supplement. Dashboard :698 → Section2/YahooSection3 → SegmentEstimateBlock :549 → useSegmentGrowth → /api/segment-growth; SegmentChildrenPanel → /api/segment-children → reviewKiChildren (shared/segment-children.ts); SegmentSupplementView → POST /api/segment-supplement → shared/segment-supplement.ts; Dashboard :699 → FinancialStatements → AnnualFinancials → /api/financial-history → buildFinancialHistory (shared/financial-history.ts) → StatementSankey. Neue Typen in shared-Modulen, schema.ts unverändert. Keine erfundenen Werte (null → „n/a — …“). Plausibel durchgereicht.
+- Soll WORK_DASHBOARD_FEATURES_2026-10.md (Blob `61d01de8`) §1 + WORK_BUSINESS_MODEL_AI_SUPPLEMENT.md (Blob `bebef8d7`), beide auf main unverändert.
+- Ist ERLEDIGT auf `dd30e8b7`: Jahres-Tabelle (AnnualFinancials), Sankey (StatementSankey), Segment-YoY (segment-growth), KI-Untersegmente mit Fremdmarken-Prüfung (Live: HPE „n/a — Fremdmarke verworfen: Arista Networks“, MSFT Power Platform bleibt, kein Dell/PowerEdge/AMD/Intel/Samsung), promptVersion `n29-brandOwner` live.
+- Ist OFFEN → beide Specs bleiben OFFEN, nicht fertig_: P2-N29-2 KI-Lüge ohne geladenen Peer (Folgespec FMP-Namenssuche pro brand); P2-3 fail-open (vorbestehend); Folgespec „eigene Unterbrands“/P3; Elternsegment als Kind (NVDA „Data Center Segment“, HPE „Hybrid Cloud Segment“); UNTESTED-Flaggschiffe wegen 24-h-KI-Cache (CRM, AX, NAV, Azure OpenAI, GitHub Copilot, Nuance, Aruba, Cisco, Juniper, Alletra MP, Zerto, DGX, Blackwell, Mellanox, MacBook Air, Beats).
+- Baseline NEU: Tests **259/30** (n=289; +11 neu grün segment-*; cone-stable bekannter Flake, isoliert 0/6 rot); guard-180/326 rot wie zuvor. tsc 76 (normdiff 0). Build rc 0. Pins Δ0 (VWAGY 4.7357 / SAP 5.1748 / MSFT 4.0581, Buffett 5.6381). Live MSFT finalScore 70, HPE 55 Prod = Preview.
+- Lanes: DC-Delta GO mit Auflagen /workspace/dispatch/DC-PR465-88d72a0d.md · Tester enger Live-PASS @`88d72a0d` Deployment 7674709527 /workspace/dod-465-88d72a0d/report.md · DC Post-Merge KLAR mit Hinweisen /workspace/dispatch/DC-PR465-postmerge-dd30e8b7.md (Raws /workspace/audit/pm465-dd30e8b7-raws/) · CI success Run 42768069621 · Prod liefert dd30e8b7-Bundle (index-CJJ_04RX.js, Neustart 07:25:05 Madrid; kein GitHub-Production-Deployment-Eintrag, H2).
+- Hinweise: H3 Merge-Kommentar 6760620940 nennt N29-15 ms fälschlich „Ablesefehler von DC“ (nicht korrigiert). H4 Drafts #381/#394 durch #465 neu konfliktbehaftet und fachlich überholt (Entscheid Stabschef). #448/#461 Konflikt wie vorher.
+- Ersetzt 07:25-Hinweis „Post-Merge DC/Prod-Tester nicht belegt“. Neu abgeschlossen: keine Spec. Offen außerdem: #480, Country-Macro-Pulse-Header/Nav, §2 Earnings-Restlücken, guard-180/326-Mutationstests.
+- Do-not-touch: Miner, PEG, invertierter DCF, Sentiment, Portfolio F.2; fertig_/Fertig_ nicht auf Offen_ drehen; Spec-Dateien nicht umbenennen.
+
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #483 @727ca998 · HEAD main `fb5546ea`
+
+- erledigt @`727ca998`: Elternsegment nicht mehr als eigenes Kind (NVDA „Data Center Segment“, HPE „Hybrid Cloud Segment“). `productChildKey` in `shared/segment-children.ts`. Kette UI → `GET /api/segment-children/:ticker` → Server → shared auf main `fb5546ea9768140679e72185ba7ff50860e506de` geprüft.
+- erledigt @`dd30e8b7`: Jahres-Tabelle, Sankey, Segment-YoY, KI-Untersegmente mit Fremdmarken-Prüfung. Der Vollblock steht im Nachtrag 10.11. darüber (Docs #481); hier nur der Fortschritt.
+- Offen: P2-3 fail-open; eigene Unterbrands; UNTESTED-Flaggschiffe (24-h-KI-Cache). P2-N29-2 erledigt @`63a5cbcf` (FMP-Namenssuche pro brand).
+- Spec bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #482 @63a5cbcf · HEAD main `63a5cbcf`
+
+- #482 (https://github.com/1719842374/Aktienanalyst/pull/482) Squash `63a5cbcf30805280ca921dac3aca1a3ee66f2b2e`. DC Post-Merge KLAR mit Hinweisen (`test-segment-n29-2.ts` 22 PASS). Tester PASS @`6856db4a`: HPE Networking „n/a — Fremdmarke verworfen“, Arista kein Kind. UNTESTED: ungültige FMP-Namenssuche live, Alletra. Ampel 🟡 TEILWEISE.
+- Kette auf main geprüft: `SegmentChildrenPanel` → GET `/api/segment-children/:ticker` (`segment-growth-route.ts:701`) → `fmpSearchCompanyName` (`server/fmp.ts`) → `ownClaimBrandQueries` / `reviewKiChildren` (`shared/segment-children.ts`).
+- Offen: P2-3 fail-open; eigene Unterbrands; Flaggschiffe (24-h-KI-Cache); P3 Obergrenze `ownClaimBrandQueries` (270 s gegen 90 s).
+- Der Abschnitt bei Z.189 bleibt der historische #465-Stand und bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.

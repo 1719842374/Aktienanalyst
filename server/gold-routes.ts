@@ -19,8 +19,10 @@ import { enrichGoldChartSeries } from "./gold-chart-series";
 import { createFredHistoryMemo } from "./gold-fred-memo";
 import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedFetcher, tail5 } from "./gold-fred-prefetch";
 import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "./gold-response-cache";
-import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
+import { buildGoldChartHistoryPoints, clipZoneSpot, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
 import { loadGoldAiscSeries } from "./gold-aisc";
+import { buildGoldMinerZone } from "../shared/gold-miner-zone";
+import type { GoldMinerZone } from "../shared/schema";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -293,6 +295,9 @@ function getTechnicalScore(rsi: number, deviationPct: number): { score: -1 | 0 |
 }
 
 export function registerGoldRoutes(server: Server, app: Express) {
+  // Gesetzt, sobald der Chart-Historie-Cache unten steht. Die Miner-Zone liest ihn;
+  // GIS und scoreGoldAdaptive bleiben auf dem rollierenden 10-Jahres-Fenster.
+  let chartHistoryGet: null | (() => Promise<{ source: string; points: Array<{ date: string; close: number }> }>) = null;
   // JOB 15: Antwort-Cache (10 min) mit Dedupe paralleler Anfragen. Die Berechnung selbst
   // (buildGoldAnalysis) ist unverändert; ein Cache-Treffer liefert exakt dieselbe Antwort.
   // ?fresh=1 umgeht den Cache. Header X-Gold-Cache: miss|hit|shared|bypass, X-Gold-Timing: Phasen in ms.
@@ -903,6 +908,35 @@ export function registerGoldRoutes(server: Server, app: Express) {
         `CPI ${cpiToday} für Fair Value (${cpiToday > 200 && cpiToday < 500 ? "✅" : "⚠️ geschätzt"})`,
       ];
 
+      // Future_10 §5 (B1): Quartals-AISC einmal laden. Linie und Miner-Zone, kein Score.
+      // aisc: null an scoreGoldAdaptive (oben) bleibt. Fehler der Zone → null.
+      // Nicht das rollierende 10-Jahres-Fenster: die Zone liest den Chart-Cache
+      // (dort ist die längere Quelle schon gewählt) und schneidet ab dem festen Start. Eine Quelle.
+      const aiscSeries = loadGoldAiscSeries();
+      let aiscZone: GoldMinerZone | null = null;
+      let aiscZoneSpotSource: string | null = null;
+      try {
+        let zonePrices: { date: string; close: number }[] = historicalPrices.map(p => ({ date: p.date, close: p.close }));
+        aiscZoneSpotSource = zonePrices.length ? "FMP GCUSD" : null;
+        if (chartHistoryGet) {
+          try {
+            const hist = await chartHistoryGet();
+            const anchored = clipZoneSpot(hist.points).filter(p => typeof p.close === "number" && isFinite(p.close) && p.close > 0);
+            if (anchored.length > 0) {
+              zonePrices = anchored.map(p => ({ date: p.date, close: p.close }));
+              aiscZoneSpotSource = hist.source;
+            }
+          } catch (histErr: any) {
+            console.warn(`[GOLD-MINER-ZONE] Lange Historie fehlgeschlagen, Zone bleibt auf dem 10-Jahres-Fenster: ${histErr?.message?.substring(0, 160)}`);
+          }
+        }
+        aiscZone = buildGoldMinerZone(zonePrices, aiscSeries);
+      } catch (zoneErr: any) {
+        aiscZone = null;
+        aiscZoneSpotSource = null;
+        console.warn(`[GOLD-MINER-ZONE] ${zoneErr?.message?.substring(0, 180)}`);
+      }
+
       // === Build response ===
       const analysis: GoldAnalysis = {
         timestamp: now.toISOString(),
@@ -951,7 +985,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
         gates,
         technicalSignals,
         // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
-        aiscLine: loadGoldAiscSeries(),
+        aiscLine: aiscSeries,
+        aiscZone,
+        aiscZoneSpotSource,
         // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.
         ...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),
       };
@@ -1028,6 +1064,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
     console.log(`[GOLD-HIST] ${picked.source}${incomplete ? " (UNVOLLSTAENDIG)" : ""}: ${points.length} Punkte ab ${start}, FMP ${fmpRows.length}, Yahoo ${yahooRows.length}, FRED ${fredFetches} Abrufe (async), ${Date.now() - t0} ms`);
     return body;
   });
+  chartHistoryGet = () => chartHistory.get();
   // ?range=10Y -> Fenster + 300 Punkte Vorlauf (statt immer der vollen ~1,3 MB); ohne/unbekannt = Max.
   app.get("/api/gold-chart-history", async (req, res) => {
     try {

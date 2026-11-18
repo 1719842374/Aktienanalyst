@@ -15,7 +15,8 @@ import {
   fmpRatiosTtm,
   isFmpAvailable,
 } from "./fmp";
-import { fetchFredVolSeries, fetchVstoxxVol } from "./recession-markets";
+import { fetchFredVolWithYahooFallback, fetchVstoxxVol } from "./recession-markets";
+import { FACTPACK_YAHOO_NA, defaultSpyYahooDeps, yahooFundamentalsWhenFmpEmpty } from "./factpack-yahoo";
 import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import {
   CHART_BOOKS,
@@ -32,6 +33,7 @@ import {
   instrumentCanPriceEps,
   leverageForMarket,
   localVolMaxima,
+  MARGIN_DEBT_NON_US_NOTE,
   marketsResponseSchema,
   ntmEpsFromEstimateRows,
   ohlcvFetchFrom,
@@ -53,12 +55,33 @@ import {
   type ValuationInstrument,
   type VolPoint,
 } from "../shared/recession-market-charts";
+import { fillSpyValuationGaps, parseYahooFactpack, YAHOO_FACTPACK_MODULES } from "../shared/yahoo-factpack";
+import { fetchYahooQuoteSummaryResult } from "./yahoo-fetcher";
 
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
 const bundleCache = new Map<string, { ts: number; data: MarketsResponse }>();
 const factpackCache = new Map<string, { ts: number; data: MarketFactpack }>();
+
+type SpyYahooLoader = () => Promise<unknown | null>;
+let spyYahooLoader: SpyYahooLoader | null = null;
+
+/** Tests ersetzen den Yahoo-Abruf. null stellt den echten quoteSummary-Call wieder her. */
+export function setSpyYahooFactpackForTests(loader: SpyYahooLoader | null): void {
+  spyYahooLoader = loader;
+}
+
+async function loadSpyYahooQuoteSummary(): Promise<unknown | null> {
+  if (spyYahooLoader) return spyYahooLoader();
+  return fetchYahooQuoteSummaryResult("SPY", YAHOO_FACTPACK_MODULES);
+}
+
+function marginDebtNote(id: MarketChart["id"], strip: LeverageStrip | null, finraNote: string | null): string | null {
+  if (id === "VGK" || id === "ASHR") return MARGIN_DEBT_NON_US_NOTE[id];
+  if (id === "SPY") return strip ? null : finraNote;
+  return null;
+}
 
 interface RawBar {
   date: string;
@@ -142,7 +165,7 @@ async function loadVol(
   bars: RawBar[],
   from: string,
   to: string,
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
   if (book.volKind === "realized") {
     return {
       vol: realizedVol20(bars),
@@ -150,8 +173,7 @@ async function loadVol(
     };
   }
   if (book.fredStart) {
-    const vol = await fetchFredVolSeries(book.volId, book.fredStart);
-    return { vol, volNote: vol.length ? null : `FRED ${book.volId} leer` };
+    return fetchFredVolWithYahooFallback(book.volId, book.fredStart);
   }
   const { vol, source, stoxxErr } = await fetchVstoxxVol(from, to);
   if (!vol.length) {
@@ -409,14 +431,42 @@ async function loadValuation(
     }
   }
 
-  const core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
+  let core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
+  const fmpCore = core;
   const valuationLabel = valuationLabelFor(chosen, book.etf);
   const sourceNotes = (chosen.symbol === book.etf ? etfSources.notes : fallbackSources?.notes ?? etfSources.notes);
   const gaps: string[] = [];
   if (valuationLabel !== "ETF-Proxy") {
     gaps.push(`Formel auf ${chosen.symbol} (Kurs und EPS), nicht auf ${book.etf}`);
   }
-  if (core.pe == null) {
+  if (book.etf === "SPY" && core.pe == null && bar.close > 0) {
+    try {
+      const yahoo = await yahooFundamentalsWhenFmpEmpty("SPY", bar.close, defaultSpyYahooDeps());
+      if (yahoo.pe != null) {
+        core = { ...core, pe: yahoo.pe };
+        gaps.push(`PE aus ${yahoo.source} (FMP leer)`);
+      } else if (yahoo.naReason) {
+        gaps.push(yahoo.naReason);
+      }
+    } catch {
+      gaps.push(FACTPACK_YAHOO_NA);
+    }
+  }
+  // Forward und g aus quoteSummary, nur in Felder die FMP leer ließ.
+  // Das KGV aus yahooFundamentalsWhenFmpEmpty bleibt die Zahl (trailingPE, sonst Kurs/EPS, sonst timeseries).
+  if (book.etf === "SPY" && (fmpCore.pe == null || (allowForward && fmpCore.peFwd == null))) {
+    const raw = await loadSpyYahooQuoteSummary();
+    const filled = fillSpyValuationGaps(fmpCore, bar.close, parseYahooFactpack(raw), allowForward);
+    const keptPe = core.pe;
+    core = filled.core;
+    if (keptPe != null) core = { ...core, pe: keptPe };
+    if (core.pe != null) {
+      for (let i = gaps.length - 1; i >= 0; i -= 1) {
+        if (gaps[i].startsWith("n/a —")) gaps.splice(i, 1);
+      }
+    }
+  }
+  if (core.pe == null && !gaps.some(gap => gap.startsWith("n/a —"))) {
     const why = [...sourceNotes, ...priceNotes].filter(Boolean);
     gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
   }
@@ -446,7 +496,7 @@ export async function buildChartMarket(
   const rawBars = await loadBars(book.etf, from, to);
   const indicated = attachIndicators(rawBars);
   const ohlcv = sliceByWindow(indicated, window);
-  const { vol: volFull, volNote } = await loadVol(book, rawBars, from, to);
+  const { vol: volFull, volNote, volSource } = await loadVol(book, rawBars, from, to);
   const vol = sliceVol(volFull, ohlcv, window);
   const marks = localVolMaxima(vol);
   const last = ohlcv[ohlcv.length - 1] ?? null;
@@ -483,12 +533,13 @@ export async function buildChartMarket(
     bandsAnalog: book.bandsAnalog,
     volYMax: VOL_Y_MAX,
     volNote,
+    ...(volSource !== undefined ? { volSource } : {}),
     ohlcv,
     vol,
     marks,
     snapshot,
     leverage: strip,
-    leverageNote: book.id === "SPY" ? (strip ? null : leverage?.note ?? null) : null,
+    leverageNote: marginDebtNote(book.id, strip, leverage?.note ?? null),
     valuationLabel,
   };
 }
@@ -508,7 +559,7 @@ function failedMarket(book: (typeof CHART_BOOKS)[number], message: string): Mark
     marks: [],
     snapshot: emptySnapshot(null, null),
     leverage: null,
-    leverageNote: book.id === "SPY" ? "FINRA Margin Debit nicht lieferbar" : null,
+    leverageNote: marginDebtNote(book.id, null, book.id === "SPY" ? "FINRA Margin Debit nicht lieferbar" : null),
     valuationLabel: "ETF-Proxy",
   };
 }
@@ -636,7 +687,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
       res.status(400).json({ error: "etf muss SPY, QQQ, VGK oder ASHR sein" });
       return true;
     }
-    const key = `v3:${window}:${etf}:${date}`;
+    const key = `v4:${window}:${etf}:${date}`;
     const cached = cacheGet(factpackCache, key);
     if (cached) {
       res.json(cached);
@@ -658,7 +709,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
     return true;
   }
 
-  const key = `v3:${window}`;
+  const key = `v4:${window}`;
   const cached = cacheGet(bundleCache, key);
   if (cached) {
     res.json(cached);

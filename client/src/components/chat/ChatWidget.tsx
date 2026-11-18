@@ -5,10 +5,14 @@
  * (Ecken/Ränder), Fenster-Controls (Zurück, Minimieren, Maximieren, Schließen),
  * Position/Größe in localStorage, Sektionsbindung. Kein Score-Einfluss: nur Lesen + Fragen.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, Crosshair, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Send, Sparkles, X } from "lucide-react";
-import { chatSectionKey, chatSectionName, chatSectionTag, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
+import { chatContextTrimOf, chatSectionKey, chatSectionName, chatSectionTag, formatChatContextTrim, mergeChatContextTrim, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
+import type { EarningsCallBrief } from "@shared/chat-earnings";
 import { useDashboardChat } from "@/hooks/useDashboardChat";
+import { useChatHistory } from "@/hooks/useChatHistory";
+import { chatThreadTitle, isChatDashboard, newChatId, type ChatThread } from "@shared/chat-history";
+import { ChatMarkdown } from "./ChatMarkdown";
 import {
   chatWindowStorageKey, clampChatWindow, moveChatWindow, parseChatWindow, resizeChatWindow, serializeChatWindow,
   type ChatWindowState, type ResizeEdge,
@@ -25,6 +29,8 @@ export interface ChatWidgetProps {
   onJumpToSection?: (id: number) => void;
   /** Beispiel-Fragen für den Startbildschirm. */
   suggestions?: string[];
+  /** Letzter Earnings Call, dieselbe Antwort wie im Chat-Kontext. */
+  earningsBrief?: EarningsCallBrief | null;
 }
 
 function viewport() {
@@ -35,7 +41,7 @@ function readStored(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }
 }
 
-export function ChatWidget({ dashboard, context, sections, getActiveSectionId, onJumpToSection, suggestions = [] }: ChatWidgetProps) {
+export function ChatWidget({ dashboard, context, sections, getActiveSectionId, onJumpToSection, suggestions = [], earningsBrief }: ChatWidgetProps) {
   const storageKey = chatWindowStorageKey(dashboard);
   const [win, setWin] = useState<ChatWindowState>(() => { const { vw, vh } = viewport(); return parseChatWindow(readStored(storageKey), vw, vh); });
   // Bindung über den stabilen Schlüssel: verschiebt sich die Nummerierung (Rezession: Regionen
@@ -48,7 +54,11 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
     setBoundKey(s ? chatSectionKey(s) : null);
   }, [sections]);
   const [input, setInput] = useState("");
-  const { entries, pending, send, reset } = useDashboardChat(context, sectionId);
+  const [threadId, setThreadId] = useState(newChatId);
+  const { entries, pending, send, reset, load, contextTrimmed } = useDashboardChat(context, sectionId);
+  const entity = context?.entity ?? null;
+  const history = useChatHistory(dashboard, entity);
+  const trimHint = formatChatContextTrim(mergeChatContextTrim(chatContextTrimOf(context), contextTrimmed));
   const listRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ mode: "move" | ResizeEdge; sx: number; sy: number; start: ChatWindowState } | null>(null);
 
@@ -59,9 +69,28 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
     return () => window.removeEventListener("resize", onResize);
   }, []);
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [entries, pending]);
-  // Neues Objekt (anderer Ticker) → Bindung lösen, Verlauf leeren (Antworten bezogen sich auf alte Daten).
-  const entity = context?.entity ?? null;
-  useEffect(() => { reset(); setBoundKey(null); }, [entity, reset]);
+  // Anderes Asset → neuer Chat. Der bisherige Verlauf bleibt im Session-Cache.
+  const seenEntity = useRef(entity);
+  useEffect(() => {
+    if (seenEntity.current === entity) return;
+    seenEntity.current = entity;
+    setThreadId(newChatId());
+    reset();
+    setBoundKey(null);
+  }, [entity, reset]);
+  useEffect(() => {
+    const messages = entries.filter(e => !e.error).map(e => ({ role: e.role, content: e.content }));
+    if (!messages.some(m => m.role === "user") || !isChatDashboard(dashboard)) return;
+    const thread: ChatThread = {
+      id: threadId,
+      dashboard,
+      entity,
+      title: chatThreadTitle(messages),
+      updatedAt: new Date().toISOString(),
+      messages,
+    };
+    void history.save(thread);
+  }, [entries, threadId, entity, dashboard, history.save]);
 
   const startPointer = useCallback((mode: "move" | ResizeEdge) => (e: ReactPointerEvent<HTMLElement>) => {
     if (win.maximized || e.button !== 0) return;
@@ -122,7 +151,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
         className={`h-10 shrink-0 flex items-center gap-1 px-1.5 border-b border-border bg-muted/40 select-none ${win.maximized ? "" : "cursor-move"} touch-none`}
         data-testid="chat-titlebar"
       >
-        <button type="button" onClick={() => { reset(); setBoundKey(null); }} className="p-1.5 rounded hover:bg-muted" title="Zurück (neuer Chat)" data-testid="chat-back"><ArrowLeft className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => { setThreadId(newChatId()); reset(); setBoundKey(null); }} className="p-1.5 rounded hover:bg-muted" title="Neuer Chat" data-testid="chat-back"><ArrowLeft className="w-3.5 h-3.5" /></button>
         <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
         <span className="text-xs font-medium truncate flex-1">KI-Chat{context ? ` · ${context.entity}` : ""}{sectionLabel ? ` · ${sectionLabel}` : ""}</span>
         <button type="button" onClick={() => setWin(w => ({ ...w, minimized: !w.minimized, maximized: false }))} className="p-1.5 rounded hover:bg-muted" title={win.minimized ? "Wiederherstellen" : "Minimieren"} data-testid="chat-minimize"><Minus className="w-3.5 h-3.5" /></button>
@@ -133,7 +162,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
       {!win.minimized && (
         <>
           {/* Sektionsbindung */}
-          <div className="shrink-0 flex items-center gap-1.5 px-2 py-1.5 border-b border-border/60 text-[11px]">
+          <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-1.5 border-b border-border/60 text-[11px]">
             <label htmlFor="chat-section" className="text-muted-foreground shrink-0">Sektion</label>
             <select
               id="chat-section"
@@ -151,7 +180,49 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
                 <Crosshair className="w-3 h-3" /> Aktuelle
               </button>
             )}
+            <label htmlFor="chat-history" className="text-muted-foreground shrink-0">Verlauf</label>
+            <select
+              id="chat-history"
+              value={threadId}
+              onChange={e => {
+                const id = e.target.value;
+                if (id === threadId) return;
+                const thread = history.threads.find(t => t.id === id);
+                if (!thread) return;
+                setThreadId(thread.id);
+                load(thread.messages.map(m => ({ role: m.role, content: m.content })));
+              }}
+              className="min-w-0 flex-1 h-7 rounded border border-border bg-background px-1.5"
+              data-testid="chat-history"
+            >
+              <option value={threadId}>{history.threads.find(t => t.id === threadId)?.title ?? "Dieser Chat"}</option>
+              {history.threads.filter(t => t.id !== threadId).map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+            </select>
+            <button
+              type="button"
+              onClick={() => { void history.remove(threadId); setThreadId(newChatId()); reset(); }}
+              className="h-7 px-2 rounded border border-border hover:bg-muted shrink-0"
+              title="Diesen Chat löschen"
+              data-testid="chat-history-delete"
+            >
+              Löschen
+            </button>
           </div>
+
+          {earningsBrief !== undefined && (
+            <div className="shrink-0 max-h-28 overflow-y-auto break-words border-b border-border/60 px-3 py-2 text-[11px] leading-relaxed" data-testid="chat-earnings-brief">
+              <div className="font-medium text-foreground">Letzter Earnings Call{earningsBrief?.date ? ` · ${earningsBrief.date}` : ""}{earningsBrief?.year != null && earningsBrief.quarter != null ? ` · FY${earningsBrief.year} Q${earningsBrief.quarter}` : ""}</div>
+              <p className="mt-1 text-muted-foreground">
+                {earningsBrief?.summary
+                  ?? earningsBrief?.excerpt
+                  ?? earningsBrief?.reason
+                  ?? "n/a — Earnings-Call noch nicht geladen"}
+              </p>
+              {earningsBrief?.summary && earningsBrief.reason && (
+                <p className="mt-1 text-muted-foreground/80">{earningsBrief.reason}</p>
+              )}
+            </div>
+          )}
 
           <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2 text-xs" data-testid="chat-messages">
             {entries.length === 0 && (
@@ -175,8 +246,8 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
             )}
             {entries.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[88%] rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "user" ? "bg-primary text-primary-foreground" : m.error ? "bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400" : "bg-muted"}`} data-testid={m.role === "user" ? "chat-msg-user" : "chat-msg-assistant"}>
-                  {m.content}
+                <div className={`max-w-[88%] min-w-0 rounded-lg px-2.5 py-1.5 break-words ${m.role === "assistant" && !m.error ? "" : "whitespace-pre-wrap"} ${m.role === "user" ? "bg-primary text-primary-foreground" : m.error ? "bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400" : "bg-muted"}`} data-testid={m.role === "user" ? "chat-msg-user" : "chat-msg-assistant"}>
+                  {m.role === "assistant" && !m.error ? <ChatMarkdown content={m.content} /> : m.content}
                   {m.sectionRefs && m.sectionRefs.length > 0 && onJumpToSection && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {m.sectionRefs.map(id => (
@@ -206,7 +277,13 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
-          <div className="shrink-0 px-2 pb-1 text-[9px] text-muted-foreground/70">KI-Antworten nur auf Basis der geladenen Daten · keine Anlageberatung · ändert keine Scores</div>
+          {trimHint && (
+            <div className="shrink-0 px-2 pt-1 text-[10px] leading-snug text-muted-foreground" data-testid="chat-context-trimmed">{trimHint}</div>
+          )}
+          <div className="shrink-0 px-2 pb-1 flex flex-wrap items-center gap-1">
+            <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-700 dark:text-amber-300" data-testid="chat-ai-terms">KI-generiert, keine Anlageberatung</span>
+            <span className="text-[9px] text-muted-foreground/70">KI-Antworten nur auf Basis der geladenen Daten · keine Anlageberatung · ändert keine Scores</span>
+          </div>
         </>
       )}
 

@@ -5,6 +5,12 @@
  */
 export const TA_NARROW_MAX_PX = 639;
 export const TA_PLOT_MIN_PX = 360;
+/** Linke Preisachse in px, dieselbe Breite wie die Y-Achse im Kursplot. */
+export const TA_PRICE_AXIS_LEFT_PX = 52;
+/** Rechte Achsenbreite im Mindestmaß des Band-Stacks, solange kein Overlay eine eigene Achse erzwingt. */
+export const TA_PRICE_AXIS_RIGHT_PX = 0;
+/** Rechter Plot-Rand in px, wenn keine rechte Achse den Rand einnimmt. */
+export const TA_PRICE_MARGIN_RIGHT_PX = 10;
 export const TA_AXIS_FONT_PX = 10;
 /** Volumen-Band auf Mobile. Spec-Floor ~36–44px. */
 export const TA_VOLUME_BAND_PX = 40;

@@ -1,0 +1,146 @@
+# WORK – Learnings from Simply Wall St for KI-Chat
+
+**Stand:** 26.10.2026  
+**Ziel:** Was man von Simply Wall St (Charlie AI + Narratives) für den eigenen KI-Chat übernehmen kann. Markdown-Sterne im Interface entfernen.
+
+---
+
+## 1. Analyse Simply Wall St
+
+### Charlie AI
+- Kontextueller Chat direkt im Dashboard.
+- Quick-Start-Prompts.
+- AI Terms of Use Badge.
+- Beantwortet Fragen zu Kennzahlen, Margen, Portfolio.
+
+### Narratives
+- Nutzer schreiben eigene Thesen zu Aktien.
+- Struktur: Catalysts / Assumptions / Risks.
+- Fair-Value-History-Chart.
+- Updates über die Zeit.
+- Community kann Narrative lesen und kommentieren.
+
+### Snowflake
+- Visueller 5-Achsen-Score (Valuation, Growth, Past Performance, Financial Health, Dividends).
+- Schneller Überblick.
+
+---
+
+## 2. Vergleich zu deinem KI-Chat
+
+| Feature | Simply Wall St | Dein KI-Chat (aktuell) | Empfehlung |
+|---------|----------------|------------------------|------------|
+| Kontext | Portfolio + Company | Asset-Analyse | Beibehalten |
+| Quick Prompts | Ja | Ja (Scoring-Gates etc.) | Beibehalten |
+| Markdown-Sterne | Sauber gerendert | **Sterne sichtbar** | **Fixen** |
+| Narrative-Struktur | Catalysts / Assumptions / Risks | Scoring-Gates | Optional übernehmen |
+| Community | Ja | Nein | Später |
+| Snowflake | Ja | Ampel + Score | Optional als Visual |
+
+---
+
+## 3. Was übernehmen
+
+### Sofort
+1. **Markdown-Sterne entfernen**  
+   Grok gibt `**INVENTORY**` aus. Im Frontend als Bold rendern oder Sterne strippen.
+2. **AI Terms of Use Badge**  
+   Klarer Hinweis: „KI-generiert, keine Anlageberatung“.
+
+### Mittelfristig
+3. **Narrative-Struktur im Chat**  
+   Bei Asset-Fragen automatisch Catalysts / Assumptions / Risks ausgeben.
+4. **Quick-Start-Prompts erweitern**  
+   „Fasse die Analyse in 5 Punkten zusammen“, „Welche Gates sind aktiv?“, „Was passiert bei -5% Wachstum?“.
+
+### Später
+5. **Community Narratives**  
+   Nutzer können eigene Thesen speichern und teilen.
+6. **Visueller Score**  
+   Snowflake-ähnliche Ampel für die 20 Sektionen.
+
+---
+
+## 4. Markdown-Sterne Fix
+
+**Problem:**  
+Grok gibt Markdown (`**Gate**`) aus. Im Interface werden die Sterne angezeigt.
+
+**Lösung:**
+- Frontend: Markdown-Renderer (z. B. `react-markdown`) verwenden.
+- Oder Backend: Sterne strippen und nur Bold-Tags senden.
+- Empfehlung: Frontend rendert Markdown korrekt.
+
+**Aufwand:** 2–4 h.
+
+---
+
+## 5. Aufwand
+
+| Schritt | Aufwand |
+|---------|---------|
+| Markdown-Sterne fixen | 2–4 h |
+| AI Terms Badge | 1–2 h |
+| Narrative-Struktur im Prompt | 4–6 h |
+| **Gesamt (sofort + mittelfristig)** | **~7–12 h** |
+
+---
+
+**Kurz:**  
+Von Simply Wall St lohnt sich vor allem die saubere Markdown-Darstellung und die Narrative-Struktur (Catalysts / Assumptions / Risks). Die Sterne im Interface müssen weg.
+
+---
+
+## 6. Chat History & Interface
+
+**Problem:** Chat History fehlt. Simply Wall St hat sie (New Chat, History).
+
+**Lösung:**
+- Chat-History im Backend speichern (pro User / pro Asset).
+- Sidebar oder Dropdown mit bisherigen Chats.
+- „New Chat“-Button.
+
+**Aufwand:** 6–8 h.
+
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #469 @fb5546ea · HEAD main `63a5cbcf`
+
+- Soll §6: Chat-History im Backend (pro User / pro Asset), Liste der bisherigen Chats, „New Chat“.
+- Ist @`fb5546ea9768140679e72185ba7ff50860e506de` (#469, https://github.com/1719842374/Aktienanalyst/pull/469, Squash über `727ca998`): `ChatWidget` → `client/src/hooks/useChatHistory.ts` → GET/PUT/DELETE `/api/chat/history` → `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. Speicher ist die Session im Prozess, gespiegelt in sessionStorage, kein Supabase. DC Post-Merge KLAR. Prod-Smoke: P1 Löschen+Reload PASS, P3 Chat PASS, P2 Zwei-Tab FAIL (Tab B zeigt den gelöschten Titel nach Reload wieder, trotz PUT stale-write; Client-Wiederbelebung). Fix-Lane läuft. Ampel 🟡 TEILWEISE, nicht grün.
+- §6 bleibt OFFEN. Dateiname `WORK_SIMPLYWALLST_LEARNINGS.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+## Soll-Ist-Teil-Fortschritt 18.11.2026 – #489 @`f6b88795` · HEAD main `f6b88795d93bca042676a8f81dfb6dec3f443c9e`
+
+- Soll §6 unverändert: Chat-History im Backend (pro User / pro Asset), Liste der bisherigen Chats, „New Chat“. Der Block #469 darüber bleibt stehen.
+- Ist #489 (https://github.com/1719842374/Aktienanalyst/pull/489) „fix(chat): stale-write verwirft den lokalen Thread (Zwei-Tab)“. Squash `f6b88795d93bca042676a8f81dfb6dec3f443c9e` über `58f6c237`. 2 Dateien +138/−11: `client/src/hooks/useChatHistory.ts`, `script/test-chat-history-delete-race.ts`. Tester-PASS lag auf PR-Head `3cf0988f`. Doublecheck Post-Merge KLAR (beide Blobs identisch mit `3cf0988f`, 0 Deletes, 0 Konflikt-Marker, Server und Schema unberührt).
+- Kette: `ChatWidget` → `client/src/hooks/useChatHistory.ts` `save` → `apiRequest` PUT `/api/chat/history/:id` → bei `200 {rejected:"stale-write"}` fällt genau dieser Thread lokal weg, danach GET des Serverstands. Route unverändert `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. Speicher bleibt die Session im Prozess, gespiegelt in sessionStorage, kein Supabase. Plausibel für den Client-Rollback. §6 ist damit nicht abgeschlossen.
+- Render LIVE `f6b88795` (17:37:51 Europe/Madrid). Ampel 🟡 bis Prod-Smoke. Prod-Smoke #494+#489 auf `f6b88795` durch Tester steht aus.
+- §6 bleibt OFFEN. Kein Spec neu abgeschlossen. Dateiname `WORK_SIMPLYWALLST_LEARNINGS.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+---
+
+## 7. Podcast-Transkript – Economist-Niveau
+
+**Ziel:** Transkript so hochwertig wie beim Economist (Fließtext, Drop-Cap, saubere Typografie).
+
+**UI-Elemente:**
+- Drop-Cap am Anfang.
+- Serifen-Schrift für Fließtext.
+- Klare Absätze.
+- AI NARRATED Badge.
+- Player oben.
+
+**Aufwand:** 4–6 h (CSS + Komponenten).
+
+---
+
+## 8. MCP-Anbindung
+
+**Ja, möglich.**
+
+- FMP hat einen MCP-Server.
+- OpenRouter unterstützt Tool-Calls.
+- Eigener MCP-Server für den Podcast-Generator (Analyse-Daten + News als Tools).
+
+**Aufwand:** 8–12 h (MCP-Server + Tool-Definitionen).
+
+**Empfehlung:** Zuerst Chat History und Podcast-Styling, MCP später.

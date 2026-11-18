@@ -79,7 +79,7 @@ check("nur ein Query-Key [\"dividends\",\"v2\",ticker] im Client", /queryKey: \[
 // ── 4) Buffett Max ──
 const bp = readFileSync("client/src/components/recession/BuffettRatioPanel.tsx", "utf8");
 check("Max: Label am letzten Punkt (nicht mehr an !showCallout gebunden)", bp.includes("{lastPointLabel(last) && (") && !bp.includes("{!showCallout && lastPointLabel(last)"));
-check("Callout: Leerzeichen nach Datum und nach 'BIP,'", bp.includes('{last.proxy ? ` (via ${last.proxy})` : ""}{" "}</text>') && bp.includes("Marktwert zum BIP, `"));
+check("Callout: Leerzeichen nach Datum und nach 'BIP,'", bp.includes('{last.proxy ? (last.proxyKind === "etf" ? ` (ETF-Proxy ${last.proxy})` : ` (via ${last.proxy})`) : ""}{" "}</text>') && bp.includes("Marktwert zum BIP, `"));
 
 console.log(fail ? `\n${fail} Fehler` : "\nalle grün");
 process.exit(fail ? 1 : 0);
