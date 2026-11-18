@@ -35,6 +35,12 @@ function signedPct(v: number): string {
   return `${deNum(v, 1)} %`;
 }
 
+/** Differenz zweier Wachstumsraten: 15 % − 10 % = 5 Pp, nicht 5 % relative Änderung. */
+function signedPp(v: number): string {
+  if (v > 0) return `+${deNum(v, 1)} Pp`;
+  return `${deNum(v, 1)} Pp`;
+}
+
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
@@ -241,7 +247,7 @@ export function RecessionGrowthSection({ number }: { number: number }) {
                 label="Realisiertes EPS-YoY"
                 value={gaps.stats.available ? signedPct(gaps.stats.realizedPct) : gaps.stats.reason}
                 detail={gaps.stats.available
-                  ? `${REALIZED_FORMULA} · ${gaps.realizedSource} · Stand ${gaps.stats.asOf} · Median ${signedPct(gaps.stats.median10y)} · Abstand ${signedPct(gaps.stats.distanceToMedianPp)} · Perzentil ${deNum(gaps.stats.percentile, 1)} % · z ${deNum(gaps.stats.z, 2)}`
+                  ? `${REALIZED_FORMULA} · ${gaps.realizedSource} · Stand ${gaps.stats.asOf} · Median ${signedPct(gaps.stats.median10y)} · Abstand ${signedPp(gaps.stats.distanceToMedianPp)} · Perzentil ${deNum(gaps.stats.percentile, 1)} % · z ${deNum(gaps.stats.z, 2)}`
                   : "n/a"}
               />
               <Reading
@@ -311,7 +317,7 @@ function GapCard({ testId, label, gap, formula }: { testId: string; label: strin
     <Reading
       testId={testId}
       label={label}
-      value={gap.available ? signedPct(gap.gapPp) : na.reason}
+      value={gap.available ? signedPp(gap.gapPp) : na.reason}
       detail={gap.available
         ? `${formula} · z ${deNum(gap.z, 2)} · ${gapMeaning(gap.direction)}${gap.warn ? " · Warnung" : ""}`
         : "n/a"}
