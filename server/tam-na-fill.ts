@@ -25,6 +25,7 @@ import {
   catalogCoverageNote,
   deriveOutperforming,
   describeTamNaMatrixRow,
+  factTamSize,
   hasPositiveSegmentRevenue,
   scopeNaCells,
   segmentNeedsLlm,
@@ -90,6 +91,8 @@ export type TamNaFillFailure = {
   status: number;
   error: string;
   code: "BAD_REQUEST" | "LLM_UNAVAILABLE" | "LLM_FAILED" | "INCOMPLETE_FILL";
+  /** Nur bei INCOMPLETE_FILL gesetzt, damit die Route das Modell einer Teilantwort nennen kann. */
+  modelUsed?: string;
 };
 
 export type TamNaFillResult = TamNaFillSuccess | TamNaFillFailure;
@@ -386,6 +389,21 @@ export function tamGapReasons(segments: TamNaFillRequestSegment[], fills: TamNaF
   return out;
 }
 
+/**
+ * Eine offene Zeile trägt schon eine Fact-Zahl (Wachstum oder Katalog-TAM).
+ * Ein Modell ohne Fills ist dann kein Totalausfall: die offene Zelle bleibt n/a mit Grund.
+ * Eine Zeile ganz ohne Fact und ohne Fill bleibt ein 422.
+ */
+export function segmentTamGapIsExplainable(segments: TamNaFillRequestSegment[]): boolean {
+  for (const seg of segments) {
+    const ref = asRef(seg);
+    if (!ref || !segmentNeedsLlm(ref)) continue;
+    if (typeof ref.segmentGrowth === "number") return true;
+    if (factTamSize(ref) != null) return true;
+  }
+  return false;
+}
+
 export async function requestTamNaFills(
   args: TamNaFillArgs,
   deps: { isLLMAvailable: () => boolean; callLLMJson: LlmJson } = { isLLMAvailable, callLLMJson },
@@ -450,8 +468,8 @@ export async function requestTamNaFills(
 
   const fills = fillsFromKnown(originalSegments, known, modelFills);
   if (fills.length === 0) {
-    console.info(`[TAM-NA] INCOMPLETE_FILL ticker=${ticker} model=${modelUsed} kept=0 shape=${redactTamLlmShape(llmData)}`);
-    return { ok: false, status: 422, error: INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
+    console.info(`[TAM-NA] no-fill ticker=${ticker} model=${modelUsed} kept=0 shape=${redactTamLlmShape(llmData)}`);
+    return { ok: false, status: 422, error: INCOMPLETE_ERROR, code: "INCOMPLETE_FILL", modelUsed };
   }
 
   return {

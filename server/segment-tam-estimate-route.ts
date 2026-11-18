@@ -8,10 +8,11 @@
 import type { Express, Request, Response } from "express";
 import type { PeerGrowthAnchor } from "../shared/peer-growth-anchor";
 import { growthFactsFromSupplement, type SupplementGrowthField } from "../shared/segment-supplement";
-import { retainSourcedTamNaFills, type TamNaReason } from "../shared/tam-na-fill";
+import { catalogCoverageNote, retainSourcedTamNaFills, type TamNaReason } from "../shared/tam-na-fill";
 import { loadPeerGrowthAnchor } from "./peer-growth-anchor";
 import {
   requestTamNaFills,
+  segmentTamGapIsExplainable,
   tamGapReasons,
   type TamNaFillArgs,
   type TamNaFillResult,
@@ -135,7 +136,24 @@ export async function estimateSegmentTam(
 ): Promise<SegmentTamEstimate | Extract<TamNaFillResult, { ok: false }>> {
   const peerAnchor = args.peerAnchor !== undefined ? args.peerAnchor : await loadPeerGrowthAnchor(args.ticker);
   const result = await requestTamNaFills({ ...args, peerAnchor }, deps);
-  if (!result.ok) return result;
+  if (!result.ok) {
+    if (result.code === "INCOMPLETE_FILL" && segmentTamGapIsExplainable(args.segments)) {
+      const gaps = tamGapReasons(args.segments, []);
+      if (gaps.length > 0) {
+        const coveragePct = typeof args.coveragePct === "number" && Number.isFinite(args.coveragePct) ? args.coveragePct : null;
+        return {
+          ok: true,
+          fills: [],
+          naReasons: gaps,
+          peerAnchor,
+          coveragePct,
+          coverageNote: catalogCoverageNote(coveragePct),
+          modelUsed: result.modelUsed ?? "",
+        };
+      }
+    }
+    return result;
+  }
   const sourced = retainSourcedTamNaFills(result.fills);
   const gaps = tamGapReasons(args.segments, sourced.fills).filter(
     (reason) => !sourced.naReasons.some((row) => row.segmentName === reason.segmentName && row.field === reason.field),

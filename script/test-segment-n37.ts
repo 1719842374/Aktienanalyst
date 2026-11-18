@@ -13,6 +13,7 @@
 import express from "express";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { applicableTamNaFills, type TamNaSegmentRef } from "../shared/tam-na-fill";
 import { registerSegmentTamEstimateRoute } from "../server/segment-tam-estimate-route";
 import { redactTamLlmShape } from "../server/tam-na-fill";
 
@@ -88,7 +89,11 @@ registerSegmentTamEstimateRoute(app, {
   isLLMAvailable: () => true,
   callLLMJson: async (opts) => {
     prompts.push(opts.prompt);
-    const data = opts.prompt.includes("MSFT") ? msftModel : sapModel;
+    const data = opts.prompt.includes("MSFT")
+      ? msftModel
+      : opts.prompt.includes("1500")
+        ? sapLiveShape
+        : sapModel;
     return { modelUsed: "anthropic/claude-haiku-4.5", data };
   },
 });
@@ -104,6 +109,15 @@ async function post(body: unknown): Promise<{ status: number; json: EstimateBody
   const json = await res.json() as EstimateBody;
   return { status: res.status, json };
 }
+
+const sapLiveShape = JSON.parse(readFileSync("script/fixtures/sap-de-tam-llm-shape.json", "utf8")).shape as { fills: unknown[] };
+
+const sapLiveSegments = [
+  { segmentName: "Cloud", segmentRevenue: 21, segmentShare: 57.1, segmentGrowth: 22.6, matched: true, tamSize: 1500, tamCAGR: 16 },
+  { segmentName: "Software support", segmentRevenue: 10.5, segmentShare: 28.6, segmentGrowth: -6.8, matched: false, tamSize: null, tamCAGR: null },
+  { segmentName: "Services", segmentRevenue: 4.3, segmentShare: 11.6, segmentGrowth: -1.9, matched: false, tamSize: null, tamCAGR: null },
+  { segmentName: "Software licenses", segmentRevenue: 1, segmentShare: 2.7, segmentGrowth: -29.2, matched: false, tamSize: null, tamCAGR: null },
+];
 
 const sapSegments = [
   { segmentName: "Cloud", segmentRevenue: 15.2, segmentShare: 46, segmentGrowth: 22.6, matched: false, tamSize: null, tamCAGR: null },
@@ -172,6 +186,55 @@ try {
       && prompt.includes("APJ")
       && prompt.includes("Quelle FMP"),
     prompt.includes("Regionen") ? prompt.slice(prompt.indexOf("Regionen"), prompt.indexOf("Regionen") + 280) : "kein Regionen-Block",
+  );
+
+  prompts.length = 0;
+  const live = await post({
+    ticker: "SAP.DE",
+    companyName: "SAP SE",
+    sector: "Technology",
+    industry: "Software - Application",
+    currency: "USD",
+    fiscalYear: "2025",
+    totalRevenue: 40.3,
+    coveragePct: 57.1,
+    supplementGrowth: [
+      { name: "Cloud", nextYearGrowthPct: 22.6, reportedGrowthPct: 22.6, field: "reportedGrowthPct", observations: 0, source: null },
+      { name: "Software support", nextYearGrowthPct: -6.8, reportedGrowthPct: -6.8, field: "reportedGrowthPct", observations: 0, source: null },
+      { name: "Services", nextYearGrowthPct: -1.9, reportedGrowthPct: -1.9, field: "reportedGrowthPct", observations: 0, source: null },
+      { name: "Software licenses", nextYearGrowthPct: -29.2, reportedGrowthPct: -29.2, field: "reportedGrowthPct", observations: 0, source: null },
+    ],
+    regions: [
+      { name: "EMEA", revenue: 15_013_000_000, yoy: -3.6, source: "FMP" },
+      { name: "Americas", revenue: 12_744_000_000, yoy: -7.7, source: "FMP" },
+      { name: "APJ", revenue: 4_781_000_000, yoy: -0.3, source: "FMP" },
+    ],
+    segments: sapLiveSegments,
+  });
+  const liveFills = live.json.fills ?? [];
+  const liveReasons = live.json.naReasons ?? [];
+  const liveRefs: TamNaSegmentRef[] = sapLiveSegments.map((row) => ({
+    segmentName: row.segmentName,
+    segmentRevenue: row.segmentRevenue,
+    segmentGrowth: row.segmentGrowth,
+    matched: row.matched,
+    tamSize: row.tamSize,
+    tamCAGR: row.tamCAGR,
+  }));
+  const applied = applicableTamNaFills(liveRefs, liveFills as never);
+  const clientShowsRed = live.status !== 200 || !Array.isArray(live.json.fills) || (applied.length === 0 && liveReasons.length === 0);
+  const openTam = ["Software support", "Services", "Software licenses"];
+  gap(
+    "sap-live-empty-model-is-200-with-reasons",
+    !clientShowsRed
+      && live.json.code !== "INCOMPLETE_FILL"
+      && live.json.modelUsed === "anthropic/claude-haiku-4.5"
+      && !liveFills.some((row) => row.segmentGrowth != null || row.tamSize != null)
+      && openTam.every((name) => liveReasons.some((row) => row.segmentName === name && row.field === "tam" && row.reason.startsWith("n/a")))
+      && openTam.every((name) => liveReasons.some((row) => row.segmentName === name && row.field === "cagr" && row.reason.includes("CAGR ohne Beleg")))
+      && !liveReasons.some((row) => row.segmentName === "Services" && row.field === "growth")
+      && !liveReasons.some((row) => row.segmentName === "Cloud"),
+    `status=${live.status} code=${live.json.code ?? ""} model=${String(live.json.modelUsed)} fills=${liveFills.map((row) => row.segmentName).join(",") || "leer"} reasons=${liveReasons.map((row) => `${row.segmentName}:${row.field}`).join(",") || "leer"}`,
   );
 
   prompts.length = 0;
