@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { withoutApproved326 } from "./guard-approved-326";
 import { withoutApproved180 } from "./guard-approved-180";
+import { withoutApprovedDcfCalibration } from "./guard-approved-dcf-calibration";
 import type { AddressInfo } from "node:net";
 import { installFakeDom, findByTestId, FakeElement, FakeText, type FakeNode } from "./lib/fake-dom";
 
@@ -214,7 +215,7 @@ async function main() {
   // #326: analyze-route.ts/schema.ts nur ausgenommen, wenn jede Diff-Zeile exakt freigegeben ist (script/guard-approved-326.ts).
   // #180: researcher.ts nur ausgenommen, wenn der Diff exakt die freigegebenen Briefing-Hunks ist (4 Bereiche = 7 -U0-Hunks, script/guard-approved-180.ts).
   const guardBase = squash274 ? `${squash274}^` : mergeBase;
-  for (const f of alarms(withoutApproved180(guardBase, withoutApproved326(guardBase, changed)))) assert.fail(f);
+  for (const f of alarms(withoutApprovedDcfCalibration(guardBase, withoutApproved180(guardBase, withoutApproved326(guardBase, changed))))) assert.fail(f);
   assert.equal(route.WILSHIRE_DOLLARS_PER_POINT_BN, 1.05, "Konstante, die recession.ts importiert, unverändert");
   const rec = readFileSync("server/recession.ts", "utf8");
   assert.ok(/import \{ WILSHIRE_DOLLARS_PER_POINT_BN \} from "\.\/buffett-route";/.test(rec) && !/analyze-recession\/buffett|buildUnitedStates|fallback/.test(rec.match(/function scoreBuffett[\s\S]*?\n\}/)![0]), "Rezessions-Score nutzt die Route nicht");
