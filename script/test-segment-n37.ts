@@ -14,6 +14,7 @@ import express from "express";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { registerSegmentTamEstimateRoute } from "../server/segment-tam-estimate-route";
+import { redactTamLlmShape } from "../server/tam-na-fill";
 
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.FMP_API_KEY;
@@ -198,6 +199,15 @@ try {
 } finally {
   await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
 }
+
+const redacted = redactTamLlmShape({
+  fills: [{ segmentName: "Cloud", tamSize: 250, tamSource: "IDC", note: "sk-live-secret-value" }],
+});
+gap(
+  "redacted-shape-keeps-numbers-drops-keys",
+  redacted.includes("\"tamSize\":250") && redacted.includes("Cloud") && !redacted.includes("sk-live"),
+  redacted,
+);
 
 const section = readFileSync("client/src/components/sections/Section7.tsx", "utf8");
 gap(

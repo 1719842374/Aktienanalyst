@@ -104,6 +104,40 @@ type LlmJson = (opts: {
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,14}$/i;
 const INCOMPLETE_ERROR = "KI-Schätzung unvollständig — nichts übernommen";
 const REST_ROW_LABEL = "Other / nicht segmentiert";
+const SECRET_TEXT = /sk-[A-Za-z0-9]|Bearer\s|api[_-]?key|OPENROUTER|Authorization/i;
+
+/**
+ * Form der Modellantwort für das Server-Log. Zahlen bleiben, Texte werden
+ * gekürzt. Schlüsselartige Werte werden nicht geschrieben.
+ */
+export function redactTamLlmShape(data: unknown): string {
+  const seen = new WeakSet<object>();
+  const walk = (value: unknown, depth: number): unknown => {
+    if (depth > 5) return "…";
+    if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const text = value.replace(/\s+/g, " ").trim();
+      if (SECRET_TEXT.test(text)) return `[redacted ${text.length}]`;
+      return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+    }
+    if (Array.isArray(value)) return value.slice(0, 8).map((item) => walk(item, depth + 1));
+    if (typeof value === "object") {
+      if (seen.has(value)) return "[cycle]";
+      seen.add(value);
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).slice(0, 24)) {
+        out[key] = SECRET_TEXT.test(key) ? "[redacted]" : walk((value as Record<string, unknown>)[key], depth + 1);
+      }
+      return out;
+    }
+    return typeof value;
+  };
+  try {
+    return JSON.stringify(walk(data, 0)).slice(0, 1500);
+  } catch {
+    return "[unprintable]";
+  }
+}
 
 function clip(v: unknown, max: number): string {
   if (typeof v !== "string") return "";
@@ -384,6 +418,7 @@ export async function requestTamNaFills(
   const needsModel = scoped.filter(segmentNeedsLlm);
   let modelFills: TamNaFill[] = [];
   let modelUsed = "supplement";
+  let llmData: unknown = null;
   if (needsModel.length > 0) {
     if (!deps.isLLMAvailable()) {
       return { ok: false, status: 503, error: "LLM nicht verfügbar", code: "LLM_UNAVAILABLE" };
@@ -394,7 +429,9 @@ export async function requestTamNaFills(
       temperature: 0.2,
       systemPrompt: "Du füllst n/a-Zellen der Tabelle Segment-TAM-Analyse. Spalten: Segment, Rev., Anteil, Wachstum, TAM, CAGR, Anteil am TAM, vs. TAM. Du überschreibst keine Fact-Zahl. Anteil am TAM und vs. TAM lieferst du nicht. Antworte ausschließlich mit JSON.",
     });
+    llmData = llm?.data ?? null;
     if (!llm || llm.data == null) {
+      console.info(`[TAM-NA] LLM_FAILED ticker=${ticker} shape=${redactTamLlmShape(llmData)}`);
       const recovered = fillsFromKnown(originalSegments, known, []);
       if (recovered.length === 0) {
         return { ok: false, status: 502, error: "KI-Antwort fehlgeschlagen", code: "LLM_FAILED" };
@@ -413,6 +450,7 @@ export async function requestTamNaFills(
 
   const fills = fillsFromKnown(originalSegments, known, modelFills);
   if (fills.length === 0) {
+    console.info(`[TAM-NA] INCOMPLETE_FILL ticker=${ticker} model=${modelUsed} kept=0 shape=${redactTamLlmShape(llmData)}`);
     return { ok: false, status: 422, error: INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
   }
 
