@@ -25,7 +25,7 @@ import {
   type SegmentGapItem,
   type SegmentGapResult,
 } from "../shared/segment-gap";
-import { fmpSegmentationRows, isFmpAvailable } from "./fmp";
+import { convertSegmentRowsToUsd, fmpSegmentationRows, isFmpAvailable, type FmpSegmentRow } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { fetchSecBusinessSegments } from "./sec-segments";
 import {
@@ -43,7 +43,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p4";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p5";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -65,6 +65,8 @@ export interface SegmentGapDeps {
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
   secSegments?: (ticker: string, companyName: string) => Promise<{ segments: Array<{ name: string }> } | null>;
+  /** Standard ist convertSegmentRowsToUsd aus #505. Tests setzen einen Kurs, ohne das Netz zu rufen. */
+  convertSegments?: (rows: FmpSegmentRow[]) => Promise<FmpSegmentRow[]>;
 }
 
 export function resetSegmentGapCacheForTests(): void {
@@ -162,9 +164,16 @@ export function segmentGapPrompt(input: {
   regions: string[];
   industry?: string;
   sector?: string;
+  parentsUsd?: ReadonlyArray<{ name: string; revenueUsd: number | null }>;
+  fxNote?: string | null;
 }): string {
   const closed = (rows: string[]) => (rows.length > 0 ? rows.slice(0, 24).join(" | ") : "keine");
   const industryEcho = input.industry || input.sector || "";
+  const parentLine = (input.parentsUsd ?? []).length > 0
+    ? (input.parentsUsd ?? []).map((row) => (
+      row.revenueUsd != null && row.revenueUsd > 0 ? `${row.name} ${row.revenueUsd} USD` : `${row.name} n/a`
+    )).join(" | ")
+    : "n/a";
   return [
     "Bekannte Fakten. Diese Namen und Zahlen nicht ersetzen und nicht als neues Top-Level-Segment anlegen.",
     `Ticker ${input.ticker}. Firma: ${input.companyName}.`,
@@ -176,10 +185,14 @@ export function segmentGapPrompt(input: {
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
     "Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Ein Land oder eine Region ist kein Produkt-Unterposten. Eine Region nur unter dem Regionen-Eltern, das sie geografisch enthält, nicht unter einem anderen Land.",
+    "Währung der Elternumsätze: USD.",
+    `Elternumsätze in USD: ${parentLine}.`,
+    input.fxNote ? input.fxNote : "",
     "shareOfParentPct ist der Anteil am Elternsegment in Prozent. Die Zahl nur zusammen mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. Nie 0.",
-    "revenue nur mit derselben Quelle, in der Währung der Elternzeile. basis nennt die Lücke und darf nicht leer sein.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
-  ].join("\n");
+    "revenue ist der Umsatz des Unterpostens in USD. currency ist USD. Eine andere Währung wird nicht umgerechnet und nicht als Anteil verwendet.",
+    "basis nennt die Lücke und darf nicht leer sein.",
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
+  ].filter((line) => line.length > 0).join("\n");
 }
 
 function fold(value: string): string {
@@ -245,7 +258,19 @@ export function reviewSegmentGaps(
     const enriched: SegmentGapItem[] = [];
     for (const child of reviewed.children) {
       if (known.has(fold(child.name))) continue;
-      enriched.push(toGapItem(parent, bucket.kind, child, parentRevenue.get(fold(parent)) ?? null, companyName));
+      const childCurrency = currencyOnRows(bucket.rows, child.name);
+      const parentUsd = parentRevenue.get(fold(parent)) ?? null;
+      const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency);
+      if (
+        child.revenue != null && child.revenue > 0
+        && parentUsd != null
+        && childCurrency !== "USD"
+        && item.shareOrigin !== "fact"
+        && concreteSource(item.basis, companyName)
+      ) {
+        notes.push(`n/a — Währung passt nicht zur Elternzeile: ${child.name}`);
+      }
+      enriched.push(item);
     }
     const shareSum = enriched.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
     if (enriched.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
@@ -257,13 +282,91 @@ export function reviewSegmentGaps(
   return { items, reason: notes.filter((note) => note.trim()).join(" ") || null };
 }
 
-function revenuesFromRows(rows: unknown[]): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const name of segmentNamesFromFmpRows(rows)) {
-    const revenue = reportedParentRevenue(rows, name);
-    if (revenue != null && revenue > 0) map.set(fold(name), revenue);
+function rowYear(row: Record<string, unknown>): number {
+  const year = row.fiscalYear;
+  if (typeof year === "number" && Number.isInteger(year)) return year;
+  if (typeof year === "string" && /^\d{4}/.test(year)) return Number(year.slice(0, 4));
+  const date = typeof row.date === "string" ? row.date : "";
+  if (/^\d{4}/.test(date)) return Number(date.slice(0, 4));
+  return 0;
+}
+
+function reportedCurrencyOf(raw: unknown[]): string {
+  if (!Array.isArray(raw)) return "";
+  let bestYear = -1;
+  let code = "";
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i];
+    if (!row || typeof row !== "object") continue;
+    const rec = row as Record<string, unknown>;
+    if (typeof rec.period === "string" && /^Q[1-4]$/i.test(rec.period.trim())) continue;
+    const reported = typeof rec.reportedCurrency === "string" ? rec.reportedCurrency.trim().toUpperCase() : "";
+    if (!/^[A-Z]{3}$/.test(reported)) continue;
+    const year = rowYear(rec);
+    if (year >= bestYear) {
+      bestYear = year;
+      code = reported;
+    }
   }
-  return map;
+  return code;
+}
+
+/** Rohe Segmentzahlen in die Form, die convertSegmentRowsToUsd aus #505 erwartet. */
+function segmentRowsForUsd(raw: unknown[]): FmpSegmentRow[] {
+  const currency = reportedCurrencyOf(raw);
+  const rows: FmpSegmentRow[] = [];
+  for (const name of segmentNamesFromFmpRows(raw)) {
+    const revenue = reportedParentRevenue(raw, name);
+    if (revenue == null || !(revenue > 0)) continue;
+    rows.push({
+      name,
+      revenue,
+      percentage: 0,
+      growth: null,
+      ...(currency ? { reportedCurrency: currency } : {}),
+    });
+  }
+  return rows;
+}
+
+function revenuesFromConverted(rows: readonly FmpSegmentRow[]): { revenues: Map<string, number>; fxNote: string | null } {
+  const revenues = new Map<string, number>();
+  let fxNote: string | null = null;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.fxNaReason) {
+      fxNote = row.fxNaReason;
+      continue;
+    }
+    if (row.revenue > 0) revenues.set(fold(row.name), row.revenue);
+  }
+  return { revenues, fxNote };
+}
+
+async function usdParentRevenues(
+  productRaw: unknown[],
+  regionRaw: unknown[],
+  convert: (rows: FmpSegmentRow[]) => Promise<FmpSegmentRow[]>,
+): Promise<{ revenues: Map<string, number>; fxNote: string | null }> {
+  const product = revenuesFromConverted(await convert(segmentRowsForUsd(productRaw)));
+  const region = revenuesFromConverted(await convert(segmentRowsForUsd(regionRaw)));
+  region.revenues.forEach((value, key) => {
+    if (!product.revenues.has(key)) product.revenues.set(key, value);
+  });
+  const fxNote = [product.fxNote, region.fxNote].filter((note) => note && note.trim()).join(" ") || null;
+  return { revenues: product.revenues, fxNote };
+}
+
+function currencyOnRows(rows: readonly unknown[], name: string): string {
+  for (let i = 0; i < rows.length; i++) {
+    const item = rows[i];
+    if (!item || typeof item !== "object") continue;
+    const row = item as { name?: unknown; currency?: unknown };
+    if (clip(row.name, 80) !== name) continue;
+    const code = clip(row.currency, 12).toUpperCase();
+    return /^[A-Z]{3}$/.test(code) ? code : "";
+  }
+  return "";
 }
 
 function toGapItem(
@@ -272,6 +375,7 @@ function toGapItem(
   child: SegmentChild,
   parentRevenue: number | null,
   companyName: string,
+  childCurrency: string,
 ): SegmentGapItem {
   let share = child.shareOfParentPct != null && child.shareOfParentPct > 0 ? child.shareOfParentPct : null;
   let shareOrigin: SegmentGapItem["shareOrigin"] = share != null ? "estimate" : null;
@@ -281,7 +385,13 @@ function toGapItem(
     share = null;
     shareOrigin = null;
   }
-  if (share == null && child.revenue != null && child.revenue > 0 && parentRevenue != null && parentRevenue > 0 && sourced) {
+  if (
+    share == null
+    && child.revenue != null && child.revenue > 0
+    && parentRevenue != null && parentRevenue > 0
+    && sourced
+    && childCurrency === "USD"
+  ) {
     const rounded = Math.round((child.revenue / parentRevenue) * 1000) / 10;
     if (rounded > 0 && rounded <= 100) {
       share = rounded;
@@ -350,12 +460,18 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         });
         for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
       }
+      const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
+      const usd = await usdParentRevenues(productRaw, regionRaw, convert);
+      const parentsUsd = [...products, ...regions].slice(0, 24).map((name) => ({
+        name,
+        revenueUsd: usd.revenues.get(fold(name)) ?? null,
+      }));
       const run = deps.llm ?? callLLMJson;
       if (!deps.llm && !isLLMAvailable()) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
       let payload: unknown = null;
       try {
         const result = await run({
-          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Bekannte Namen nicht wiederholen. Eine Zahl nur mit Quelle, nie 0. Das Label ist KI-Schätzung, kein Override.",
+          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Bekannte Namen nicht wiederholen. revenue und currency in USD. Eine Zahl nur mit Quelle, nie 0. Das Label ist KI-Schätzung, kein Override.",
           prompt: segmentGapPrompt({
             ticker,
             companyName: identity.companyName,
@@ -364,6 +480,8 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
             regions,
             industry: identity.industry,
             sector: identity.sector,
+            parentsUsd,
+            fxNote: usd.fxNote,
           }),
           maxTokens: 800,
           temperature: 0.2,
@@ -377,11 +495,11 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
         return res.json({ items: [], reason: OUTLINE_MISMATCH });
       }
-      const revenues = revenuesFromRows(productRaw);
-      revenuesFromRows(regionRaw).forEach((value, revenueKey) => {
-        if (!revenues.has(revenueKey)) revenues.set(revenueKey, value);
-      });
-      const body = reviewSegmentGaps(payload, products, regions, identity.companyName, ticker, identity.description ?? "", revenues);
+      const reviewed = reviewSegmentGaps(payload, products, regions, identity.companyName, ticker, identity.description ?? "", usd.revenues);
+      const reason = [reviewed.reason, usd.fxNote && !(reviewed.reason ?? "").includes(usd.fxNote) ? usd.fxNote : ""]
+        .filter((note) => note && note.trim())
+        .join(" ") || null;
+      const body = { items: reviewed.items, reason };
       const ttl = body.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
       rememberGap(key, { at: now, ttl, body });
       return res.json(body);

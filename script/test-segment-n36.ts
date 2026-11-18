@@ -14,6 +14,7 @@ import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
 import { registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
+import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
 delete process.env.OPENROUTER_API_KEY;
 (globalThis as { React?: typeof React }).React = React;
@@ -391,7 +392,7 @@ const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) 
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p4")
+    && keyA.includes("n36-gap-p5")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -828,7 +829,7 @@ registerSegmentGapRoute(bindApp, {
             citedChild("Automotive", "Mexico", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
             citedChild("Automotive", "Germany", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
             citedChild("Automotive", "India", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
-            citedChild("Energy Generation and Storage", "Megapack", "Tesla, Inc.", { source: "Tesla Annual Report 2025", revenue: 25 }),
+            citedChild("Energy Generation and Storage", "Megapack", "Tesla, Inc.", { source: "Tesla Annual Report 2025", revenue: 25, currency: "USD" }),
             citedChild("Automotive", "Robotaxi", "Tesla, Inc.", { source: null, revenue: 40, basis: "Pilot ohne Beleg" }),
             citedChild("Automotive", "Optimus", "Tesla, Inc.", { source: "Tesla Annual Report 2025", shareOfParentPct: 0 }),
           ],
@@ -894,6 +895,8 @@ try {
     megapack?.shareOfParentPct === 25
       && megapack.shareOrigin === "fact"
       && (megapack.basis ?? "").includes("Formel: 25 / 100")
+      && tslaPrompt.includes("Energy Generation and Storage 100 USD")
+      && tslaPrompt.includes("Währung der Elternumsätze: USD.")
       && robotaxi?.shareOfParentPct == null
       && !(robotaxi?.basis ?? "").includes("Formel")
       && optimus?.shareOfParentPct == null
@@ -939,11 +942,135 @@ try {
   bindServer.close();
 }
 
+resetSegmentGapCacheForTests();
+const fxPrompts: string[] = [];
+const fxApp = express();
+fxApp.use(express.json());
+registerSegmentGapRoute(fxApp, {
+  available: () => true,
+  productRows: async (ticker) => {
+    if (ticker.toUpperCase() === "NVO") {
+      return [{ fiscalYear: "2025", reportedCurrency: "DKK", data: { "Diabetes and Obesity care": 500 } }];
+    }
+    return [{ fiscalYear: "2025", reportedCurrency: "SEK", data: { Networks: 200 } }];
+  },
+  regionRows: async () => [],
+  convertSegments: async (rows) => {
+    const currency = (rows.find((row) => row.reportedCurrency)?.reportedCurrency ?? "").toUpperCase();
+    if (currency === "DKK") return applySegmentFx(rows, 0.2, currency);
+    if (currency === "SEK") return applySegmentFx(rows, 1, currency);
+    return convertSegmentRowsToUsd(rows);
+  },
+  identity: async (ticker) => {
+    if (ticker.toUpperCase() === "NVO") {
+      return {
+        companyName: "Novo Nordisk",
+        exchange: "NYSE",
+        country: "DK",
+        sector: "Healthcare",
+        industry: "Biotechnology",
+        description: "Novo Nordisk verkauft Medikamente.",
+        fiscalYear: "2025",
+        currency: "DKK",
+      };
+    }
+    return {
+      companyName: "Ericsson",
+      exchange: "NASDAQ",
+      country: "SE",
+      sector: "Technology",
+      industry: "Communication Equipment",
+      description: "Ericsson baut Netze.",
+      fiscalYear: "2025",
+      currency: "SEK",
+    };
+  },
+  llm: async (opts) => {
+    fxPrompts.push(opts.prompt);
+    if (opts.prompt.includes("Ticker NVO.")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Novo Nordisk",
+          industryEcho: "Biotechnology",
+          children: [
+            citedChild("Diabetes and Obesity care", "Wegovy", "Novo Nordisk", {
+              source: "Novo Nordisk Annual Report 2025",
+              revenue: 25,
+              currency: "USD",
+            }),
+            citedChild("Diabetes and Obesity care", "Rybelsus", "Novo Nordisk", {
+              source: "Novo Nordisk Annual Report 2025",
+              revenue: 25,
+              currency: "DKK",
+            }),
+          ],
+        },
+      };
+    }
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Ericsson",
+        industryEcho: "Communication Equipment",
+        children: [
+          citedChild("Networks", "Radio", "Ericsson", {
+            source: "Ericsson Annual Report 2025",
+            revenue: 40,
+            currency: "USD",
+          }),
+        ],
+      },
+    };
+  },
+});
+const fxServer = fxApp.listen(0);
+const fxPort = (fxServer.address() as AddressInfo).port;
+try {
+  const nvo = await postGap(fxPort, "NVO");
+  const wegovy = nvo.json.items?.find((item) => item.name === "Wegovy");
+  const rybelsus = nvo.json.items?.find((item) => item.name === "Rybelsus");
+  const nvoPrompt = fxPrompts.find((prompt) => prompt.includes("Ticker NVO.")) ?? "";
+  gap(
+    "nvo-dkk-fact-share-in-usd",
+    nvo.status === 200
+      && wegovy?.shareOfParentPct === 25
+      && wegovy.shareOrigin === "fact"
+      && (wegovy.basis ?? "").includes("Formel: 25 / 100")
+      && rybelsus?.shareOfParentPct == null
+      && /Währung passt nicht zur Elternzeile: Rybelsus/.test(nvo.json.reason ?? "")
+      && nvoPrompt.includes("Diabetes and Obesity care 100 USD")
+      && nvoPrompt.includes("Währung der Elternumsätze: USD.")
+      && !nvoPrompt.includes("500"),
+    `wegovy=${JSON.stringify(wegovy)} rybelsus=${JSON.stringify(rybelsus)} reason=${nvo.json.reason ?? ""} prompt=${nvoPrompt}`,
+  );
+  const missing = await postGap(fxPort, "ERIC");
+  const radio = missing.json.items?.find((item) => item.name === "Radio");
+  const ericPrompt = fxPrompts.find((prompt) => prompt.includes("Ticker ERIC.")) ?? "";
+  gap(
+    "missing-fx-share-is-na",
+    missing.status === 200
+      && radio?.shareOfParentPct == null
+      && radio?.shareOrigin !== "fact"
+      && /n\/a — FX SEKUSD fehlt, kein Faktor 1/.test(missing.json.reason ?? "")
+      && /n\/a — FX SEKUSD fehlt, kein Faktor 1/.test(ericPrompt)
+      && !ericPrompt.includes("200 USD"),
+    `radio=${JSON.stringify(radio)} reason=${missing.json.reason ?? ""} prompt=${ericPrompt}`,
+  );
+} finally {
+  fxServer.close();
+}
+
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");
 gap(
   "no-ticker-parent-map",
-  !/\bTSLA\b|\bMSFT\b|SAP\.DE|S\/4HANA|SuccessFactors/.test(`${routeSource}\n${gapModule}`),
+  !/\bTSLA\b|\bMSFT\b|\bNVO\b|SAP\.DE|S\/4HANA|SuccessFactors/.test(`${routeSource}\n${gapModule}`),
   "Route und Geografie ohne Ticker-Mapping",
+);
+gap(
+  "uses-convert-segment-rows-to-usd",
+  routeSource.includes("convertSegmentRowsToUsd"),
+  "Elternumsatz läuft über die #505-Umrechnung",
 );
 
 if (gaps.length > 0) {
