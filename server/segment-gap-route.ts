@@ -43,7 +43,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p5";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p6";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -183,6 +183,7 @@ export function segmentGapPrompt(input: {
     `Erlaubte Regionen-Eltern, nur diese Zeichenfolgen: ${closed(input.regions)}.`,
     "parent ist genau eine dieser Zeichenfolgen. Jeder andere Elternname ist ungültig und wird verworfen.",
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
+    "Nenne auch Geschäftsbereiche, die diese Firma real führt und die in den Listen nicht stehen, etwa Software, Services oder Abos. Sie hängen unter dem passenden Elternsegment.",
     "Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Ein Land oder eine Region ist kein Produkt-Unterposten. Eine Region nur unter dem Regionen-Eltern, das sie geografisch enthält, nicht unter einem anderen Land.",
     "Währung der Elternumsätze: USD.",
@@ -311,22 +312,30 @@ function reportedCurrencyOf(raw: unknown[]): string {
   return code;
 }
 
+function currencyCode(value: string | undefined): string {
+  const code = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : "";
+}
+
 /** Rohe Segmentzahlen in die Form, die convertSegmentRowsToUsd aus #505 erwartet. */
-function segmentRowsForUsd(raw: unknown[]): FmpSegmentRow[] {
-  const currency = reportedCurrencyOf(raw);
+function segmentRowsForUsd(raw: unknown[], fallbackCurrency: string): { rows: FmpSegmentRow[]; missingCurrency: boolean } {
+  const currency = reportedCurrencyOf(raw) || currencyCode(fallbackCurrency);
   const rows: FmpSegmentRow[] = [];
+  let hasRevenue = false;
   for (const name of segmentNamesFromFmpRows(raw)) {
     const revenue = reportedParentRevenue(raw, name);
     if (revenue == null || !(revenue > 0)) continue;
+    hasRevenue = true;
+    if (!currency) continue;
     rows.push({
       name,
       revenue,
       percentage: 0,
       growth: null,
-      ...(currency ? { reportedCurrency: currency } : {}),
+      reportedCurrency: currency,
     });
   }
-  return rows;
+  return { rows, missingCurrency: hasRevenue && !currency };
 }
 
 function revenuesFromConverted(rows: readonly FmpSegmentRow[]): { revenues: Map<string, number>; fxNote: string | null } {
@@ -347,13 +356,17 @@ async function usdParentRevenues(
   productRaw: unknown[],
   regionRaw: unknown[],
   convert: (rows: FmpSegmentRow[]) => Promise<FmpSegmentRow[]>,
+  fallbackCurrency: string,
 ): Promise<{ revenues: Map<string, number>; fxNote: string | null }> {
-  const product = revenuesFromConverted(await convert(segmentRowsForUsd(productRaw)));
-  const region = revenuesFromConverted(await convert(segmentRowsForUsd(regionRaw)));
+  const productBuilt = segmentRowsForUsd(productRaw, fallbackCurrency);
+  const regionBuilt = segmentRowsForUsd(regionRaw, fallbackCurrency);
+  const product = revenuesFromConverted(await convert(productBuilt.rows));
+  const region = revenuesFromConverted(await convert(regionBuilt.rows));
   region.revenues.forEach((value, key) => {
     if (!product.revenues.has(key)) product.revenues.set(key, value);
   });
-  const fxNote = [product.fxNote, region.fxNote].filter((note) => note && note.trim()).join(" ") || null;
+  const missingNote = productBuilt.missingCurrency || regionBuilt.missingCurrency ? "n/a — Währung fehlt" : null;
+  const fxNote = [product.fxNote, region.fxNote, missingNote].filter((note) => note && note.trim()).join(" ") || null;
   return { revenues: product.revenues, fxNote };
 }
 
@@ -461,7 +474,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
       }
       const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
-      const usd = await usdParentRevenues(productRaw, regionRaw, convert);
+      const usd = await usdParentRevenues(productRaw, regionRaw, convert, identity.currency ?? "");
       const parentsUsd = [...products, ...regions].slice(0, 24).map((name) => ({
         name,
         revenueUsd: usd.revenues.get(fold(name)) ?? null,
@@ -471,7 +484,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       let payload: unknown = null;
       try {
         const result = await run({
-          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Bekannte Namen nicht wiederholen. revenue und currency in USD. Eine Zahl nur mit Quelle, nie 0. Das Label ist KI-Schätzung, kein Override.",
+          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Nenne auch Software, Services und Abos, die die Firma führt und die Listen nicht ausweisen. Bekannte Namen nicht wiederholen. revenue und currency in USD. Eine Zahl nur mit Quelle, nie 0. Das Label ist KI-Schätzung, kein Override.",
           prompt: segmentGapPrompt({
             ticker,
             companyName: identity.companyName,

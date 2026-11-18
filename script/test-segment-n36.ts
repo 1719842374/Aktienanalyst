@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SegmentGapList, SegmentGapPanel, SegmentGapUnderParent, type GapRequest } from "../client/src/components/sections/SegmentGapPanel";
+import { SegmentEstimateBlock } from "../client/src/components/sections/Section2";
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
@@ -100,6 +101,80 @@ gap(
 );
 await act(async () => { root.unmount(); });
 
+function switchData(ticker: string) {
+  if (ticker === "MSFT") {
+    return {
+      ticker: "MSFT",
+      revenueSegments: [{ name: "Intelligent Cloud", percentage: 50, revenue: 50 }],
+      geoSegments: [{ name: "UNITED STATES", percentage: 60, revenue: 40 }],
+    };
+  }
+  return {
+    ticker: "TSLA",
+    revenueSegments: [{ name: "Automotive", percentage: 73, revenue: 70 }],
+    geoSegments: [{ name: "United States", percentage: 40, revenue: 40 }],
+  };
+}
+
+function TickerSwitch({ ticker, request }: { ticker: string; request: GapRequest }) {
+  return createElement(SegmentEstimateBlock, { data: switchData(ticker) as never, gapRequest: request });
+}
+
+const switchClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+switchClient.setQueryData(["/api/segment-growth", "TSLA"], { ticker: "TSLA", business: [], geographic: [], source: "fixture", currency: "USD" });
+switchClient.setQueryData(["/api/segment-growth", "MSFT"], { ticker: "MSFT", business: [], geographic: [], source: "fixture", currency: "USD" });
+let releaseMsft: () => void = () => {};
+const msftGate = new Promise<void>((resolve) => { releaseMsft = resolve; });
+const switchPosts: string[] = [];
+const switchRequest: GapRequest = async (_method, _url, body) => {
+  const asked = typeof body === "object" && body && "ticker" in body ? String((body as { ticker?: unknown }).ticker ?? "") : "";
+  switchPosts.push(asked);
+  if (asked === "MSFT") {
+    await msftGate;
+    return new Response(JSON.stringify({
+      items: [{ parent: "UNITED STATES", kind: "geographic", name: "US Operations", shareOfParentPct: 12, growthPct: null, basis: "Microsoft Annual Report 2025", shareOrigin: "estimate" }],
+      reason: null,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return new Response(JSON.stringify({
+    items: [{ parent: "Automotive", kind: "product", name: "FSD", shareOfParentPct: 8, growthPct: null, basis: "Tesla Annual Report 2025", shareOrigin: "estimate" }],
+    reason: null,
+  }), { status: 200, headers: { "content-type": "application/json" } });
+};
+const switchContainer = doc.createElement("div");
+doc.body.appendChild(switchContainer);
+const switchRoot = createRoot(switchContainer);
+let switchTicker = "TSLA";
+const renderSwitch = () => {
+  switchRoot.render(createElement(QueryClientProvider, { client: switchClient }, createElement(TickerSwitch, { ticker: switchTicker, request: switchRequest })));
+};
+await act(async () => { renderSwitch(); });
+const switchToggle = findByTestId(switchContainer, "segment-gap-toggle");
+const switchToggleProps = switchToggle ? reactPropsOf(switchToggle) : null;
+if (switchToggleProps?.onClick) {
+  await act(async () => { switchToggleProps.onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+}
+switchTicker = "MSFT";
+await act(async () => { renderSwitch(); });
+switchTicker = "TSLA";
+await act(async () => { renderSwitch(); });
+releaseMsft();
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+const backAuto = findByTestId(switchContainer, "segment-gap-under-Automotive")?.textContent ?? "";
+const backUs = findByTestId(switchContainer, "segment-gap-under-United States")?.textContent ?? "";
+const backToggle = findByTestId(switchContainer, "segment-gap-toggle")?.textContent ?? "";
+gap(
+  "ticker-switch-keeps-own-rows",
+  backAuto.includes("FSD")
+    && !backUs.includes("US Operations")
+    && !backAuto.includes("US Operations")
+    && backToggle.includes("ausblenden")
+    && switchPosts.filter((ticker) => ticker === "TSLA").length === 1,
+  `auto=${backAuto.slice(0, 160)} us=${backUs.slice(0, 160)} toggle=${backToggle} posts=${switchPosts.join(",")}`,
+);
+await act(async () => { switchRoot.unmount(); });
+
 resetSegmentGapCacheForTests();
 const prompts: string[] = [];
 let llmCalls = 0;
@@ -159,6 +234,11 @@ try {
   const json = await second.json() as { items?: { parent: string; name: string; shareOfParentPct: number | null; growthPct: number | null }[]; reason?: string; error?: string };
   const prompt = prompts[1] ?? prompts[0] ?? "";
   gap("prompt-has-known-facts", prompt.includes("Automotive") && prompt.includes("United States") && prompt.includes("Tesla baut Fahrzeuge") && !prompt.includes("FSD"), prompt.slice(0, 360));
+gap(
+  "prompt-asks-unreported-lines",
+  prompt.includes("Software") && prompt.includes("Services") && prompt.includes("Abos") && !prompt.includes("FSD") && !/\bTSLA\b/.test(prompt.split("Ticker")[0] ?? prompt),
+  prompt.slice(0, 420),
+);
   const names = (json.items ?? []).map((item) => `${item.parent}/${item.name}`);
   gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct === 8 && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
   gap("drops-echo-and-unknown-parent", !names.includes("Automotive/Automotive") && !names.includes("Automotive/United States") && !names.some((name) => name.startsWith("Software/")), names.join(",") || json.reason || "");
@@ -392,7 +472,7 @@ const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) 
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p5")
+    && keyA.includes("n36-gap-p6")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1059,6 +1139,115 @@ try {
   );
 } finally {
   fxServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const identityFxPrompts: string[] = [];
+const identityFxApp = express();
+identityFxApp.use(express.json());
+registerSegmentGapRoute(identityFxApp, {
+  available: () => true,
+  productRows: async (ticker) => {
+    if (ticker.toUpperCase() === "NVO") {
+      return [{ fiscalYear: "2025", data: { "Diabetes and Obesity care": 500 } }];
+    }
+    return [{ fiscalYear: "2025", data: { Networks: 200 } }];
+  },
+  regionRows: async () => [],
+  convertSegments: async (rows) => {
+    const currency = (rows.find((row) => row.reportedCurrency)?.reportedCurrency ?? "").toUpperCase();
+    if (currency === "DKK") return applySegmentFx(rows, 0.2, currency);
+    if (!currency) return rows.map((row) => ({ ...row, fxNaReason: "n/a — Währung fehlt" }));
+    return convertSegmentRowsToUsd(rows);
+  },
+  identity: async (ticker) => {
+    if (ticker.toUpperCase() === "NVO") {
+      return {
+        companyName: "Novo Nordisk",
+        exchange: "NYSE",
+        country: "DK",
+        sector: "Healthcare",
+        industry: "Biotechnology",
+        description: "Novo Nordisk verkauft Medikamente.",
+        fiscalYear: "2025",
+        currency: "DKK",
+      };
+    }
+    return {
+      companyName: "Acme Networks",
+      exchange: "NASDAQ",
+      country: "US",
+      sector: "Technology",
+      industry: "Communication Equipment",
+      description: "Acme baut Netze.",
+      fiscalYear: "2025",
+      currency: "",
+    };
+  },
+  llm: async (opts) => {
+    identityFxPrompts.push(opts.prompt);
+    if (opts.prompt.includes("Ticker NVO.")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Novo Nordisk",
+          industryEcho: "Biotechnology",
+          children: [
+            citedChild("Diabetes and Obesity care", "Wegovy", "Novo Nordisk", {
+              source: "Novo Nordisk Annual Report 2025",
+              revenue: 25,
+              currency: "USD",
+            }),
+          ],
+        },
+      };
+    }
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Acme Networks",
+        industryEcho: "Communication Equipment",
+        children: [
+          citedChild("Networks", "Radio", "Acme Networks", {
+            source: "Acme Networks Annual Report 2025",
+            revenue: 40,
+            currency: "USD",
+          }),
+        ],
+      },
+    };
+  },
+});
+const identityFxServer = identityFxApp.listen(0);
+const identityFxPort = (identityFxServer.address() as AddressInfo).port;
+try {
+  const nvo = await postGap(identityFxPort, "NVO");
+  const wegovy = nvo.json.items?.find((item) => item.name === "Wegovy");
+  const nvoPrompt = identityFxPrompts.find((prompt) => prompt.includes("Ticker NVO.")) ?? "";
+  gap(
+    "nvo-identity-currency-without-reported",
+    nvo.status === 200
+      && wegovy?.shareOfParentPct === 25
+      && wegovy.shareOrigin === "fact"
+      && nvoPrompt.includes("Diabetes and Obesity care 100 USD")
+      && !nvoPrompt.includes("500"),
+    `wegovy=${JSON.stringify(wegovy)} prompt=${nvoPrompt}`,
+  );
+  const bare = await postGap(identityFxPort, "ACME");
+  const radio = bare.json.items?.find((item) => item.name === "Radio");
+  const barePrompt = identityFxPrompts.find((prompt) => prompt.includes("Ticker ACME.")) ?? "";
+  gap(
+    "missing-currency-is-na",
+    bare.status === 200
+      && radio?.shareOfParentPct == null
+      && radio?.shareOrigin !== "fact"
+      && /Währung fehlt/.test(bare.json.reason ?? "")
+      && /Währung fehlt/.test(barePrompt)
+      && !barePrompt.includes("200 USD"),
+    `radio=${JSON.stringify(radio)} reason=${bare.json.reason ?? ""} prompt=${barePrompt}`,
+  );
+} finally {
+  identityFxServer.close();
 }
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");

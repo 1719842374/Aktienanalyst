@@ -14,7 +14,7 @@ import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
 import { SegmentChildrenPanel, SegmentLine, visibleBasis } from "./SegmentChildren";
-import { SegmentGapPanel, SegmentGapUnderParent } from "./SegmentGapPanel";
+import { SegmentGapPanel, SegmentGapUnderParent, type GapRequest } from "./SegmentGapPanel";
 import type { SegmentGapResult } from "@shared/segment-gap";
 import { apiRequest } from "../../lib/queryClient";
 
@@ -569,7 +569,7 @@ export function Section2({ data }: Props) {
 }
 
 
-export function SegmentEstimateBlock({ data }: Props) {
+export function SegmentEstimateBlock({ data, gapRequest }: Props & { gapRequest?: GapRequest }) {
   const segmentGrowthQueried = (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0;
   const segmentGrowth = useSegmentGrowth(data.ticker, segmentGrowthQueried);
   const [openBusiness, setOpenBusiness] = useState<Record<string, boolean>>({});
@@ -598,7 +598,6 @@ export function SegmentEstimateBlock({ data }: Props) {
     setOutlineLoading(null);
     setOpenBusiness({});
     setOpenGeo({});
-    setGapResult(null);
     outlineTicket.current += 1;
   }, [data.ticker]);
 
@@ -874,7 +873,7 @@ export function SegmentEstimateBlock({ data }: Props) {
             </p>
           )}
         </div>
-        <SegmentGapPanel ticker={data.ticker} onResult={setGapResult} />
+        <SegmentGapPanel ticker={data.ticker} onResult={setGapResult} request={gapRequest} />
     </>
   );
 }

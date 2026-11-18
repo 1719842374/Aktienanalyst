@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { segmentGapKey, type SegmentGapItem, type SegmentGapResult } from "@shared/segment-gap";
 
 export type GapRequest = (method: string, url: string, data?: unknown) => Promise<Response>;
+
+const useIsoLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
 
 export function SegmentGapPanel({
   ticker,
@@ -20,21 +22,22 @@ export function SegmentGapPanel({
     enabled: open && ticker.trim().length > 0,
     retry: false,
     staleTime: 15 * 60 * 1000,
-    queryFn: async (): Promise<SegmentGapResult> => {
-      const response = await request("POST", "/api/segment-gaps", { ticker });
+    queryFn: async ({ queryKey }): Promise<SegmentGapResult> => {
+      const asked = typeof queryKey[1] === "string" ? queryKey[1] : "";
+      const response = await request("POST", "/api/segment-gaps", { ticker: asked });
       const body = await response.json().catch(() => null) as (SegmentGapResult & { error?: string }) | null;
       if (!response.ok) throw new Error(body?.error || "n/a — fehlende Segmente nicht erreichbar");
       return { items: body?.items ?? [], reason: body?.reason ?? null };
     },
   });
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     if (!onResult) return;
     if (!open) {
       onResult(null);
       return;
     }
-    if (query.data) onResult(query.data);
-  }, [open, query.data, onResult]);
+    onResult(query.data ?? null);
+  }, [open, query.data, onResult, ticker]);
   return (
     <div className="mt-3" data-testid="segment-gaps">
       <button
