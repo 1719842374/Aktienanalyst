@@ -196,7 +196,7 @@ export function annualSegments(data: StockAnalysis): { name: string; revenue: nu
     name: segment.name,
     revenue: segment.revenue > 0 ? segment.revenue : null,
     fiscalYear: segment.fiscalYear ?? null,
-    currency: null,
+    currency: segment.reportedCurrency ?? null,
   }));
 }
 

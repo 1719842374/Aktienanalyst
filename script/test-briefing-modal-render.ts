@@ -169,6 +169,35 @@ const checks: Record<string, boolean> = {
     && Array.isArray(keptNeutral.affectedSectors)
     && keptNeutral.affectedSectors[0] === "Energy",
 };
+
+const headerNav = [
+  ["macro", "Country Macro Pulse"],
+  ["sectors", "Sector Opportunity"],
+  ["screener", "Undervalued Screener"],
+  ["capex", "Capex & Fiscal"],
+] as const;
+
+function modalHeader(html: string): string {
+  const start = html.indexOf('data-testid="briefing-modal-header"');
+  const end = html.indexOf('data-testid="briefing-hero"');
+  if (start < 0 || end <= start) return "";
+  return html.slice(start, end);
+}
+
+for (const [variant, html] of [["v1", v1], ["v2", v2]] as const) {
+  const header = modalHeader(html);
+  const visible = header.replace(/&amp;/g, "&");
+  const hrefs = [...header.matchAll(/href="([^"]*)"/g)].map(match => match[1]);
+  checks[`${variant}HeaderNav`] = headerNav.every(([id, label]) =>
+    header.includes(`data-testid="briefing-nav-${id}"`) && visible.includes(label),
+  ) && hrefs.length === headerNav.length && hrefs.every(href => href === "#/researcher");
+  checks[`${variant}HeaderTitle`] = header.includes(">Country Macro Pulse<")
+    && !header.includes("Pre-Market Briefing");
+}
+checks.pageTitleResearcher = /<h1 className="text-sm font-semibold tracking-tight">Researcher<\/h1>/.test(researcherSrc);
+checks.cardGridRemains = researcherSrc.includes('data-testid="briefing-events"')
+  && researcherSrc.includes("md:grid-cols-2")
+  && researcherSrc.includes("<KeyEventCard");
 let failed = 0;
 for (const [name, ok] of Object.entries(checks)) {
   if (ok) console.log(`  OK  ${name}`);
