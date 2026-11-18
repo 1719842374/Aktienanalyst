@@ -2,14 +2,15 @@
  * Fehlende Segmente/Regionen: generisch, an ein Elternsegment gehängt, Doppelungen weg.
  * Aufruf: npx tsx --tsconfig script/tsconfig.jsx.json script/test-segment-n36.ts
  */
-import React, { act, createElement } from "react";
+import React, { act, createElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import express from "express";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SegmentGapList, SegmentGapPanel } from "../client/src/components/sections/SegmentGapPanel";
+import { SegmentGapList, SegmentGapPanel, SegmentGapUnderParent, type GapRequest } from "../client/src/components/sections/SegmentGapPanel";
+import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
 import { registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
@@ -26,18 +27,36 @@ function gap(name: string, ok: boolean, detail: string) {
 const hidden = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(SegmentGapPanel, { ticker: "TSLA" })));
 gap("toggle-starts-hidden", hidden.includes("Fehlende Segmente/Regionen anzeigen") && !hidden.includes("segment-gap-list"), hidden.slice(0, 200));
 
+function GapHarness({ request }: { request: GapRequest }) {
+  const [data, setData] = useState<SegmentGapResult | null>(null);
+  return createElement(
+    "div",
+    null,
+    createElement(
+      "div",
+      { "data-testid": "segment-row-Automotive" },
+      "Automotive",
+      createElement(SegmentGapUnderParent, {
+        parent: "Automotive",
+        kind: "product",
+        items: data?.items ?? [],
+      }),
+    ),
+    createElement(SegmentGapPanel, { ticker: "TSLA", request, onResult: setData }),
+  );
+}
+
 const { doc } = installFakeDom();
 const container = doc.createElement("div");
 doc.body.appendChild(container);
 const root = createRoot(container);
 let posts = 0;
 await act(async () => {
-  root.render(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(SegmentGapPanel, {
-    ticker: "TSLA",
+  root.render(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(GapHarness, {
     request: async () => {
       posts += 1;
       return new Response(JSON.stringify({
-        items: [{ parent: "Automotive", kind: "product", name: "FSD", shareOfParentPct: 8, growthPct: null, basis: "Tesla Annual Report 2025" }],
+        items: [{ parent: "Automotive", kind: "product", name: "FSD", shareOfParentPct: 8, growthPct: null, basis: "Tesla Annual Report 2025", shareOrigin: "estimate" }],
         reason: null,
       }), { status: 200, headers: { "content-type": "application/json" } });
     },
@@ -50,13 +69,34 @@ if (toggleProps?.onClick) {
   await act(async () => { toggleProps.onClick(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
 }
-const shown = container.textContent ?? "";
-gap("toggle-shows-fsd", shown.includes("Automotive / FSD") && shown.includes("8.0") && shown.includes("n/a") && shown.includes("KI-Schätzung"), shown.slice(0, 240));
+const rowText = findByTestId(container, "segment-row-Automotive")?.textContent ?? "";
+const panelText = findByTestId(container, "segment-gaps")?.textContent ?? "";
+const under = findByTestId(container, "segment-gap-under-Automotive");
+const underClass = String((under ? reactPropsOf(under) : null)?.className ?? "");
+gap(
+  "toggle-shows-fsd",
+  rowText.includes("FSD") && rowText.includes("8.0") && rowText.includes("n/a") && rowText.includes("KI-Schätzung") && !panelText.includes("FSD"),
+  `row=${rowText.slice(0, 180)} panel=${panelText.slice(0, 120)}`,
+);
+gap(
+  "rows-indented-under-parent",
+  (under?.textContent ?? "").includes("FSD") && underClass.includes("pl-4") && !panelText.includes("segment-gap-list"),
+  `class=${underClass || "fehlt"}`,
+);
 if (toggleProps?.onClick) {
   await act(async () => { toggleProps.onClick(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
-gap("toggle-hides", !(container.textContent ?? "").includes("Automotive / FSD") && posts === 1, container.textContent ?? "");
+gap("toggle-hides", !(findByTestId(container, "segment-row-Automotive")?.textContent ?? "").includes("FSD") && posts === 1, findByTestId(container, "segment-row-Automotive")?.textContent ?? "");
+if (toggleProps?.onClick) {
+  await act(async () => { toggleProps.onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+}
+gap(
+  "second-open-no-request",
+  posts === 1 && (findByTestId(container, "segment-row-Automotive")?.textContent ?? "").includes("FSD"),
+  `posts=${posts} row=${findByTestId(container, "segment-row-Automotive")?.textContent ?? ""}`,
+);
 await act(async () => { root.unmount(); });
 
 resetSegmentGapCacheForTests();
@@ -162,7 +202,7 @@ async function postGap(port: number, ticker: string) {
     body: JSON.stringify({ ticker }),
   });
   const json = await response.json() as {
-    items?: { parent: string; name: string; shareOfParentPct: number | null; growthPct: number | null }[];
+    items?: { parent: string; name: string; kind?: string; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null; basis?: string }[];
     reason?: string | null;
     error?: string;
   };
@@ -351,7 +391,7 @@ const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) 
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p3")
+    && keyA.includes("n36-gap-p4")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -534,11 +574,68 @@ const unsourcedRow = renderToStaticMarkup(createElement(SegmentGapList, {
 }));
 gap(
   "unsourced-fsd-shows-phrase",
-  unsourcedRow.includes("Automotive / FSD")
+  unsourcedRow.includes("FSD")
     && unsourcedRow.includes("n/a — ohne Quelle")
     && unsourcedRow.includes("KI-Schätzung")
-    && !unsourcedRow.includes("0.0 %"),
+    && unsourcedRow.includes("pl-4")
+    && !unsourcedRow.includes("0.0 %")
+    && !unsourcedRow.includes("Automotive / FSD"),
   unsourcedRow,
+);
+
+const estimateMarkup = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+  parent: "Automotive",
+  kind: "product",
+  items: [{
+    parent: "Automotive",
+    kind: "product",
+    name: "FSD",
+    shareOfParentPct: 8,
+    growthPct: null,
+    basis: "Tesla Annual Report 2025",
+    shareOrigin: "estimate",
+  }],
+}));
+const factMarkup = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+  parent: "Energy Generation and Storage",
+  kind: "product",
+  items: [{
+    parent: "Energy Generation and Storage",
+    kind: "product",
+    name: "Megapack",
+    shareOfParentPct: 25,
+    growthPct: null,
+    basis: "Tesla Annual Report 2025 · Formel: 25 / 100",
+    shareOrigin: "fact",
+  }],
+}));
+gap(
+  "estimate-share-is-violet",
+  estimateMarkup.includes("text-violet-700")
+    && estimateMarkup.includes("data-testid=\"segment-gap-share\"")
+    && estimateMarkup.includes("8.0 %")
+    && estimateMarkup.includes("overflow-x-hidden")
+    && estimateMarkup.includes("flex-wrap")
+    && estimateMarkup.includes("break-words"),
+  estimateMarkup,
+);
+gap(
+  "fact-share-shows-formula",
+  factMarkup.includes("25.0 %")
+    && factMarkup.includes("Formel: 25 / 100")
+    && factMarkup.includes("KI-Schätzung")
+    && !factMarkup.includes("font-mono text-violet-700"),
+  factMarkup,
+);
+
+const sectionSource = readFileSync(new URL("../client/src/components/sections/Section2.tsx", import.meta.url), "utf8");
+const panelSource = readFileSync(new URL("../client/src/components/sections/SegmentGapPanel.tsx", import.meta.url), "utf8");
+gap(
+  "section-indents-under-parent",
+  sectionSource.includes("<SegmentGapUnderParent parent={seg.name} kind=\"product\"")
+    && sectionSource.includes("<SegmentGapUnderParent parent={seg.name} kind=\"geographic\"")
+    && !panelSource.includes("<SegmentGapList"),
+  "Section2 hängt die Zeile an die Elternzeile",
 );
 
 const echoFirms = [
@@ -650,6 +747,204 @@ try {
 } finally {
   foreignServer.close();
 }
+
+function citedChild(
+  parent: string,
+  name: string,
+  owner: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    parent,
+    name,
+    owner,
+    brand: "",
+    basis: "im Elternsegment, nicht separat ausgewiesen",
+    source: `${owner} Annual Report 2025`,
+    shareOfParentPct: null,
+    growthPct: null,
+    ...extra,
+  };
+}
+
+resetSegmentGapCacheForTests();
+const bindPrompts: string[] = [];
+const bindApp = express();
+bindApp.use(express.json());
+registerSegmentGapRoute(bindApp, {
+  available: () => true,
+  productRows: async (ticker) => {
+    if (ticker.toUpperCase() === "TSLA") {
+      return [{ fiscalYear: "2025", data: { Automotive: 400, "Energy Generation and Storage": 100 } }];
+    }
+    if (ticker.toUpperCase() === "MSFT") {
+      return [{ fiscalYear: "2025", data: { "Intelligent Cloud": 80 } }];
+    }
+    return [{ fiscalYear: "2025", data: { Cloud: 50, "Software support": 30, Services: 20 } }];
+  },
+  regionRows: async (ticker) => {
+    if (ticker.toUpperCase() === "TSLA") return [{ fiscalYear: "2025", data: { "United States": 250, China: 80 } }];
+    if (ticker.toUpperCase() === "MSFT") return [{ fiscalYear: "2025", data: { "UNITED STATES": 40, EMEA: 30 } }];
+    return [{ fiscalYear: "2025", data: { EMEA: 40 } }];
+  },
+  identity: async (ticker) => {
+    const upper = ticker.toUpperCase();
+    if (upper === "MSFT") {
+      return {
+        companyName: "Microsoft Corporation",
+        exchange: "NASDAQ",
+        country: "US",
+        sector: "Technology",
+        industry: "Software - Infrastructure",
+        description: "Microsoft verkauft Software und Cloud.",
+        fiscalYear: "2025",
+        currency: "USD",
+      };
+    }
+    if (upper === "SAP.DE") {
+      return {
+        companyName: "SAP SE",
+        exchange: "XETRA",
+        country: "DE",
+        sector: "Technology",
+        industry: "Software - Application",
+        description: "SAP verkauft Unternehmenssoftware.",
+        fiscalYear: "2025",
+        currency: "EUR",
+      };
+    }
+    return fixtureIdentity;
+  },
+  llm: async (opts) => {
+    bindPrompts.push(opts.prompt);
+    if (opts.prompt.includes("Ticker TSLA.")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Tesla, Inc.",
+          industryEcho: "Auto Manufacturers",
+          children: [
+            citedChild("Automotive", "FSD", "Tesla, Inc.", { source: "Tesla Annual Report 2025", shareOfParentPct: 8 }),
+            citedChild("Automotive", "Mexico", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
+            citedChild("Automotive", "Germany", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
+            citedChild("Automotive", "India", "Tesla, Inc.", { source: "Tesla Annual Report 2025" }),
+            citedChild("Energy Generation and Storage", "Megapack", "Tesla, Inc.", { source: "Tesla Annual Report 2025", revenue: 25 }),
+            citedChild("Automotive", "Robotaxi", "Tesla, Inc.", { source: null, revenue: 40, basis: "Pilot ohne Beleg" }),
+            citedChild("Automotive", "Optimus", "Tesla, Inc.", { source: "Tesla Annual Report 2025", shareOfParentPct: 0 }),
+          ],
+        },
+      };
+    }
+    if (opts.prompt.includes("Ticker MSFT.")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Microsoft Corporation",
+          industryEcho: "Software - Infrastructure",
+          children: [
+            citedChild("UNITED STATES", "EMEA", "Microsoft Corporation"),
+            citedChild("UNITED STATES", "Asia Pacific", "Microsoft Corporation"),
+            citedChild("EMEA", "Germany", "Microsoft Corporation", { shareOfParentPct: 12 }),
+            citedChild("Intelligent Cloud", "Azure", "Microsoft Corporation", { shareOfParentPct: 11 }),
+          ],
+        },
+      };
+    }
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "SAP SE",
+        industryEcho: "Software - Application",
+        children: [
+          citedChild("S/4HANA", "RISE", "SAP SE"),
+          citedChild("SuccessFactors", "Employee Central", "SAP SE"),
+          citedChild("Cloud", "Business Technology Platform", "SAP SE", { shareOfParentPct: 12 }),
+        ],
+      },
+    };
+  },
+});
+const bindServer = bindApp.listen(0);
+const bindPort = (bindServer.address() as AddressInfo).port;
+try {
+  const tsla = await postGap(bindPort, "TSLA");
+  const tslaNames = (tsla.json.items ?? []).map((item) => `${item.kind ?? "?"}:${item.parent}/${item.name}`);
+  const fsd = tsla.json.items?.find((item) => item.name === "FSD");
+  const megapack = tsla.json.items?.find((item) => item.name === "Megapack");
+  const robotaxi = tsla.json.items?.find((item) => item.name === "Robotaxi");
+  const optimus = tsla.json.items?.find((item) => item.name === "Optimus");
+  const tslaPrompt = bindPrompts.find((prompt) => prompt.includes("Ticker TSLA.")) ?? "";
+  gap(
+    "tsla-product-child-not-country",
+    tsla.status === 200
+      && tslaNames.includes("product:Automotive/FSD")
+      && fsd?.shareOfParentPct === 8
+      && fsd.shareOrigin === "estimate"
+      && !tslaNames.some((name) => name.endsWith("/Mexico") || name.endsWith("/Germany") || name.endsWith("/India"))
+      && /nicht als Produkt-Unterposten: Mexico/.test(tsla.json.reason ?? "")
+      && /nicht als Produkt-Unterposten: Germany/.test(tsla.json.reason ?? "")
+      && /nicht als Produkt-Unterposten: India/.test(tsla.json.reason ?? "")
+      && tslaPrompt.includes("Automotive")
+      && tslaPrompt.includes("United States")
+      && !tslaPrompt.includes("FSD"),
+    `names=${tslaNames.join(",")} reason=${tsla.json.reason ?? ""}`,
+  );
+  gap(
+    "tsla-share-from-facts-or-na",
+    megapack?.shareOfParentPct === 25
+      && megapack.shareOrigin === "fact"
+      && (megapack.basis ?? "").includes("Formel: 25 / 100")
+      && robotaxi?.shareOfParentPct == null
+      && !(robotaxi?.basis ?? "").includes("Formel")
+      && optimus?.shareOfParentPct == null
+      && /Anteil 0 verworfen: Optimus/.test(tsla.json.reason ?? ""),
+    `megapack=${JSON.stringify(megapack)} robotaxi=${JSON.stringify(robotaxi)} optimus=${JSON.stringify(optimus)} reason=${tsla.json.reason ?? ""}`,
+  );
+  const msft = await postGap(bindPort, "MSFT");
+  const msftNames = (msft.json.items ?? []).map((item) => `${item.kind ?? "?"}:${item.parent}/${item.name}`);
+  const germany = msft.json.items?.find((item) => item.name === "Germany");
+  const azure = msft.json.items?.find((item) => item.name === "Azure");
+  gap(
+    "msft-region-not-under-united-states",
+    msft.status === 200
+      && !msftNames.some((name) => name.includes("UNITED STATES/EMEA") || name.includes("UNITED STATES/Asia Pacific"))
+      && /passt nicht unter UNITED STATES: EMEA/.test(msft.json.reason ?? "")
+      && /passt nicht unter UNITED STATES: Asia Pacific/.test(msft.json.reason ?? "")
+      && germany?.parent === "EMEA"
+      && germany.kind === "geographic"
+      && germany.shareOfParentPct === 12
+      && azure?.parent === "Intelligent Cloud"
+      && azure.kind === "product",
+    `names=${msftNames.join(",")} reason=${msft.json.reason ?? ""}`,
+  );
+  const sap = await postGap(bindPort, "SAP.DE");
+  const sapNames = (sap.json.items ?? []).map((item) => `${item.parent}/${item.name}`);
+  const sapPrompt = bindPrompts.find((prompt) => prompt.includes("Ticker SAP.DE.")) ?? "";
+  const platform = sap.json.items?.find((item) => item.name === "Business Technology Platform");
+  gap(
+    "sap-parent-binds-to-fmp-names",
+    sap.status === 200
+      && sapNames.length === 1
+      && platform?.parent === "Cloud"
+      && platform.shareOfParentPct === 12
+      && /Elternsegment nicht in der Liste: RISE/.test(sap.json.reason ?? "")
+      && /Elternsegment nicht in der Liste: Employee Central/.test(sap.json.reason ?? "")
+      && sapPrompt.includes("Cloud")
+      && sapPrompt.includes("Software support")
+      && !sapPrompt.includes("S/4HANA")
+      && !sapPrompt.includes("SuccessFactors"),
+    `names=${sapNames.join(",")} reason=${sap.json.reason ?? ""} prompt=${sapPrompt.slice(0, 280)}`,
+  );
+} finally {
+  bindServer.close();
+}
+
+const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");
+gap(
+  "no-ticker-parent-map",
+  !/\bTSLA\b|\bMSFT\b|SAP\.DE|S\/4HANA|SuccessFactors/.test(`${routeSource}\n${gapModule}`),
+  "Route und Geografie ohne Ticker-Mapping",
+);
 
 if (gaps.length > 0) {
   console.error(`n36 FAIL ${gaps.length}`);
