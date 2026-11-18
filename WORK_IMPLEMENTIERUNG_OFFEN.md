@@ -1,6 +1,11 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
 > Stand 11.10.2026 · Kopf-Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`) · Index-HEAD davor `a0979593fe13792fd13aa7eaf183cb808b396791` (#209 Gold-Chart im BTC-Design, parent `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2` #206 Ampel Gold MA50; Feature-Tip Gold `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` #201; Index davor Tip `8add9ed1e6d599283368896127711486955855f3` #200) · Companion `WORK_IST_VS_SOLL.md`
+> **21:35 Europe/Madrid (18.11.2026) · #468 · main `806772f2` · HEAD main `806772f2c9a25b0c92c21b82e4ef7458520c395d` · Ampel 🟢**
+> - Tester Prod-Smoke PASS auf main `806772f2` (Gate 21:27: ls-remote main 806772f2, Prod-Bundle `index-dRj3Jtnb.js` HTTP 200, /api/health 200). SPY `#/recession`: Abstand zum Median +7,1 Pp (distanceToMedianPp 7.135), Growth Gap −1,9 Pp (gapPp −1.915); YoY +16,9 %, Median 10J +9,7 %, Perzentil 75,0 %, Forward +15,0 % bleiben Prozent; Gauges 45/45/35/50/80 unverändert; VGK und ASHR n/a mit Grund; 375 + 1440 px, hell + dunkel, 0 Fehler.
+> - Kette: DC Post-Merge KLAR + DC-Lauf `run-d8063a19` GO (Test 10/10, tsc 76, Normdiff 0) + Tester-PASS Preview `e05714a4` + Prod-Smoke PASS → #468 🟢.
+> - Testlücken bleiben sichtbar: Implied Gap als Zahl (live n/a, keine datengetriebene WACC), negative und Null-Werte.
+> - Soll-Ist: Soll = Differenzen Growth Gap, Implied Gap, Abstand Median in Pp (`WORK_RECESSION_GROWTH_GAP.md` §2). Ist = `signedPp` in `client/src/components/recession/RecessionGrowthSection.tsx` auf main `806772f2`, live bestätigt. Spec `WORK_RECESSION_GROWTH_GAP.md` bleibt OFFEN und OHNE Prefix (nicht vollständig erfüllt); kein `fertig_`-Rename, kein Ticket neu abgeschlossen. Der Block 21:30 darunter bleibt der Stand vor diesem Prod-Smoke.
 > **21:30 Europe/Madrid (18.11.2026) · #468 · main `806772f2` · HEAD main `806772f2c9a25b0c92c21b82e4ef7458520c395d` · Ampel 🟡 nur noch bis Prod-Smoke**
 > - DC-Lauf `run-d8063a19` ist da und GO für #468 auf `806772f2`. `script/test-recession-growth-pp-render.ts`: Exit 0, 10/10, 0 HTTP. tsc 76 auf `806772f2` und auf dem Parent `1c4c2e7c`, Normdiff 0.
 > - Bytegleich zum Parent `1c4c2e7c`: `client/src/hooks/useRecessionGrowth.ts` (`798b4f62`), `server/recession-growth-route.ts` (`ac422ba9`), `shared/recession-growth.ts` (`ef6f647c`).
