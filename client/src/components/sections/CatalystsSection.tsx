@@ -7,6 +7,13 @@ import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
+import {
+  browserReloadSession,
+  runCatalystEnrich,
+  thrownEnrichMessage,
+  type EnrichResponse,
+  type FlowResult,
+} from "../../lib/catalystEnrichFlow";
 import { CATALYST_EVENT_VARIABLES, DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE, USER_EVENT_SUFFIX, catalystDisplayName, formatSignedPct, isDownsideEventBelowThreshold, isUserEvent } from "../../../../shared/catalyst-event";
 
 interface Props {
@@ -21,6 +28,8 @@ interface Props {
   // statt der alten generischen. Optional gehalten (aeltere Response-
   // Formen/Fehlerfaelle liefern es ggf. nicht).
   onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts'], growthThesis?: string | null, growthThesisGeneratedAt?: string | null, execSummary?: any) => void;
+  // 404: derselbe Dashboard-Analyze (Peers, KI-Flag). Der Parent setzt damit das ganze Dashboard neu.
+  onReloadAnalysis?: () => Promise<unknown>;
   // S17 „Event hinzufügen“ (§4b Stufe 1): ein zusätzlicher Katalysator, Dashboard hängt ihn an data.catalysts (nur Session).
   onUserEvent?: (catalyst: StockAnalysis['catalysts'][number]) => void;
 }
@@ -46,13 +55,14 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Props) {
+export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onReloadAnalysis }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmDone, setLlmDone] = useState(false);
   const [llmSkipped, setLlmSkipped] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
+  const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
   // S17 „Event hinzufügen“
   const [eventOpen, setEventOpen] = useState(false);
@@ -73,47 +83,66 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
   const downsideCatalysts = catalysts.filter(c => isNegativeCatalyst(c));
   const showGenericBanner = llmEnrichedCatalysts === null && hasGenericCatalysts(data.catalysts as any);
 
+  function applyEnrichResult(result: FlowResult) {
+    const info = [...result.notices].reverse().find((notice) => notice.level === "info");
+    setReloadNotice(info ? info.text : null);
+    switch (result.kind) {
+      case "success":
+        setLlmError(null);
+        setLlmEnrichedCatalysts(result.catalysts);
+        setLlmDone(true);
+        // Auftrag 08.08.2026: These und ExecSummary additiv, damit S2/S0 zur neuen S15 passen.
+        onCatalystsEnriched?.(result.catalysts as StockAnalysis["catalysts"], result.growthThesis, result.growthThesisGeneratedAt, result.execSummary);
+        return;
+      case "llm-limit":
+        setLlmSkipped(true);
+        setLlmError(result.message);
+        if (Array.isArray(result.catalysts)) setLlmEnrichedCatalysts(result.catalysts);
+        return;
+      case "error":
+        setLlmError(result.message);
+        return;
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
+  }
+
   async function triggerKI() {
+    const ticker = data.ticker;
     setLlmLoading(true);
     setLlmError(null);
     setLlmSkipped(false);
+    setReloadNotice(null);
     try {
-      // LLM-Enrich: two sequential model calls (~30s each) → allow 120s
-      const res = await apiRequest("POST", "/api/catalyst-enrich", {
-        ticker: data.ticker,
-        useLLM: true,
-        force: true,
-      }, 120_000);
-      const json = await res.json();
-      if (json._llmSkipped) {
-        setLlmSkipped(true);
-        if (Array.isArray(json.catalysts)) setLlmEnrichedCatalysts(json.catalysts);
-        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Katalysatoren werden angezeigt.");
-      } else if (Array.isArray(json.catalysts)) {
-        setLlmEnrichedCatalysts(json.catalysts);
-        setLlmDone(true);
-        // Persist enriched catalysts into parent Dashboard state
-        // so they survive navigation/re-renders (won't reset to generic)
-        // Auftrag 08.08.2026: /api/catalyst-enrich liefert jetzt zusaetzlich
-        // die sofort neu generierte These (Section 2) im selben Response --
-        // wird additiv mit weitergegeben, damit S2 sofort konsistent mit den
-        // gerade firmenspezifisch gewordenen Katalysatoren in S15 ist.
-        onCatalystsEnriched?.(json.catalysts, json.growthThesis, json.growthThesisGeneratedAt, json.execSummary);
-      } else {
-        setLlmError("Keine Katalysatoren erhalten.");
-      }
-    } catch (err: any) {
-      const msg = err?.message || "";
-      console.warn(`[Section15] KI-Analyse fehlgeschlagen: ${msg}`);
-      if (/timeout|90s|120s/i.test(msg)) {
-        setLlmError("KI-Analyse: Server zu langsam — bitte erneut versuchen (LLM braucht 40-70s).");
-      } else if (/503|402/.test(msg)) {
-        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft).");
-      } else if (/404/.test(msg)) {
-        setLlmError("Keine zwischengespeicherte Analyse — bitte zuerst Vollanalyse ausführen.");
-      } else {
-        setLlmError(msg || "KI-Analyse fehlgeschlagen.");
-      }
+      // res.ok wird im Flow gelesen. apiRequest wirft bei HTTP-Status nicht.
+      const result = await runCatalystEnrich({
+        ticker,
+        session: browserReloadSession(),
+        onNotice: (notice) => {
+          if (notice.level === "info") setReloadNotice(notice.text);
+          else setLlmError(notice.text);
+        },
+        request: async (): Promise<EnrichResponse> => {
+          // LLM-Enrich: two sequential model calls (~30s each) → allow 120s
+          const res = await apiRequest("POST", "/api/catalyst-enrich", {
+            ticker,
+            useLLM: true,
+            force: true,
+          }, 120_000);
+          const body = await res.json().catch(() => ({}));
+          return { ok: res.ok, status: res.status, body };
+        },
+        reloadDashboard: () => {
+          if (!onReloadAnalysis) return Promise.reject(new Error("Analyse konnte nicht neu geladen werden."));
+          return onReloadAnalysis();
+        },
+      });
+      applyEnrichResult(result);
+    } catch (err: unknown) {
+      console.warn(`[Section15] KI-Analyse fehlgeschlagen: ${err instanceof Error ? err.message : ""}`);
+      setLlmError(thrownEnrichMessage(err));
     } finally {
       setLlmLoading(false);
     }
@@ -271,8 +300,14 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
         </div>
       )}
 
+      {reloadNotice && (
+        <div className="text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded px-3 py-2" data-testid="catalyst-reload-notice" role="status">
+          {reloadNotice}
+        </div>
+      )}
+
       {llmError && (
-        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2" data-testid="catalyst-enrich-error">
           ⚠ {llmError}
         </div>
       )}
