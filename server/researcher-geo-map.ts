@@ -251,7 +251,10 @@ async function capexYearsFmp(symbol: string): Promise<CapexYears> {
   trackFmpCall();
   const rowsRaw = await fmpCashFlow(symbol, 2);
   const rows = await convertFmpRowsToUsd(Array.isArray(rowsRaw) ? rowsRaw : []);
+  const unconverted = (r: any) => !!r && (r._fxMissing || (typeof r.reportedCurrency === "string" && r.reportedCurrency !== "USD" && !r._fxConverted));
+  if (unconverted(rows[0])) return { latest: null, prevCapexUsd: null };
   const val = (r: any): number | null => {
+    if (unconverted(r)) return null;
     const v = Number(r?.capitalExpenditure);
     return Number.isFinite(v) && v !== 0 ? Math.abs(v) : null;
   };
