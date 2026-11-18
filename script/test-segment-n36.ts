@@ -116,8 +116,8 @@ function switchData(ticker: string) {
   };
 }
 
-function TickerSwitch({ ticker, request }: { ticker: string; request: GapRequest }) {
-  return createElement(SegmentEstimateBlock, { data: switchData(ticker) as never, gapRequest: request });
+function TickerSwitch({ ticker }: { ticker: string }) {
+  return createElement(SegmentEstimateBlock, { data: switchData(ticker) as never });
 }
 
 const switchClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -126,8 +126,11 @@ switchClient.setQueryData(["/api/segment-growth", "MSFT"], { ticker: "MSFT", bus
 let releaseMsft: () => void = () => {};
 const msftGate = new Promise<void>((resolve) => { releaseMsft = resolve; });
 const switchPosts: string[] = [];
-const switchRequest: GapRequest = async (_method, _url, body) => {
-  const asked = typeof body === "object" && body && "ticker" in body ? String((body as { ticker?: unknown }).ticker ?? "") : "";
+const previousFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  if (!url.includes("/api/segment-gaps")) return previousFetch(input, init);
+  const asked = JSON.parse(String(init?.body ?? "{}")).ticker as string;
   switchPosts.push(asked);
   if (asked === "MSFT") {
     await msftGate;
@@ -140,40 +143,44 @@ const switchRequest: GapRequest = async (_method, _url, body) => {
     items: [{ parent: "Automotive", kind: "product", name: "FSD", shareOfParentPct: 8, growthPct: null, basis: "Tesla Annual Report 2025", shareOrigin: "estimate" }],
     reason: null,
   }), { status: 200, headers: { "content-type": "application/json" } });
-};
+}) as typeof fetch;
 const switchContainer = doc.createElement("div");
 doc.body.appendChild(switchContainer);
 const switchRoot = createRoot(switchContainer);
 let switchTicker = "TSLA";
 const renderSwitch = () => {
-  switchRoot.render(createElement(QueryClientProvider, { client: switchClient }, createElement(TickerSwitch, { ticker: switchTicker, request: switchRequest })));
+  switchRoot.render(createElement(QueryClientProvider, { client: switchClient }, createElement(TickerSwitch, { ticker: switchTicker })));
 };
-await act(async () => { renderSwitch(); });
-const switchToggle = findByTestId(switchContainer, "segment-gap-toggle");
-const switchToggleProps = switchToggle ? reactPropsOf(switchToggle) : null;
-if (switchToggleProps?.onClick) {
-  await act(async () => { switchToggleProps.onClick(); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+try {
+  await act(async () => { renderSwitch(); });
+  const switchToggle = findByTestId(switchContainer, "segment-gap-toggle");
+  const switchToggleProps = switchToggle ? reactPropsOf(switchToggle) : null;
+  if (switchToggleProps?.onClick) {
+    await act(async () => { switchToggleProps.onClick(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  }
+  switchTicker = "MSFT";
+  await act(async () => { renderSwitch(); });
+  switchTicker = "TSLA";
+  await act(async () => { renderSwitch(); });
+  releaseMsft();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  const backAuto = findByTestId(switchContainer, "segment-gap-under-Automotive")?.textContent ?? "";
+  const backUs = findByTestId(switchContainer, "segment-gap-under-United States")?.textContent ?? "";
+  const backToggle = findByTestId(switchContainer, "segment-gap-toggle")?.textContent ?? "";
+  gap(
+    "ticker-switch-keeps-own-rows",
+    backAuto.includes("FSD")
+      && !backUs.includes("US Operations")
+      && !backAuto.includes("US Operations")
+      && backToggle.includes("ausblenden")
+      && switchPosts.filter((ticker) => ticker === "TSLA").length === 1,
+    `auto=${backAuto.slice(0, 160)} us=${backUs.slice(0, 160)} toggle=${backToggle} posts=${switchPosts.join(",")}`,
+  );
+} finally {
+  await act(async () => { switchRoot.unmount(); });
+  globalThis.fetch = previousFetch;
 }
-switchTicker = "MSFT";
-await act(async () => { renderSwitch(); });
-switchTicker = "TSLA";
-await act(async () => { renderSwitch(); });
-releaseMsft();
-await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
-const backAuto = findByTestId(switchContainer, "segment-gap-under-Automotive")?.textContent ?? "";
-const backUs = findByTestId(switchContainer, "segment-gap-under-United States")?.textContent ?? "";
-const backToggle = findByTestId(switchContainer, "segment-gap-toggle")?.textContent ?? "";
-gap(
-  "ticker-switch-keeps-own-rows",
-  backAuto.includes("FSD")
-    && !backUs.includes("US Operations")
-    && !backAuto.includes("US Operations")
-    && backToggle.includes("ausblenden")
-    && switchPosts.filter((ticker) => ticker === "TSLA").length === 1,
-  `auto=${backAuto.slice(0, 160)} us=${backUs.slice(0, 160)} toggle=${backToggle} posts=${switchPosts.join(",")}`,
-);
-await act(async () => { switchRoot.unmount(); });
 
 resetSegmentGapCacheForTests();
 const prompts: string[] = [];
