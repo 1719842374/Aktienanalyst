@@ -1,5 +1,5 @@
 /**
- * Fixture: ein KI-Ticker darf nicht in die gescorte Peer-Tabelle.
+ * Fixture: ein KI-Ticker steht in derselben Tabelle, aber nicht in Ø Peers.
  * Die kuratierte Map bleibt unverändert. Ein User-Override +LLY darf.
  * Kein Live-FMP, wenn kein Key gesetzt ist.
  *
@@ -123,28 +123,28 @@ try {
     check("Subjekt wird nicht als Peer eingetragen", !next.includes("NVO"));
   }
 
-  console.log("\n=== KI-Ticker nicht in der gescorten Tabelle ===");
+  console.log("\n=== KI-Ticker in derselben Tabelle, nicht im Ø ===");
   {
     const html = renderPeer(analysis([company("SNY"), company("PFE")]), [kiRow("LLY")]);
     const scored = scoredTable(html);
     check("gescorte Tabelle ist markiert", scored.includes('data-testid="peer-scored-table"'));
     check("FMP-Peers SNY und PFE stehen in der gescorten Tabelle", scored.includes("SNY") && scored.includes("PFE"));
     check("Ø Peers bleibt in der gescorten Tabelle", scored.includes("Ø Peers"));
-    check(
-      "KI-Ticker LLY steht nicht in der gescorten Tabelle",
-      !scored.includes("LLY") && !scored.includes("row-peer-ki-LLY"),
-      scored.includes("LLY") ? "LLY im gescorten Tabellen-HTML" : "gescorte Tabelle fehlt",
-    );
-    check("KI-Zeile steht in der Seitenliste", html.includes('data-testid="peer-ki-side-list"') && html.includes('data-testid="row-peer-ki-LLY"'));
-    check("Seitenliste liegt außerhalb der gescorten Tabelle", !scored.includes("peer-ki-side-list"));
-    check("KI-Badge bleibt an der Seitenliste", html.includes('data-testid="badge-peer-ki-LLY"'));
+    check("KI-Ticker LLY steht in derselben Tabelle", scored.includes('data-testid="row-peer-ki-LLY"'));
+    check("Hinweis: nicht in Ø Peers, Relativ-Score unverändert", scored.includes("nicht in Ø Peers") && scored.includes("Relativ-Score unverändert"));
+    check("keine separate Seitenliste", !html.includes('data-testid="peer-ki-side-list"'));
+    check("KI-Badge bleibt an der Zeile", scored.includes('data-testid="badge-peer-ki-LLY"'));
+    const avgAt = scored.indexOf(">Ø Peers<");
+    const kiAt = scored.indexOf("row-peer-ki-LLY");
+    check("KI-Zeile steht vor der Ø-Peers-Zeile", kiAt >= 0 && avgAt > kiAt);
+
+    const missing = renderPeer(analysis([company("SNY")]), [{ ...kiRow("GM"), pe: null, marketCap: null }]);
+    check("fehlende KI-Kennzahl nennt den Grund", missing.includes("n/a — keine FMP-Kennzahl"));
 
     const onlyKi = renderPeer(analysis([]), [kiRow("LLY")]);
-    check("ohne FMP-Peers gibt es keine gescorte Tabelle", scoredTable(onlyKi) === "");
-    check(
-      "fehlender Rivale bleibt nur in der Seitenliste",
-      onlyKi.includes('data-testid="peer-ki-side-list"') && onlyKi.includes('data-testid="row-peer-ki-LLY"'),
-    );
+    const onlyTable = scoredTable(onlyKi);
+    check("ohne FMP-Peers bleibt die KI-Zeile in der Tabelle", onlyTable.includes('data-testid="row-peer-ki-LLY"'));
+    check("ohne FMP-Peers keine Seitenliste", !onlyKi.includes('data-testid="peer-ki-side-list"'));
   }
 
   console.log("\n=== User +LLY darf in der gescorten Tabelle stehen ===");
@@ -155,8 +155,7 @@ try {
     );
     const scored = scoredTable(html);
     check("Override-Ticker LLY steht in der gescorten Tabelle", scored.includes(">LLY<"));
-    check("dieselbe Zeile ist keine KI-Zeile der gescorten Tabelle", !scored.includes("row-peer-ki-LLY"));
-    check("bereits gescorter Ticker bleibt aus der Seitenliste", !html.includes('data-testid="row-peer-ki-LLY"'));
+    check("bereits gescorter Ticker wird nicht noch einmal als KI-Zeile gezeigt", !scored.includes("row-peer-ki-LLY"));
     check("Add-Steuerung bleibt", html.includes("+ Peer hinzufügen"));
   }
 
