@@ -20,7 +20,23 @@ for (const t of ["SAP.DE", "VOW3.DE"]) {
   ok(r.quality === "weak", `${t}: quality weak wie vorher`);
   const before = dcfGrowthCapFromTam({ quality: a.tamAnalysis.quality, tamCAGR: a.tamAnalysis.tamCAGR, companyGrowth: 0 });
   const after = dcfGrowthCapFromTam({ quality: r.quality!, tamCAGR: r.tamCAGR, companyGrowth: 0 });
-  ok(JSON.stringify(before) === JSON.stringify(after) && after.useSegmentCagr === false, `${t}: DCF-Kopplung identisch (useSegmentCagr false)`);
+  ok(JSON.stringify(before) === JSON.stringify(after) && after.useSegmentCagr === false, `${t}: DCF-Kopplung identisch (useSegmentCagr false)`, JSON.stringify(after));
+}
+
+// Gate: dcfGrowthCapFromTam(tamCAGR=null) darf nicht werfen und kein NaN liefern.
+// quality 'weak' ist der no-revenue-Pfad; 'ok' trifft den zweiten Operanden von `tam.tamCAGR == null`.
+console.log("=== dcfGrowthCapFromTam tamCAGR=null ===");
+for (const quality of ["ok", "weak", "unreliable"] as const) {
+  let threw: unknown = null;
+  let result: { useSegmentCagr: boolean; note: string } | undefined;
+  try {
+    result = dcfGrowthCapFromTam({ quality, tamCAGR: null, companyGrowth: 0 });
+  } catch (e) {
+    threw = e;
+  }
+  const json = JSON.stringify(result);
+  const finite = result != null && result.useSegmentCagr === false && typeof result.note === "string" && !result.note.includes("NaN") && !json.includes("NaN");
+  ok(threw === null && finite, `tamCAGR=null quality=${quality}: kein Throw, kein NaN, useSegmentCagr false`, threw ? String(threw) : json);
 }
 
 // US-Kontrolle MSFT: Ergebnis identisch zur Live-Antwort von main
