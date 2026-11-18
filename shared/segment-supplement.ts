@@ -338,3 +338,71 @@ export function applyManualGrowthOverride(
     reportedShareReason: base.reportedShareReason,
   };
 }
+
+/** Felder der Supplement-Antwort, die ein Wachstum in Prozent tragen. observations ist eine Anzahl, keine Rate. */
+export const SUPPLEMENT_GROWTH_FIELDS = ["nextYearGrowthPct", "reportedGrowthPct"] as const;
+export type SupplementGrowthField = (typeof SUPPLEMENT_GROWTH_FIELDS)[number];
+
+export interface SupplementGrowthFact {
+  name: string;
+  pct: number;
+  field: SupplementGrowthField;
+  observations: number;
+  source: string | null;
+}
+
+function finiteGrowthPct(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function pickSupplementGrowth(row: Record<string, unknown>): { pct: number; field: SupplementGrowthField } | null {
+  const nextYear = finiteGrowthPct(row.nextYearGrowthPct);
+  if (nextYear != null) return { pct: nextYear, field: "nextYearGrowthPct" };
+  const reported = finiteGrowthPct(row.reportedGrowthPct);
+  if (reported != null) return { pct: reported, field: "reportedGrowthPct" };
+  return null;
+}
+
+/**
+ * Liest die Supplement-Antwort. nextYearGrowthPct gewinnt, sonst reportedGrowthPct
+ * auf der Growth-Zeile, sonst parents[].reportedGrowthPct zum selben Namen.
+ * null bleibt eine Lücke. Eine echte 0 bleibt 0 und ersetzt keine Lücke.
+ */
+export function growthFactsFromSupplement(body: unknown): SupplementGrowthFact[] {
+  const rec = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  const growth = Array.isArray(rec.growth) ? rec.growth : Array.isArray(body) ? body : [];
+  const parentPct = new Map<string, number>();
+  if (Array.isArray(rec.parents)) {
+    for (const row of rec.parents) {
+      if (!row || typeof row !== "object") continue;
+      const parent = row as Record<string, unknown>;
+      const name = typeof parent.name === "string" ? parent.name.trim() : "";
+      const pct = finiteGrowthPct(parent.reportedGrowthPct);
+      if (!name || pct == null) continue;
+      parentPct.set(name, pct);
+    }
+  }
+  const out: SupplementGrowthFact[] = [];
+  const seen = new Set<string>();
+  const push = (name: string, picked: { pct: number; field: SupplementGrowthField }, observations: number, source: string | null) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    out.push({ name, pct: picked.pct, field: picked.field, observations, source });
+  };
+  for (const row of growth) {
+    if (!row || typeof row !== "object") continue;
+    const item = row as Record<string, unknown>;
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    if (!name) continue;
+    const fromParent = parentPct.get(name);
+    const picked = pickSupplementGrowth(item) ?? (fromParent == null ? null : { pct: fromParent, field: "reportedGrowthPct" as const });
+    if (!picked) continue;
+    const observations = typeof item.observations === "number" && Number.isFinite(item.observations) ? item.observations : 0;
+    const source = typeof item.source === "string" && item.source.trim() ? item.source.trim() : null;
+    push(name, picked, observations, source);
+  }
+  parentPct.forEach((pct, name) => {
+    push(name, { pct, field: "reportedGrowthPct" }, 0, null);
+  });
+  return out;
+}
