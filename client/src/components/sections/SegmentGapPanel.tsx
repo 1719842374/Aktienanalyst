@@ -62,14 +62,14 @@ export function SegmentGapList({ data }: { data: SegmentGapResult }) {
 }
 
 function GapRow({ item }: { item: SegmentGapItem }) {
-  const share = item.shareOfParentPct != null ? `${item.shareOfParentPct.toFixed(1)} %` : "n/a";
+  const share = item.shareOfParentPct != null ? `${item.shareOfParentPct.toFixed(1)} %` : "n/a — ohne Quelle";
   const growth = item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${item.growthPct.toFixed(1)}%` : "n/a";
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2 text-[10px]" data-testid="segment-gap-row">
+    <div className="flex flex-wrap items-baseline gap-x-2 pl-4 text-[10px]" data-testid="segment-gap-row">
       <span>{item.parent} / {item.name}</span>
       <span className="font-mono" data-testid="segment-gap-share">{share}</span>
       <span className="font-mono" data-testid="segment-gap-growth">{growth}</span>
-      {item.basis ? <span className="text-muted-foreground">{item.basis}</span> : <span>n/a — ohne Quelle</span>}
+      {item.basis ? <span className="text-muted-foreground">{item.basis}</span> : item.shareOfParentPct != null ? <span>n/a — ohne Quelle</span> : null}
       <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200">KI-Schätzung</span>
     </div>
   );

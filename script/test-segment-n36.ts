@@ -9,8 +9,9 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SegmentGapPanel } from "../client/src/components/sections/SegmentGapPanel";
+import { SegmentGapList, SegmentGapPanel } from "../client/src/components/sections/SegmentGapPanel";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
+import { outlineEchoMatches } from "../shared/segment-children";
 import { registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
 
 delete process.env.OPENROUTER_API_KEY;
@@ -350,7 +351,7 @@ const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) 
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p2")
+    && keyA.includes("n36-gap-p3")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -487,6 +488,167 @@ try {
   );
 } finally {
   capServer.close();
+}
+
+const realisticTsla = {
+  companyEcho: "Tesla, Inc.",
+  industryEcho: "Auto Manufacturers",
+  children: [{
+    parent: "Automotive",
+    name: "FSD",
+    owner: "Tesla, Inc.",
+    shareOfParentPct: null,
+    growthPct: null,
+    basis: "FSD steckt in Automotive und ist im 10-K nicht separat ausgewiesen.",
+    source: null,
+  }],
+};
+gap(
+  "filter-accepts-realistic-tsla",
+  outlineEchoMatches(realisticTsla, "Tesla, Inc.", "Auto Manufacturers", "Consumer Cyclical") === true,
+  "realistischer TSLA-Echo",
+);
+gap(
+  "filter-rejects-foreign-company",
+  outlineEchoMatches(
+    { ...realisticTsla, companyEcho: "Ford Motor Company" },
+    "Tesla, Inc.",
+    "Auto Manufacturers",
+    "Consumer Cyclical",
+  ) === false,
+  "Ford-Echo",
+);
+
+const unsourcedRow = renderToStaticMarkup(createElement(SegmentGapList, {
+  data: {
+    items: [{
+      parent: "Automotive",
+      kind: "product",
+      name: "FSD",
+      shareOfParentPct: null,
+      growthPct: null,
+      basis: "nicht separat ausgewiesen",
+    }],
+    reason: null,
+  },
+}));
+gap(
+  "unsourced-fsd-shows-phrase",
+  unsourcedRow.includes("Automotive / FSD")
+    && unsourcedRow.includes("n/a — ohne Quelle")
+    && unsourcedRow.includes("KI-Schätzung")
+    && !unsourcedRow.includes("0.0 %"),
+  unsourcedRow,
+);
+
+const echoFirms = [
+  { ticker: "TSLA", companyName: "Tesla, Inc.", sector: "Consumer Cyclical", industry: "Auto Manufacturers", parent: "Automotive" },
+  { ticker: "SAP.DE", companyName: "SAP SE", sector: "Technology", industry: "Software - Application", parent: "Applications" },
+  { ticker: "MSFT", companyName: "Microsoft Corporation", sector: "Technology", industry: "Software - Infrastructure", parent: "Intelligent Cloud" },
+];
+
+resetSegmentGapCacheForTests();
+const echoApp = express();
+echoApp.use(express.json());
+registerSegmentGapRoute(echoApp, {
+  available: () => true,
+  productRows: async (ticker) => {
+    const firm = echoFirms.find((row) => row.ticker.toUpperCase() === ticker.toUpperCase());
+    return [{ fiscalYear: "2025", data: { [firm?.parent ?? "Seg"]: 100 } }];
+  },
+  regionRows: async () => [{ fiscalYear: "2025", data: { "United States": 40 } }],
+  identity: async (ticker) => {
+    const firm = echoFirms.find((row) => row.ticker.toUpperCase() === ticker.toUpperCase());
+    if (!firm) return null;
+    return {
+      companyName: firm.companyName,
+      exchange: "X",
+      country: "US",
+      sector: firm.sector,
+      industry: firm.industry,
+      description: "Profil",
+      fiscalYear: "2025",
+      currency: "USD",
+    };
+  },
+  llm: async (opts) => {
+    const match = opts.prompt.match(/"companyEcho":"([^"]*)","industryEcho":"([^"]*)"/);
+    const firm = echoFirms.find((row) => opts.prompt.includes(`Ticker ${row.ticker}.`));
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: match?.[1] ?? "",
+        industryEcho: match?.[2] ?? "",
+        children: [{
+          parent: firm?.parent ?? "Automotive",
+          name: "FSD",
+          owner: match?.[1] ?? "",
+          shareOfParentPct: null,
+          growthPct: null,
+          basis: "nicht separat ausgewiesen",
+          source: null,
+        }],
+      },
+    };
+  },
+});
+const echoServer = echoApp.listen(0);
+const echoPort = (echoServer.address() as AddressInfo).port;
+try {
+  const missed: string[] = [];
+  for (const firm of echoFirms) {
+    const response = await postGap(echoPort, firm.ticker);
+    const item = response.json.items?.find((row) => row.name === "FSD");
+    const kept = response.status === 200
+      && item?.parent === firm.parent
+      && item.shareOfParentPct == null
+      && item.growthPct == null
+      && !/passt nicht/.test(response.json.reason ?? "");
+    if (!kept) missed.push(`${firm.ticker}:${response.json.reason ?? JSON.stringify(response.json.items ?? [])}`);
+  }
+  gap("accepts-template-echo-for-tsla-sap-msft", missed.length === 0, missed.join(" | ") || "ok");
+} finally {
+  echoServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const foreignApp = express();
+foreignApp.use(express.json());
+registerSegmentGapRoute(foreignApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", data: { Automotive: 700 } }],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  llm: async () => ({
+    modelUsed: "mock-model",
+    data: {
+      companyEcho: "Ford Motor Company",
+      industryEcho: "Auto Manufacturers",
+      children: [{
+        parent: "Automotive",
+        name: "FSD",
+        owner: "Ford Motor Company",
+        shareOfParentPct: 8,
+        growthPct: null,
+        basis: "fremde Firma",
+        source: "Ford Annual Report 2025",
+      }],
+    },
+  }),
+});
+const foreignServer = foreignApp.listen(0);
+const foreignPort = (foreignServer.address() as AddressInfo).port;
+try {
+  const foreign = await postGap(foreignPort, "EXI");
+  gap(
+    "route-rejects-foreign-company-echo",
+    foreign.status === 200
+      && (foreign.json.items?.length ?? 1) === 0
+      && /passt nicht zur Firma/.test(foreign.json.reason ?? ""),
+    foreign.json.reason ?? JSON.stringify(foreign.json.items ?? []),
+  );
+} finally {
+  foreignServer.close();
 }
 
 if (gaps.length > 0) {

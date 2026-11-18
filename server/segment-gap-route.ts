@@ -35,7 +35,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p2";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p3";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -152,18 +152,22 @@ export function segmentGapPrompt(input: {
   description: string;
   products: string[];
   regions: string[];
+  industry?: string;
+  sector?: string;
 }): string {
   const list = (rows: string[]) => (rows.length > 0 ? rows.slice(0, 24).join(", ") : "n/a");
+  const industryEcho = input.industry || input.sector || "";
   return [
     "Bekannte Fakten. Diese Namen und Zahlen nicht ersetzen und nicht als neues Top-Level-Segment anlegen.",
     `Ticker ${input.ticker}. Firma: ${input.companyName}.`,
+    `Branche: ${industryEcho || "n/a"}.`,
     `Profil: ${clip(input.description, 600) || "n/a"}.`,
     `Geschäftssegmente: ${list(input.products)}.`,
     `Regionen: ${list(input.regions)}.`,
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
     "parent ist genau einer der bekannten Namen. Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Eine Zahl nur, wenn source Firma, Dokumenttyp und Jahr nennt, sonst null. basis nennt die Lücke und darf nicht leer sein.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"","children":[{"parent":"","name":"","owner":"${input.companyName}","shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
   ].join("\n");
 }
 
@@ -282,13 +286,15 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       let payload: unknown = null;
       try {
         const result = await run({
-          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. Bekannte Namen nicht wiederholen. Eine Zahl nur mit Quelle. Das Label ist KI-Schätzung, kein Override.",
+          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. Bekannte Namen nicht wiederholen. Eine Zahl nur mit Quelle. Das Label ist KI-Schätzung, kein Override.",
           prompt: segmentGapPrompt({
             ticker,
             companyName: identity.companyName,
             description: identity.description ?? "",
             products,
             regions,
+            industry: identity.industry,
+            sector: identity.sector,
           }),
           maxTokens: 800,
           temperature: 0.2,
