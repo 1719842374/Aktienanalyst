@@ -7,8 +7,9 @@ import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
-import { annotationByName } from "../../../../shared/segment-growth-calc";
+import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
 import { concreteSource, outlineStillCurrent } from "../../../../shared/segment-children";
+import { priorFromGrowth } from "../../../../shared/segment-yoy-fill";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
@@ -121,6 +122,85 @@ export function OutlineRows({
 
 export function segmentEstimateButtonVisible(segments: readonly unknown[] | null | undefined): boolean {
   return !segments || segments.length === 0;
+}
+
+/** True, sobald eine angezeigte Zeile keine numerische YoY hat. Die Quelle (kuratiert, FMP, SEC) spielt keine Rolle. */
+export function segmentYoYGap(
+  segments: readonly { growth?: number | null; yoyChangePercent?: number | null }[] | null | undefined,
+): boolean {
+  if (!segments || segments.length === 0) return false;
+  return segments.some((seg) => !Number.isFinite(seg.growth) && !Number.isFinite(seg.yoyChangePercent));
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function fillByName(map: Record<string, OutlineItem>, name: string): OutlineItem | null {
+  if (map[name]) return map[name];
+  const key = name.toLowerCase();
+  return Object.values(map).find((item) => item.name.toLowerCase() === key) ?? null;
+}
+
+function KiEstimate({
+  item,
+  model,
+  formula,
+  testId,
+}: {
+  item: OutlineItem;
+  model: string | null;
+  formula?: string;
+  testId: string;
+}) {
+  if (typeof item.growthPct !== "number") return null;
+  const source = concreteSource(item.basis) ? visibleBasis(item.basis) : "n/a — ohne Quelle";
+  return (
+    <>
+      <span
+        className="font-mono text-[10px] tabular-nums text-violet-700 dark:text-violet-200"
+        data-testid={testId}
+        title={item.basis}
+      >
+        {`${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}%`}
+      </span>
+      <span
+        className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200"
+        data-testid={`${testId}-badge`}
+      >
+        KI-Schätzung
+        {model ? ` · ${model}` : ""}
+        {` · ${source}`}
+        {formula ? <span className="mt-0.5 block text-[9px]" data-testid={`${testId}-formula`}>{formula}</span> : null}
+      </span>
+    </>
+  );
+}
+
+/** Fakt oder „berechnet“ bleibt stehen. Die KI-Zahl und das Badge kommen daneben. */
+export function SegmentGrowthWithKi({
+  fact,
+  annotation,
+  fill,
+  model,
+  formula,
+  testId,
+}: {
+  fact: number | null | undefined;
+  annotation: SegmentGrowthAnnotation | null | undefined;
+  fill: OutlineItem | null;
+  model: string | null;
+  formula?: string;
+  testId: string;
+}) {
+  return (
+    <>
+      <SegmentGrowthReadout fact={fact} annotation={annotation} />
+      {fill && typeof fill.growthPct === "number" ? (
+        <KiEstimate item={fill} model={model} formula={formula} testId={testId} />
+      ) : null}
+    </>
+  );
 }
 
 /** Gleiche Regel wie der Button: ohne Zeilen bleibt der Grund sichtbar, nichts wird übernommen. */
@@ -567,6 +647,18 @@ export function Section2({ data }: Props) {
 }
 
 
+function revenueSegmentsSourceLabel(data: StockAnalysis) {
+  const src = data.revenueSegmentsSource;
+  const fy = data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear;
+  const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
+    : src === "fmp" ? "Quelle: FMP"
+    : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
+    : null;
+  return label ? (
+    <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
+  ) : null;
+}
+
 export function SegmentEstimateBlock({ data }: Props) {
   const segmentGrowthQueried = (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0;
   const segmentGrowth = useSegmentGrowth(data.ticker, segmentGrowthQueried);
@@ -579,6 +671,13 @@ export function SegmentEstimateBlock({ data }: Props) {
   const [businessOutlineNote, setBusinessOutlineNote] = useState<string | null>(null);
   const [geoOutlineNote, setGeoOutlineNote] = useState<string | null>(null);
   const [geoFills, setGeoFills] = useState<Record<string, OutlineItem>>({});
+  const [productFills, setProductFills] = useState<Record<string, OutlineItem>>({});
+  const [productModel, setProductModel] = useState<string | null>(null);
+  const [geoModel, setGeoModel] = useState<string | null>(null);
+  const [productMix, setProductMix] = useState<string | null>(null);
+  const [geoMix, setGeoMix] = useState<string | null>(null);
+  const [productFormula, setProductFormula] = useState<Record<string, string>>({});
+  const [geoFormula, setGeoFormula] = useState<Record<string, string>>({});
   const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
   const tickerRef = useRef(data.ticker);
   const outlineTicket = useRef(0);
@@ -592,6 +691,13 @@ export function SegmentEstimateBlock({ data }: Props) {
     setBusinessOutlineNote(null);
     setGeoOutlineNote(null);
     setGeoFills({});
+    setProductFills({});
+    setProductModel(null);
+    setGeoModel(null);
+    setProductMix(null);
+    setGeoMix(null);
+    setProductFormula({});
+    setGeoFormula({});
     setOutlineLoading(null);
     setOpenBusiness({});
     setOpenGeo({});
@@ -612,14 +718,15 @@ export function SegmentEstimateBlock({ data }: Props) {
       else setGeoOutlineError(message);
     };
     try {
-      const knownRows = kind === "geographic"
-        ? (data.geoSegments ?? []).map((seg) => ({
-          name: seg.name,
-          revenue: seg.revenue,
-          share: seg.percentage,
-          growth: typeof seg.growth === "number" ? seg.growth : null,
-        }))
-        : [];
+      const listed = kind === "geographic" ? data.geoSegments : data.revenueSegments;
+      const knownRows = (listed ?? []).map((seg) => ({
+        name: seg.name,
+        revenue: finiteOrNull(seg.revenue),
+        share: finiteOrNull(seg.percentage),
+        growth: finiteOrNull(seg.growth ?? seg.yoyChangePercent),
+      }));
+      const companyYoY = finiteOrNull(data.financialStatements?.incomeStatement?.revenueGrowth);
+      const totalRevenue = finiteOrNull(data.revenue);
       const res = await apiRequest("POST", "/api/segment-outline", {
         ticker: started,
         kind,
@@ -630,22 +737,81 @@ export function SegmentEstimateBlock({ data }: Props) {
           fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
             ?? data.geoSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
             ?? "",
-          totalRevenue: typeof data.revenue === "number" ? data.revenue : null,
+          totalRevenue,
+          companyYoY,
+          priorRevenue: priorFromGrowth(totalRevenue, companyYoY),
           segments: (data.revenueSegments ?? []).map((seg) => ({
             name: seg.name,
-            revenue: seg.revenue,
-            growth: typeof seg.growth === "number" ? seg.growth : null,
+            revenue: finiteOrNull(seg.revenue),
+            share: finiteOrNull(seg.percentage),
+            growth: finiteOrNull(seg.growth ?? seg.yoyChangePercent),
           })),
           regions: (data.geoSegments ?? []).map((seg) => ({
             name: seg.name,
-            revenue: seg.revenue,
-            growth: typeof seg.growth === "number" ? seg.growth : null,
+            revenue: finiteOrNull(seg.revenue),
+            share: finiteOrNull(seg.percentage),
+            growth: finiteOrNull(seg.growth ?? seg.yoyChangePercent),
           })),
         },
       });
       if (!current()) return;
-      const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
+      const json = await res.json().catch(() => null) as {
+        items?: OutlineItem[];
+        reason?: string;
+        error?: string;
+        modelUsed?: string | null;
+        mix?: { text?: string; revenueWithinTolerance?: boolean | null; yoyWithinTolerance?: boolean | null };
+        formulas?: { name: string; text: string }[];
+      } | null;
       const message = outlineFailureMessage(res.ok, json);
+      const listedNow = kind === "geographic" ? (data.geoSegments?.length ?? 0) > 0 : (data.revenueSegments?.length ?? 0) > 0;
+      if (listedNow) {
+        const mixText = typeof json?.mix?.text === "string" ? json.mix.text : null;
+        if (kind === "product") setProductMix(mixText);
+        else setGeoMix(mixText);
+        const outside = json?.mix?.revenueWithinTolerance === false || json?.mix?.yoyWithinTolerance === false;
+        const usable = outside
+          ? []
+          : (json?.items ?? []).filter((item) => typeof item.growthPct === "number");
+        if (!res.ok || usable.length === 0) {
+          if (outside) {
+            if (kind === "product") {
+              setProductFills({});
+              setProductModel(null);
+              setProductFormula({});
+            } else {
+              setGeoFills({});
+              setGeoModel(null);
+              setGeoFormula({});
+            }
+          }
+          setError(json?.reason || message || "n/a — nicht schätzbar");
+          return;
+        }
+        const formulas: Record<string, string> = {};
+        for (const row of json?.formulas ?? []) {
+          if (typeof row?.name === "string" && typeof row.text === "string") formulas[row.name] = row.text;
+        }
+        const source = kind === "product" ? data.revenueSegments : data.geoSegments;
+        const next: Record<string, OutlineItem> = {};
+        for (const item of usable) {
+          const official = (source ?? []).find((seg) => seg.name.toLowerCase() === item.name.toLowerCase());
+          const name = official?.name ?? item.name;
+          next[name] = { ...item, name };
+        }
+        if (kind === "product") {
+          setProductFills(next);
+          setProductModel(json?.modelUsed ?? null);
+          setProductFormula(formulas);
+          setBusinessOutlineNote(json?.reason ?? null);
+        } else {
+          setGeoFills(next);
+          setGeoModel(json?.modelUsed ?? null);
+          setGeoFormula(formulas);
+          setGeoOutlineNote(json?.reason ?? null);
+        }
+        return;
+      }
       if (message || !json?.items) {
         setError(message ?? "KI-Schätzung unvollständig — nichts übernommen");
         return;
@@ -653,11 +819,6 @@ export function SegmentEstimateBlock({ data }: Props) {
       if (kind === "product") {
         setBusinessOutline(json.items);
         setBusinessOutlineNote(json.reason ?? null);
-      } else if ((data.geoSegments?.length ?? 0) > 0) {
-        const next: Record<string, OutlineItem> = {};
-        for (const item of json.items) next[item.name] = item;
-        setGeoFills(next);
-        setGeoOutlineNote(json.reason ?? null);
       } else {
         setGeoOutline(json.items);
         setGeoOutlineNote(json.reason ?? null);
@@ -691,17 +852,20 @@ export function SegmentEstimateBlock({ data }: Props) {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
-              {(() => {
-                const src = data.revenueSegmentsSource;
-                const fy = data.revenueSegments!.find(s => s.fiscalYear)?.fiscalYear;
-                const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
-                  : src === "fmp" ? "Quelle: FMP"
-                  : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
-                  : null;
-                return label ? (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
-                ) : null;
-              })()}
+              {segmentYoYGap(data.revenueSegments) ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="button-segment-outline-product"
+                    disabled={outlineLoading !== null}
+                    onClick={() => { void estimateOutline("product"); }}
+                    className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+                  >
+                    {outlineLoading === "product" ? "…" : "N/A mit KI schätzen"}
+                  </button>
+                  {revenueSegmentsSourceLabel(data)}
+                </div>
+              ) : revenueSegmentsSourceLabel(data)}
             </div>
             {data.revenueSegments.length === 1 ? (
               // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
@@ -722,10 +886,19 @@ export function SegmentEstimateBlock({ data }: Props) {
                         {seg.revenue > 0 && (
                           <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
                         )}
-                        <SegmentGrowthReadout
-                          fact={seg.growth ?? seg.yoyChangePercent}
-                          annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
-                        />
+                        {(() => {
+                          const fill = fillByName(productFills, seg.name);
+                          return (
+                            <SegmentGrowthWithKi
+                              fact={seg.growth ?? seg.yoyChangePercent}
+                              annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
+                              fill={fill}
+                              model={productModel}
+                              formula={fill ? productFormula[fill.name] ?? productFormula[seg.name] : undefined}
+                              testId={`segment-ki-${seg.name}`}
+                            />
+                          );
+                        })()}
                         <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                       </div>
                     </div>
@@ -742,8 +915,13 @@ export function SegmentEstimateBlock({ data }: Props) {
                 ))}
               </div>
             )}
+            {productMix ? <p className="mt-1 text-[10px] text-muted-foreground" data-testid="segment-yoy-mix">{productMix}</p> : null}
+            {businessOutlineError ? <p className="mt-1 text-[10px] text-red-500" data-testid="segment-outline-error-product">{businessOutlineError}</p> : null}
             <SegmentSupplementView
               ticker={data.ticker}
+              kiGrowth={Object.fromEntries(Object.values(productFills).flatMap((item) => (
+                typeof item.growthPct === "number" ? [[item.name, { pct: item.growthPct, model: productModel, source: item.basis }]] : []
+              )))}
               segments={data.revenueSegments.map((seg: RevenueSegment) => ({
                 name: seg.name,
                 percentage: Number.isFinite(seg.percentage) ? seg.percentage : null,
@@ -799,6 +977,7 @@ export function SegmentEstimateBlock({ data }: Props) {
               </button>
             )}
           </div>
+          {geoMix ? <p className="mb-1 text-[10px] text-muted-foreground" data-testid="region-yoy-mix">{geoMix}</p> : null}
           {geoOutlineNote && (data.geoSegments?.length ?? 0) > 0 && (
             <p className="mb-1 text-[10px] text-muted-foreground" data-testid="segment-outline-note-geo">{geoOutlineNote}</p>
           )}
@@ -827,18 +1006,19 @@ export function SegmentEstimateBlock({ data }: Props) {
                       {seg.revenue > 0 && (
                         <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
                       )}
-                      <SegmentGrowthReadout
-                        fact={seg.growth}
-                        annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
-                      />
-                      {geoFills[seg.name] && (
-                        <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200" data-testid={`region-ki-${seg.name}`}>
-                          KI-Schätzung
-                          {concreteSource(geoFills[seg.name].basis)
-                            ? ` ${visibleBasis(geoFills[seg.name].basis)}`
-                            : " n/a — ohne Quelle"}
-                        </span>
-                      )}
+                      {(() => {
+                        const fill = fillByName(geoFills, seg.name);
+                        return (
+                          <SegmentGrowthWithKi
+                            fact={seg.growth}
+                            annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
+                            fill={fill}
+                            model={geoModel}
+                            formula={fill ? geoFormula[fill.name] ?? geoFormula[seg.name] : undefined}
+                            testId={`region-ki-${seg.name}`}
+                          />
+                        );
+                      })()}
                       <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                     </div>
                   </div>

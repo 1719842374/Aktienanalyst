@@ -71,3 +71,24 @@ export const CURATED_PRODUCT_SEGMENTS: Record<string, Array<{ name: string; pct:
 export function curatedSegmentNames(ticker: string): string[] {
   return (CURATED_PRODUCT_SEGMENTS[ticker.trim().toUpperCase()] ?? []).map((row) => row.name);
 }
+
+/** Jahr aus dem Kommentar über der jeweiligen Liste. Kein Wachstum und keine Umsatzzahl. */
+export const CURATED_SHARE_YEAR: Record<string, string> = {
+  NVO: "2024",
+  ASML: "2024",
+  TSM: "2024",
+  NSRGY: "2024",
+  SAP: "2024",
+  LVMUY: "2024",
+  TM: "2024",
+};
+
+/** Bezugsjahr nur, wenn die angezeigten Namen genau die kuratierte Liste sind. */
+export function curatedShareYear(ticker: string, names: readonly string[]): string {
+  const curated = curatedSegmentNames(ticker);
+  if (curated.length === 0 || names.length !== curated.length) return "";
+  const fold = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  const have = new Set(names.map(fold));
+  if (!curated.every((name) => have.has(fold(name)))) return "";
+  return CURATED_SHARE_YEAR[ticker.trim().toUpperCase()] ?? "";
+}
