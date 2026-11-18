@@ -18,20 +18,28 @@
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import type { PeerGrowthAnchor } from "../shared/peer-growth-anchor";
 import {
+  SEGMENT_GROWTH_MAX,
+  SEGMENT_GROWTH_MIN,
   TAM_NA_COLUMN_HEADER,
   applicableTamNaFills,
   catalogCoverageNote,
+  deriveOutperforming,
   describeTamNaMatrixRow,
   hasPositiveSegmentRevenue,
+  scopeNaCells,
   segmentNeedsLlm,
   validateTamNaFills,
   type TamNaFill,
+  type TamNaReason,
   type TamNaSegmentRef,
 } from "../shared/tam-na-fill";
+import type { SupplementGrowthField } from "../shared/segment-supplement";
 
 const MAX_SEGMENTS = 24;
 /** Obergrenze für den Historienblock im Prompt, Zeichen inklusive Zeilenumbrüche. */
 export const HISTORY_PROMPT_MAX = 1200;
+/** Obergrenze für den Regionenblock im Prompt. */
+const REGION_PROMPT_MAX = 1200;
 
 export interface TamNaFillRequestSegment extends TamNaSegmentRef {
   segmentShare?: number;
@@ -52,8 +60,20 @@ export interface TamNaFillArgs {
   fiscalYear?: string | null;
   /** Gesamtumsatz in derselben Einheit wie segmentRevenue. */
   totalRevenue?: number | null;
-  /** Median aus /api/segment-supplement. Eine vorhandene Rate wird nicht neu geschätzt. */
-  supplementGrowth?: { name: string; nextYearGrowthPct: number; observations: number; source?: string | null }[];
+  /**
+   * Zahlen aus /api/segment-supplement.
+   * nextYearGrowthPct trägt die Rate. field sagt, ob sie aus nextYearGrowthPct
+   * oder reportedGrowthPct gelesen wurde. Eine vorhandene Rate wird nicht neu geschätzt.
+   */
+  supplementGrowth?: {
+    name: string;
+    nextYearGrowthPct: number;
+    observations: number;
+    source?: string | null;
+    field?: SupplementGrowthField;
+  }[];
+  /** Regionen aus der Analyse. Kein zweiter FMP-Abruf. */
+  regions?: { name: string; revenue: number | null; yoy: number | null; source: string | null }[];
   segments: TamNaFillRequestSegment[];
 }
 
@@ -94,16 +114,69 @@ function echoCoverage(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+interface KnownGrowth {
+  name: string;
+  pct: number;
+  observations: number;
+  source: string | null;
+  field: SupplementGrowthField;
+}
+
+function inGrowthWindow(pct: number): boolean {
+  return pct >= SEGMENT_GROWTH_MIN && pct <= SEGMENT_GROWTH_MAX;
+}
+
+function knownGrowthRows(rows: TamNaFillArgs["supplementGrowth"]): KnownGrowth[] {
+  const out: KnownGrowth[] = [];
+  for (const row of rows ?? []) {
+    if (typeof row.nextYearGrowthPct !== "number" || !Number.isFinite(row.nextYearGrowthPct)) continue;
+    const name = row.name.trim();
+    if (!name || out.some((item) => item.name === name)) continue;
+    const field: SupplementGrowthField = row.field === "reportedGrowthPct" ? "reportedGrowthPct" : "nextYearGrowthPct";
+    out.push({
+      name,
+      pct: row.nextYearGrowthPct,
+      observations: typeof row.observations === "number" && Number.isFinite(row.observations) ? row.observations : 0,
+      source: row.source ?? null,
+      field,
+    });
+  }
+  return out;
+}
+
+function growthText(hit: KnownGrowth): { rationale: string; formula: string } {
+  switch (hit.field) {
+    case "reportedGrowthPct": {
+      const source = hit.source || "Segmentzeile";
+      return {
+        rationale: `Gemeldetes Wachstum aus reportedGrowthPct. Quelle: ${source}.`,
+        formula: `reportedGrowthPct ${hit.pct}`,
+      };
+    }
+    case "nextYearGrowthPct": {
+      const source = hit.source || "FMP revenue-product-segmentation";
+      return {
+        rationale: `Median YoY aus nextYearGrowthPct, ${hit.observations} Jahresraten. Quelle: ${source}.`,
+        formula: `nextYearGrowthPct Median aus ${hit.observations} YoY-Raten`,
+      };
+    }
+    default: {
+      const unexpected: never = hit.field;
+      return unexpected;
+    }
+  }
+}
+
 function historyPrompt(rows: TamNaFillArgs["supplementGrowth"]): string {
   const lines: string[] = [];
   let used = 0;
-  for (const row of rows ?? []) {
-    if (typeof row.nextYearGrowthPct !== "number" || !Number.isFinite(row.nextYearGrowthPct)) continue;
+  for (const row of knownGrowthRows(rows)) {
     const name = clip(row.name, 80);
     if (!name) continue;
-    const source = clip(row.source, 160) || "FMP revenue-product-segmentation";
-    const observations = typeof row.observations === "number" && Number.isFinite(row.observations) ? row.observations : 0;
-    const line = `FMP-Segmenthistorie ${name}: Median YoY ${row.nextYearGrowthPct}% aus ${observations} Jahresraten. Quelle: ${source}. Nicht überschreiben.`;
+    const source = clip(row.source, 160) || (row.field === "reportedGrowthPct" ? "Segmentzeile" : "FMP revenue-product-segmentation");
+    const line = row.field === "reportedGrowthPct"
+      ? `Gemeldetes Segmentwachstum ${name}: ${row.pct}% (Feld reportedGrowthPct). Quelle: ${source}. Nicht überschreiben.`
+      : `FMP-Segmenthistorie ${name}: Median YoY ${row.pct}% aus ${row.observations} Jahresraten. Quelle: ${source}. Nicht überschreiben.`;
     const extra = lines.length > 0 ? 1 : 0;
     if (used + extra + line.length > HISTORY_PROMPT_MAX) {
       if (lines.length === 0) lines.push(line.slice(0, HISTORY_PROMPT_MAX));
@@ -113,6 +186,24 @@ function historyPrompt(rows: TamNaFillArgs["supplementGrowth"]): string {
     used += extra + line.length;
   }
   return lines.join("\n");
+}
+
+function regionsPrompt(rows: TamNaFillArgs["regions"]): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const row of rows ?? []) {
+    const name = clip(row.name, 80);
+    if (!name) continue;
+    const source = clip(row.source, 40) || "n/a";
+    const revenue = typeof row.revenue === "number" && Number.isFinite(row.revenue) ? String(row.revenue) : "n/a";
+    const yoy = typeof row.yoy === "number" && Number.isFinite(row.yoy) ? String(row.yoy) : "n/a";
+    const line = `${name}: Umsatz ${revenue} (Quelle ${source}), YoY ${yoy} (Quelle ${source})`;
+    const extra = lines.length > 0 ? 2 : 0;
+    if (used + extra + line.length > REGION_PROMPT_MAX) break;
+    lines.push(line);
+    used += extra + line.length;
+  }
+  return lines.length > 0 ? `Regionen: ${lines.join("; ")}.` : "Regionen: n/a.";
 }
 
 function asRef(seg: TamNaFillRequestSegment): TamNaSegmentRef | null {
@@ -172,6 +263,7 @@ export function buildTamNaFillPrompt(args: TamNaFillArgs, rows: TamNaSegmentRef[
   const totalRevenue = typeof args.totalRevenue === "number" && Number.isFinite(args.totalRevenue) ? String(args.totalRevenue) : "n/a";
   const anchor = args.peerAnchor;
   const history = historyPrompt(args.supplementGrowth);
+  const regions = regionsPrompt(args.regions);
   const peerLine = anchor && anchor.medianRevenueYoyPct != null
     ? `PEER-ANKER: Median Umsatz-YoY ${anchor.medianRevenueYoyPct}% (n=${anchor.peerCount}, P25=${anchor.p25RevenueYoyPct}%, P75=${anchor.p75RevenueYoyPct}%). Quelle: ${anchor.source}. Fehlende CAGR und fehlendes Segment-Wachstum relativ zu diesem Median und zur Branche ${clip(args.industry, 80) || clip(args.sector, 80) || "n/a"} schätzen.`
     : "PEER-ANKER: n/a — Peer-Umsatz-YoY nicht übergeben. Eine Zahl ohne eigene Quelle weglassen.";
@@ -181,6 +273,7 @@ ${peerLine}
 UNTERNEHMEN: ${clip(args.companyName, 120) || args.ticker} (${args.ticker})
 SEKTOR: ${clip(args.sector, 80) || "n/a"} | BRANCHE: ${clip(args.industry, 80) || "n/a"}
 ${profile ? `PROFIL: ${profile}\n` : ""}${history ? `${history}\n` : ""}Währung der Segmentumsätze: ${currency}. Geschäftsjahr: ${fiscalYear}. Gesamtumsatz: ${totalRevenue}.
+${regions}
 TABELLE Segment-TAM-Analyse
 Spalten: ${TAM_NA_COLUMN_HEADER}
 ${rest}
@@ -200,52 +293,125 @@ REGELN:
 - formula oder rationale belegt jede gesetzte Zahl. tamSource belegt TAM und CAGR. Ohne Beleg das Feld weglassen; die Zelle bleibt n/a.`;
 }
 
+function fillsFromKnown(segments: TamNaFillRequestSegment[], known: KnownGrowth[], modelFills: TamNaFill[]): TamNaFill[] {
+  const byName = new Map<string, TamNaFill>();
+  for (const fill of modelFills) {
+    if (!fill || typeof fill.segmentName !== "string" || byName.has(fill.segmentName)) continue;
+    byName.set(fill.segmentName, { ...fill });
+  }
+  for (const seg of segments) {
+    const ref = asRef(seg);
+    if (!ref) continue;
+    if (typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth)) continue;
+    const hit = known.find((row) => row.name === ref.segmentName);
+    if (!hit || !inGrowthWindow(hit.pct)) continue;
+    const text = growthText(hit);
+    const existing = byName.get(ref.segmentName);
+    if (existing) {
+      existing.segmentGrowth = hit.pct;
+      if (!existing.rationale) existing.rationale = text.rationale;
+      if (!existing.formula) existing.formula = text.formula;
+      existing.outperforming = deriveOutperforming(hit.pct, existing.tamCAGR ?? null);
+      continue;
+    }
+    byName.set(ref.segmentName, {
+      segmentName: ref.segmentName,
+      segmentGrowth: hit.pct,
+      confidence: "med",
+      rationale: text.rationale,
+      formula: text.formula,
+      outperforming: null,
+    });
+  }
+  const merged: TamNaFill[] = [];
+  byName.forEach((fill) => { merged.push(fill); });
+  return applicableTamNaFills(scopeSegments(segments), merged);
+}
+
+export function tamGapReasons(segments: TamNaFillRequestSegment[], fills: TamNaFill[]): TamNaReason[] {
+  const byName = new Map<string, TamNaFill>();
+  for (const fill of fills) {
+    if (!fill || typeof fill.segmentName !== "string" || byName.has(fill.segmentName)) continue;
+    byName.set(fill.segmentName, fill);
+  }
+  const out: TamNaReason[] = [];
+  for (const seg of segments) {
+    const ref = asRef(seg);
+    if (!ref) continue;
+    const cells = scopeNaCells(ref, byName.get(ref.segmentName) ?? null);
+    if (cells.growth) {
+      out.push({
+        segmentName: ref.segmentName,
+        field: "growth",
+        reason: "n/a — kein numerischer Wachstumswert (nextYearGrowthPct und reportedGrowthPct fehlen)",
+      });
+    }
+    if (cells.tam) out.push({ segmentName: ref.segmentName, field: "tam", reason: "n/a — TAM ohne Beleg" });
+    if (cells.cagr) out.push({ segmentName: ref.segmentName, field: "cagr", reason: "n/a — CAGR ohne Beleg" });
+  }
+  return out;
+}
+
 export async function requestTamNaFills(
   args: TamNaFillArgs,
   deps: { isLLMAvailable: () => boolean; callLLMJson: LlmJson } = { isLLMAvailable, callLLMJson },
 ): Promise<TamNaFillResult> {
   const ticker = clip(args.ticker, 16);
-  const historyByName = new Map<string, number>();
-  for (const row of args.supplementGrowth ?? []) {
-    if (typeof row.nextYearGrowthPct === "number" && Number.isFinite(row.nextYearGrowthPct)) {
-      historyByName.set(row.name.trim(), row.nextYearGrowthPct);
-    }
-  }
-  const segments = args.segments.map((seg) => {
-    if (typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth)) return seg;
-    const known = historyByName.get((seg.segmentName ?? "").trim());
-    return known == null ? seg : { ...seg, segmentGrowth: known };
-  });
-  args = { ...args, ticker, segments };
+  const originalSegments = args.segments;
+  const known = knownGrowthRows(args.supplementGrowth);
+  const segments = Array.isArray(originalSegments)
+    ? originalSegments.map((seg) => {
+      if (typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth)) return seg;
+      const hit = known.find((row) => row.name === (seg.segmentName ?? "").trim());
+      if (!hit || !inGrowthWindow(hit.pct)) return seg;
+      return { ...seg, segmentGrowth: hit.pct };
+    })
+    : originalSegments;
+  const locked = { ...args, ticker, segments };
   if (!TICKER_RE.test(ticker)) {
     return { ok: false, status: 400, error: "ticker fehlt oder ist ungültig", code: "BAD_REQUEST" };
   }
-  if (!Array.isArray(args.segments)) {
+  if (!Array.isArray(originalSegments)) {
     return { ok: false, status: 400, error: "segments fehlen", code: "BAD_REQUEST" };
   }
-  const scoped = scopeSegments(args.segments);
-  const eligible = scoped.filter(segmentNeedsLlm);
-  if (eligible.length === 0) {
+  const eligibleBefore = scopeSegments(originalSegments).filter(segmentNeedsLlm);
+  if (eligibleBefore.length === 0) {
     return { ok: false, status: 400, error: "Keine N/A-Zellen", code: "BAD_REQUEST" };
   }
 
   const coveragePct = echoCoverage(args.coveragePct);
-
-  if (!deps.isLLMAvailable()) {
-    return { ok: false, status: 503, error: "LLM nicht verfügbar", code: "LLM_UNAVAILABLE" };
+  const scoped = scopeSegments(segments);
+  const needsModel = scoped.filter(segmentNeedsLlm);
+  let modelFills: TamNaFill[] = [];
+  let modelUsed = "supplement";
+  if (needsModel.length > 0) {
+    if (!deps.isLLMAvailable()) {
+      return { ok: false, status: 503, error: "LLM nicht verfügbar", code: "LLM_UNAVAILABLE" };
+    }
+    const llm = await deps.callLLMJson({
+      prompt: buildTamNaFillPrompt(locked, scoped),
+      maxTokens: 2000,
+      temperature: 0.2,
+      systemPrompt: "Du füllst n/a-Zellen der Tabelle Segment-TAM-Analyse. Spalten: Segment, Rev., Anteil, Wachstum, TAM, CAGR, Anteil am TAM, vs. TAM. Du überschreibst keine Fact-Zahl. Anteil am TAM und vs. TAM lieferst du nicht. Antworte ausschließlich mit JSON.",
+    });
+    if (!llm || llm.data == null) {
+      const recovered = fillsFromKnown(originalSegments, known, []);
+      if (recovered.length === 0) {
+        return { ok: false, status: 502, error: "KI-Antwort fehlgeschlagen", code: "LLM_FAILED" };
+      }
+      return {
+        ok: true,
+        fills: recovered,
+        coveragePct,
+        coverageNote: catalogCoverageNote(coveragePct),
+        modelUsed,
+      };
+    }
+    modelUsed = llm.modelUsed;
+    modelFills = applicableTamNaFills(needsModel, validateTamNaFills(needsModel, llm.data));
   }
 
-  const llm = await deps.callLLMJson({
-    prompt: buildTamNaFillPrompt({ ...args, ticker }, scoped),
-    maxTokens: 2000,
-    temperature: 0.2,
-    systemPrompt: "Du füllst n/a-Zellen der Tabelle Segment-TAM-Analyse. Spalten: Segment, Rev., Anteil, Wachstum, TAM, CAGR, Anteil am TAM, vs. TAM. Du überschreibst keine Fact-Zahl. Anteil am TAM und vs. TAM lieferst du nicht. Antworte ausschließlich mit JSON.",
-  });
-  if (!llm || llm.data == null) {
-    return { ok: false, status: 502, error: "KI-Antwort fehlgeschlagen", code: "LLM_FAILED" };
-  }
-
-  const fills = applicableTamNaFills(eligible, validateTamNaFills(eligible, llm.data));
+  const fills = fillsFromKnown(originalSegments, known, modelFills);
   if (fills.length === 0) {
     return { ok: false, status: 422, error: INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
   }
@@ -255,6 +421,6 @@ export async function requestTamNaFills(
     fills,
     coveragePct,
     coverageNote: catalogCoverageNote(coveragePct),
-    modelUsed: llm.modelUsed,
+    modelUsed,
   };
 }

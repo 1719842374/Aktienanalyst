@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
+import { growthFactsFromSupplement, type SupplementGrowthField } from "../../../../shared/segment-supplement";
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaReason, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
@@ -134,7 +135,14 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     const requestId = ++tamAiRequest.current;
     setTamAiLoading(true);
     setTamAiError(null);
-    let supplementGrowth: { name: string; nextYearGrowthPct: number; observations: number; source: string | null }[] = [];
+    let supplementGrowth: {
+      name: string;
+      nextYearGrowthPct: number;
+      reportedGrowthPct: number | null;
+      field: SupplementGrowthField;
+      observations: number;
+      source: string | null;
+    }[] = [];
     try {
       const supRes = await apiRequest("POST", "/api/segment-supplement", {
         ticker: data.ticker,
@@ -145,16 +153,15 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         })),
       });
       if (supRes.ok) {
-        const sup = await supRes.json() as { growth?: { name?: unknown; nextYearGrowthPct?: unknown; observations?: unknown; source?: unknown }[] };
-        supplementGrowth = (sup.growth ?? []).flatMap((row) => {
-          if (typeof row.name !== "string" || typeof row.nextYearGrowthPct !== "number") return [];
-          return [{
-            name: row.name,
-            nextYearGrowthPct: row.nextYearGrowthPct,
-            observations: typeof row.observations === "number" ? row.observations : 0,
-            source: typeof row.source === "string" ? row.source : null,
-          }];
-        });
+        const sup = await supRes.json();
+        supplementGrowth = growthFactsFromSupplement(sup).map((row) => ({
+          name: row.name,
+          nextYearGrowthPct: row.pct,
+          reportedGrowthPct: row.field === "reportedGrowthPct" ? row.pct : null,
+          field: row.field,
+          observations: row.observations,
+          source: row.source,
+        }));
       }
     } catch {
       supplementGrowth = [];
@@ -171,6 +178,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear ?? null,
         totalRevenue: typeof tam.companyRevenue === "number" ? tam.companyRevenue : null,
         supplementGrowth,
+        regions: tamRegionsFromAnalysis(data),
         segments: visibleTamSegments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
@@ -787,6 +795,22 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
 
 export function tamNaHint(scopeNaCount: number): string | null {
   return scopeNaCount === 0 ? "Keine N/A-Zellen" : null;
+}
+
+/** Regionen der Analyse. geoSegments kommen aus fmpGeoSegments, deshalb Quelle FMP, außer die Zeile nennt sec oder curated. */
+export function tamRegionsFromAnalysis(data: Pick<StockAnalysis, "geoSegments">): { name: string; revenue: number | null; yoy: number | null; source: string }[] {
+  return (data.geoSegments ?? []).flatMap((seg) => {
+    const name = typeof seg.name === "string" ? seg.name.trim() : "";
+    if (!name) return [];
+    const revenue = typeof seg.revenue === "number" && Number.isFinite(seg.revenue) && seg.revenue > 0 ? seg.revenue : null;
+    const yoy = typeof seg.growth === "number" && Number.isFinite(seg.growth)
+      ? seg.growth
+      : typeof seg.yoyChangePercent === "number" && Number.isFinite(seg.yoyChangePercent)
+        ? seg.yoyChangePercent
+        : null;
+    const source = seg.source === "sec" ? "SEC" : seg.source === "curated" ? "curated" : "FMP";
+    return [{ name, revenue, yoy, source }];
+  });
 }
 
 function toTamNaRef(s: {
