@@ -47,6 +47,7 @@ import { Section8 } from "@/components/sections/Section8";
 import { Section9 } from "@/components/sections/Section9";
 import { ReverseDCFSection } from "@/components/sections/ReverseDCFSection";
 import { CatalystsSection } from "@/components/sections/CatalystsSection";
+import { applyCatalystFollowUp } from "@/lib/catalystEnrichFlow";
 import { MonteCarloSection } from "@/components/sections/MonteCarloSection";
 import { SummarySection } from "@/components/sections/SummarySection";
 import { ManagementScoreSection } from "@/components/sections/ManagementScoreSection";
@@ -728,13 +729,7 @@ export default function Dashboard() {
                   // Pro/Contra/PoS-Satz/Fazit dort auf den alten generischen
                   // Katalysatoren stehen, obwohl S15 hier schon firmen-
                   // spezifisch aktualisiert wird.
-                  setData(prev => prev ? {
-                    ...prev, catalysts: enriched,
-                    llmMode: true,
-                    catalystsSource: "llm",
-                    ...(growthThesis ? { growthThesis, growthThesisGeneratedAt: growthThesisGeneratedAt ?? prev.growthThesisGeneratedAt } : {}),
-                    ...(execSummary ? { execSummary } : {}),
-                  } : prev);
+                  setData(prev => applyCatalystFollowUp(prev, data.ticker, enriched, growthThesis, growthThesisGeneratedAt, execSummary));
                 }}
                 onUserEvent={(cat) => {
                   // S17 „Event hinzufügen“ (§4b Stufe 1): additiv an die bestehende Liste, nur Session-State.

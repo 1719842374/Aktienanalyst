@@ -66,6 +66,39 @@ function tickerKey(ticker: string): string {
   return ticker.trim().toUpperCase();
 }
 
+type CatalystFollowUp = {
+  ticker?: string;
+  catalysts?: unknown;
+  llmMode?: boolean;
+  catalystsSource?: "generic" | "llm";
+  growthThesis?: string | null;
+  growthThesisGeneratedAt?: string | null;
+  execSummary?: unknown;
+};
+
+/** Enrich-Nachzug nur auf das Dashboard desselben Tickers. Fremder Ticker bleibt das Objekt selbst. */
+export function applyCatalystFollowUp<T extends CatalystFollowUp>(
+  prev: T | null,
+  followUpTicker: string,
+  enriched: unknown,
+  growthThesis?: string | null,
+  growthThesisGeneratedAt?: string | null,
+  execSummary?: unknown,
+): T | null {
+  if (!prev) return prev;
+  const current = typeof prev.ticker === "string" ? prev.ticker.trim().toUpperCase() : "";
+  const follow = followUpTicker.trim().toUpperCase();
+  if (!current || current !== follow) return prev;
+  return {
+    ...prev,
+    catalysts: enriched,
+    llmMode: true,
+    catalystsSource: "llm",
+    ...(growthThesis ? { growthThesis, growthThesisGeneratedAt: growthThesisGeneratedAt ?? prev.growthThesisGeneratedAt } : {}),
+    ...(execSummary ? { execSummary } : {}),
+  };
+}
+
 export function reloadedNotice(at: Date): string {
   const hh = String(at.getHours()).padStart(2, "0");
   const mm = String(at.getMinutes()).padStart(2, "0");

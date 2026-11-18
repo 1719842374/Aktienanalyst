@@ -386,7 +386,7 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
     const msg = err?.message || String(err);
     const reason = assignOpenRouterLimit(sink, status);
     if (reason) {
-      console.warn(`[LLM] ${reason} token budget exhausted — skipping LLM`);
+      console.warn(`[LLM] ${ticker}: ${reason} token budget exhausted — skipping LLM: ${msg.substring(0, 300)}`);
     } else {
       console.error(`[LLM] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
     }
