@@ -34,6 +34,7 @@ import {
   checkSegmentMix,
   formulaText,
   gapFillPrompt,
+  mixDiscardReason,
   notEstimableReason,
   priorFromGrowth,
   usdSeriesFromIncome,
@@ -93,6 +94,8 @@ export const SEGMENT_CHILDREN_KI_TIMEOUT_MS = 15_000;
 const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const childCache = new Map<string, { at: number; ttl: number; body: SegmentChildrenResult }>();
+/** Antwort von callLLMJson für /api/segment-outline. Dieselbe Frist wie der KI-Kinder-Cache. */
+const outlineResponseCache = new Map<string, { at: number; payload: unknown; modelUsed: string }>();
 /** P2-N29-2: erfolgreiche Namenssuche. 429 und Netzfehler werden nicht als „keine Firma“ abgelegt. */
 const brandSearchCache = new Map<string, { at: number; companies: readonly PeerCompany[] }>();
 /** N29: Prompt-Version im Schlüssel der KI-Kinder; alte 24-h-Antworten ohne brandOwner werden nicht mehr gezeigt. */
@@ -118,6 +121,7 @@ const statementFacts = new Map<string, { at: number; fiscalYear: string; currenc
 
 export function resetSegmentChildrenGuardsForTests(): void {
   childCache.clear();
+  outlineResponseCache.clear();
   brandSearchCache.clear();
   rateBuckets.clear();
   outlineNames.clear();
@@ -1194,33 +1198,56 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
       let payload: unknown = null;
       let modelUsed = "";
       if (known.length > 0) {
-        const result = await (deps.llm ?? callLLMJson)({
-          systemPrompt: kind === "geographic"
-            ? "Antworte nur mit JSON. Schätze nur fehlendes Regionenwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung. Eine fehlende Zahl bleibt null."
-            : "Antworte nur mit JSON. Schätze nur fehlendes Segmentwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung. Eine fehlende Zahl bleibt null.",
-          prompt: gapFillPrompt({
-            kind,
-            factsBlock: segmentFactBlock(shownForPrompt),
-            rows: known,
-            contextRows: context,
-            contextLabel: kind === "product" ? "Regionen aus der Anzeige" : "Geschäftssegmente aus der Anzeige",
-            companyName: identity.companyName,
-            industry: identity.industry || identity.sector || "",
-            ticker,
-            shareYear,
-            totalRevenue: company.totalRevenue,
-            priorRevenue,
-            companyYoY,
-            annualNote: shown.annualNote ?? null,
-            annualUsd: shown.annualUsd ?? [],
-            amountNote,
-          }),
-          maxTokens: 800,
-          temperature: 0.2,
-          signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
-        }).catch(() => null);
-        payload = result?.data ?? null;
-        modelUsed = result?.modelUsed ?? "";
+        const systemPrompt = kind === "geographic"
+          ? "Antworte nur mit JSON. Schätze nur fehlendes Regionenwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung. Eine fehlende Zahl bleibt null."
+          : "Antworte nur mit JSON. Schätze nur fehlendes Segmentwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung. Eine fehlende Zahl bleibt null.";
+        const prompt = gapFillPrompt({
+          kind,
+          factsBlock: segmentFactBlock(shownForPrompt),
+          rows: known,
+          contextRows: context,
+          contextLabel: kind === "product" ? "Regionen aus der Anzeige" : "Geschäftssegmente aus der Anzeige",
+          companyName: identity.companyName,
+          industry: identity.industry || identity.sector || "",
+          ticker,
+          shareYear,
+          totalRevenue: company.totalRevenue,
+          priorRevenue,
+          companyYoY,
+          annualNote: shown.annualNote ?? null,
+          annualUsd: shown.annualUsd ?? [],
+          amountNote,
+        });
+        const cacheKey = `${ticker.toUpperCase()}|${kind}|${systemPrompt}|${prompt}`;
+        const cached = outlineResponseCache.get(cacheKey);
+        if (cached && now - cached.at < CHILDREN_CACHE_MS) {
+          payload = cached.payload;
+          modelUsed = cached.modelUsed;
+        } else {
+          const result = await (deps.llm ?? callLLMJson)({
+            systemPrompt,
+            prompt,
+            maxTokens: 800,
+            temperature: 0.2,
+            signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+          }).catch(() => null);
+          payload = result?.data ?? null;
+          modelUsed = result?.modelUsed ?? "";
+          if (result) {
+            if (outlineResponseCache.size >= CHILDREN_CACHE_MAX) {
+              let oldestKey: string | null = null;
+              let oldestAt = Number.POSITIVE_INFINITY;
+              outlineResponseCache.forEach((entry, key) => {
+                if (entry.at < oldestAt) {
+                  oldestAt = entry.at;
+                  oldestKey = key;
+                }
+              });
+              if (oldestKey) outlineResponseCache.delete(oldestKey);
+            }
+            outlineResponseCache.set(cacheKey, { at: now, payload, modelUsed });
+          }
+        }
       } else {
         payload = await (deps.outline ?? defaultOutline)(ticker, kind, identity, facts, deps.llm);
       }
@@ -1269,11 +1296,26 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
         const hit = items.find((item) => item.name.toLowerCase() === row.name.toLowerCase());
         return { ...row, growth: hit && typeof hit.growthPct === "number" ? hit.growthPct : null };
       });
+      const acceptedKi = filled.some((row) => {
+        const prior = known.find((item) => item.name.toLowerCase() === row.name.toLowerCase());
+        return prior?.growth == null && row.growth != null;
+      });
+      const mix = mixOf(filled);
+      const discard = acceptedKi ? mixDiscardReason(mix) : null;
+      if (discard) {
+        return res.json({
+          items: [],
+          reason: discard,
+          modelUsed: modelUsed || null,
+          mix,
+          formulas: formulasOf(known),
+        });
+      }
       return res.json({
         items,
         reason: reviewed.reason,
         modelUsed: modelUsed || null,
-        mix: mixOf(filled),
+        mix,
         formulas: formulasOf(filled),
       });
     } catch (err: unknown) {

@@ -6,9 +6,11 @@ import React from "react";
 import express from "express";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { SegmentGrowthReadout } from "../client/src/components/sections/SegmentGrowthReadout";
 import { SegmentSupplementBody } from "../client/src/components/sections/SegmentSupplementView";
 import { segmentYoYGap } from "../client/src/components/sections/Section2";
-import { checkSegmentMix, formulaText, notEstimableReason, priorFromGrowth } from "../shared/segment-yoy-fill";
+import { checkSegmentMix, formulaText, mixDiscardReason, notEstimableReason, priorFromGrowth } from "../shared/segment-yoy-fill";
 import type { SegmentSupplement } from "../shared/segment-supplement";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -53,6 +55,14 @@ gap(
     && outside.text.includes("Abweichung")
     && outside.text.includes("-800"),
   outside.text,
+);
+gap(
+  "discard-reason-uses-existing-tolerance-only",
+  mixDiscardReason(within) === null
+    && (mixDiscardReason(outside) ?? "").startsWith("n/a — verworfen:")
+    && (mixDiscardReason(outside) ?? "").includes("außerhalb")
+    && (mixDiscardReason(outside) ?? "").includes(outside.text),
+  mixDiscardReason(outside) ?? "",
 );
 
 const partial = checkSegmentMix(
@@ -165,6 +175,66 @@ gap(
   "product-button-hidden-when-yoy-exists",
   !msftHtml.includes("button-segment-outline-product") && msftHtml.includes("Server"),
   `button=${msftHtml.includes("button-segment-outline-product")}`,
+);
+const msftMainHtml = readFileSync(new URL("./fixtures/msft-segment-estimate-main.html", import.meta.url), "utf8");
+const msftDiffAt = [...msftHtml].findIndex((char, index) => char !== msftMainHtml[index]);
+gap(
+  "msft-without-click-matches-main-render",
+  msftHtml === msftMainHtml,
+  msftDiffAt < 0
+    ? `bytes=${msftHtml.length}`
+    : `diffAt=${msftDiffAt} branch=${JSON.stringify(msftHtml.slice(Math.max(0, msftDiffAt - 40), msftDiffAt + 40))} main=${JSON.stringify(msftMainHtml.slice(Math.max(0, msftDiffAt - 40), msftDiffAt + 40))}`,
+);
+const calculated = {
+  name: "Server",
+  growth: 4.2,
+  basis: "berechnet" as const,
+  method: "unresolved" as const,
+  formula: "Vorjahr fehlt",
+  source: "FMP",
+  reason: null,
+};
+const readoutOnly = renderToStaticMarkup(React.createElement(SegmentGrowthReadout, {
+  fact: null,
+  annotation: calculated,
+}));
+const beside = renderToStaticMarkup(React.createElement(section.SegmentGrowthWithKi, {
+  fact: null,
+  annotation: calculated,
+  fill: {
+    name: "Server",
+    shareOfParentPct: null,
+    growthPct: 9.5,
+    basis: "Geschäftsbericht 2024",
+    origin: "KI" as const,
+  },
+  model: "mock-model",
+  formula: "Anteil × Konzernumsatz",
+  testId: "segment-ki-Server",
+}));
+gap(
+  "ki-number-sits-beside-calculated-readout-and-badge",
+  beside.includes(readoutOnly)
+    && readoutOnly.includes("berechnet")
+    && beside.includes("segment-ki-Server")
+    && beside.includes("9.5")
+    && beside.includes("KI-Schätzung")
+    && beside.indexOf("berechnet") < beside.indexOf("+9.5%")
+    && beside.indexOf("+9.5%") < beside.indexOf("KI-Schätzung"),
+  beside,
+);
+const factOnly = renderToStaticMarkup(React.createElement(SegmentGrowthReadout, { fact: 10, annotation: null }));
+const noKi = renderToStaticMarkup(React.createElement(section.SegmentGrowthWithKi, {
+  fact: 10,
+  annotation: null,
+  fill: null,
+  model: null,
+  testId: "segment-ki-Server",
+}));
+gap(
+  "missing-ki-leaves-readout-unchanged",
+  noKi === factOnly && !noKi.includes("KI-Schätzung"),
+  noKi,
 );
 
 const deadEnd: SegmentSupplement = {
@@ -342,6 +412,32 @@ try {
     glp?.text ?? "keine Formel",
   );
 
+  const callsAfterNvo = calls.length;
+  const again = await fetch(`http://127.0.0.1:${port}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ticker: "NVO",
+      kind: "product",
+      rows: nvoRows,
+      yahoo: {
+        description: "Novo Nordisk verkauft Ozempic, Rybelsus, Wegovy und Saxenda.",
+        currency: "USD",
+        fiscalYear: "2025",
+        totalRevenue: 1000,
+        companyYoY: 12.5,
+        segments: nvoRows,
+        regions: [{ name: "North America", revenue: 600, share: 60, growth: 8 }],
+      },
+    }),
+  });
+  const againJson = await again.json() as { items?: unknown[] };
+  gap(
+    "outline-response-cache-skips-second-llm-call",
+    again.status === 200 && calls.length === callsAfterNvo && (againJson.items ?? []).length === 5,
+    `status=${again.status} calls=${calls.length} was=${callsAfterNvo} items=${(againJson.items ?? []).length}`,
+  );
+
   calls.length = 0;
   const unsourced = await fetch(`http://127.0.0.1:${port}/api/segment-outline`, {
     method: "POST",
@@ -377,9 +473,89 @@ try {
       && regionPrompt.includes("1000")
       && regionPrompt.includes("Nur Regionen")
       && (europe == null || europe.growthPct == null)
-      && (unsourcedJson.reason ?? "").length > 0
+      && (unsourcedJson.reason ?? "").includes("ohne Quelle")
+      && !(unsourcedJson.reason ?? "").includes("verworfen")
       && !(unsourcedJson.items ?? []).some((row) => row.name === "North America" && row.growthPct != null && row.growthPct !== 8),
     `status=${unsourced.status} reason=${unsourcedJson.reason ?? ""} items=${JSON.stringify(unsourcedJson.items ?? [])} prompt=${regionPrompt.slice(0, 350)}`,
+  );
+
+  calls.length = 0;
+  const revenueRows = nvoRows.map((row) => ({ ...row, revenue: 10 }));
+  const revenueOff = await fetch(`http://127.0.0.1:${port}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ticker: "NVO",
+      kind: "product",
+      rows: revenueRows,
+      yahoo: {
+        description: "Novo Nordisk verkauft Ozempic, Rybelsus, Wegovy und Saxenda.",
+        currency: "USD",
+        totalRevenue: 1000,
+        companyYoY: 12.5,
+        segments: revenueRows,
+      },
+    }),
+  });
+  const revenueJson = await revenueOff.json() as {
+    items?: { name: string; growthPct: number | null }[];
+    reason?: string;
+    mix?: { revenueWithinTolerance?: boolean | null; yoyWithinTolerance?: boolean | null; text?: string };
+  };
+  const revenuePrompt = calls.map((call) => call.prompt).join("\n");
+  const revenueItems = revenueJson.items ?? [];
+  gap(
+    "revenue-outside-tolerance-discards-ki-number",
+    revenueOff.status === 200
+      && calls.length === 1
+      && revenueJson.mix?.revenueWithinTolerance === false
+      && revenueJson.mix?.yoyWithinTolerance === true
+      && revenueItems.length === 0
+      && !revenueItems.some((row) => typeof row.growthPct === "number")
+      && (revenueJson.reason ?? "").startsWith("n/a — verworfen:")
+      && (revenueJson.reason ?? "").includes("außerhalb")
+      && (revenueJson.reason ?? "").includes("0.5")
+      && !revenuePrompt.includes("309064000000"),
+    `status=${revenueOff.status} calls=${calls.length} reason=${revenueJson.reason ?? ""} items=${JSON.stringify(revenueItems)}`,
+  );
+
+  calls.length = 0;
+  const yoyOff = await fetch(`http://127.0.0.1:${port}/api/segment-outline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ticker: "NVO",
+      kind: "product",
+      rows: nvoRows,
+      yahoo: {
+        description: "Novo Nordisk verkauft Ozempic, Rybelsus, Wegovy und Saxenda.",
+        currency: "USD",
+        totalRevenue: 1000,
+        companyYoY: 0,
+        segments: nvoRows,
+      },
+    }),
+  });
+  const yoyJson = await yoyOff.json() as {
+    items?: { name: string; growthPct: number | null }[];
+    reason?: string;
+    mix?: { revenueWithinTolerance?: boolean | null; yoyWithinTolerance?: boolean | null; text?: string };
+  };
+  const yoyPrompt = calls.map((call) => call.prompt).join("\n");
+  const yoyItems = yoyJson.items ?? [];
+  gap(
+    "yoy-outside-tolerance-discards-ki-number",
+    yoyOff.status === 200
+      && calls.length === 1
+      && yoyJson.mix?.revenueWithinTolerance === true
+      && yoyJson.mix?.yoyWithinTolerance === false
+      && yoyItems.length === 0
+      && !yoyItems.some((row) => typeof row.growthPct === "number")
+      && (yoyJson.reason ?? "").startsWith("n/a — verworfen:")
+      && (yoyJson.reason ?? "").includes("außerhalb")
+      && (yoyJson.reason ?? "").includes("1.5")
+      && !yoyPrompt.includes("309064000000"),
+    `status=${yoyOff.status} calls=${calls.length} reason=${yoyJson.reason ?? ""} items=${JSON.stringify(yoyItems)}`,
   );
 } finally {
   await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));

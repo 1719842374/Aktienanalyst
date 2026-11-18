@@ -127,6 +127,19 @@ export function checkSegmentMix(
   };
 }
 
+/**
+ * Verwerfen nur, wenn eine schon definierte Toleranz überschritten ist.
+ * null heißt „nicht prüfbar“ und ist kein neuer Grenzwert.
+ */
+export function mixOutsideTolerance(mix: MixCheck): boolean {
+  return mix.revenueWithinTolerance === false || mix.yoyWithinTolerance === false;
+}
+
+export function mixDiscardReason(mix: MixCheck): string | null {
+  if (!mixOutsideTolerance(mix)) return null;
+  return `n/a — verworfen: ${mix.text}`;
+}
+
 /** Jahresreihe nur, wenn sie schon USD ist. Eine Fremdwährung wird nicht multipliziert. */
 export function usdSeriesFromIncome(income: unknown): UsdSeries {
   if (!Array.isArray(income) || income.length === 0) return { currency: "", rows: [], note: null };

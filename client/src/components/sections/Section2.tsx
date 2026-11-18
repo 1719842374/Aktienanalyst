@@ -7,7 +7,7 @@ import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
-import { annotationByName } from "../../../../shared/segment-growth-calc";
+import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
 import { concreteSource, outlineStillCurrent } from "../../../../shared/segment-children";
 import { priorFromGrowth } from "../../../../shared/segment-yoy-fill";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
@@ -156,16 +156,50 @@ function KiEstimate({
   if (typeof item.growthPct !== "number") return null;
   const source = concreteSource(item.basis) ? visibleBasis(item.basis) : "n/a — ohne Quelle";
   return (
-    <span
-      className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200"
-      data-testid={testId}
-      title={item.basis}
-    >
-      {`${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}% KI-Schätzung`}
-      {model ? ` · ${model}` : ""}
-      {` · ${source}`}
-      {formula ? <span className="mt-0.5 block text-[9px]" data-testid={`${testId}-formula`}>{formula}</span> : null}
-    </span>
+    <>
+      <span
+        className="font-mono text-[10px] tabular-nums text-violet-700 dark:text-violet-200"
+        data-testid={testId}
+        title={item.basis}
+      >
+        {`${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}%`}
+      </span>
+      <span
+        className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200"
+        data-testid={`${testId}-badge`}
+      >
+        KI-Schätzung
+        {model ? ` · ${model}` : ""}
+        {` · ${source}`}
+        {formula ? <span className="mt-0.5 block text-[9px]" data-testid={`${testId}-formula`}>{formula}</span> : null}
+      </span>
+    </>
+  );
+}
+
+/** Fakt oder „berechnet“ bleibt stehen. Die KI-Zahl und das Badge kommen daneben. */
+export function SegmentGrowthWithKi({
+  fact,
+  annotation,
+  fill,
+  model,
+  formula,
+  testId,
+}: {
+  fact: number | null | undefined;
+  annotation: SegmentGrowthAnnotation | null | undefined;
+  fill: OutlineItem | null;
+  model: string | null;
+  formula?: string;
+  testId: string;
+}) {
+  return (
+    <>
+      <SegmentGrowthReadout fact={fact} annotation={annotation} />
+      {fill && typeof fill.growthPct === "number" ? (
+        <KiEstimate item={fill} model={model} formula={formula} testId={testId} />
+      ) : null}
+    </>
   );
 }
 
@@ -608,6 +642,18 @@ export function Section2({ data }: Props) {
 }
 
 
+function revenueSegmentsSourceLabel(data: StockAnalysis) {
+  const src = data.revenueSegmentsSource;
+  const fy = data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear;
+  const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
+    : src === "fmp" ? "Quelle: FMP"
+    : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
+    : null;
+  return label ? (
+    <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
+  ) : null;
+}
+
 export function SegmentEstimateBlock({ data }: Props) {
   const segmentGrowthQueried = (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0;
   const segmentGrowth = useSegmentGrowth(data.ticker, segmentGrowthQueried);
@@ -709,7 +755,7 @@ export function SegmentEstimateBlock({ data }: Props) {
         reason?: string;
         error?: string;
         modelUsed?: string | null;
-        mix?: { text?: string };
+        mix?: { text?: string; revenueWithinTolerance?: boolean | null; yoyWithinTolerance?: boolean | null };
         formulas?: { name: string; text: string }[];
       } | null;
       const message = outlineFailureMessage(res.ok, json);
@@ -718,8 +764,22 @@ export function SegmentEstimateBlock({ data }: Props) {
         const mixText = typeof json?.mix?.text === "string" ? json.mix.text : null;
         if (kind === "product") setProductMix(mixText);
         else setGeoMix(mixText);
-        const usable = (json?.items ?? []).filter((item) => typeof item.growthPct === "number");
+        const outside = json?.mix?.revenueWithinTolerance === false || json?.mix?.yoyWithinTolerance === false;
+        const usable = outside
+          ? []
+          : (json?.items ?? []).filter((item) => typeof item.growthPct === "number");
         if (!res.ok || usable.length === 0) {
+          if (outside) {
+            if (kind === "product") {
+              setProductFills({});
+              setProductModel(null);
+              setProductFormula({});
+            } else {
+              setGeoFills({});
+              setGeoModel(null);
+              setGeoFormula({});
+            }
+          }
           setError(json?.reason || message || "n/a — nicht schätzbar");
           return;
         }
@@ -786,8 +846,8 @@ export function SegmentEstimateBlock({ data }: Props) {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
-              <div className="flex items-center gap-2">
-                {segmentYoYGap(data.revenueSegments) ? (
+              {segmentYoYGap(data.revenueSegments) ? (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     data-testid="button-segment-outline-product"
@@ -797,19 +857,9 @@ export function SegmentEstimateBlock({ data }: Props) {
                   >
                     {outlineLoading === "product" ? "…" : "N/A mit KI schätzen"}
                   </button>
-                ) : null}
-                {(() => {
-                  const src = data.revenueSegmentsSource;
-                  const fy = data.revenueSegments!.find(s => s.fiscalYear)?.fiscalYear;
-                  const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
-                    : src === "fmp" ? "Quelle: FMP"
-                    : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
-                    : null;
-                  return label ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
-                  ) : null;
-                })()}
-              </div>
+                  {revenueSegmentsSourceLabel(data)}
+                </div>
+              ) : revenueSegmentsSourceLabel(data)}
             </div>
             {data.revenueSegments.length === 1 ? (
               // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
@@ -832,12 +882,14 @@ export function SegmentEstimateBlock({ data }: Props) {
                         )}
                         {(() => {
                           const fill = fillByName(productFills, seg.name);
-                          return fill && typeof fill.growthPct === "number" ? (
-                            <KiEstimate item={fill} model={productModel} formula={productFormula[fill.name] ?? productFormula[seg.name]} testId={`segment-ki-${seg.name}`} />
-                          ) : (
-                            <SegmentGrowthReadout
+                          return (
+                            <SegmentGrowthWithKi
                               fact={seg.growth ?? seg.yoyChangePercent}
                               annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
+                              fill={fill}
+                              model={productModel}
+                              formula={fill ? productFormula[fill.name] ?? productFormula[seg.name] : undefined}
+                              testId={`segment-ki-${seg.name}`}
                             />
                           );
                         })()}
@@ -950,12 +1002,14 @@ export function SegmentEstimateBlock({ data }: Props) {
                       )}
                       {(() => {
                         const fill = fillByName(geoFills, seg.name);
-                        return fill && typeof fill.growthPct === "number" ? (
-                          <KiEstimate item={fill} model={geoModel} formula={geoFormula[fill.name] ?? geoFormula[seg.name]} testId={`region-ki-${seg.name}`} />
-                        ) : (
-                          <SegmentGrowthReadout
+                        return (
+                          <SegmentGrowthWithKi
                             fact={seg.growth}
                             annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
+                            fill={fill}
+                            model={geoModel}
+                            formula={fill ? geoFormula[fill.name] ?? geoFormula[seg.name] : undefined}
+                            testId={`region-ki-${seg.name}`}
                           />
                         );
                       })()}
