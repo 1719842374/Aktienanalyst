@@ -8,6 +8,7 @@
     "build": "node --import tsx/esm script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:segment-children": "tsx --tsconfig script/tsconfig.jsx.json script/test-segment-children.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

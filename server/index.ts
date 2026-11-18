@@ -29,6 +29,8 @@ process.on("uncaughtException", (error: any) => {
 });
 
 const app = express();
+// Render sitzt genau einen Hop davor. true wäre fälschbar über X-Forwarded-For.
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {

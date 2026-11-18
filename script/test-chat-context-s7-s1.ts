@@ -5,7 +5,7 @@
  * Offline, kein LLM. Run: npx tsx --tsconfig script/tsconfig.jsx.json script/test-chat-context-s7-s1.ts
  */
 import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import { readFileSync } from "fs";
 
 (globalThis as any).React = React;

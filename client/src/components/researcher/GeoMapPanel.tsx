@@ -10,7 +10,7 @@
  * Nur Anzeige, kein Score.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "@/lib/reactSimpleMaps";
 import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Globe2, Loader2, RefreshCw, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";

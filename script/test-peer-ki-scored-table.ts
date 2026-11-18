@@ -1,10 +1,12 @@
 /**
- * Fixture: ein KI-Ticker darf nicht in die gescorte Peer-Tabelle.
- * Die kuratierte Map bleibt unverändert. Ein User-Override +LLY darf.
+ * Fixture: ein KI-Ticker steht in derselben Tabelle wie die manuellen Peers,
+ * mit denselben Spalten. Fehlende FMP-Felder bleiben n/a. Ø, Gates und Score
+ * bleiben die mitgelieferten Zahlen. Ein User-Override +LLY darf.
  * Kein Live-FMP, wenn kein Key gesetzt ist.
  *
  * Ausführen: npx tsx --tsconfig script/tsconfig.jsx.json script/test-peer-ki-scored-table.ts
  */
+import { readFileSync } from "node:fs";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PeerCompany, StockAnalysis } from "../shared/schema";
@@ -99,6 +101,18 @@ function scoredTable(html: string): string {
   return tables.find((table) => table.includes("Ø Peers")) ?? "";
 }
 
+function rowHtml(table: string, marker: string): string {
+  const at = table.indexOf(marker);
+  if (at < 0) return "";
+  const start = table.lastIndexOf("<tr", at);
+  const end = table.indexOf("</tr>", at);
+  return start >= 0 && end > start ? table.slice(start, end + 5) : "";
+}
+
+function openTags(fragment: string, tag: "td" | "th"): number {
+  return fragment.match(new RegExp(`<${tag}\\b`, "g"))?.length ?? 0;
+}
+
 try {
   console.log("\n=== Kuratierte Map unverändert ===");
   {
@@ -123,28 +137,100 @@ try {
     check("Subjekt wird nicht als Peer eingetragen", !next.includes("NVO"));
   }
 
-  console.log("\n=== KI-Ticker nicht in der gescorten Tabelle ===");
+  console.log("\n=== KI-Ticker in derselben Tabelle, nicht im Ø ===");
   {
-    const html = renderPeer(analysis([company("SNY"), company("PFE")]), [kiRow("LLY")]);
+    const data = analysis([company("SNY"), company("PFE")]);
+    const avgBefore = JSON.stringify(data.peerComparison?.peerAvg);
+    const peersBefore = (data.peerComparison?.peers ?? []).map((peer) => peer.ticker).join(",");
+    const html = renderPeer(data, [kiRow("LLY")]);
     const scored = scoredTable(html);
+    const header = scored.slice(scored.indexOf("<thead"), scored.indexOf("</thead>"));
+    const manualRow = rowHtml(scored, ">SNY<");
+    const kiRowHtml = rowHtml(scored, 'data-testid="row-peer-ki-LLY"');
+    const avgRow = rowHtml(scored, ">Ø Peers<");
     check("gescorte Tabelle ist markiert", scored.includes('data-testid="peer-scored-table"'));
+    check("genau eine Vergleichstabelle", (html.match(/<table\b/g) ?? []).length === 1);
     check("FMP-Peers SNY und PFE stehen in der gescorten Tabelle", scored.includes("SNY") && scored.includes("PFE"));
     check("Ø Peers bleibt in der gescorten Tabelle", scored.includes("Ø Peers"));
+    check("KI-Ticker LLY steht in derselben Tabelle", scored.includes('data-testid="row-peer-ki-LLY"'));
+    check("Hinweis: nicht in Ø Peers, Relativ-Score unverändert", scored.includes("nicht in Ø Peers") && scored.includes("Relativ-Score unverändert"));
+    check("keine separate Seitenliste", !html.includes('data-testid="peer-ki-side-list"'));
+    check("KI-Badge bleibt an der Zeile", scored.includes('data-testid="badge-peer-ki-LLY"'));
+    const avgAt = scored.indexOf(">Ø Peers<");
+    const kiAt = scored.indexOf("row-peer-ki-LLY");
+    check("KI-Zeile steht vor der Ø-Peers-Zeile", kiAt >= 0 && avgAt > kiAt);
     check(
-      "KI-Ticker LLY steht nicht in der gescorten Tabelle",
-      !scored.includes("LLY") && !scored.includes("row-peer-ki-LLY"),
-      scored.includes("LLY") ? "LLY im gescorten Tabellen-HTML" : "gescorte Tabelle fehlt",
+      "KI-Zeile hat dieselbe Spaltenzahl wie Kopf und manuelle Zeile",
+      openTags(header, "th") > 0 && openTags(header, "th") === openTags(manualRow, "td") && openTags(manualRow, "td") === openTags(kiRowHtml, "td"),
+      `th=${openTags(header, "th")} manual=${openTags(manualRow, "td")} ki=${openTags(kiRowHtml, "td")}`,
     );
-    check("KI-Zeile steht in der Seitenliste", html.includes('data-testid="peer-ki-side-list"') && html.includes('data-testid="row-peer-ki-LLY"'));
-    check("Seitenliste liegt außerhalb der gescorten Tabelle", !scored.includes("peer-ki-side-list"));
-    check("KI-Badge bleibt an der Seitenliste", html.includes('data-testid="badge-peer-ki-LLY"'));
+    check("Render schreibt peerAvg nicht um", JSON.stringify(data.peerComparison?.peerAvg) === avgBefore);
+    check("Render schreibt die Peer-Liste nicht um", (data.peerComparison?.peers ?? []).map((peer) => peer.ticker).join(",") === peersBefore);
+    check("Ø-Zeile behält die Fixture-Zahlen", ["20.0", "1.10", "5.0", "4.0", "10.0%", "8.0%", "15.0%", "14.0%"].every((token) => avgRow.includes(token)), avgRow);
+    check("KI-KGV 22.4 steht in der KI-Zeile und nicht in der Ø-Zeile", kiRowHtml.includes("22.4") && !avgRow.includes("22.4"));
+
+    const missing = renderPeer(analysis([company("SNY")]), [{ ...kiRow("GM"), pe: null, marketCap: null, roic: null }]);
+    const missingRow = rowHtml(scoredTable(missing), 'data-testid="row-peer-ki-GM"');
+    check("fehlende KI-Kennzahl nennt den Grund", missingRow.includes("n/a — keine FMP-Kennzahl"));
+    check("fehlende KI-Kennzahl wird nicht als 0 gezeigt", !missingRow.includes(">0<") && !missingRow.includes(">0.0<"));
+
+    const manualMissing = renderPeer(analysis([{ ...company("SNY"), pe: null, roic: null }]), []);
+    const manualMissingRow = rowHtml(scoredTable(manualMissing), ">SNY<");
+    check("manuelle fehlende Nicht-ROIC-Kennzahl bleibt —", manualMissingRow.includes(">—</td>"));
+    check("manuelle fehlende ROIC-Kennzahl bleibt n/a", manualMissingRow.includes(">n/a</td>"));
+    check("manuelle Zeile übernimmt nicht den KI-Hinweis", !manualMissingRow.includes("keine FMP-Kennzahl"));
 
     const onlyKi = renderPeer(analysis([]), [kiRow("LLY")]);
-    check("ohne FMP-Peers gibt es keine gescorte Tabelle", scoredTable(onlyKi) === "");
-    check(
-      "fehlender Rivale bleibt nur in der Seitenliste",
-      onlyKi.includes('data-testid="peer-ki-side-list"') && onlyKi.includes('data-testid="row-peer-ki-LLY"'),
-    );
+    const onlyTable = scoredTable(onlyKi);
+    check("ohne FMP-Peers bleibt die KI-Zeile in der Tabelle", onlyTable.includes('data-testid="row-peer-ki-LLY"'));
+    check("ohne FMP-Peers keine Seitenliste", !onlyKi.includes('data-testid="peer-ki-side-list"'));
+    check("ohne FMP-Peers bleibt die Ø-Zeile die Fixture", rowHtml(onlyTable, ">Ø Peers<").includes("20.0") && !rowHtml(onlyTable, ">Ø Peers<").includes("22.4"));
+  }
+
+  console.log("\n=== fehlendes Peer-Set: KI bleibt in derselben Tabelle ===");
+  {
+    const bareKi = [{ ...kiRow("GM"), pe: null, marketCap: null, roic: null }];
+    const nullData = { ticker: "NVO", peerComparison: null } as StockAnalysis;
+    const nullHtml = renderPeer(nullData, bareKi);
+    const nullTables = nullHtml.match(/<table\b[\s\S]*?<\/table>/g) ?? [];
+    const nullTable = nullTables.find((table) => table.includes('data-testid="peer-scored-table"')) ?? "";
+    const nullHeader = nullTable.slice(nullTable.indexOf("<thead"), nullTable.indexOf("</thead>"));
+    const nullKi = rowHtml(nullTable, 'data-testid="row-peer-ki-GM"');
+    check("null: genau eine Tabelle", nullTables.length === 1 && nullTable.length > 0);
+    check("null: KI-Zeile in peer-scored-table", nullTable.includes('data-testid="row-peer-ki-GM"'));
+    check("null: keine Seitenliste", !nullHtml.includes('data-testid="peer-ki-side-list"'));
+    check("null: fehlende Kennzahl nennt den Grund", nullKi.includes("n/a — keine FMP-Kennzahl"));
+    check("null: keine Ø-Zeile und keine erfundene 20.0", !nullHtml.includes(">Ø Peers<") && !nullHtml.includes(">20.0<"));
+    check("null: fehlende Kennzahl ist nicht 0", !nullKi.includes(">0<") && !nullKi.includes(">0.0<"));
+    check("null: dieselbe Spaltenzahl", openTags(nullHeader, "th") > 0 && openTags(nullHeader, "th") === openTags(nullKi, "td"), `th=${openTags(nullHeader, "th")} td=${openTags(nullKi, "td")}`);
+
+    const partial = {
+      ticker: "NVO",
+      peerComparison: {
+        subject: company("NVO", 28),
+        peerAvg: { pe: 20, peg: 1.1, ps: 5, pb: 4, epsGrowth1Y: 10, epsGrowth5Y: 8, roic: 15, roic5Y: 14 },
+        sectorMedian: { pe: 18, peg: 1.2, ps: 4, pb: 3, epsGrowth: 8, sectorName: "Healthcare" },
+      },
+    } as StockAnalysis;
+    const avgBefore = JSON.stringify(partial.peerComparison?.peerAvg);
+    const partialHtml = renderPeer(partial, [kiRow("LLY")]);
+    const partialTable = scoredTable(partialHtml);
+    const partialAvg = rowHtml(partialTable, ">Ø Peers<");
+    check("ohne peers-Feld: KI-Zeile in der vorhandenen Tabelle", partialTable.includes('data-testid="row-peer-ki-LLY"'));
+    check("ohne peers-Feld: keine Seitenliste", !partialHtml.includes('data-testid="peer-ki-side-list"'));
+    check("ohne peers-Feld: Subjekt bleibt", partialTable.includes(">NVO<"));
+    check("ohne peers-Feld: kein erfundener FMP-Peer", !partialTable.includes(">SNY<"));
+    check("ohne peers-Feld: mitgeliefertes Ø bleibt, KI-KGV nicht darin", partialAvg.includes("20.0") && !partialAvg.includes("22.4"));
+    check("ohne peers-Feld: Render schreibt peerAvg nicht um", JSON.stringify(partial.peerComparison?.peerAvg) === avgBefore);
+  }
+
+  console.log("\n=== Datenkette und keine Score-Berechnung in der Tabelle ===");
+  {
+    const section7 = readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8");
+    const tableSrc = readFileSync(new URL("../client/src/components/sections/PeerComparison.tsx", import.meta.url), "utf8");
+    check("Section7 reicht peerKiFills als kiPeers an dieselbe Tabelle", section7.includes("kiPeers={peerKiFills ?? []}"));
+    check("Section7 holt die Fills über peer-na-fill und setzt nur den Sitzungsstate", section7.includes("/peer-na-fill") && section7.includes("setPeerKiFills(next"));
+    check("Peer-Tabelle importiert kein Scoring und kein Peer-Gate", !tableSrc.includes("scoring-integration") && !tableSrc.includes("assessPeerSet") && !tableSrc.includes("scoringWithPeerDelta") && !tableSrc.includes("RELATIVE_GROWTH"));
   }
 
   console.log("\n=== User +LLY darf in der gescorten Tabelle stehen ===");
@@ -155,8 +241,7 @@ try {
     );
     const scored = scoredTable(html);
     check("Override-Ticker LLY steht in der gescorten Tabelle", scored.includes(">LLY<"));
-    check("dieselbe Zeile ist keine KI-Zeile der gescorten Tabelle", !scored.includes("row-peer-ki-LLY"));
-    check("bereits gescorter Ticker bleibt aus der Seitenliste", !html.includes('data-testid="row-peer-ki-LLY"'));
+    check("bereits gescorter Ticker wird nicht noch einmal als KI-Zeile gezeigt", !scored.includes("row-peer-ki-LLY"));
     check("Add-Steuerung bleibt", html.includes("+ Peer hinzufügen"));
   }
 

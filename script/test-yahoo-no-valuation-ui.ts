@@ -39,10 +39,23 @@ check("Section1 Yahoo: Hinweis „Yahoo-Daten – keine Bewertung“ oben", s1Ya
 check("Section1 Yahoo: Kurs weiterhin sichtbar", s1Yahoo.includes("Price"));
 
 // Dashboard-Weiche: bewertende Sektionen 1/3/6/7/8/10/16/17/20 werden bei Yahoo durch die n/a-Karte ersetzt.
+// Sektion 3 läuft seit #465 N19 über YahooSection3 (n/a-Karte Nr. 3 + nur Segment-/KI-Schätzungsblock).
 const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
+const yahooWeiche = (n: number) => n === 3
+  ? /isYahooOnly\(data\) \? <YahooSection3 data=\{data\} \/> : <Section2 data=\{data\} \/>/
+  : new RegExp(`isYahooOnly\\(data\\) \\? <YahooNoValuationCard number=\\{${n}\\}`);
 for (const n of [1, 3, 6, 7, 8, 10, 16, 17, 20]) {
-  check(`Dashboard: Sektion ${n} hat die Yahoo-Weiche`, new RegExp(`isYahooOnly\\(data\\) \\? <YahooNoValuationCard number=\\{${n}\\}`).test(dash));
+  check(`Dashboard: Sektion ${n} hat die Yahoo-Weiche`, yahooWeiche(n).test(dash));
 }
+// Inhalt der Yahoo-Sektion 3: n/a-Karte Nr. 3 mit Hinweis, Segmentblock, keine Bewertungsfelder aus Section2.
+const { YahooSection3 } = await import("../client/src/components/sections/Section2");
+const s3Yahoo = wrap(React.createElement(YahooSection3, { data: yahoo }));
+const s3Valuation = ["Peter Lynch", "Moat Assessment", "FCF Strength", "FCF Haircut", "Conservative DCF", "Kat.-adj. Zielwert", "Total Upside", "DCF Rechenweg", "Katalysatoren (Company-Specific)"];
+const s3Leak = s3Valuation.filter((label) => s3Yahoo.includes(label));
+check(`Sektion 3 Yahoo: n/a-Karte Nr. 3 + nur Segmentblock, keine Bewertungsfelder${s3Leak.length ? ` (gefunden: ${s3Leak.join(", ")})` : ""}`,
+  s3Yahoo.includes('data-testid="yahoo-na-3"') && s3Yahoo.includes(YAHOO_NO_VALUATION_NOTICE)
+    && s3Yahoo.includes('data-testid="segment-reported-currency"') && s3Yahoo.includes("Umsatz nach Regionen")
+    && s3Leak.length === 0);
 
 // Null-Sicherheit mit echter Route-Antwort (VOW3.DE, FMP 402 → Yahoo; dcfFairValue/upsidePotential/impliedGStar = null):
 // alle Sektionen, die Dashboard bei Yahoo NICHT durch die n/a-Karte ersetzt, rendern ohne Fehler (sonst ErrorBoundary).

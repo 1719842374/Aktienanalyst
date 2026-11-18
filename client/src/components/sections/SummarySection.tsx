@@ -209,7 +209,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             Monte Carlo (historisch-empirisch, μ aus Kursrenditen) impliziert{' '}
             <span className={mcExpectedReturn >= 0 ? 'text-emerald-400' : 'text-red-400'}>{mcExpectedReturn >= 0 ? '+' : ''}{mcExpectedReturn.toFixed(1)}%</span>,
             {' '}DCF (fundamental) impliziert{' '}
-            <span className={dcfUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside >= 0 ? '+' : ''}{dcfUpside.toFixed(1)}%</span>
+            {/* Beleg: divergence ist null genau dann, wenn dcfUpside null ist; darüber ist bei null schon zurückgekehrt. */}
+            <span className={dcfUpside! >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside! >= 0 ? '+' : ''}{dcfUpside!.toFixed(1)}%</span>
             {' '}— Differenz {Math.abs(divergence).toFixed(0)} Pp.
             Beide Methoden messen unterschiedliche Dinge: Monte Carlo extrapoliert historischen Kursimpuls,
             DCF bewertet fundamentale Ertragskraft. Große Divergenz signalisiert: entweder Momentum-überschuss oder DCF-Annahmen zu konservativ.

@@ -7,7 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createElement, type ReactElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import { assessEcosystem, resolveEcosystem } from "../server/ecosystem-moat";
 import { MoatPorterSection } from "../client/src/components/sections/MoatPorterSection";
 

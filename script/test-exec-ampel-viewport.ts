@@ -11,7 +11,7 @@
  */
 import React from "react";
 (globalThis as any).React = React;
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithQuery as renderToStaticMarkup } from "./ssr-query";
 import assert from "node:assert/strict";
 import { ExecSummaryCard } from "../client/src/components/ExecSummaryCard";
 import { SummarySection } from "../client/src/components/sections/SummarySection";
