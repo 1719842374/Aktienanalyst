@@ -10,6 +10,7 @@
  * Keine neuen Schwellen. Fenster stehen in AMPEL_TA_PARAMS und BAND_PARAMS.
  */
 import { technicalSignal } from "../../../shared/conflict-matrix";
+import { phaseFromTechnical } from "../../../shared/ta-phase";
 import { macd1269 } from "../../../shared/tech-rsi";
 import { quantileR7 } from "./robustStats";
 import { smaSeries } from "./taWindowSeries";
@@ -96,15 +97,19 @@ export type AmpelChartRow = ComboPoint & {
   segments: Record<string, number | null>;
 };
 
-/** Grün nur bei buySignal (alle vier Bedingungen). Gelb = technicalSignal nicht negativ. Rot = negativ. */
+/** Grün = ATTRAKTIV, Gelb = NEUTRAL, Rot = VORSICHTIG. Dieselbe Funktion wie die Kurslinie (shared/ta-phase.ts). */
 export function ampelColorFromStatus(status: TechnicalFlags | null): AmpelColor | null {
-  if (!status) return null;
-  const judged = technicalSignal(status);
-  if (judged.signal === "n/a") return null;
-  const buySignal = status.priceAboveMA200 && status.ma50AboveMA200 && status.macdAboveZero && status.macdRising;
-  if (buySignal) return "green";
-  if (judged.signal === "negativ") return "red";
-  return "yellow";
+  const phase = phaseFromTechnical(status, false);
+  switch (phase) {
+    case "ATTRAKTIV": return "green";
+    case "NEUTRAL": return "yellow";
+    case "VORSICHTIG": return "red";
+    case null: return null;
+    default: {
+      const unreachable: never = phase;
+      return unreachable;
+    }
+  }
 }
 
 export function evaluateAmpelOnCloses(closes: number[]): AmpelPoint[] {

@@ -45,6 +45,14 @@ export function mwFromHashrateEh(ehPerS: number, joulesPerTh: number): number | 
   return Number.isFinite(mw) && mw > 0 ? mw : null;
 }
 
+/** EH/s aus MW und einer genannten Effizienz. Umkehr von mwFromHashrateEh: EH/s = MW / (J/TH). */
+export function ehsFromMw(mw: number, joulesPerTh: number): number | null {
+  if (!(typeof mw === "number" && Number.isFinite(mw) && mw > 0)) return null;
+  if (!(typeof joulesPerTh === "number" && Number.isFinite(joulesPerTh) && joulesPerTh > 0)) return null;
+  const eh = mw / joulesPerTh;
+  return Number.isFinite(eh) && eh > 0 ? eh : null;
+}
+
 /** Obergrenze aus der Hut-8-Meldung, nicht eine gemessene Ist-Hashrate. */
 export const VEGA_HASHRATE_CEILING = {
   ehPerS: 15,
@@ -79,6 +87,8 @@ export interface SourcedNumber {
   sourceLabel: string;
   sourceUrl: string;
   scope: string;
+  /** Badge, wenn der Wert eine Schätzung und kein gemessener Primärwert ist. */
+  estimateLabel?: string;
 }
 
 export interface MinerMapOperator {
@@ -140,6 +150,10 @@ export interface MinerMapPipeline {
   hashpriceNote: string | null;
   hashpriceUsdPerThDay: number | null;
   hashpriceUsdNote: string | null;
+  /** Gesetzt, wenn USD/TH/Tag = BTC/TH/Tag × Spot gerechnet ist. */
+  hashpriceUsdFormula: string | null;
+  btcSpotUsd: number | null;
+  btcSpotNote: string | null;
   breakevenUsd: number | null;
   breakevenNote: string | null;
   puellMultiple: number | null;
@@ -237,6 +251,75 @@ const maraCompanyHash: SourcedNumber = {
   scope: "Energised hashrate Ende Dezember 2025, Konzern. Kein späterer freier Wert in den gelesenen Quellen.",
 };
 
+const irenCompanyHash: SourcedNumber = {
+  value: 23.2,
+  asOf: "2026-06-30",
+  sourceLabel: "IREN Form 10-K FY2026",
+  sourceUrl: IREN_20F,
+  scope: "Installed Bitcoin mining capacity etwa 23.2 EH/s auf etwa 380 MW, Konzern, nicht ein Standort. Stand 30.06.2026.",
+};
+
+const HUT_10Q = "https://www.sec.gov/Archives/edgar/data/1964789/000110465926090025/hut-20260630x10q.htm";
+const hutCompanyHash: SourcedNumber = {
+  value: 28.1,
+  asOf: "2026-06-30",
+  sourceLabel: "Hut 8 Form 10-Q, Quartal bis 30.06.2026",
+  sourceUrl: HUT_10Q,
+  scope: "American Bitcoin, konsolidierte Tochter: owned fleet nach der Drumheller-Lieferung im April 2026 etwa 28.1 EH/s, vorher etwa 25.1. Sechs Standorte, nicht Vega allein.",
+};
+
+const CIFR_Q3_2026 = "https://ciphermining.gcs-web.com/static-files/db20d559-f9b5-4a1c-b0ac-b55165955b78";
+const cifrSiteHash: SourcedNumber = {
+  value: 11.6,
+  asOf: "2026-09-30",
+  sourceLabel: "Cipher Digital, Q3 2026 Business Update, 02.11.2026",
+  sourceUrl: CIFR_Q3_2026,
+  scope: "etwa 11.6 EH/s auf der Odessa-Folie, neben 296 BTC im Quartal, 207 MW und etwa 17.2 J/TH. Die Tilde steht in der Quelle. Kontrollrechnung der Nameplate: EH/s = MW / (J/TH) = 207 / 17.2 = 12.03. Die 12.03 ersetzen die genannten 11.6 nicht.",
+};
+const cifrCompanyHash: SourcedNumber = {
+  value: 11.6,
+  asOf: "2026-09-30",
+  sourceLabel: "Cipher Digital, Q3 2026 Business Update, 02.11.2026",
+  sourceUrl: CIFR_Q3_2026,
+  scope: "etwa 11.6 EH/s Total Hashrate, in dem Update dem Odessa-Mining zugeordnet. Kein zweiter Mining-Standort in der gelesenen Folie.",
+};
+
+const BTDR_SEP_2026 = "https://ir.bitdeer.com/node/9916/pdf";
+const BTDR_Q2_2026 = "https://ir.bitdeer.com/news-releases/news-release-details/bitdeer-reports-unaudited-financial-results-second-quarter-2026";
+const btdrCompanyHash: SourcedNumber = {
+  value: 82.3,
+  asOf: "2026-09-30",
+  sourceLabel: "Bitdeer, September 2026 Production Update",
+  sourceUrl: BTDR_SEP_2026,
+  scope: "Self-Mining in eigenen Rechenzentren, etwa 82.3 EH/s per 30.09.2026. Nicht Äthiopien allein. Total Proprietary derselben Meldung: 86.4 EH/s.",
+};
+const btdrCompanyPower: SourcedNumber = {
+  value: 44 / 1000,
+  asOf: "2026-06-30",
+  sourceLabel: "Bitdeer, Q2 2026 unaudited results",
+  sourceUrl: BTDR_Q2_2026,
+  scope: "Average cost of electricity 44 $/MWh im Quartal bis 30.06.2026, Konzern, nicht Äthiopien.",
+};
+
+const ERCOT_IMM_AUG2026 = "https://www.potomaceconomics.com/wp-content/uploads/2026/09/2026-08_Nodal_Monthly_Report.pdf";
+
+function ercotHubPower(hub: "West" | "Houston", usdPerMwh: number): SourcedNumber {
+  return {
+    value: usdPerMwh / 1000,
+    asOf: "2026-08",
+    sourceLabel: "Potomac Economics, ERCOT IMM Monthly Report, August 2026",
+    sourceUrl: ERCOT_IMM_AUG2026,
+    scope: `Schätzung. ERCOT ${hub} Hub, Average Real-Time Price August 2026, ${usdPerMwh.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $/MWh. Regionspreis, nicht der Vertragspreis des Standorts.`,
+    estimateLabel: "Schätzung",
+  };
+}
+
+const HUT_FLEET_J_PER_TH = 16;
+const VEGA_SITE_EH = ehsFromMw(205, HUT_FLEET_J_PER_TH);
+const BTDR_FLEET_J_PER_TH = 15.8;
+const ETHIOPIA_MW = 40;
+const ETHIOPIA_SITE_EH = ehsFromMw(ETHIOPIA_MW, BTDR_FLEET_J_PER_TH);
+
 export interface MinerCountryShare {
   iso2: string;
   name: string;
@@ -244,13 +327,16 @@ export interface MinerCountryShare {
   asOf: string;
   sharePct: number | null;
   hashrateEH: number | null;
-  label: "Schätzung / keine Primärquelle";
+  label: "Schätzung / keine Primärquelle" | "Schätzung";
   sourceLabel: string;
   sourceUrl: string;
   note: string | null;
 }
 
 const CAMBRIDGE_ARCHIVE_LABEL = "Cambridge Judge Business School, 17.05.2022, CCAF Mining Map Januar 2022";
+
+/** USA 70.97 EH/s sind 37.84 % derselben Tabelle. China-EH/s = 70.97 × (21.11 / 37.84). */
+export const CAMBRIDGE_CHINA_JAN2022_EH = Math.round(70.97 * (21.11 / 37.84) * 100) / 100;
 
 /** Anteile aus dem Cambridge-Artikel. Kein Ist 2026, keine Fortschreibung. */
 export const CAMBRIDGE_ARCHIVE_SHARES: readonly MinerCountryShare[] = [
@@ -270,11 +356,11 @@ export const CAMBRIDGE_ARCHIVE_SHARES: readonly MinerCountryShare[] = [
     name: "China",
     asOf: "2022-01",
     sharePct: 21.11,
-    hashrateEH: null,
+    hashrateEH: CAMBRIDGE_CHINA_JAN2022_EH,
     label: "Schätzung / keine Primärquelle",
     sourceLabel: CAMBRIDGE_ARCHIVE_LABEL,
     sourceUrl: CAMBRIDGE_ARCHIVE_URL,
-    note: "n/a — absolute EH/s für Januar 2022 nennt der Artikel nicht. 30.47 EH/s sind September 2021 und werden nicht eingesetzt.",
+    note: `Formel: EH/s = USA-EH/s × (China-Anteil / USA-Anteil) = 70.97 × (21.11 / 37.84) = ${CAMBRIDGE_CHINA_JAN2022_EH}. Dieselbe Cambridge-Tabelle Januar 2022. Der Artikel nennt keine absolute EH/s-Zahl für China. 30.47 EH/s vom September 2021 bleiben ungenutzt.`,
   },
   {
     iso2: "KZ",
@@ -310,6 +396,19 @@ export const CAMBRIDGE_ARCHIVE_SHARES: readonly MinerCountryShare[] = [
     note: null,
   },
 ];
+
+/** Jüngere Länder-Schätzung, getrennt vom Cambridge-Archiv Januar 2022. */
+export const HASHRATE_INDEX_CHINA_Q4: MinerCountryShare = {
+  iso2: "CN",
+  name: "China (Hashrate Index, Q3 2026)",
+  asOf: "2026-09",
+  sharePct: 11.7,
+  hashrateEH: 110,
+  label: "Schätzung",
+  sourceLabel: "Hashrate Index, Global Hashrate Heatmap Q4 2026 (Stand Ende Q3 2026), 05.10.2026",
+  sourceUrl: "https://hashrateindex.com/blog/global-hashrate-heatmap-update-q4-2026-c/",
+  note: "Schätzung. Artikel vom 05.10.2026 zum Stand Ende Q3 2026: China etwa 110 EH/s, 11.7 % von etwa 941 EH/s Netz. Die Tilde steht in der Quelle. Kein Primärfiling und nicht das Cambridge-Archiv Januar 2022.",
+};
 
 export const MINER_FILING_LOWER_BOUND_NOTE =
   "Filing-Untergrenze: n/a — keine gemessene standortscharfe EH/s. Vega nennt bis zu 15 EH/s als Obergrenze bei voller Energisierung. Obergrenzen zählen nicht als Untergrenze und werden nicht als 0 geführt.";
@@ -456,11 +555,11 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
       ticker: "IREN",
       name: "IREN Limited",
       siteHashrateEHs: null,
-      siteHashrateNote: "n/a — FY26: Mining-Hardware wird abgebaut, Umstellung auf AI bis 31.12.2026 angestrebt. Historische 40.1 EH/s per 30.06.2025 werden nicht als Ist gezeigt.",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine aktuelle EH/s-Zahl in der gelesenen FY26-Meldung",
+      siteHashrateNote: "n/a — 10-K FY2026: 23.2 EH/s und etwa 380 MW sind der Konzern, nicht Canal Flats. Keine J/TH und kein Standort-Split, deshalb keine Schätzung aus der Nameplate. Historische 40.1 EH/s per 30.06.2025 bleiben ungenutzt.",
+      companyHashrateEHs: irenCompanyHash,
+      companyHashrateNote: null,
       companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein USD/kWh. Strom über BC Hydro, regulierter Tarif.",
+      companyPowerNote: "n/a — kein USD/kWh im 10-K. BC Hydro ist ein regulierter Tarif, der Centwert steht in der gelesenen Stelle nicht.",
     }],
     operatorNote: null,
     energyNote: "BC Hydro, seit Betriebsbeginn als erneuerbar beschrieben (Netz plus RECs).",
@@ -488,11 +587,11 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
       ticker: "IREN",
       name: "IREN Limited",
       siteHashrateEHs: null,
-      siteHashrateNote: "n/a — keine standortscharfe EH/s. Mining-Abbau bis Ende 2026 angestrebt.",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine aktuelle EH/s-Zahl in der gelesenen FY26-Meldung",
+      siteHashrateNote: "n/a — 10-K FY2026: 23.2 EH/s und etwa 380 MW sind der Konzern, nicht Prince George. Keine J/TH und kein Standort-Split, deshalb keine Schätzung aus der Nameplate.",
+      companyHashrateEHs: irenCompanyHash,
+      companyHashrateNote: null,
       companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein USD/kWh. Strom über BC Hydro.",
+      companyPowerNote: "n/a — kein USD/kWh im 10-K. BC Hydro ist ein regulierter Tarif, der Centwert steht in der gelesenen Stelle nicht.",
     }],
     operatorNote: null,
     energyNote: "BC Hydro, erneuerbar laut IREN (Netz plus RECs).",
@@ -520,11 +619,11 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
       ticker: "IREN",
       name: "IREN Limited",
       siteHashrateEHs: null,
-      siteHashrateNote: "n/a — keine standortscharfe EH/s. GPU-Finanzierung am Standort ist AI, nicht Hashrate.",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine aktuelle EH/s-Zahl in der gelesenen FY26-Meldung",
+      siteHashrateNote: "n/a — 10-K FY2026: 23.2 EH/s und etwa 380 MW sind der Konzern, nicht Mackenzie. Keine J/TH und kein Standort-Split, deshalb keine Schätzung aus der Nameplate. GPU-Finanzierung am Standort ist AI, nicht Hashrate.",
+      companyHashrateEHs: irenCompanyHash,
+      companyHashrateNote: null,
       companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein USD/kWh. Strom über BC Hydro.",
+      companyPowerNote: "n/a — kein USD/kWh im 10-K. BC Hydro ist ein regulierter Tarif, der Centwert steht in der gelesenen Stelle nicht.",
     }],
     operatorNote: null,
     energyNote: "BC Hydro. Zusätzliche Flüssigkühlung 2027 ist als AI-Nutzung der Leistungsreserve beschrieben.",
@@ -552,11 +651,11 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
       ticker: "IREN",
       name: "IREN Limited",
       siteHashrateEHs: null,
-      siteHashrateNote: "n/a — FY26-Bericht: Mining-Hardware wird abgebaut. 40.1 EH/s per 30.06.2025 sind historisch und nicht als Ist übernommen.",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine aktuelle EH/s-Zahl in der gelesenen FY26-Meldung",
-      companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein USD/kWh. Bezug über ERCOT-Wholesale, RECs bis 30.06.2026.",
+      siteHashrateNote: "n/a — 10-K FY2026: 23.2 EH/s und etwa 380 MW sind der Konzern, nicht Childress. Die 750 MW Nameplate sind nicht diese Mining-Last, und eine J/TH fehlt, deshalb keine Schätzung Nameplate/(J/TH). 40.1 EH/s per 30.06.2025 bleiben ungenutzt.",
+      companyHashrateEHs: irenCompanyHash,
+      companyHashrateNote: null,
+      companyPowerUsdPerKwh: ercotHubPower("West", 37.8),
+      companyPowerNote: null,
     }],
     operatorNote: null,
     energyNote: "ERCOT-Wholesale. RECs für den Verbrauch bis 30.06.2026. Horizon-Flächen am Standort sind GPU-Verträge, keine Hashrate.",
@@ -642,14 +741,14 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
       ticker: "MARA",
       name: "MARA Holdings",
       siteHashrateEHs: null,
-      siteHashrateNote: "n/a — keine EH/s. Standort ist als Development beschrieben.",
+      siteHashrateNote: "n/a — keine EH/s und keine J/TH. Standort ist als Development beschrieben, deshalb keine Schätzung MW/(J/TH).",
       companyHashrateEHs: maraCompanyHash,
       companyHashrateNote: null,
-      companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein Strompreis. Konzern „1.9 GW energized“ auf der Startseite ist nicht dieser Site zugeordnet.",
+      companyPowerUsdPerKwh: ercotHubPower("Houston", 37.99),
+      companyPowerNote: null,
     }],
     operatorNote: null,
-    energyNote: "n/a — kein Tarif. Erwarteter Netzanschluss, nicht energisiert in der gelesenen Stelle.",
+    energyNote: "Kein Vertragspreis. Am Betreiber steht der ERCOT-Houston-Hub als Schätzung. Erwarteter Netzanschluss, nicht energisiert in der gelesenen Stelle.",
     regulatoryNote: "n/a — die Seite nennt keine Regulierung für Matagorda.",
   },
   {
@@ -719,16 +818,22 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     lat: 31.845,
     lon: -102.368,
     coordNote: "Ungefähre Lage Odessa, Texas.",
-    capacityMw: null,
-    capacityNote: "n/a — CoinShares nennt den Odessa-PPA, aber keine MW. 300 MW Barber Lake sind HPC in Entwicklung und hier nicht eingerechnet.",
-    capacityRole: null,
+    capacityMw: {
+      value: 207,
+      asOf: "2026-09-30",
+      sourceLabel: "Cipher Digital, Q3 2026 Business Update, 02.11.2026",
+      sourceUrl: CIFR_Q3_2026,
+      scope: "207 MW Total Capacity, Odessa Site Snapshot. 300 MW Barber Lake bleiben HPC und sind hier nicht eingerechnet.",
+    },
+    capacityNote: null,
+    capacityRole: "developed",
     operators: [{
       ticker: "CIFR",
       name: "Cipher Digital",
-      siteHashrateEHs: null,
-      siteHashrateNote: "n/a — keine EH/s für Odessa in der gelesenen Stelle",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine aktuelle EH/s in der gelesenen CoinShares-Stelle",
+      siteHashrateEHs: cifrSiteHash,
+      siteHashrateNote: null,
+      companyHashrateEHs: cifrCompanyHash,
+      companyHashrateNote: null,
       companyPowerUsdPerKwh: {
         value: 0.028,
         asOf: "2025-12-31",
@@ -741,6 +846,7 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     operatorNote: null,
     energyNote: "PPA etwa 2.8 c/kWh laut CoinShares. Die Tilde steht in der Quelle.",
     regulatoryNote: "n/a — die gelesene Stelle nennt für Odessa keine Regulierung. Firmenname seit 20.02.2026 Cipher Digital.",
+    formulaTooltip: "207 MW und etwa 11.6 EH/s stehen im Q3-Update 2026. Kontrollrechnung: EH/s = MW / (J/TH) = 207 / 17.2 = 12.03 bei etwa 17.2 J/TH. Angezeigt wird die genannte Hashrate 11.6 EH/s, nicht die 12.03.",
   },
   {
     id: "et-btdr",
@@ -763,16 +869,24 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     operators: [{
       ticker: "BTDR",
       name: "Bitdeer",
-      siteHashrateEHs: null,
-      siteHashrateNote: "n/a — der Report nennt 40 MW, keine EH/s für Äthiopien",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — keine Konzern-EH/s in dem gelesenen Absatz",
-      companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein äthiopischer Tarif. Konzernstrom 46 $/MWh im Q4-Absatz ist nicht diesem Land zugeordnet.",
+      siteHashrateEHs: ETHIOPIA_SITE_EH == null ? null : {
+        value: ETHIOPIA_SITE_EH,
+        asOf: "2026-06-30",
+        sourceLabel: "Schätzung aus CoinShares Q1 2026 (40 MW) und Bitdeer Q2 2026 (15.8 J/TH)",
+        sourceUrl: BTDR_Q2_2026,
+        scope: `Schätzung. EH/s = MW / (J/TH) = ${ETHIOPIA_MW} / ${BTDR_FLEET_J_PER_TH} = ${ETHIOPIA_SITE_EH}. 40 MW sind der Länderhinweis im CoinShares-Report Q1 2026, keine gemessene Auslastung. 15.8 J/TH ist die durchschnittliche Miner-Effizienz im Quartal bis 30.06.2026, Konzern, nicht Äthiopien.`,
+        estimateLabel: "Schätzung",
+      },
+      siteHashrateNote: ETHIOPIA_SITE_EH == null ? "n/a — MW oder J/TH fehlt, deshalb keine Schätzung" : null,
+      companyHashrateEHs: btdrCompanyHash,
+      companyHashrateNote: null,
+      companyPowerUsdPerKwh: btdrCompanyPower,
+      companyPowerNote: null,
     }],
     operatorNote: null,
-    energyNote: "n/a — kein Tarif für das Land in dem Absatz.",
+    energyNote: "Kein äthiopischer Tarif in dem Absatz. Am Betreiber steht der Konzernschnitt 44 $/MWh aus dem Q2 2026, nicht das Land.",
     regulatoryNote: "n/a — der Absatz nennt keine Regulierung.",
+    formulaTooltip: `Schätzung Standort-EH/s = MW / (J/TH) = ${ETHIOPIA_MW} / ${BTDR_FLEET_J_PER_TH} = ${ETHIOPIA_SITE_EH}. 40 MW CoinShares Q1 2026, 15.8 J/TH Bitdeer Q2 2026, Konzern.`,
   },
   {
     id: "om-country",
@@ -838,17 +952,24 @@ export const MINER_MAP_SITES: MinerMapSite[] = [
     operators: [{
       ticker: "HUT",
       name: "Hut 8",
-      siteHashrateEHs: null,
-      siteHashrateNote: "n/a — bis zu 15 EH/s bei voller Energisierung sind eine Obergrenze, keine gemessene Ist-Hashrate und keine Untergrenze.",
-      companyHashrateEHs: null,
-      companyHashrateNote: "n/a — 10 EH/s auf 25 EH/s ist der Pfad, falls die Kaufoption gezogen wird, keine gemessene Konzern-Hashrate in dieser Meldung.",
-      companyPowerUsdPerKwh: null,
-      companyPowerNote: "n/a — kein USD/kWh. Genannt sind ERCOT, ein Windpark hinter dem Zähler und PUE 1.06.",
+      siteHashrateEHs: VEGA_SITE_EH == null ? null : {
+        value: VEGA_SITE_EH,
+        asOf: "2026-06-30",
+        sourceLabel: "Schätzung aus Hut-8-Nameplate 30.06.2025 und 10-Q-Effizienz",
+        sourceUrl: HUT_10Q,
+        scope: `Schätzung. EH/s = Nameplate-MW / (J/TH) = 205 / ${HUT_FLEET_J_PER_TH} = ${VEGA_SITE_EH}. 205 MW Nameplate, Hut 8, 30.06.2025. Etwa 16.0 J/TH ist die Portfolio-Effizienz der American-Bitcoin-Flotte nach April 2026, nicht eine Vega-Messung. Nimmt an, die ganze Nameplate läuft mit dieser Effizienz. Bis zu 15 EH/s bei 13 J/TH bleiben eine Obergrenze und sind nicht dieser Wert.`,
+        estimateLabel: "Schätzung",
+      },
+      siteHashrateNote: VEGA_SITE_EH == null ? "n/a — Nameplate oder J/TH fehlt, deshalb keine Schätzung" : null,
+      companyHashrateEHs: hutCompanyHash,
+      companyHashrateNote: null,
+      companyPowerUsdPerKwh: ercotHubPower("West", 37.8),
+      companyPowerNote: null,
     }],
     operatorNote: null,
-    energyNote: "ERCOT-Netz und Windpark hinter dem Zähler, PUE 1.06. Kein Tarif in USD/kWh.",
+    energyNote: "ERCOT-Netz und Windpark hinter dem Zähler, PUE 1.06. Kein Vertragspreis in der Vega-Meldung. Am Betreiber steht der ERCOT-West-Hub August 2026 als Schätzung.",
     regulatoryNote: "n/a — die Meldung nennt keine Genehmigung über den ERCOT-Anschluss hinaus.",
-    formulaTooltip: `Formel: MW = EH/s × J/TH = ${VEGA_HASHRATE_CEILING.ehPerS} × ${VEGA_HASHRATE_CEILING.joulesPerTh} = ${VEGA_FORMULA_MW} MW ASIC-Last. Nameplate bleibt 205 MW. Quelle: Hut 8, 30.06.2025.`,
+    formulaTooltip: `Formel: MW = EH/s × J/TH = ${VEGA_HASHRATE_CEILING.ehPerS} × ${VEGA_HASHRATE_CEILING.joulesPerTh} = ${VEGA_FORMULA_MW} MW ASIC-Last. Nameplate bleibt 205 MW. Quelle: Hut 8, 30.06.2025. Schätzung Standort-EH/s = 205 / ${HUT_FLEET_J_PER_TH} = ${VEGA_SITE_EH}.`,
   },
   {
     id: "us-tx-barber-lake",
@@ -1053,6 +1174,9 @@ export function emptyPipeline(unavailableNote: string): MinerMapPipeline {
     hashpriceNote: "n/a — " + unavailableNote,
     hashpriceUsdPerThDay: null,
     hashpriceUsdNote: "n/a — Hashprice der Pipeline ist BTC je TH und Tag. Ein USD-Wert bräuchte einen Spot, den dieser GET nicht lädt.",
+    hashpriceUsdFormula: null,
+    btcSpotUsd: null,
+    btcSpotNote: null,
     breakevenUsd: null,
     breakevenNote: "n/a — " + unavailableNote,
     puellMultiple: null,
@@ -1100,18 +1224,62 @@ export function pipelineFromMiner(input: {
   };
 }
 
+export interface BtcSpotQuote {
+  usd: number;
+  asOf: string;
+  sourceLabel: string;
+  sourceUrl: string;
+}
+
+/** USD/TH/Tag = BTC/TH/Tag × Spot der bestehenden Preis-Pipeline. */
+export function applyHashpriceUsd(pipeline: MinerMapPipeline, spot: BtcSpotQuote | null): MinerMapPipeline {
+  const spotUsd = spot != null && Number.isFinite(spot.usd) && spot.usd > 0 ? spot.usd : null;
+  const btc = pipeline.hashpriceBtcPerThDay;
+  if (spotUsd == null) {
+    return {
+      ...pipeline,
+      btcSpotUsd: null,
+      btcSpotNote: "n/a — BTC-Spot der Preis-Pipeline nicht geladen (CoinGecko simple/price, sonst Blockchain.com Ticker).",
+      hashpriceUsdFormula: null,
+      hashpriceUsdPerThDay: null,
+      hashpriceUsdNote: btc == null
+        ? pipeline.hashpriceUsdNote
+        : "n/a — Hashprice in BTC/TH/Tag liegt vor, der BTC-Spot der Preis-Pipeline nicht.",
+    };
+  }
+  if (btc == null) {
+    return {
+      ...pipeline,
+      btcSpotUsd: spotUsd,
+      btcSpotNote: null,
+      hashpriceUsdPerThDay: null,
+      hashpriceUsdFormula: null,
+      hashpriceUsdNote: "n/a — Hashprice in BTC/TH/Tag fehlt, deshalb kein Produkt mit dem BTC-Spot.",
+    };
+  }
+  const usd = btc * spotUsd;
+  return {
+    ...pipeline,
+    btcSpotUsd: spotUsd,
+    btcSpotNote: null,
+    hashpriceUsdPerThDay: usd,
+    hashpriceUsdNote: null,
+    hashpriceUsdFormula: `USD/TH/Tag = BTC/TH/Tag × Spot = ${btc} × ${spotUsd} USD. Spot: ${spot?.sourceLabel ?? ""}, ${spot?.asOf ?? ""}.`,
+  };
+}
+
 export function buildMinerMapBody(pipeline: MinerMapPipeline, asOf = new Date().toISOString()): MinerMapResponse {
   const sites = decorateMinerSites(MINER_MAP_SITES);
   return {
     layer: "miner",
     asOf,
-    source: "SEC-Filings, Unternehmensmeldungen, CoinShares-Report (kostenlos), Live-Kontext aus server/btc-miner.ts",
-    attribution: `Länderanteil: Schätzung / keine Primärquelle, Cambridge-Archiv Januar 2022 (${CAMBRIDGE_ARCHIVE_URL}), nicht Ist 2026. Die Karte ${CAMBRIDGE} wird nicht als aktueller Abruf verwendet. Standorte ohne Koordinate bleiben ohne Pin.`,
+    source: "SEC-Filings, Unternehmensmeldungen, CoinShares-Report (kostenlos), Hashrate Index, ERCOT IMM, Live-Kontext aus server/btc-miner.ts, BTC-Spot aus der Preis-Pipeline (CoinGecko simple/price)",
+    attribution: `Länderanteil: Schätzung / keine Primärquelle, Cambridge-Archiv Januar 2022 (${CAMBRIDGE_ARCHIVE_URL}), nicht Ist 2026. China aktuell: ${HASHRATE_INDEX_CHINA_Q4.sourceLabel} (${HASHRATE_INDEX_CHINA_Q4.sourceUrl}). Die Karte ${CAMBRIDGE} wird nicht als aktueller Abruf verwendet. Standorte ohne Koordinate bleiben ohne Pin.`,
     coverage: minerCoverage(sites),
     sites,
     pipeline,
-    countryShareNote: MINER_MAP_COUNTRY_SHARE_NOTE,
-    countryShares: [...CAMBRIDGE_ARCHIVE_SHARES],
+    countryShareNote: `${MINER_MAP_COUNTRY_SHARE_NOTE} ${HASHRATE_INDEX_CHINA_Q4.note}`,
+    countryShares: [...CAMBRIDGE_ARCHIVE_SHARES, HASHRATE_INDEX_CHINA_Q4],
     gaps: MINER_MAP_GAPS,
   };
 }

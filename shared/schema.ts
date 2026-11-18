@@ -492,6 +492,8 @@ export interface StockAnalysis {
   lynchPEGBasis?: string;   // Erklärung welche Methode verwendet wurde
   evEbitda: number;
   beta5Y: number;
+  /** Aktuelles Beta: letzte 252 Handelstage täglich gegen SPY. Nicht das Mehrjahres-Beta des Profils und nicht der DCF-Input. */
+  betaLive?: number | null;
   fcfTTM: number;
   fcfMargin: number;
   /** A3 (WORK_SECTION4_DATA_BUGS.md §4): false wenn weder freeCashFlow noch
@@ -641,7 +643,7 @@ export interface StockAnalysis {
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
    *  alten Cache-Eintraegen vor diesem Ticket.
    *  'yahoo' = C1 (#252): FMP 402, Historie komplett aus dem Yahoo-Fallback. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'fmp+nasdaq' | 'fmp+onvista' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche

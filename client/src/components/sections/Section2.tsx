@@ -1,15 +1,28 @@
 import { SectionCard } from "../SectionCard";
+import { YahooNoValuationCard } from "../YahooNoValuationCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
 import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
 import { annotationByName } from "../../../../shared/segment-growth-calc";
+import { outlineStillCurrent } from "../../../../shared/segment-children";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
+import { SegmentSupplementView } from "./SegmentSupplementView";
+import { SegmentChildrenPanel, SegmentLine } from "./SegmentChildren";
+import { apiRequest } from "../../lib/queryClient";
+
+interface OutlineItem {
+  name: string;
+  shareOfParentPct: number | null;
+  growthPct: number | null;
+  basis: string;
+  origin: "KI";
+}
 
 interface Props { data: StockAnalysis }
 
@@ -54,13 +67,89 @@ const CYCLICAL_TICKERS = new Set([
   'CF','MOS','NTR',
 ]);
 
+export function OutlineRows({
+  ticker,
+  kind,
+  items,
+  note,
+  open,
+  setOpen,
+}: {
+  ticker: string;
+  kind: "product" | "geographic";
+  items: OutlineItem[];
+  /** Grund aus /api/segment-outline, z. B. „n/a — Fremdmarke verworfen: …“, auch wenn Items übrig bleiben. */
+  note?: string | null;
+  open: Record<string, boolean>;
+  setOpen: (next: Record<string, boolean>) => void;
+}) {
+  return (
+    <div className="mt-2 space-y-1.5" data-testid={`segment-outline-${kind}`}>
+      {note ? <p className="text-[10px] text-muted-foreground" data-testid={`segment-outline-note-${kind}`}>{note}</p> : null}
+      {items.map((item) => (
+        <SegmentLine key={item.name} name={item.name} open={open[item.name] === true} onToggle={() => setOpen({ ...open, [item.name]: !open[item.name] })}>
+          <div className="mb-0.5 flex items-center justify-between text-xs">
+            <span className="mr-2 truncate font-medium">{item.name}</span>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                {item.shareOfParentPct != null ? `${formatNumber(item.shareOfParentPct, 1)}%` : "n/a"}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground" title={item.basis}>
+                {item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${formatNumber(item.growthPct, 1)}%` : "n/a"}
+              </span>
+              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200">KI-Schätzung</span>
+            </div>
+          </div>
+          {item.shareOfParentPct != null && (
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-violet-500/60" style={{ width: `${Math.min(100, item.shareOfParentPct)}%` }} />
+            </div>
+          )}
+          {open[item.name] === true && (
+            <SegmentChildrenPanel ticker={ticker} parent={item.name} kind={kind} />
+          )}
+        </SegmentLine>
+      ))}
+    </div>
+  );
+}
+
+export function segmentEstimateButtonVisible(segments: readonly unknown[] | null | undefined): boolean {
+  return !segments || segments.length === 0;
+}
+
+/**
+ * Berichtswährung aus GET /api/segment-growth (FMP income-statement reportedCurrency).
+ * Solange die Anfrage läuft: Ladezustand. Danach die Währung oder n/a mit Grund.
+ */
+export function SegmentCurrencyLine({
+  queried,
+  loading,
+  failed,
+  currency,
+}: {
+  queried: boolean;
+  loading: boolean;
+  failed: boolean;
+  currency: string | null;
+}) {
+  if (loading) {
+    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="loading">Währung …</p>;
+  }
+  if (currency) {
+    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="ready">{`Währung ${currency}`}</p>;
+  }
+  const reason = !queried
+    ? "keine Segmente, Berichtswährung nicht abgefragt"
+    : failed
+      ? "Segmentdaten nicht erreichbar"
+      : "Berichtswährung fehlt im Abschluss";
+  return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="na" title={reason}>{`Währung n/a — ${reason}`}</p>;
+}
+
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
-  const segmentGrowth = useSegmentGrowth(
-    data.ticker,
-    (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0,
-  );
 
   // === SINGLE SOURCE OF TRUTH: shared DCF defaults (same as Section5/Section6/SummarySection) ===
   // buildDefaultDCFParams liefert auch `rsl` mit → identischer Fair Value wie Section 5/6.
@@ -192,124 +281,8 @@ export function Section2({ data }: Props) {
           );
         })()}
 
-        {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
-            Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from
-            one of THREE sources (see server/analyze-route.ts step 7/7b + server/sec-segments.ts):
-              1) FMP fmpSegments() — fastest, free, but empty for many tickers (e.g. IREN)
-              2) curated static fallback (foreign ADRs FMP structurally never covers)
-              3) SEC EDGAR 10-K/20-F full-text extraction via LLM (ticker-agnostic)
-            data.revenueSegmentsSource / data.revenueSegmentsMessage tell the UI which
-            case applies so we NEVER show a generic/empty placeholder (hard requirement:
-            no "None"/"N/A"/empty bars — always a concrete number or a clear explanation). */}
-        {data.revenueSegments && data.revenueSegments.length > 0 ? (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
-              {(() => {
-                const src = data.revenueSegmentsSource;
-                const fy = data.revenueSegments!.find(s => s.fiscalYear)?.fiscalYear;
-                const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
-                  : src === "fmp" ? "Quelle: FMP"
-                  : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
-                  : null;
-                return label ? (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
-                ) : null;
-              })()}
-            </div>
-            {data.revenueSegments.length === 1 ? (
-              // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
-              // 100%-Balke lieber der explizite Hinweistext (Anforderung #3A).
-              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
-                <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
-                {data.revenueSegments[0].revenue > 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {data.revenueSegments.map((seg, i) => (
-                  <div key={i} className="relative">
-                    <div className="flex items-center justify-between text-xs mb-0.5">
-                      <span className="font-medium truncate mr-2">{seg.name}</span>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {seg.revenue > 0 && (
-                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
-                        )}
-                        <SegmentGrowthReadout
-                          fact={seg.growth ?? seg.yoyChangePercent}
-                          annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
-                        />
-                        <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary/60 transition-all duration-500"
-                        style={{ width: `${Math.min(100, seg.percentage)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          // Anforderung #1/#6: klare Meldung statt generischem/leerem Block, wenn
-          // wirklich keine Business-Segment-Daten verfügbar sind (weder FMP noch
-          // SEC EDGAR fanden welche). Wird nur gerendert wenn eine Meldung vom
-          // Server gesetzt wurde — sonst (z.B. alter Cache-Eintrag ohne das Feld)
-          // bleibt der Block ganz ausgeblendet statt "N/A" zu zeigen.
-          data.revenueSegmentsMessage && (
-            <div>
-              <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
-              <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage}</span>
-              </div>
-            </div>
-          )
-        )}
+        <SegmentEstimateBlock data={data} />
 
-        {/* Geographic Segments. The server already removed name+revenue and
-            non-geo duplicates. geoSegmentsNote is the spelled footnote when
-            that removal happened. */}
-        {((data.geoSegments && data.geoSegments.length > 0) || data.geoSegmentsNote) && (
-          <div>
-            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
-            {data.geoSegments && data.geoSegments.length > 0 && (
-            <div className="space-y-1.5">
-              {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
-                <div key={i} className="relative">
-                  <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-medium truncate mr-2">{seg.name}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {seg.revenue > 0 && (
-                        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
-                      )}
-                      <SegmentGrowthReadout
-                        fact={seg.growth}
-                        annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
-                      />
-                      <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
-                    </div>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-blue-500/60 transition-all duration-500"
-                      style={{ width: `${Math.min(100, seg.percentage)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-            )}
-            {data.geoSegmentsNote && (
-              <p className="mt-1.5 text-[10px] text-muted-foreground italic" data-testid="geo-segment-dedup-note">
-                {data.geoSegmentsNote}
-              </p>
-            )}
-          </div>
-        )}
 
         {/* Growth Thesis & Catalyst Reasoning (expanded) */}
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
@@ -569,6 +542,250 @@ export function Section2({ data }: Props) {
         steps={baseDCF.steps}
       />
     </SectionCard>
+  );
+}
+
+
+export function SegmentEstimateBlock({ data }: Props) {
+  const segmentGrowthQueried = (data.revenueSegments?.length ?? 0) > 0 || (data.geoSegments?.length ?? 0) > 0;
+  const segmentGrowth = useSegmentGrowth(data.ticker, segmentGrowthQueried);
+  const [openBusiness, setOpenBusiness] = useState<Record<string, boolean>>({});
+  const [openGeo, setOpenGeo] = useState<Record<string, boolean>>({});
+  const [businessOutline, setBusinessOutline] = useState<OutlineItem[] | null>(null);
+  const [geoOutline, setGeoOutline] = useState<OutlineItem[] | null>(null);
+  const [businessOutlineError, setBusinessOutlineError] = useState<string | null>(null);
+  const [geoOutlineError, setGeoOutlineError] = useState<string | null>(null);
+  const [businessOutlineNote, setBusinessOutlineNote] = useState<string | null>(null);
+  const [geoOutlineNote, setGeoOutlineNote] = useState<string | null>(null);
+  const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
+  const tickerRef = useRef(data.ticker);
+  const outlineTicket = useRef(0);
+  tickerRef.current = data.ticker;
+
+  useEffect(() => {
+    setBusinessOutline(null);
+    setGeoOutline(null);
+    setBusinessOutlineError(null);
+    setGeoOutlineError(null);
+    setBusinessOutlineNote(null);
+    setGeoOutlineNote(null);
+    setOutlineLoading(null);
+    setOpenBusiness({});
+    setOpenGeo({});
+    outlineTicket.current += 1;
+  }, [data.ticker]);
+
+  async function estimateOutline(kind: "product" | "geographic") {
+    if (outlineLoading) return;
+    const started = data.ticker;
+    const ticket = ++outlineTicket.current;
+    setOutlineLoading(kind);
+    if (kind === "product") setBusinessOutlineError(null);
+    else setGeoOutlineError(null);
+    const current = () => outlineStillCurrent(started, tickerRef.current) && ticket === outlineTicket.current;
+    const setError = (message: string) => {
+      if (!current()) return;
+      if (kind === "product") setBusinessOutlineError(message);
+      else setGeoOutlineError(message);
+    };
+    try {
+      const res = await apiRequest("POST", "/api/segment-outline", { ticker: started, kind });
+      if (!current()) return;
+      const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
+      if (!res.ok || !json || !Array.isArray(json.items) || json.items.length === 0) {
+        setError(json?.reason || json?.error || "KI-Schätzung unvollständig — nichts übernommen");
+        return;
+      }
+      if (kind === "product") {
+        setBusinessOutline(json.items);
+        setBusinessOutlineNote(json.reason ?? null);
+      } else {
+        setGeoOutline(json.items);
+        setGeoOutlineNote(json.reason ?? null);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "KI-Schätzung fehlgeschlagen");
+    } finally {
+      if (current()) setOutlineLoading(null);
+    }
+  }
+  const reportedCurrency = segmentGrowth.data?.currency || null;
+  return (
+    <>
+        <SegmentCurrencyLine
+          queried={segmentGrowthQueried && (data.ticker ?? "").trim().length > 0}
+          loading={segmentGrowth.isLoading}
+          failed={segmentGrowth.isError}
+          currency={reportedCurrency}
+        />
+        {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
+            Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from
+            one of THREE sources (see server/analyze-route.ts step 7/7b + server/sec-segments.ts):
+              1) FMP fmpSegments() — fastest, free, but empty for many tickers (e.g. IREN)
+              2) curated static fallback (foreign ADRs FMP structurally never covers)
+              3) SEC EDGAR 10-K/20-F full-text extraction via LLM (ticker-agnostic)
+            data.revenueSegmentsSource / data.revenueSegmentsMessage tell the UI which
+            case applies so we NEVER show a generic/empty placeholder (hard requirement:
+            no "None"/"N/A"/empty bars — always a concrete number or a clear explanation). */}
+        {data.revenueSegments && data.revenueSegments.length > 0 ? (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
+              {(() => {
+                const src = data.revenueSegmentsSource;
+                const fy = data.revenueSegments!.find(s => s.fiscalYear)?.fiscalYear;
+                const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
+                  : src === "fmp" ? "Quelle: FMP"
+                  : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
+                  : null;
+                return label ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
+                ) : null;
+              })()}
+            </div>
+            {data.revenueSegments.length === 1 ? (
+              // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
+              // 100%-Balke lieber der explizite Hinweistext (Anforderung #3A).
+              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+                <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
+                {data.revenueSegments[0].revenue > 0 && (
+                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {data.revenueSegments.map((seg, i) => (
+                  <SegmentLine key={i} name={seg.name} open={openBusiness[seg.name] === true} onToggle={() => setOpenBusiness((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
+                    <div className="flex items-center justify-between text-xs mb-0.5">
+                      <span className="font-medium truncate mr-2">{seg.name}</span>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {seg.revenue > 0 && (
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                        )}
+                        <SegmentGrowthReadout
+                          fact={seg.growth ?? seg.yoyChangePercent}
+                          annotation={annotationByName(segmentGrowth.data?.business, seg.name)}
+                        />
+                        <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary/60 transition-all duration-500"
+                        style={{ width: `${Math.min(100, seg.percentage)}%` }}
+                      />
+                    </div>
+                    {openBusiness[seg.name] === true && (
+                      <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="product" />
+                    )}
+                  </SegmentLine>
+                ))}
+              </div>
+            )}
+            <SegmentSupplementView
+              ticker={data.ticker}
+              segments={data.revenueSegments.map((seg: RevenueSegment) => ({
+                name: seg.name,
+                percentage: Number.isFinite(seg.percentage) ? seg.percentage : null,
+                reportedGrowthPct: typeof (seg.growth ?? seg.yoyChangePercent) === "number"
+                  ? (seg.growth ?? seg.yoyChangePercent) as number
+                  : null,
+              }))}
+            />
+          </div>
+        ) : (
+          // Anforderung #1/#6: klare Meldung statt generischem/leerem Block, wenn
+          // wirklich keine Business-Segment-Daten verfügbar sind (weder FMP noch
+          // SEC EDGAR fanden welche). Wird nur gerendert wenn eine Meldung vom
+          // Server gesetzt wurde — sonst (z.B. alter Cache-Eintrag ohne das Feld)
+          // bleibt der Block ganz ausgeblendet statt "N/A" zu zeigen.
+          (data.revenueSegmentsMessage || segmentEstimateButtonVisible(data.revenueSegments)) && (
+            <div>
+              <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
+              <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage || "n/a — keine gemeldeten Segmente"}</span>
+              </div>
+              <button
+                type="button"
+                data-testid="button-segment-outline-product"
+                disabled={outlineLoading !== null}
+                onClick={() => { void estimateOutline("product"); }}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+              >
+                {outlineLoading === "product" ? "…" : businessOutline ? "erneut schätzen" : "N/A mit KI schätzen"}
+              </button>
+              {businessOutlineError && <p className="mt-1 text-[10px] text-red-500" data-testid="segment-outline-error-product">{businessOutlineError}</p>}
+              {businessOutline && <OutlineRows ticker={data.ticker} kind="product" items={businessOutline} note={businessOutlineNote} open={openBusiness} setOpen={setOpenBusiness} />}
+            </div>
+          )
+        )}
+
+        {/* Geographic Segments. The server already removed name+revenue and
+            non-geo duplicates. geoSegmentsNote is the spelled footnote when
+            that removal happened. */}
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+          {!(data.geoSegments && data.geoSegments.length > 0) && (
+            <>
+              <button
+                type="button"
+                data-testid="button-segment-outline-geo"
+                disabled={outlineLoading !== null}
+                onClick={() => { void estimateOutline("geographic"); }}
+                className="mb-2 inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+              >
+                {outlineLoading === "geographic" ? "…" : geoOutline ? "erneut schätzen" : "N/A mit KI schätzen"}
+              </button>
+              {geoOutlineError && <p className="mb-1 text-[10px] text-red-500" data-testid="segment-outline-error-geo">{geoOutlineError}</p>}
+              {geoOutline && <OutlineRows ticker={data.ticker} kind="geographic" items={geoOutline} note={geoOutlineNote} open={openGeo} setOpen={setOpenGeo} />}
+            </>
+          )}
+          {data.geoSegments && data.geoSegments.length > 0 && (
+            <div className="space-y-1.5">
+              {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
+                <SegmentLine key={i} name={seg.name} open={openGeo[seg.name] === true} onToggle={() => setOpenGeo((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
+                  <div className="flex items-center justify-between text-xs mb-0.5">
+                    <span className="font-medium truncate mr-2">{seg.name}</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {seg.revenue > 0 && (
+                        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                      )}
+                      <SegmentGrowthReadout
+                        fact={seg.growth}
+                        annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
+                      />
+                      <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
+                    </div>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500/60 transition-all duration-500"
+                      style={{ width: `${Math.min(100, seg.percentage)}%` }}
+                    />
+                  </div>
+                  {openGeo[seg.name] === true && (
+                    <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="geographic" />
+                  )}
+                </SegmentLine>
+              ))}
+            </div>
+            )}
+          {data.geoSegmentsNote && (
+            <p className="mt-1.5 text-[10px] text-muted-foreground italic" data-testid="geo-segment-dedup-note">
+              {data.geoSegmentsNote}
+            </p>
+          )}
+        </div>
+    </>
+  );
+}
+
+export function YahooSection3({ data }: Props) {
+  return (
+    <>
+      <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} />
+      <SegmentEstimateBlock data={data} />
+    </>
   );
 }
 

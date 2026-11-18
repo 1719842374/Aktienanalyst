@@ -112,9 +112,15 @@ export interface RoicPeriod {
 
 export interface FundJoinPoint {
   date: string;
+  /** Gezeichnet, wenn der Earnings-Yield-Chip an ist. */
   earningsYieldPct: number | null;
+  /** Wert für den Tooltip, auch wenn die Linie aus ist. */
+  earningsYieldKnown: number | null;
   earningsYieldNote: string | null;
+  /** Gezeichnet, wenn der ROIC-Chip an ist. */
   roicPct: number | null;
+  /** Wert für den Tooltip, auch wenn die Linie aus ist. */
+  roicKnown: number | null;
   roicNote: string | null;
   /** Gezeichnet, wenn der Peer-ROIC-Modus an ist. */
   peerRoicPct: number | null;
@@ -545,13 +551,22 @@ export function joinFundamentalsOntoPrices(
     showRoic: boolean;
     showPeerRoic: boolean;
     showPeerPrice: boolean;
+    /**
+     * Tooltip des Haupttitels. Standard = die Zeichen-Flags.
+     * Der Peer-Vergleich setzt das auf true, damit EY und ROIC im Tooltip stehen,
+     * auch wenn die eigene Linie aus ist.
+     */
+    resolveEarningsYield?: boolean;
+    resolveRoic?: boolean;
   },
 ): FundJoinPoint[] {
   const rows = priceDates.map((date, i) => ({ date, close: args.subjectCloses[i] ?? NaN }));
   rows.sort((a, b) => a.date.localeCompare(b.date));
-  const useQuarters = args.showEarningsYield && args.epsQuarters != null;
-  const ey = (!useQuarters && args.showEarningsYield ? args.earningsYield ?? [] : []).filter(p => p.date).sort((a, b) => a.date.localeCompare(b.date));
-  const roic = (args.showRoic ? args.roic ?? [] : []).filter(p => p.date && p.value != null).sort((a, b) => a.date.localeCompare(b.date));
+  const resolveEy = args.resolveEarningsYield ?? args.showEarningsYield;
+  const resolveRoic = args.resolveRoic ?? args.showRoic;
+  const useQuarters = resolveEy && args.epsQuarters != null;
+  const ey = (!useQuarters && resolveEy ? args.earningsYield ?? [] : []).filter(p => p.date).sort((a, b) => a.date.localeCompare(b.date));
+  const roic = (resolveRoic ? args.roic ?? [] : []).filter(p => p.date && p.value != null).sort((a, b) => a.date.localeCompare(b.date));
   const peerRoic = (args.showPeerRoic ? args.peerRoic ?? [] : []).filter(p => p.date && p.value != null).sort((a, b) => a.date.localeCompare(b.date));
   const bars = (args.showPeerPrice ? args.peerBars ?? [] : [])
     .filter(b => b.date && Number.isFinite(b.close) && b.close > 0)
@@ -565,7 +580,7 @@ export function joinFundamentalsOntoPrices(
   return rows.map(row => {
     let earningsYieldPct: number | null = null;
     let earningsYieldNote: string | null = null;
-    if (args.showEarningsYield) {
+    if (resolveEy) {
       if (useQuarters) {
         const numerator = epsNumeratorAt(args.epsQuarters ?? [], args.ttmPrints ?? [], args.annualEps ?? [], row.date);
         const yieldHit = numerator.eps == null
@@ -582,7 +597,7 @@ export function joinFundamentalsOntoPrices(
       }
     }
     const roicHit = asofLatest(roic, row.date, cRoic);
-    const roicResolved = args.showRoic
+    const roicResolved = resolveRoic
       ? finitePointNote(roicHit, roic.length > 0, args.roicSeriesNote ?? "n/a — keine ROIC-Punkte", "n/a — noch kein ROIC-Filing bis zu diesem Tag")
       : { value: null, note: null };
     const peerKnown = args.showPeerRoic
@@ -600,10 +615,12 @@ export function joinFundamentalsOntoPrices(
     const indexed = pxHit && scale.scale != null ? pxHit.close * scale.scale : null;
     return {
       date: row.date,
-      earningsYieldPct,
-      earningsYieldNote,
-      roicPct: roicResolved.value,
-      roicNote: roicResolved.note,
+      earningsYieldPct: args.showEarningsYield ? earningsYieldPct : null,
+      earningsYieldKnown: resolveEy ? earningsYieldPct : null,
+      earningsYieldNote: resolveEy ? earningsYieldNote : null,
+      roicPct: args.showRoic ? roicResolved.value : null,
+      roicKnown: resolveRoic ? roicResolved.value : null,
+      roicNote: resolveRoic ? roicResolved.note : null,
       peerRoicPct: peerKnown.value,
       peerRoicKnown: peerKnown.value,
       peerRoicNote: peerKnown.note,
@@ -612,6 +629,12 @@ export function joinFundamentalsOntoPrices(
       peerPriceNote,
     };
   });
+}
+
+/** Badge nur, wenn der Hinweis eine Schätzung kennzeichnet. Berichtete Fallbacks bleiben ohne Badge. */
+export function estimateBadge(note: string | null | undefined): string | null {
+  if (!note || !note.includes("Schätzung")) return null;
+  return "Schätzung";
 }
 
 export function latestFinite(points: FundamentalPoint[] | null | undefined): { value: number | null; note: string | null } {

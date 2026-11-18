@@ -8,16 +8,19 @@ import {
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
-  buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars,
   type WindowPoint, type WindowSeries,
 } from "@/lib/taWindowSeries";
+import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { attachEarningsToPoints, beatRateLabelForWindow, type EarningsMarker } from "@shared/earnings-markers";
 import { useDividendHistory } from "@/lib/useDividendHistory";
-import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
-import { currencySymbol } from "@/lib/formatters";
+import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
+import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
 import { useMarketTreasury10Y } from "@/lib/useMarketTreasury10Y";
@@ -25,13 +28,42 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_FORMULA, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, scenarioConeFromAnalysis, separateLabelYs,
+  CONE_EDGE_LABEL, CONE_FORMULA, CONE_HORIZON_NAME, CONE_LEGEND, CONE_PARAMS, CONE_PROBABILITY_HINT, CONE_SOURCE, CONE_STYLE, attachConeSeries, coneDomainValues, coneHorizonLabel, coneIntervalLegend, coneMoveColor, coneMoveDirection, conePriceMovePct, formatConeMovePct, scenarioConeFromAnalysis, separateLabelYs,
   type ConeMonteCarlo,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import {
+  paintPhaseRows, TA_PHASE_BADGE, TA_PHASE_STROKE,
+  type TaPhase,
+} from "@shared/ta-phase";
+import {
+  ampelFactorsFromAnalysis, symmetricAmpelSeries,
+  type SymmetricSnapshot,
+} from "@shared/symmetric-ampel";
+
+export type { TimeRange };
+
+/** Earnings-Punkte und der Text dazu. marker.kind bleibt die Klassifikation. */
+const EARNINGS_POINT_COLOR = {
+  beat: "#22c55e",
+  miss: "#ef4444",
+  inline: "#94a3b8",
+} as const;
+
+function earningsPointColor(kind: string | null | undefined): string {
+  if (kind === "beat") return EARNINGS_POINT_COLOR.beat;
+  if (kind === "miss") return EARNINGS_POINT_COLOR.miss;
+  return EARNINGS_POINT_COLOR.inline;
+}
+
+/**
+ * Peer-Overlay ist der Stand von main (#380): Chip `button-fund-peer`,
+ * Kurs als Median-Index auf dataKey `_peerPx`, ROIC auf `_peerRoic`.
+ * Earnings-Marker liegen zusätzlich auf demselben Kurs.
+ */
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -75,14 +107,6 @@ const MA_LINES = [
 type MAKey = typeof MA_LINES[number]["key"];
 
 const SIGNALS_PAGE_SIZE = 10;
-
-// Preset-Schnitte in Handelstagen — identisch zum bisherigen IST (slice vom letzten Bar).
-const TIME_RANGE_CUTOFF = {
-  "3M": 63, "6M": 126, "1Y": 252, "2Y": 504, "3Y": 756, "5Y": 1260, "10Y": 2520,
-  /** Only offered via `rangePresets` (recession TA). Slices the whole series. */
-  "Max": Number.MAX_SAFE_INTEGER,
-} as const;
-export type TimeRange = keyof typeof TIME_RANGE_CUTOFF;
 
 const EMPTY_WINDOW_HINT = "Keine Bars in diesem Fenster";
 
@@ -199,6 +223,8 @@ export function TechnicalChart({
     return s;
   });
   const [showSignals,   setShowSignals]   = useState(true);
+  // Ampel färbt den Kurs nur als Lage. Aus bleibt die blaue Kurslinie.
+  const [showAmpel,     setShowAmpel]     = useState(false);
   const [showVolume,    setShowVolume]    = useState(true);
   const [showBollinger, setShowBollinger] = useState(false);
   // Immer an, solange der Nutzer sie nicht ausblendet — Ein-Band bleibt MACD/RSI wie nach #97.
@@ -247,6 +273,19 @@ export function TechnicalChart({
   // Szenario-Kegel: nur Anzeige. Default aus, Reset je Ticker — aus = keine Serie und keine Achsenänderung.
   const [showCone, setShowCone] = useState(false);
   useEffect(() => { setShowCone(false); }, [data.ticker]);
+  // Earnings Beat/Miss: nur Anzeige, Default aus. Der Szenario-Kegel bleibt unverändert.
+  const [showEarnings, setShowEarnings] = useState(false);
+  useEffect(() => { setShowEarnings(false); }, [data.ticker]);
+  const earningsQuery = useQuery({
+    queryKey: ["earnings-markers", data.ticker],
+    enabled: showEarnings,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/earnings-markers/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{ markers: EarningsMarker[]; beatRateLabel: string; note: string | null }>;
+    },
+  });
+  const earningsMarkers = showEarnings ? earningsQuery.data?.markers ?? null : null;
   // Earnings Yield und ROIC 5Y: nur Anzeige, Default aus, Reset je Ticker. Kein Score.
   const [showEy, setShowEy] = useState(false);
   const [showRoic, setShowRoic] = useState(false);
@@ -261,13 +300,18 @@ export function TechnicalChart({
     setPeerDraft("");
     setPeerQuery("");
   }, [data.ticker]);
-  const eyQuery = useEarningsYield(data.ticker, showEy);
-  const roicQuery = useRoicSeries(data.ticker, showRoic);
+  const peerOn = showPeerFund && peerQuery.length > 0;
+  // Tooltip zeigt EY und ROIC des Haupttitels, sobald der Peer-Vergleich an ist.
+  // Die Linien bleiben an den Chips. Vorher lief der Abruf nur bei showEy/showRoic,
+  // der Tooltip druckte dann „n/a — kein Wert“, während der Peer einen Wert hatte.
+  const fundActive = showEy || showRoic || peerOn;
+  const eyQuery = useEarningsYield(data.ticker, fundActive);
+  const roicQuery = useRoicSeries(data.ticker, fundActive);
   const peerFrom = oldestOhlcvDate(ohlcv);
   const peerTo = newestOhlcvDate(ohlcv);
-  const peerOn = showPeerFund && peerQuery.length > 0;
   const peerRoicQuery = useRoicSeries(peerQuery, peerOn);
   const peerPriceQuery = usePeerPriceBars(peerQuery, peerOn, peerFrom ?? "", peerTo ?? "");
+  const peerDivQuery = useDividendHistory(peerQuery, showDividend && peerOn);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -308,7 +352,7 @@ export function TechnicalChart({
     if (customA && customA.from <= customA.to) {
       return ohlcv.filter(d => d.date >= customA.from && d.date <= customA.to);
     }
-    return ohlcv.slice(-Math.min(rangeCutoff, ohlcv.length));
+    return slicePresetWindow(ohlcv, timeRange);
   }, [ohlcv, customA, rangeCutoff]);
 
   // WORK_DATA_PROVIDERS.md §4: Chart-Domain muss an tatsaechlich geladene
@@ -324,7 +368,17 @@ export function TechnicalChart({
   // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
   // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
   const isHistoryTruncated = !customA && timeRange !== "Max" && ti.maData.length > 0 && ti.maData.length < rangeCutoff * 0.95;
-  const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
+  // Calendar span of the loaded series. Session count / 252 under-counts a
+  // listing whose vendor only printed a sale on some days; the from/to dates
+  // are that same span.
+  const actualYearsAvailable = (() => {
+    const first = ti.maData[0]?.date;
+    const last = ti.maData[ti.maData.length - 1]?.date;
+    if (!first || !last) return 0;
+    const ms = Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`);
+    if (!Number.isFinite(ms) || ms < 0) return 0;
+    return +(ms / (365.25 * 86400000)).toFixed(1);
+  })();
   const hasEnoughForMA200 = ti.maData.length >= 200;
 
   const fromADisplay = customA?.from
@@ -363,7 +417,26 @@ export function TechnicalChart({
   const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
   // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
+  const ampelFactors = useMemo(() => ampelFactorsFromAnalysis(data), [data]);
+  const symmetric = useMemo(
+    () => symmetricAmpelSeries(fullSeries.points.map(p => ({
+      date: p.date,
+      close: p.close,
+      volume: p.volume,
+      rsi: p.rsi,
+      histogram: p.histogram,
+    })), ampelFactors),
+    [fullSeries, ampelFactors],
+  );
+  const phaseByDateMap = symmetric.phases;
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
+  const earningsBadge = !showEarnings
+    ? null
+    : earningsQuery.isLoading
+      ? "Earnings: werden geladen …"
+      : earningsQuery.isError
+        ? "n/a — Abruf fehlgeschlagen"
+        : beatRateLabelForWindow(earningsQuery.data?.markers ?? [], aBuilt.points.map(p => p.date));
   const scenarioCone = useMemo(() => {
     if (!showCone) return null;
     const last = aBuilt.points[aBuilt.points.length - 1];
@@ -371,6 +444,7 @@ export function TechnicalChart({
     return scenarioConeFromAnalysis(data, { date: last.date, close: last.close }, monteCarlo);
   }, [showCone, data, aBuilt.points, monteCarlo]);
   const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
+  const lineEndPhase = aBuilt.points.length ? (phaseByDateMap.get(aBuilt.points[aBuilt.points.length - 1].date) ?? null) : null;
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
@@ -441,8 +515,12 @@ export function TechnicalChart({
   });
 
   const cs = ti.currentStatus;
-  // JOB 22: Kurs-Symbol aus der Listing-Währung (SHEL.L → £), nicht fest "$".
-  const ccy = currencySymbol(data.currency);
+  // JOB 22: Kurs-Symbol aus der Listing-Währung (SHEL.L → £).
+  // SAP.DE / VOW3.DE: nach der USD-Bewertung die Achse wieder in Euro (factor = 1/FX).
+  const listingPrice = chartListingPrice(data);
+  const ccy = listingPrice.symbol;
+  const priceFactor = listingPrice.factor;
+  const px = (value: number, digits = 2) => formatChartPrice(ccy, value, priceFactor, digits);
 
   // ── Buy-signal score (0-4) ──────────────────────────────────────────────────
   const buyScore = [
@@ -465,6 +543,7 @@ export function TechnicalChart({
     : buyScore === 2 ? "2 / 4 Bedingungen – neutrales Umfeld"
     : buyScore === 1 ? "1 / 4 Bedingungen – klares Warnsignal"
     : "0 / 4 Bedingungen – kein Kaufsignal";
+  const ampelBadge = <ChartAmpelBadge snap={symmetric.last} lineEndPhase={lineEndPhase} buyScore={buyScore} />;
 
   // Leeres Fenster lässt die Controls stehen, damit Von/Bis korrigierbar bleiben.
   // Jedes Band rechnet Y aus der eigenen Serie — keine gemeinsame Absolute-Y, kein closeB.
@@ -477,6 +556,31 @@ export function TechnicalChart({
   // Currency guard: dividend currency (stated by FMP/Yahoo) vs analysis price currency. Mismatch → n/a, no FX.
   const dividendCcy = dividendCurrencyCheck(dividendQuery.data?.currency, data.currency);
   const dividendOverlay = dividendCcy !== "mismatch" && dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
+  const peerDividend = useMemo<{ points: PeerDividendYieldPoint[]; sourceText: string } | null>(() => {
+    if (!showDividend || !peerOn || !dividendOverlay) return null;
+    const dates = aBuilt.points.map(p => p.date);
+    if (peerDivQuery.isLoading && !peerDivQuery.data) {
+      return {
+        points: dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividende wird geladen" })),
+        sourceText: dividendSourceCaption(null),
+      };
+    }
+    if (peerDivQuery.isError && !peerDivQuery.data) {
+      return {
+        points: dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividenden-Abruf fehlgeschlagen" })),
+        sourceText: dividendSourceCaption(null),
+      };
+    }
+    const history = peerDivQuery.data;
+    const bars = peerPriceQuery.data?.bars ?? [];
+    const priceNote = peerPriceQuery.isError
+      ? "n/a — Peer-Kurs-Abruf fehlgeschlagen"
+      : (peerPriceQuery.isLoading && bars.length === 0 ? "n/a — Peer-Kurs wird geladen" : (peerPriceQuery.data?.note ?? null));
+    return {
+      points: peerDividendYieldOnDates(dates, bars, history?.events ?? [], history?.events?.length ? priceNote : (history?.note ?? priceNote)),
+      sourceText: dividendSourceCaption(history?.source),
+    };
+  }, [showDividend, peerOn, dividendOverlay, aBuilt.points, peerDivQuery.isLoading, peerDivQuery.isError, peerDivQuery.data, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading]);
   const creditSeries = useMemo<CreditOverlayPoint[] | null>(
     () => (showCredit && creditQuery.data && creditQuery.data.points.length > 0 ? creditOverlaySeries(aBuilt.points, creditQuery.data.points) : null),
     [showCredit, creditQuery.data, aBuilt.points],
@@ -494,12 +598,14 @@ export function TechnicalChart({
   );
   const real10yOverlay = real10ySeries && real10ySeries.some(p => p.real10y != null) ? real10ySeries : null;
   const fundOverlay = useMemo<FundJoinPoint[] | null>(() => {
-    if (!showEy && !showRoic && !peerOn) return null;
+    if (!fundActive) return null;
+    const eyLoaded = !!eyQuery.data;
+    const eyEmpty = eyLoaded && eyQuery.data!.quarters.length === 0 && eyQuery.data!.ttmPrints.length === 0 && eyQuery.data!.annualEps.length === 0;
     const joined = joinFundamentalsOntoPrices(aBuilt.points.map(p => p.date), {
       earningsYield: null,
-      epsQuarters: showEy ? (eyQuery.data?.quarters ?? []) : null,
-      ttmPrints: showEy ? (eyQuery.data?.ttmPrints ?? []) : null,
-      annualEps: showEy ? (eyQuery.data?.annualEps ?? []) : null,
+      epsQuarters: fundActive ? (eyQuery.data?.quarters ?? []) : null,
+      ttmPrints: fundActive ? (eyQuery.data?.ttmPrints ?? []) : null,
+      annualEps: fundActive ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
       priceFx: data.currencyInfo?.converted && eyQuery.data?.fxHistory && eyQuery.data.fxHistory.length > 0
         ? {
@@ -509,8 +615,12 @@ export function TechnicalChart({
             history: eyQuery.data.fxHistory,
           }
         : null,
-      roic: roicQuery.data?.points ?? null,
-      roicSeriesNote: roicQuery.data?.note ?? null,
+      roic: fundActive ? (roicQuery.data?.points ?? null) : null,
+      roicSeriesNote: !fundActive
+        ? null
+        : roicQuery.isError
+          ? "n/a — ROIC-Abruf fehlgeschlagen"
+          : (roicQuery.data?.note ?? (roicQuery.isLoading ? "n/a — ROIC wird geladen" : "n/a — keine ROIC-Punkte")),
       peerRoic: peerRoicQuery.data?.points ?? null,
       peerRoicSeriesNote: peerOn
         ? (peerRoicQuery.isError ? "n/a — Peer-ROIC-Abruf fehlgeschlagen" : (peerRoicQuery.data?.note ?? (peerRoicQuery.isLoading ? "n/a — Peer-ROIC wird geladen" : null)))
@@ -524,13 +634,46 @@ export function TechnicalChart({
       showRoic,
       showPeerRoic: peerOn,
       showPeerPrice: peerOn,
+      resolveEarningsYield: fundActive,
+      resolveRoic: fundActive,
     });
-    return joined.map(point => ({
-      ...point,
-      peerRoicPct: peerMode === "roic" ? point.peerRoicKnown : null,
-      peerPriceIndexed: peerMode === "price" ? point.peerPriceIndexed : null,
-    }));
-  }, [showEy, showRoic, peerOn, peerMode, eyQuery.data, roicQuery.data, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency, data.currencyInfo]);
+    return joined.map(point => {
+      let earningsYieldKnown = point.earningsYieldKnown;
+      let earningsYieldNote = point.earningsYieldNote;
+      let roicKnown = point.roicKnown;
+      let roicNote = point.roicNote;
+      if (eyQuery.isLoading && !eyQuery.data) {
+        earningsYieldKnown = null;
+        earningsYieldNote = "n/a — Earnings Yield wird geladen";
+      } else if (eyQuery.isError && !eyQuery.data) {
+        earningsYieldKnown = null;
+        earningsYieldNote = "n/a — Earnings-Yield-Abruf fehlgeschlagen";
+      } else if (eyEmpty && eyQuery.data?.note) {
+        earningsYieldKnown = null;
+        earningsYieldNote = eyQuery.data.note;
+      } else if (earningsYieldKnown != null && earningsYieldNote && !earningsYieldNote.includes("Quelle:") && eyQuery.data?.source) {
+        earningsYieldNote = `${earningsYieldNote} · Quelle: ${eyQuery.data.source}`;
+      }
+      if (roicQuery.isLoading && !roicQuery.data) {
+        roicKnown = null;
+        roicNote = "n/a — ROIC wird geladen";
+      } else if (roicQuery.isError && !roicQuery.data) {
+        roicKnown = null;
+        roicNote = "n/a — ROIC-Abruf fehlgeschlagen";
+      }
+      return {
+        ...point,
+        earningsYieldPct: showEy ? earningsYieldKnown : null,
+        earningsYieldKnown,
+        earningsYieldNote,
+        roicPct: showRoic ? roicKnown : null,
+        roicKnown,
+        roicNote,
+        peerRoicPct: peerMode === "roic" ? point.peerRoicKnown : null,
+        peerPriceIndexed: peerMode === "price" ? point.peerPriceIndexed : null,
+      };
+    });
+  }, [fundActive, showEy, showRoic, peerOn, peerMode, eyQuery.data, eyQuery.isError, eyQuery.isLoading, roicQuery.data, roicQuery.isError, roicQuery.isLoading, peerRoicQuery.data, peerRoicQuery.isError, peerRoicQuery.isLoading, peerPriceQuery.data, peerPriceQuery.isError, peerPriceQuery.isLoading, aBuilt.points, data.currency, data.currencyInfo]);
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -582,10 +725,22 @@ export function TechnicalChart({
         )}
       </div>
 
+      {symmetric.last && (
+        <div
+          className="mb-3 text-[10px] leading-snug text-muted-foreground break-words"
+          data-testid="symmetric-ampel-facts"
+          data-color={symmetric.last.color ?? ""}
+          data-meaning={symmetric.last.meaning ?? ""}
+          title={symmetric.last.summary}
+        >
+          {symmetric.last.summary}
+        </div>
+      )}
+
       {/* ── Status pills (4 Bedingungen) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: ${ccy}${cs.ma200Value.toFixed(2)}` : ""} />
-        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: ${ccy}${cs.ma50Value.toFixed(2)}`   : ""} />
+        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: ${px(cs.ma200Value)}` : ""} />
+        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: ${px(cs.ma50Value)}`   : ""} />
         <StatusPill label="MACD > 0"      value={cs.macdAboveZero}   detail={cs.macdValue  !== undefined ? `MACD: ${cs.macdValue.toFixed(4)}`    : ""} />
         <StatusPill label="MACD steigend" value={cs.macdRising}      detail={cs.signalValue!== undefined ? `Signal: ${cs.signalValue.toFixed(4)}` : ""} />
       </div>
@@ -715,6 +870,13 @@ export function TechnicalChart({
               {showVolume ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Volumen
             </button>
+            <button type="button" onClick={() => setShowAmpel(v => !v)} data-testid="button-ampel" aria-pressed={showAmpel}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showAmpel ? "border-emerald-400 text-emerald-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showAmpel ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Ampel
+            </button>
             <button type="button" onClick={() => setShowSignals(v => !v)}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
@@ -770,6 +932,14 @@ export function TechnicalChart({
               {showReal10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               {REAL10Y_OVERLAY.label}
             </button>
+            <button type="button" onClick={() => setShowEarnings(v => !v)} data-testid="button-earnings" aria-pressed={showEarnings}
+              title="Earnings Beat/Miss auf dem Kurs. Nur Anzeige, kein Score."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showEarnings ? "border-emerald-500 text-emerald-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showEarnings ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Earnings
+            </button>
             <button type="button" onClick={() => setShowCone(v => !v)} data-testid="button-scenario-cone" aria-pressed={showCone}
               aria-label="Szenario-Kegel"
               title="Szenario-Kegel ab dem letzten Close. Nur Anzeige, kein Score. Standard aus."
@@ -811,6 +981,14 @@ export function TechnicalChart({
               Messen
             </button>
             {extraChips}
+            {showCone ? (
+              <div
+                className="ml-auto shrink-0 flex items-center basis-full sm:basis-auto justify-end"
+                data-testid="ta-ampel-toolbar-slot"
+              >
+                <ChartAmpelBadge snap={symmetric.last} lineEndPhase={lineEndPhase} buyScore={buyScore} placement="toolbar" />
+              </div>
+            ) : null}
           </div>
           {showPeerFund && (
             <div className={FUNDAMENTAL_PEER_ROW_CLASS} data-testid="row-fund-peer">
@@ -898,7 +1076,7 @@ export function TechnicalChart({
             {!measurement ? (
               <span className="text-muted-foreground">
                 {measurePoints.length===0 ? "Klicke auf den Chart um Punkt A zu setzen" : "Klicke auf den Chart um Punkt B zu setzen"}
-                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — {ccy}{measurePoints[0].close.toFixed(2)}</span>}
+                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — {px(measurePoints[0].close)}</span>}
               </span>
             ) : (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -906,7 +1084,7 @@ export function TechnicalChart({
                 <span className={`font-bold font-mono text-sm ${measurement.isGain?"text-emerald-500":"text-red-500"}`}>
                   {measurement.isGain?"+":""}{measurement.diff.toFixed(2)} ({measurement.isGain?"+":""}{measurement.pct.toFixed(2)}%) {measurement.isGain?"↑":"↓"}
                 </span>
-                <span className="text-muted-foreground font-mono">{ccy}{measurement.a.close.toFixed(2)} → {ccy}{measurement.b.close.toFixed(2)}</span>
+                <span className="text-muted-foreground font-mono">{px(measurement.a.close)} → {px(measurement.b.close)}</span>
               </div>
             )}
           </div>
@@ -918,10 +1096,9 @@ export function TechnicalChart({
 
       {/* Golden / Death Cross banner */}
       {(() => {
-        const maData = ti.maData;
+        const maData = aBuilt.points;
         let lastCrossType: 'golden'|'death'|null = null, lastCrossDate = '';
-        const lookback = Math.min(504, maData.length - 1);
-        for (let i = maData.length - 1; i >= maData.length - lookback; i--) {
+        for (let i = maData.length - 1; i >= 1; i--) {
           const cur = maData[i], prev = maData[i-1];
           if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
             if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) { lastCrossType='golden'; lastCrossDate=cur.date; break; }
@@ -971,7 +1148,7 @@ export function TechnicalChart({
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone}>
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={showCone ? undefined : ampelBadge}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -985,18 +1162,25 @@ export function TechnicalChart({
                 showVolume={showVolume}
                 showBollinger={showBollinger}
                 showSignals={showSignals}
+                showAmpel={showAmpel}
                 dense={false}
                 onPlotClick={handleChartClick}
                 measurePoints={measurePoints}
                 measurement={measurement}
                 dividend={dividendOverlay}
+                peerDividend={peerDividend?.points ?? null}
+                peerDividendSource={peerDividend?.sourceText ?? null}
                 credit={creditOverlay}
                 creditLabel={creditLabel}
                 t10y={t10yOverlay}
                 real10y={real10yOverlay}
                 ccy={ccy}
+                priceFactor={priceFactor}
                 cone={scenarioCone}
                 fund={fundOverlay}
+                phases={phaseByDateMap}
+                earnings={earningsMarkers}
+                earningsBadge={earningsBadge}
               />
             </div>
             {narrow && showVolume && (
@@ -1034,7 +1218,10 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               cone={scenarioCone}
+              earnings={earningsMarkers}
+              earningsBadge={earningsBadge}
               widthScale={CONE_VIEWPORT_SCALE}
               scrollToEnd={showCone}
               alignedPoints={aAligned}
@@ -1042,6 +1229,8 @@ export function TechnicalChart({
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
               dividend={dividendOverlay}
+              peerDividend={peerDividend?.points ?? null}
+              peerDividendSource={peerDividend?.sourceText ?? null}
               credit={creditOverlay}
               creditLabel={creditLabel}
               t10y={t10yOverlay}
@@ -1051,6 +1240,9 @@ export function TechnicalChart({
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
               measurement={measurement}
+              phases={phaseByDateMap}
+              showAmpel={showAmpel}
+              overlay={showCone ? undefined : ampelBadge}
             />
           )}
           {showKursB && (
@@ -1071,6 +1263,7 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               testId="chart-band-b"
               macdTestId="chart-macd-b"
               rsiTestId="chart-rsi-b"
@@ -1094,6 +1287,7 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              priceFactor={priceFactor}
               testId="chart-band-c"
               macdTestId="chart-macd-c"
               rsiTestId="chart-rsi-c"
@@ -1115,20 +1309,34 @@ export function TechnicalChart({
           data-formula={CONE_FORMULA}
           title={`${CONE_SOURCE}. ${CONE_FORMULA}`}
         >
-          Szenario-Kegel ab letztem Close <span className="font-mono">{ccy}{scenarioCone.anchorPrice.toFixed(2)}</span>
+          Szenario-Kegel ab letztem Close <span className="font-mono">{px(scenarioCone.anchorPrice)}</span>
           {" "}({scenarioCone.anchorDate}) · Horizont {scenarioCone.horizonDays} Handelstage
           {scenarioCone.sigmaDaily != null && <> · σ<sub>η</sub> <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
           {scenarioCone.driftPerDay != null && <> · b <span className="font-mono">{scenarioCone.driftPerDay.toFixed(6)}</span></>}
           {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
           {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
           {" "}· 50%-Band und 80%-Band
-          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${ccy}${m.price.toFixed(2)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
+          {" "}· {coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}
+          {" "}· {scenarioCone.markers.map(m => `${m.price != null ? `${px(m.price)} · ` : ""}${m.caption}${m.sourceLabel ? ` · ${m.sourceLabel}` : ""}${m.formula ? ` · ${m.formula}` : ""}${m.posReason ? ` (${m.posReason})` : ""}`).join(" · ")}
           {" "}· {CONE_SOURCE}
           {" "}· nur Anzeige, kein Score
+          <div data-testid="cone-legend" className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: CONE_STYLE.outerFill, opacity: CONE_STYLE.outerFillOpacity }} />{coneIntervalLegend("outer")}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: CONE_STYLE.innerFill, opacity: CONE_STYLE.innerFillOpacity }} />{coneIntervalLegend("inner")}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3" style={{ background: CONE_STYLE.midline }} />{CONE_LEGEND.midline}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-0 w-3 border-t border-dashed" style={{ borderColor: CONE_STYLE.forecastStart }} />{CONE_LEGEND.forecastStart}</span>
+          </div>
           <div data-testid="cone-probability-hint">{CONE_PROBABILITY_HINT}</div>
         </div>
       )}
 
+      {showEarnings && showKursA && !chartEmpty && (
+        <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
+          {earningsQuery.isLoading && "Earnings: werden geladen …"}
+          {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
+          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · <span style={{ color: EARNINGS_POINT_COLOR.beat }}>Grün</span> Beat, <span style={{ color: EARNINGS_POINT_COLOR.miss }}>Rot</span> Miss, <span style={{ color: EARNINGS_POINT_COLOR.inline }}>Grau</span> Inline · kein Score</>}
+        </div>
+      )}
       {showDividend && showKursA && !chartEmpty && (
         <DividendOverlayStatus
           series={dividendOverlay}
@@ -1138,6 +1346,7 @@ export function TechnicalChart({
           formatDateFull={formatDateFull}
           currencyCheck={dividendCcy}
           priceCurrency={data.currency}
+          peerCaption={peerDividend ? `Peer Div. Yield · Formel: ${DIVIDEND_YIELD_FORMULA} · Quelle: ${peerDividend.sourceText}. Kein Score-Einfluss.` : null}
         />
       )}
 
@@ -1250,7 +1459,7 @@ export function TechnicalChart({
                       : s.reason.includes('Bearish')      ? 'text-red-500'
                       : s.reason.includes('Bullish')      ? 'text-emerald-500' : ''
                     }`}>{s.reason}</td>
-                    <td className="py-1 text-right font-mono tabular-nums">{ccy}{s.price.toFixed(2)}</td>
+                    <td className="py-1 text-right font-mono tabular-nums">{px(s.price)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1340,8 +1549,6 @@ function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): Wi
   return points.concat(tail);
 }
 
-const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneInnerLow", "coneInnerHigh", "coneBull", "coneBase", "coneBear"]);
-
 function markerFill(id: string): string {
   if (id === "bull") return CONE_STYLE.bull;
   if (id === "base") return CONE_STYLE.base;
@@ -1354,6 +1561,64 @@ type ChartAxis = {
   tick?: { fontSize?: number } | boolean;
 };
 
+/** Geschlossene Fläche zwischen zwei Kegellinien. Koordinaten aus den Achsen, keine zweite Skala. */
+function coneBandPath(
+  xScale: (value: number | string) => number,
+  yScale: (value: number | string) => number,
+  cone: ScenarioCone,
+  low: (point: ScenarioCone["points"][number]) => number,
+  high: (point: ScenarioCone["points"][number]) => number,
+): string {
+  const forward: string[] = [];
+  const back: Array<[number, number]> = [];
+  for (const point of cone.points) {
+    const x = xScale(point.date);
+    const yHi = yScale(high(point));
+    const yLo = yScale(low(point));
+    if (!Number.isFinite(x) || !Number.isFinite(yHi) || !Number.isFinite(yLo)) continue;
+    forward.push(`${forward.length === 0 ? "M" : "L"}${x.toFixed(2)},${yHi.toFixed(2)}`);
+    back.push([x, yLo]);
+  }
+  if (forward.length < 2) return "";
+  const reverse = [...back].reverse().map(([x, y]) => `L${x.toFixed(2)},${y.toFixed(2)}`);
+  return `${forward.join("")}${reverse.join("")}Z`;
+}
+
+function ConeBandFill({
+  xAxisMap,
+  yAxisMap,
+  cone,
+}: {
+  xAxisMap?: Record<string, ChartAxis>;
+  yAxisMap?: Record<string, ChartAxis>;
+  cone: ScenarioCone;
+}) {
+  const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
+  const priceAxis = yAxisMap?.price;
+  if (!xAxis?.scale || !priceAxis?.scale || cone.points.length < 2) return null;
+  const outer = coneBandPath(xAxis.scale, priceAxis.scale, cone, point => point.p10, point => point.p90);
+  const inner = coneBandPath(xAxis.scale, priceAxis.scale, cone, point => point.innerLow, point => point.innerHigh);
+  if (!outer && !inner) return null;
+  return (
+    <g data-testid="cone-band-fill" pointerEvents="none">
+      {outer ? <path data-testid="cone-band-outer" d={outer} fill={CONE_STYLE.outerFill} fillOpacity={CONE_STYLE.outerFillOpacity} stroke="none" /> : null}
+      {inner ? <path data-testid="cone-band-inner" d={inner} fill={CONE_STYLE.innerFill} fillOpacity={CONE_STYLE.innerFillOpacity} stroke="none" /> : null}
+    </g>
+  );
+}
+
+/** Größer als die Achsen-Ticks, damit PoS, Kurs und Prozentänderung am Horizont lesbar bleiben. */
+const CONE_HORIZON_LABEL_PX = 16;
+/** Zusätzlicher Luftabstand zwischen zwei Kegel-Zeilen, über das Aneinanderstoßen hinaus. */
+const CONE_LABEL_GAP_PX = 10;
+
+function coneMoveParts(anchor: number, price: number): { text: string; color: string; direction: "up" | "down" | "flat" } | null {
+  const pct = conePriceMovePct(anchor, price);
+  const direction = coneMoveDirection(pct);
+  if (pct == null || direction == null) return null;
+  return { text: formatConeMovePct(pct), color: coneMoveColor(direction), direction };
+}
+
 /**
  * Kegel-Labels am Horizont-Ende. Stehen sie sich oder dem Dividenden-Label
  * „4 % attraktiv“ zu nahe, verschiebt separateLabelYs sie um den Fehlbetrag
@@ -1365,12 +1630,18 @@ function ConeEndLabels({
   cone,
   priceFontPx,
   labelShift,
+  formatPx,
+  priceSymbol,
+  priceFactor,
 }: {
   xAxisMap?: Record<string, ChartAxis>;
   yAxisMap?: Record<string, ChartAxis>;
   cone: ScenarioCone;
   priceFontPx: number;
   labelShift: Record<string, number>;
+  formatPx: (value: number, digits?: number) => string;
+  priceSymbol: string;
+  priceFactor: number;
 }) {
   const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
   const priceAxis = yAxisMap?.price;
@@ -1380,15 +1651,19 @@ function ConeEndLabels({
   if (!Number.isFinite(dotX)) return null;
   const markers = cone.markers.filter(m => m.price != null && Number.isFinite(m.price));
   const bands = [
-    { id: "band-outer", y: end.p90, text: "80%" },
-    { id: "band-inner", y: end.innerHigh, text: "50%" },
+    { id: "p90", y: end.p90, name: CONE_EDGE_LABEL.p90 },
+    { id: "p75", y: end.innerHigh, name: CONE_EDGE_LABEL.p75 },
+    { id: "p50", y: end.p50, name: CONE_EDGE_LABEL.p50 },
+    { id: "p25", y: end.innerLow, name: CONE_EDGE_LABEL.p25 },
+    { id: "p10", y: end.p10, name: CONE_EDGE_LABEL.p10 },
   ];
   return (
     <g data-testid="cone-marker-labels">
       <title>{`${CONE_SOURCE}. ${CONE_FORMULA}`}</title>
       {bands.map(b => {
         const anchorY = priceAxis.scale!(b.y);
-        if (!Number.isFinite(anchorY)) return null;
+        const move = coneMoveParts(cone.anchorPrice, b.y);
+        if (!Number.isFinite(anchorY) || !move) return null;
         return (
           <text
             key={b.id}
@@ -1397,16 +1672,26 @@ function ConeEndLabels({
             y={anchorY + (labelShift[b.id] ?? 0)}
             textAnchor="end"
             dominantBaseline="middle"
-            fontSize={priceFontPx}
-            fill={CONE_STYLE.band}
+            fontSize={CONE_HORIZON_LABEL_PX}
+            fontWeight={600}
           >
-            {b.text}
+            <tspan fill={CONE_STYLE.band}>{b.name}</tspan>
+            <tspan fill={move.color} data-direction={move.direction}>{` ${formatPx(b.y)} ${move.text}`}</tspan>
           </text>
         );
       })}
       {markers.map(m => {
-        const anchorY = priceAxis.scale!(m.price as number);
-        if (!Number.isFinite(anchorY)) return null;
+        const price = m.price as number;
+        const anchorY = priceAxis.scale!(price);
+        const line = coneHorizonLabel({
+          name: CONE_HORIZON_NAME[m.id],
+          probability: m.probability,
+          price,
+          anchor: cone.anchorPrice,
+          symbol: priceSymbol,
+          factor: priceFactor,
+        });
+        if (!Number.isFinite(anchorY) || !line) return null;
         return (
           <text
             key={m.id}
@@ -1415,10 +1700,12 @@ function ConeEndLabels({
             y={anchorY + (labelShift[m.id] ?? 0)}
             textAnchor="end"
             dominantBaseline="middle"
-            fontSize={priceFontPx}
-            fill={markerFill(m.id)}
+            fontSize={CONE_HORIZON_LABEL_PX}
+            fontWeight={600}
           >
-            {m.caption}
+            <title>{[m.caption, m.formula, m.posReason].filter(Boolean).join(" · ")}</title>
+            <tspan fill={markerFill(m.id)} data-testid={`cone-pos-${m.id}`}>{line.lead}</tspan>
+            <tspan fill={coneMoveColor(line.direction)} data-direction={line.direction}>{line.move}</tspan>
           </text>
         );
       })}
@@ -1456,7 +1743,7 @@ function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>):
       fixed: true,
     });
   });
-  const placed = separateLabelYs(boxes);
+  const placed = separateLabelYs(boxes, CONE_LABEL_GAP_PX);
   const next: Record<string, number> = {};
   let changed = false;
   const pixel = 1 / (typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
@@ -1471,36 +1758,112 @@ function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>):
   return changed ? next : null;
 }
 
-function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
+function ConePriceWithMove({ anchor, price, formatPx }: { anchor: number; price: number; formatPx: (value: number, digits?: number) => string }) {
+  const move = coneMoveParts(anchor, price);
+  if (!move) return <span className="font-mono">{formatPx(price)}</span>;
+  return (
+    <span className="font-mono">
+      {formatPx(price)}{" "}
+      <span data-testid="cone-move" data-direction={move.direction} style={{ color: move.color }}>{move.text}</span>
+    </span>
+  );
+}
+
+function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: ConePlotFields; formatPx: (value: number, digits?: number) => string; cone: ScenarioCone; priceSymbol: string; priceFactor: number }) {
   if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
+  const anchor = cone.anchorPrice;
   const row = (color: string, name: string, value: number | null | undefined) => (
     value != null && Number.isFinite(value)
-      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><span className="font-mono">{ccy}{value.toFixed(2)}</span></div>
+      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><ConePriceWithMove anchor={anchor} price={value} formatPx={formatPx} /></div>
       : null
   );
+  const scenarioRow = (id: "bull" | "base" | "bear", value: number | null | undefined, caption: string | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return null;
+    const marker = cone.markers.find(m => m.id === id);
+    const line = marker && coneHorizonLabel({
+      name: CONE_HORIZON_NAME[id],
+      probability: marker.probability,
+      price: value,
+      anchor,
+      symbol: priceSymbol,
+      factor: priceFactor,
+    });
+    if (!marker || !line) return null;
+    return (
+      <div key={id} className="flex justify-between gap-3" title={[caption, marker.formula, marker.posReason].filter(Boolean).join(" · ") || undefined} data-testid={`cone-tip-${id}`}>
+        <span style={{ color: markerFill(id) }}>{line.lead}</span>
+        <span className="font-mono" data-testid="cone-move" data-direction={line.direction} style={{ color: coneMoveColor(line.direction) }}>{line.move}</span>
+      </div>
+    );
+  };
   return (
-    <>
-      <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[260px] whitespace-normal text-muted-foreground" title={CONE_FORMULA}>
+    <div className="space-y-1.5 text-[13px] leading-5">
+      <div data-testid="cone-tooltip-formula" className="mt-1 max-w-[280px] whitespace-normal text-[11px] leading-4 text-muted-foreground" title={CONE_FORMULA}>
         <div>{CONE_SOURCE}</div>
         <div>{CONE_FORMULA}</div>
+        <div>{coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}</div>
       </div>
-      {row(CONE_STYLE.band, "80%-Band unten", p.coneP10)}
-      {row(CONE_STYLE.band, "50%-Band unten", p.coneInnerLow)}
-      {row(CONE_STYLE.band, "Trend", p.coneP50)}
-      {row(CONE_STYLE.band, "50%-Band oben", p.coneInnerHigh)}
-      {row(CONE_STYLE.band, "80%-Band oben", p.coneP90)}
-      {typeof p.coneBullLabel === "string" && <div style={{ color: CONE_STYLE.bull }}>{p.coneBullLabel}</div>}
-      {typeof p.coneBaseLabel === "string" && <div style={{ color: CONE_STYLE.base }}>{p.coneBaseLabel}</div>}
-      {typeof p.coneBearLabel === "string" && <div style={{ color: CONE_STYLE.bear }}>{p.coneBearLabel}</div>}
+      {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p10, p.coneP10)}
+      {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p25, p.coneInnerLow)}
+      {row(CONE_STYLE.midline, CONE_LEGEND.midline, p.coneP50)}
+      {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p75, p.coneInnerHigh)}
+      {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p90, p.coneP90)}
+      {scenarioRow("bull", p.coneBull, p.coneBullLabel)}
+      {scenarioRow("base", p.coneBase, p.coneBaseLabel)}
+      {scenarioRow("bear", p.coneBear, p.coneBearLabel)}
+    </div>
+  );
+}
+
+type EarningsTipFields = {
+  _earnKind?: string;
+  _earnRevActual?: number | null;
+  _earnRevEst?: number | null;
+  _earnRev?: number | null;
+  _earnEps?: number | null;
+  _earnReason?: string | null;
+};
+
+function formatReported(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "n/a";
+  return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value);
+}
+
+function EarningsTooltipRows({ p }: { p: EarningsTipFields }) {
+  if (!p._earnKind) return null;
+  const color = earningsPointColor(p._earnKind);
+  const surprise = (value: number | null | undefined) => (
+    value == null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(1)} %`
+  );
+  return (
+    <div className="mt-1 max-w-[240px] whitespace-normal border-t border-border pt-1" data-testid="earnings-tooltip" data-kind={p._earnKind}>
+      <div style={{ color }}>Earnings {p._earnKind}</div>
+      <div style={{ color }}>Revenue Actual {formatReported(p._earnRevActual)}</div>
+      <div>Revenue Estimate {formatReported(p._earnRevEst)}</div>
+      <div style={{ color }}>Surprise <span style={{ color }}>{surprise(p._earnRev)}</span></div>
+      <div style={{ color }}>EPS Surprise <span style={{ color }}>{surprise(p._earnEps)}</span></div>
+      {p._earnReason ? <div style={{ color }}>{p._earnReason}</div> : null}
+    </div>
+  );
+}
+
+function EarningsBeatCount({ label }: { label: string }) {
+  const match = /^(.*?\bBeat )(\d+)(\/.*)$/.exec(label);
+  if (!match) return <>{label}</>;
+  return (
+    <>
+      {match[1]}
+      <span style={{ color: EARNINGS_POINT_COLOR.beat }}>{match[2]}</span>
+      {match[3]}
     </>
   );
 }
 
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
-  visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
-  cone = null, fund = null,
+  visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, dense,
+  onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
+  priceFactor = 1, cone = null, fund = null, phases = null, earnings = null, earningsBadge = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1512,11 +1875,16 @@ function PricePane({
   showVolume: boolean;
   showBollinger: boolean;
   showSignals: boolean;
+  /** Farbige Kurslage. Die blaue Close-Linie bleibt darunter. */
+  showAmpel?: boolean;
   dense: boolean;
   onPlotClick?: (e: any) => void;
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  /** Peer-Dividendenrendite auf denselben Kurstagen, zweite Linie der Div.-Yield-Achse. */
+  peerDividend?: PeerDividendYieldPoint[] | null;
+  peerDividendSource?: string | null;
   /** JOB A1: Markt-Spread Baa je Kurstag (eigene rechte %-Achse). */
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
@@ -1526,10 +1894,18 @@ function PricePane({
   real10y?: Real10YOverlayPoint[] | null;
   /** JOB 22: Kurs-Symbol (Listing-Währung). */
   ccy?: string;
+  /** Datenwert × factor = Beschriftung. 1 = Kerzen schon in der Anzeigewährung. */
+  priceFactor?: number;
   /** Szenario-Kegel. null = Chart-Daten und Preisdomäne unverändert. */
   cone?: ScenarioCone | null;
   /** Earnings Yield / ROIC / Peer, nur Anzeige. null = keine zusätzliche Serie. */
   fund?: FundJoinPoint[] | null;
+  /** Phasenfarbe der Kurslinie. null = eine Farbe, wie bisher. */
+  phases?: Map<string, TaPhase | null> | null;
+  /** Beat/Miss-Marker. null = keine Punkte, Kegel-Daten bleiben die Referenz. */
+  earnings?: EarningsMarker[] | null;
+  /** Beat-Rate oben rechts. null = kein Badge. */
+  earningsBadge?: string | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1537,18 +1913,26 @@ function PricePane({
   const domainExtra = [...(conePrices ?? []), ...peerIndexed];
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger, domainExtra.length ? domainExtra : undefined);
   const chartData = useMemo(() => {
-    const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y), fund);
+    const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
-  }, [points, dividend, credit, t10y, real10y, cone, fund]);
+  }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
+  const plotted = useMemo(() => attachEarningsToPoints(chartData, earnings), [chartData, earnings]);
+  const phasePainted = useMemo(
+    () => (showAmpel && phases ? paintPhaseRows(plotted, phases) : null),
+    [plotted, phases, showAmpel],
+  );
+  const plotData = phasePainted ?? plotted;
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
   const rightAxis = !!dividend || !!credit || !!t10y || !!real10y || !!fund;
   const fundDomain = percentAxisDomain((fund ?? []).flatMap(p => [p.earningsYieldPct, p.roicPct, p.peerRoicPct]));
-  const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
+  const peerDivMax = peerDividend ? Math.max(0, ...peerDividend.map(p => p.yieldPct ?? 0)) : 0;
+  const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0), peerDivMax) : 0;
   const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
   const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
+  const formatPx = (value: number, digits = 2) => formatChartPrice(ccy, value, priceFactor, digits);
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(chartData.length / (dense ? 5 : 8))));
   const plotRef = useRef<HTMLDivElement>(null);
@@ -1563,16 +1947,22 @@ function PricePane({
     if (next) setLabelShift(next);
   }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
-    <div ref={plotRef} className="h-full w-full">
+    <div ref={plotRef} className="relative h-full w-full">
+    {earningsBadge && (
+      <div
+        className="pointer-events-none absolute right-2 top-1 z-10 max-w-[calc(100%-1rem)] truncate rounded border border-border bg-background/85 px-1.5 py-0.5 text-[10px] font-semibold text-foreground"
+        data-testid="earnings-beat-badge"
+      ><EarningsBeatCount label={earningsBadge} /></div>
+    )}
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
-        data={chartData}
+        data={plotData}
         margin={dense ? { top: 2, right: rightAxis ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: rightAxis ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} {...xInterval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
-        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `${ccy}${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => formatPx(v, 0)} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
         {dividend && (
@@ -1653,35 +2043,57 @@ function PricePane({
               }
             }
           }
-          const bbWidth = dp.bbUpper != null && dp.bbLower != null ? (dp.bbUpper - dp.bbLower).toFixed(2) : null;
+          const bbWidth = dp.bbUpper != null && dp.bbLower != null ? formatPx(dp.bbUpper - dp.bbLower) : null;
           const dv = dp as WindowPoint & DividendFields;
+          const phase = (dp as { _phase?: TaPhase | null })._phase ?? null;
+          const phaseStroke = phase ? TA_PHASE_STROKE[phase] : closeStroke;
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
               {dp.close != null && Number.isFinite(dp.close) && (
-                <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{ccy}{dp.close.toFixed(2)}</span></div>
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: phaseStroke }}>{closeName}</span>
+                  <span className="font-mono">{formatPx(dp.close)}</span>
+                </div>
+              )}
+              {showAmpel && phase && (
+                <div className="font-semibold" style={{ color: phaseStroke }}>Ampel: {PHASE_MEANING[phase]}</div>
               )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
                 <>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">{ccy}{dp.bbUpper.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">{ccy}{dp.bbMid?.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">{ccy}{dp.bbLower?.toFixed(2)}</span></div>
-                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{ccy}{bbWidth}</span></div>}
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">{formatPx(dp.bbUpper)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">{dp.bbMid != null ? formatPx(dp.bbMid) : ""}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">{dp.bbLower != null ? formatPx(dp.bbLower) : ""}</span></div>
+                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{bbWidth}</span></div>}
                 </>
               )}
-              {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
+              {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} peerSource={peerDividendSource} />}
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
-              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} ccy={ccy} />}
-              {fund && <FundTooltipRows p={dp as WindowPoint & FundFields} />}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_peerPx"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
-                <div key={p.dataKey} className="flex justify-between gap-3">
-                  <span style={{ color: p.color }}>{p.name}</span>
-                  <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
+              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} formatPx={formatPx} cone={cone} priceSymbol={ccy} priceFactor={priceFactor} />}
+              <EarningsTooltipRows p={dp as WindowPoint & EarningsTipFields} />
+              {fund && (dp.close != null && Number.isFinite(dp.close)
+                ? <FundTooltipRows p={dp as WindowPoint & FundFields} />
+                : <FundLastIstRows series={fund} formatDateFull={formatDateFull} />)}
+              {MA_LINES.filter(ma => visibleMAs.has(ma.key)).map(ma => {
+                const value = dp[ma.key];
+                return (
+                  <div key={ma.key} className="flex justify-between gap-3" data-testid={`tooltip-${ma.key}`}>
+                    <span style={{ color: ma.color }}>{ma.label}</span>
+                    <span className="font-mono">{value != null && Number.isFinite(value) ? formatPx(value) : "n/a"}</span>
+                  </div>
+                );
+              })}
+              {visibleMAs.has("ma50") && visibleMAs.has("ma200") && dp.ma50 != null && dp.ma200 != null && Number.isFinite(dp.ma50) && Number.isFinite(dp.ma200) && dp.ma200 !== 0 && (
+                <div className="flex justify-between gap-3" data-testid="tooltip-ma-gap">
+                  <span className="text-muted-foreground">MA50 − MA200</span>
+                  <span className={`font-mono ${dp.ma50 >= dp.ma200 ? "text-green-400" : "text-red-400"}`}>
+                    {dp.ma50 - dp.ma200 >= 0 ? "+" : "−"}{formatPx(Math.abs(dp.ma50 - dp.ma200))} ({((dp.ma50 / dp.ma200 - 1) * 100).toFixed(2)} %)
+                  </span>
                 </div>
-              ))}
+              )}
               {sigs.map((s, i) => (
                 <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
                   {s.type === "buy" ? "▲ BUY" : "▼ SELL"}: {s.reason}
@@ -1701,11 +2113,15 @@ function PricePane({
         )}
         {cone && (
           <>
-            <Line yAxisId="price" type="monotone" dataKey="coneP90" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP10" name="80%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneInnerHigh" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneInnerLow" name="50%-Band" stroke={CONE_STYLE.band} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
-            <Line yAxisId="price" type="monotone" dataKey="coneP50" name="Trend" stroke={CONE_STYLE.band} strokeWidth={1} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Customized component={(overlay: { xAxisMap?: Record<string, ChartAxis>; yAxisMap?: Record<string, ChartAxis> }) => (
+              <ConeBandFill {...overlay} cone={cone} />
+            )} />
+            <ReferenceLine yAxisId="price" x={cone.anchorDate} stroke={CONE_STYLE.forecastStart} strokeDasharray={CONE_STYLE.forecastDash} strokeWidth={CONE_STYLE.forecastWidth} />
+            <Line yAxisId="price" type="monotone" dataKey="coneP90" name={coneIntervalLegend("outer")} stroke={CONE_STYLE.outerStroke} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP10" name={coneIntervalLegend("outer")} stroke={CONE_STYLE.outerStroke} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerHigh" name={coneIntervalLegend("inner")} stroke={CONE_STYLE.innerStroke} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneInnerLow" name={coneIntervalLegend("inner")} stroke={CONE_STYLE.innerStroke} strokeWidth={1.25} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP50" name={CONE_LEGEND.midline} stroke={CONE_STYLE.midline} strokeWidth={CONE_STYLE.midlineWidth} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             {cone.markers.map((m) => m.price == null ? null : (
               <ReferenceDot
                 key={m.id}
@@ -1723,13 +2139,54 @@ function PricePane({
                 cone={cone}
                 priceFontPx={typeof tick.fontSize === "number" ? tick.fontSize : 0}
                 labelShift={labelShift}
+                formatPx={formatPx}
+                priceSymbol={ccy}
+                priceFactor={priceFactor}
               />
             )} />
           </>
         )}
-        <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.75} dot={false} connectNulls isAnimationActive={false} />
+        {earnings && (
+          <Line
+            yAxisId="price"
+            type="monotone"
+            dataKey="_earn"
+            name="Earnings"
+            stroke="none"
+            legendType="none"
+            isAnimationActive={false}
+            dot={(props: any) => {
+              const kind = props?.payload?._earnKind as string | undefined;
+              if (!kind || props.cx == null || props.cy == null) return <g key={props.key} />;
+              const fill = earningsPointColor(kind);
+              return <circle key={props.key} cx={props.cx} cy={props.cy} r={3.5} fill={fill} stroke="none" />;
+            }}
+          />
+        )}
+        {phasePainted && (
+          <>
+            <Line yAxisId="price" type="monotone" dataKey="_phA" name="ATTRAKTIV" stroke={TA_PHASE_STROKE.ATTRAKTIV} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="_phN" name="NEUTRAL" stroke={TA_PHASE_STROKE.NEUTRAL} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="_phV" name="VORSICHTIG" stroke={TA_PHASE_STROKE.VORSICHTIG} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+          </>
+        )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
+        ))}
+        {visibleMAs.has("ma50") && visibleMAs.has("ma200") && maCrossMarkers(points).map(cross => (
+          <ReferenceDot
+            key={`${cross.type}-${cross.date}`}
+            yAxisId="price"
+            x={cross.date}
+            y={(cross.ma50 + cross.ma200) / 2}
+            r={4}
+            fill={cross.type === "golden" ? "#10b981" : "#ef4444"}
+            stroke="var(--card)"
+            strokeWidth={1}
+            ifOverflow="discard"
+            label={{ value: cross.type === "golden" ? "GC" : "DC", position: "top", fontSize: 8, fill: cross.type === "golden" ? "#10b981" : "#ef4444", fontWeight: 700 }}
+          />
         ))}
         {showBollinger && (
           <>
@@ -1761,6 +2218,20 @@ function PricePane({
               // Marks a visibly corrected point (amber) or a window with a special dividend (violet).
               return <circle key={props.key} cx={props.cx} cy={props.cy} r={2.5} fill={pl._divSpecial?.length ? "#a855f7" : "#f59e0b"} stroke="none" />;
             }}
+          />
+        )}
+        {dividend && peerDividend && (
+          <Line
+            yAxisId="div"
+            type="stepAfter"
+            dataKey="_peerDivYield"
+            name="Peer Div. Yield"
+            stroke="#0f766e"
+            strokeWidth={1.25}
+            strokeDasharray="4 2"
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
           />
         )}
         {credit && (
@@ -1976,9 +2447,9 @@ function RsiPane({
 
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
-  visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, fund, ccy,
-  cone = null, widthScale = 1, scrollToEnd = false, alignedPoints,
+  visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, showMacd, showRsi, count,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
+  priceFactor = 1, cone = null, earnings = null, earningsBadge = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
 }: {
   label: string;
   labelClassName: string;
@@ -1992,6 +2463,7 @@ function BandStack({
   showVolume: boolean;
   showBollinger: boolean;
   showSignals: boolean;
+  showAmpel?: boolean;
   showMacd: boolean;
   showRsi: boolean;
   count: number;
@@ -2003,23 +2475,30 @@ function BandStack({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  peerDividend?: PeerDividendYieldPoint[] | null;
+  peerDividendSource?: string | null;
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
   t10y?: Treasury10YOverlayPoint[] | null;
   real10y?: Real10YOverlayPoint[] | null;
   fund?: FundJoinPoint[] | null;
   ccy?: string;
+  priceFactor?: number;
   cone?: ScenarioCone | null;
+  earnings?: EarningsMarker[] | null;
+  earningsBadge?: string | null;
   widthScale?: number;
   scrollToEnd?: boolean;
   alignedPoints?: WindowPoint[];
+  phases?: Map<string, TaPhase | null> | null;
+  overlay?: ReactNode;
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
   const compact = count > 1;
   const aligned = alignedPoints ?? series.points;
   return (
-    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd}>
+    <TaPlotScroll minWidth={taChartMinWidth(TA_PRICE_AXIS_LEFT_PX, TA_PRICE_AXIS_RIGHT_PX, TA_PRICE_MARGIN_RIGHT_PX)} testId={`${testId}-scroll`} widthScale={widthScale} scrollToEnd={scrollToEnd} overlay={overlay}>
     <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
@@ -2045,13 +2524,20 @@ function BandStack({
               measurePoints={measurePoints}
               measurement={measurement}
               dividend={dividend}
+              peerDividend={peerDividend}
+              peerDividendSource={peerDividendSource}
               credit={credit}
               creditLabel={creditLabel}
               t10y={t10y}
               real10y={real10y}
               fund={fund}
               ccy={ccy}
+              priceFactor={priceFactor}
               cone={cone}
+              earnings={earnings}
+              earningsBadge={earningsBadge}
+              phases={phases}
+              showAmpel={showAmpel}
             />
           )}
         </div>
@@ -2067,6 +2553,53 @@ function BandStack({
       )}
     </div>
     </TaPlotScroll>
+  );
+}
+
+const PHASE_MEANING: Record<TaPhase, string> = {
+  ATTRAKTIV: "Attraktiv",
+  NEUTRAL: "Neutral",
+  VORSICHTIG: "Unattraktiv",
+};
+
+function ChartAmpelBadge({ snap, lineEndPhase, buyScore, placement = "overlay" }: {
+  snap: SymmetricSnapshot | null;
+  lineEndPhase: TaPhase | null;
+  buyScore: number;
+  placement?: "overlay" | "toolbar";
+}) {
+  const phase = snap?.paint ?? null;
+  const meaning = snap?.meaning ?? null;
+  const lineAgrees = phase == null || lineEndPhase == null || phase === lineEndPhase;
+  const tone = phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground";
+  let frame: string;
+  switch (placement) {
+    case "overlay":
+      frame = "pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
+      break;
+    case "toolbar":
+      frame = "pointer-events-none inline-flex h-7 max-h-7 items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
+      break;
+    default: {
+      const unreachable: never = placement;
+      frame = unreachable;
+      break;
+    }
+  }
+  return (
+    <div
+      className={`${frame} ${tone}`}
+      data-testid="chart-ampel-label"
+      data-phase={snap?.color ?? ""}
+      data-meaning={meaning ?? ""}
+      data-buyscore={buyScore}
+      data-consistent={lineAgrees ? "1" : "0"}
+      data-line-end={lineEndPhase ?? ""}
+      data-adjusted={snap?.adjusted ?? ""}
+      title={snap?.summary}
+    >
+      {meaning ? `Ampel: ${meaning}` : "Ampel: n/a"}
+    </div>
   );
 }
 
@@ -2102,36 +2635,75 @@ type DividendFields = {
   _divDropped?: string[];
   _divSpecial?: string[];
   _divAdded?: string[];
+  _peerDivYield?: number | null;
+  _peerDivNote?: string | null;
 };
 
-/** Adds the overlay fields to each price point by date. No dividend series → points unchanged. */
-export function withDividendOverlay(points: WindowPoint[], series: DividendOverlaySeries | null | undefined): Array<WindowPoint & DividendFields> {
-  if (!series) return points;
-  const byDate = new Map(series.points.map(p => [p.date, p]));
+/** Adds the overlay fields to each price point by date. No dividend series and no peer → points unchanged. */
+export function withDividendOverlay(
+  points: WindowPoint[],
+  series: DividendOverlaySeries | null | undefined,
+  peer?: PeerDividendYieldPoint[] | null,
+): Array<WindowPoint & DividendFields> {
+  if (!series && !peer) return points;
+  const byDate = new Map((series?.points ?? []).map(p => [p.date, p]));
+  const peerByDate = new Map((peer ?? []).map(p => [p.date, p]));
   return points.map(pt => {
-    const d = byDate.get(pt.date);
-    if (!d) return { ...pt, _divYield: null };
-    return { ...pt, _divYield: d.yieldPct, _divTtm: d.ttmDividend, _divRaw: d.rawYieldPct, _divDropped: d.droppedExDates, _divSpecial: d.specialExDates, _divAdded: d.addedExDates };
+    const d = series ? byDate.get(pt.date) : undefined;
+    const peerHit = peer ? peerByDate.get(pt.date) : undefined;
+    const peerFields = peer
+      ? { _peerDivYield: peerHit?.yieldPct ?? null, _peerDivNote: peerHit?.note ?? (peerHit ? null : "n/a — kein Peer-Dividendenpunkt an diesem Tag") }
+      : {};
+    if (!series) return { ...pt, ...peerFields };
+    if (!d) return { ...pt, _divYield: null, ...peerFields };
+    return {
+      ...pt,
+      _divYield: d.yieldPct,
+      _divTtm: d.ttmDividend,
+      _divRaw: d.rawYieldPct,
+      _divDropped: d.droppedExDates,
+      _divSpecial: d.specialExDates,
+      _divAdded: d.addedExDates,
+      ...peerFields,
+    };
   });
 }
 
-function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatDateFull: (d: string) => string }) {
-  if (p._divYield == null) {
-    return <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">n/a</span></div>;
-  }
+function PeerDividendTooltipRows({ p, source }: { p: DividendFields; source?: string | null }) {
+  if (p._peerDivYield === undefined && p._peerDivNote === undefined) return null;
+  const text = p._peerDivYield != null && Number.isFinite(p._peerDivYield)
+    ? `${p._peerDivYield.toFixed(2)} %`
+    : (p._peerDivNote?.trim() ? p._peerDivNote : "n/a — Peer-Dividendenrendite fehlt");
   return (
     <>
-      <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
-      {isAttractiveDividendYield(p._divYield) && <div className="text-green-500" data-testid="dividend-tooltip-attractive">≥ {DIV_ATTRACTIVE_YIELD_PCT} % attraktiv</div>}
-      {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
-      {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
-        <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
-      ))}
+      <div className="flex justify-between gap-3" data-testid="tooltip-peer-div-yield"><span className="text-teal-700">Peer Div. Yield</span><span className="font-mono">{text}</span></div>
+      <div className="text-muted-foreground">Formel: {DIVIDEND_YIELD_FORMULA}</div>
+      <div className="text-muted-foreground" data-testid="tooltip-peer-div-source">Quelle: {source ?? dividendSourceCaption(null)}</div>
     </>
   );
 }
 
-function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency }: {
+function DividendTooltipRows({ p, formatDateFull, peerSource = null }: { p: DividendFields; formatDateFull: (d: string) => string; peerSource?: string | null }) {
+  return (
+    <>
+      {p._divYield == null ? (
+        <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">n/a</span></div>
+      ) : (
+        <>
+          <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
+          {isAttractiveDividendYield(p._divYield) && <div className="text-green-500" data-testid="dividend-tooltip-attractive">≥ {DIV_ATTRACTIVE_YIELD_PCT} % attraktiv</div>}
+          {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
+          {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
+            <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
+          ))}
+        </>
+      )}
+      <PeerDividendTooltipRows p={p} source={peerSource} />
+    </>
+  );
+}
+
+function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency, peerCaption = null }: {
   currencyCheck?: "ok" | "mismatch" | "unknown";
   priceCurrency?: string;
   series: DividendOverlaySeries | null;
@@ -2139,6 +2711,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
   loading: boolean;
   failed: boolean;
   formatDateFull: (d: string) => string;
+  peerCaption?: string | null;
 }) {
   const base = "mt-1 text-[10px] text-muted-foreground break-words";
   if (loading) return <div className={base} data-testid="dividend-overlay-loading">Div. Yield: Dividendenhistorie wird geladen …</div>;
@@ -2158,6 +2731,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
       {" "}· KPI „Div. Yield“ in Sektion 1 zeigt denselben TTM-Wert (GJ-Wert von FMP als Zusatzzeile).
+      {peerCaption && <div data-testid="dividend-overlay-peer">{peerCaption}</div>}
     </div>
   );
 }
@@ -2166,8 +2740,10 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
 
 type FundFields = {
   _ey?: number | null;
+  _eyKnown?: number | null;
   _eyNote?: string | null;
   _roic?: number | null;
+  _roicKnown?: number | null;
   _roicNote?: string | null;
   _peerRoic?: number | null;
   _peerRoicKnown?: number | null;
@@ -2185,8 +2761,10 @@ function withFundOverlay<T extends WindowPoint>(points: T[], series: FundJoinPoi
     return {
       ...pt,
       _ey: f?.earningsYieldPct ?? null,
+      _eyKnown: f?.earningsYieldKnown ?? null,
       _eyNote: f?.earningsYieldNote ?? null,
       _roic: f?.roicPct ?? null,
+      _roicKnown: f?.roicKnown ?? null,
       _roicNote: f?.roicNote ?? null,
       _peerRoic: f?.peerRoicPct ?? null,
       _peerRoicKnown: f?.peerRoicKnown ?? null,
@@ -2203,14 +2781,72 @@ function fmtPctOrNote(v: number | null | undefined, note: string | null | undefi
   return note && note.trim() ? note : "n/a — kein Wert";
 }
 
+function EstimateBadge({ note }: { note: string | null | undefined }) {
+  if (!estimateBadge(note)) return null;
+  return <div className="text-amber-400" data-testid="badge-schaetzung">Schätzung · {note}</div>;
+}
+
+const LAST_IST_LABEL = "letzter Ist-Wert";
+
+function lastFiniteFund<K extends "earningsYieldPct" | "roicPct" | "peerRoicKnown" | "peerPriceRaw">(
+  series: FundJoinPoint[],
+  key: K,
+): FundJoinPoint | null {
+  for (let i = series.length - 1; i >= 0; i--) {
+    const value = series[i][key];
+    if (typeof value === "number" && Number.isFinite(value)) return series[i];
+  }
+  return null;
+}
+
+/**
+ * Prognosepunkte haben keinen Ist-Wert. Statt „n/a — kein Wert“ der letzte
+ * bekannte Punkt mit Datum. Fehlt der Wert auch in der Historie, bleibt die Zeile weg.
+ */
+function FundLastIstRows({ series, formatDateFull }: { series: FundJoinPoint[]; formatDateFull: (date: string) => string }) {
+  const rows: { key: string; label: string; className: string; text: string; date: string; formula: string | null }[] = [];
+  const ey = lastFiniteFund(series, "earningsYieldPct");
+  if (ey?.earningsYieldPct != null) {
+    rows.push({ key: "ey", label: "Earnings Yield", className: "text-sky-500", text: `${ey.earningsYieldPct.toFixed(1)} %`, date: ey.date, formula: EARNINGS_YIELD_FORMULA });
+  }
+  const roic = lastFiniteFund(series, "roicPct");
+  if (roic?.roicPct != null) {
+    rows.push({ key: "roic", label: "ROIC", className: "text-lime-500", text: `${roic.roicPct.toFixed(1)} %`, date: roic.date, formula: ROIC_FORMULA });
+  }
+  const peer = lastFiniteFund(series, "peerRoicKnown");
+  if (peer?.peerRoicKnown != null) {
+    rows.push({ key: "peer-roic", label: "Peer-ROIC", className: "text-lime-500", text: `${peer.peerRoicKnown.toFixed(1)} %`, date: peer.date, formula: ROIC_FORMULA });
+  }
+  const peerPx = lastFiniteFund(series, "peerPriceRaw");
+  if (peerPx?.peerPriceRaw != null) {
+    rows.push({ key: "peer-px", label: "Peer-Kurs", className: "text-orange-400", text: peerPx.peerPriceRaw.toFixed(2), date: peerPx.date, formula: null });
+  }
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal" data-testid="fund-last-ist">
+      {rows.map(row => (
+        <div key={row.key}>
+          <div className="flex justify-between gap-3"><span className={row.className}>{row.label}</span><span className="font-mono">{row.text}</span></div>
+          <div className="text-muted-foreground">{LAST_IST_LABEL} · {formatDateFull(row.date)}</div>
+          {row.formula ? <div className="text-muted-foreground">Formel: {row.formula}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FundTooltipRows({ p }: { p: FundFields }) {
+  const ey = p._eyKnown ?? null;
+  const roic = p._roicKnown ?? null;
   return (
     <div className="mt-1 pt-1 border-t border-border max-w-[280px] whitespace-normal">
-      <div className="flex justify-between gap-3"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(p._ey, p._ey != null ? null : p._eyNote)}</span></div>
-      {p._ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
+      <div className="flex justify-between gap-3" data-testid="tooltip-earnings-yield"><span className="text-sky-500">Earnings Yield</span><span className="font-mono">{fmtPctOrNote(ey, ey != null ? null : p._eyNote)}</span></div>
+      {ey != null && p._eyNote ? <div className="text-muted-foreground">{p._eyNote}</div> : null}
+      <EstimateBadge note={ey != null ? p._eyNote : null} />
       <div className="text-muted-foreground">Formel: {EARNINGS_YIELD_FORMULA}</div>
-      <div className="flex justify-between gap-3"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(p._roic, p._roic != null ? null : p._roicNote)}</span></div>
-      {p._roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
+      <div className="flex justify-between gap-3" data-testid="tooltip-roic"><span className="text-lime-500">ROIC</span><span className="font-mono">{fmtPctOrNote(roic, roic != null ? null : p._roicNote)}</span></div>
+      {roic != null && p._roicNote ? <div className="text-muted-foreground">{p._roicNote}</div> : null}
+      <EstimateBadge note={roic != null ? p._roicNote : null} />
       {p._roicNote?.includes("Formel:") ? null : <div className="text-muted-foreground">Formel: {ROIC_FORMULA}</div>}
       <div className="flex justify-between gap-3"><span className="text-lime-500">Peer-ROIC</span><span className="font-mono">{fmtPctOrNote(p._peerRoicKnown, p._peerRoicKnown != null ? null : p._peerRoicNote)}</span></div>
       {p._peerRoicKnown != null && p._peerRoicNote ? <div className="text-muted-foreground">{p._peerRoicNote}</div> : null}

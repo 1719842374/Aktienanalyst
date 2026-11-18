@@ -85,3 +85,17 @@
 
 *Erstellt am 18.10.2026 – detaillierte Capex- + Sektor-Map-Spec mit Zahlen und Fakten.  
 Repo: https://github.com/1719842374/Aktienanalyst*
+
+---
+
+## Ampel / Soll-Ist (Nachzug main `01bf6089`, 09.11.2026 Europe/Madrid)
+
+| Teil | Ampel | Beleg auf main |
+|---|---|---|
+| Capex-Layer Slice 1 | 🟡 Soft | #283 Squash `0498b8617b44…` — `GeoMapPanel.tsx` → `GET /api/researcher/geo-map?layer=capex` → `server/researcher-geo-map-route.ts` → `server/researcher-geo-map.ts` → `shared/geo-map.ts` |
+| Sektor-Overlay | 🟡 Soft | Layer `sector` in `GeoMapPanel.tsx` (`LAYERS`, `sectorColor` / `sectorLegendShares`); Acceptance „8–10 Sektoren live + Side-Panel %“ nicht in diesem Docs-Lauf live belegt |
+| Gold-Mining-Layer | 🟡 Soft | Companion-Spec §4 / #411 Squash `a2ac30c8d4feea2ab67e093b826ce2a31f695ead` (Parent `266d3899`) — `layer=gold`, USGS-Bubbles |
+| Miner-Layer | 🟡 Soft | `layer=miner` + `MinerMapPanel` auf main; Länderanteil n/a laut Panel-Kommentar |
+| Spec-Datei | offen | bleibt `Offen_WORK_CAPEX_SECTOR_MAP.md` (kein Rename). Live-Acceptance ≥20 Länder / Top-Firmen-Panel nicht in diesem Lauf gegen Prod geprüft → nicht 🟢 |
+
+Kette (Capex/Sektor): UI `client/src/components/researcher/GeoMapPanel.tsx` + Mount `Researcher.tsx` Tab capex → `apiRequest`/`queryClient` → `GET /api/researcher/geo-map?layer=capex|sector|…` → `server/routes-register.ts` `registerGeoMapRoute` → `server/researcher-geo-map-route.ts` → `server/researcher-geo-map.ts` → `shared/geo-map.ts` / `shared/geo-map-layers.ts`.

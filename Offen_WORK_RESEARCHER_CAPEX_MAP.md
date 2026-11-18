@@ -128,7 +128,7 @@ Repo: https://github.com/1719842374/Aktienanalyst*
 
 Datei bleibt `Offen_`. Kein Umbenennen auf `Fertig_`.
 
-**Implementierung:** `ab70d24b068e030ae6f21aa4402ee6ed9c03bc5c`  
+**Implementierung:** `a2ac30c8d4feea2ab67e093b826ce2a31f695ead` (#411, Squash auf main, Parent `266d3899debcf862242d0437adf02ce1785aa0bc`)  
 **Basis davor:** `c5f300e0b55530aada1f5cd04df013cdb2a61ba3` (Prod-Befund auch auf `a930d2e9`)
 
 ### Soll

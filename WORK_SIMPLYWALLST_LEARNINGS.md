@@ -102,6 +102,20 @@ Von Simply Wall St lohnt sich vor allem die saubere Markdown-Darstellung und die
 
 **Aufwand:** 6–8 h.
 
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #469 @fb5546ea · HEAD main `63a5cbcf`
+
+- Soll §6: Chat-History im Backend (pro User / pro Asset), Liste der bisherigen Chats, „New Chat“.
+- Ist @`fb5546ea9768140679e72185ba7ff50860e506de` (#469, https://github.com/1719842374/Aktienanalyst/pull/469, Squash über `727ca998`): `ChatWidget` → `client/src/hooks/useChatHistory.ts` → GET/PUT/DELETE `/api/chat/history` → `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. Speicher ist die Session im Prozess, gespiegelt in sessionStorage, kein Supabase. DC Post-Merge KLAR. Prod-Smoke: P1 Löschen+Reload PASS, P3 Chat PASS, P2 Zwei-Tab FAIL (Tab B zeigt den gelöschten Titel nach Reload wieder, trotz PUT stale-write; Client-Wiederbelebung). Fix-Lane läuft. Ampel 🟡 TEILWEISE, nicht grün.
+- §6 bleibt OFFEN. Dateiname `WORK_SIMPLYWALLST_LEARNINGS.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+## Soll-Ist-Teil-Fortschritt 18.11.2026 – #489 @`f6b88795` · HEAD main `f6b88795d93bca042676a8f81dfb6dec3f443c9e`
+
+- Soll §6 unverändert: Chat-History im Backend (pro User / pro Asset), Liste der bisherigen Chats, „New Chat“. Der Block #469 darüber bleibt stehen.
+- Ist #489 (https://github.com/1719842374/Aktienanalyst/pull/489) „fix(chat): stale-write verwirft den lokalen Thread (Zwei-Tab)“. Squash `f6b88795d93bca042676a8f81dfb6dec3f443c9e` über `58f6c237`. 2 Dateien +138/−11: `client/src/hooks/useChatHistory.ts`, `script/test-chat-history-delete-race.ts`. Tester-PASS lag auf PR-Head `3cf0988f`. Doublecheck Post-Merge KLAR (beide Blobs identisch mit `3cf0988f`, 0 Deletes, 0 Konflikt-Marker, Server und Schema unberührt).
+- Kette: `ChatWidget` → `client/src/hooks/useChatHistory.ts` `save` → `apiRequest` PUT `/api/chat/history/:id` → bei `200 {rejected:"stale-write"}` fällt genau dieser Thread lokal weg, danach GET des Serverstands. Route unverändert `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. Speicher bleibt die Session im Prozess, gespiegelt in sessionStorage, kein Supabase. Plausibel für den Client-Rollback. §6 ist damit nicht abgeschlossen.
+- Render LIVE `f6b88795` (17:37:51 Europe/Madrid). Ampel 🟡 bis Prod-Smoke. Prod-Smoke #494+#489 auf `f6b88795` durch Tester steht aus.
+- §6 bleibt OFFEN. Kein Spec neu abgeschlossen. Dateiname `WORK_SIMPLYWALLST_LEARNINGS.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
 ---
 
 ## 7. Podcast-Transkript – Economist-Niveau

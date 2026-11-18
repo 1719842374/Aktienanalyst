@@ -14,6 +14,8 @@ import {
   aiscStressRuns,
   attachAiscToChart,
   buildGoldAiscSeries,
+  GOLD_AISC_FORMULA,
+  goldAiscNaReason,
   goldAiscStepAt,
   goldAiscStress,
   quarterPeriodEnd,
@@ -38,7 +40,7 @@ console.log("\nDatei server/data/gold-aisc.json ist belegt");
 {
   const errors = validateGoldAiscFile(file);
   check("Validierung ohne Fehler", errors.length === 0, errors.join("; "));
-  check("30 Werte (NEM/B/AEM × 2024-Q1…2026-Q2)", file.values.length === 30, String(file.values.length));
+  check("112 Werte (Historie 2016-Q3…2023-Q4 plus NEM/B/AEM × 2024-Q1…2026-Q2)", file.values.length === 112, String(file.values.length));
   check("jeder Wert hat https-Quelle + Datum", file.values.every(v => /^https:\/\//.test(v.sourceUrl) && /^\d{4}-\d{2}-\d{2}$/.test(v.sourceDate)));
   check("jede Quelle liegt nach dem Quartalsende", file.values.every(v => v.sourceDate > quarterPeriodEnd(v.quarter)));
   const nem = (q: string) => file.values.find(v => v.company === "NEM" && v.quarter === q)?.aisc;
@@ -56,8 +58,8 @@ console.log("\nLookahead-Kennzeichnung (Quelle nach der Chart-Stufe eingereicht)
   const late = file.values.filter(v => v.sourceDate > addDays(quarterPeriodEnd(v.quarter), LAG));
   const ids = late.map(v => `${v.company} ${v.quarter}`).sort();
   const expected = ["AEM", "B", "NEM"].flatMap(c => ["2024-Q1", "2024-Q2", "2024-Q3", "2024-Q4"].map(q => `${c} ${q}`))
-    .concat(["NEM 2025-Q1", "NEM 2025-Q2", "NEM 2025-Q3"]).sort();
-  check(`15 von 30 Werten nicht point-in-time (alle 2024er + NEM 2025-Q1–Q3), gezählt: ${late.length}`, JSON.stringify(ids) === JSON.stringify(expected), ids.join(","));
+    .concat(["NEM 2025-Q1", "NEM 2025-Q2", "NEM 2025-Q3", "B 2020-Q2", "B 2020-Q4", "B 2022-Q2"]).sort();
+  check(`18 Werte nicht point-in-time (15 aus 2024/2025 plus Barrick 2020-Q2, 2020-Q4, 2022-Q2), gezählt: ${late.length}`, JSON.stringify(ids) === JSON.stringify(expected), ids.join(","));
   check("jeder davon trägt die Lookahead-Note (inkl. „nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung“)",
     late.every(v => (v.note ?? "").startsWith("Lookahead:") && (v.note ?? "").includes("nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung")));
   check("kein point-in-time-Wert trägt eine Lookahead-Note", file.values.filter(v => !late.includes(v)).every(v => !(v.note ?? "").includes("Lookahead")));
@@ -73,13 +75,25 @@ const series = buildGoldAiscSeries(file);
     "2025-Q1": 1468, "2025-Q2": 1449, "2025-Q3": 1405, "2025-Q4": 1467,
     "2026-Q1": 1407, "2026-Q2": 1649,
   };
-  check("10 Quartale", series.quarters.length === 10, String(series.quarters.length));
-  check("keine Lücken im Bereich", series.gaps.length === 0, series.gaps.join(","));
-  for (const q of series.quarters) check(`${q.quarter} Ø ${q.aisc} (n=${q.count})`, q.aisc === expected[q.quarter] && q.count === 3, `erwartet ${expected[q.quarter]}`);
+  check("40 Quartale, 2016-Q3 bis 2026-Q2", series.quarters.length === 40 && series.quarters[0].quarter === "2016-Q3" && series.quarters.at(-1)!.quarter === "2026-Q2", `${series.quarters.length} ${series.quarters[0]?.quarter}…${series.quarters.at(-1)?.quarter}`);
+  const barrickGaps = ["2016-Q4", "2017-Q3", "2017-Q4", "2018-Q4", "2019-Q1", "2019-Q2", "2019-Q4", "2022-Q1"].map(q => `B ${q}`);
+  check("Lücken nur unbelegte Barrick-Quartale, nichts interpoliert", JSON.stringify(series.gaps) === JSON.stringify(barrickGaps), series.gaps.join(","));
+  for (const [quarter, aisc] of Object.entries(expected)) {
+    const q = series.quarters.find(step => step.quarter === quarter);
+    check(`${quarter} Ø ${q?.aisc} (n=${q?.count})`, q?.aisc === aisc && q.count === 3, `erwartet ${aisc}`);
+  }
   const q4 = series.quarters.find(q => q.quarter === "2025-Q4")!;
   check("2025-Q4 periodEnd 2025-12-31, availableFrom 2026-03-01", q4.periodEnd === "2025-12-31" && q4.availableFrom === "2026-03-01", `${q4.periodEnd} ${q4.availableFrom}`);
   check("inScore=false", series.inScore === false);
-  check("vor erster Stufe → null", goldAiscStepAt(series, "2024-05-29") === null);
+  check("2016-Q3 Ø 820 ab 2016-11-29", series.quarters[0].aisc === 820 && series.quarters[0].availableFrom === "2016-11-29" && series.quarters[0].count === 3);
+  check("2016-Q4 ohne Barrick: Ø aus NEM+AEM = 873", series.quarters.find(q => q.quarter === "2016-Q4")!.aisc === 873 && series.quarters.find(q => q.quarter === "2016-Q4")!.count === 2);
+  check("2018-Q1 Ø 883, 2018-Q2 Ø 926", series.quarters.find(q => q.quarter === "2018-Q1")!.aisc === 883 && series.quarters.find(q => q.quarter === "2018-Q2")!.aisc === 926);
+  check("vor erster Stufe → null", goldAiscStepAt(series, "2016-11-28") === null);
+  check("2016-11-29 → 2016-Q3", goldAiscStepAt(series, "2016-11-29")?.quarter === "2016-Q3");
+  check("2018-06-15 → 2018-Q1 (Q2 erst ab 2018-08-29)", goldAiscStepAt(series, "2018-06-15")?.quarter === "2018-Q1" && goldAiscStepAt(series, "2018-06-15")?.aisc === 883);
+  check("2018-09-01 → 2018-Q2", goldAiscStepAt(series, "2018-09-01")?.aisc === 926);
+  check("n/a-Grund vor der ersten Stufe, ohne Interpolation", (goldAiscNaReason(series, "2016-11-28") ?? "").includes("Nicht interpoliert") && goldAiscNaReason(series, "2018-06-15") === null);
+  check("Formel nennt Mittelwert, minCompanies und lagDays", GOLD_AISC_FORMULA.includes("minCompanies") && GOLD_AISC_FORMULA.includes("lagDays") && GOLD_AISC_FORMULA.includes("Keine Interpolation"));
   check("2024-05-30 → 2024-Q1", goldAiscStepAt(series, "2024-05-30")?.quarter === "2024-Q1");
   check("2026-10-18 → 2026-Q2 (Q3 erst ab 2026-11-29)", goldAiscStepAt(series, "2026-10-18")?.quarter === "2026-Q2");
   check("kein Lookahead: 2026-08-28 → 2026-Q1", goldAiscStepAt(series, "2026-08-28")?.quarter === "2026-Q1");
@@ -125,7 +139,7 @@ console.log("\nStresszone AISC × 1,10–1,15");
 console.log("\nServer-Loader + Verdrahtung");
 {
   const loaded = loadGoldAiscSeries();
-  check("loadGoldAiscSeries() liefert Serie", !!loaded && loaded.quarters.length === 10 && loaded.quarters.at(-1)!.aisc === 1649);
+  check("loadGoldAiscSeries() liefert Serie", !!loaded && loaded.quarters.length === 40 && loaded.quarters[0].quarter === "2016-Q3" && loaded.quarters.at(-1)!.aisc === 1649);
   check("ungültige Datei → null", loadGoldAiscSeries(path.join(root, "server/data/does-not-exist.json")) === null);
   const loaderSrc = readFileSync(path.join(root, "server/gold-aisc.ts"), "utf8");
   check("Prod: JSON wird importiert (esbuild bündelt, cwd-unabhängig)", /import bundledGoldAisc from "\.\/data\/gold-aisc\.json"/.test(loaderSrc));
@@ -133,10 +147,11 @@ console.log("\nServer-Loader + Verdrahtung");
   process.chdir(os.tmpdir());
   const fromTmp = loadGoldAiscSeries();
   process.chdir(cwd);
-  check("loadGoldAiscSeries() aus fremdem cwd liefert 10 Quartale", !!fromTmp && fromTmp.quarters.length === 10 && fromTmp.quarters.at(-1)!.aisc === 1649);
+  check("loadGoldAiscSeries() aus fremdem cwd liefert 40 Quartale", !!fromTmp && fromTmp.quarters.length === 40 && fromTmp.quarters.at(-1)!.aisc === 1649);
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
   check("gold-routes liefert aiscLine aus dem Loader", /const aiscSeries = loadGoldAiscSeries\(\)/.test(routes) && /aiscLine: aiscSeries/.test(routes));
-  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(historicalPrices, aiscSeries\)/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
+  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(zonePrices, aiscSeries\)/.test(routes) && /aiscZone = null/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
+  check("Spot-Quelle der Zone steht an der Antwort", /aiscZoneSpotSource/.test(routes));
   check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
   check("getTechnicalScore vorhanden", /function getTechnicalScore\(/.test(routes));
   // Schnitt endet vor der Response-Zeile: die Reihe wird einmal geladen, nachdem GIS und
@@ -147,6 +162,7 @@ console.log("\nServer-Loader + Verdrahtung");
   check("analyze-route.ts kennt AISC nicht", !/gold-aisc|aiscLine/.test(analyze));
   const schema = readFileSync(path.join(root, "shared/gold-schema.ts"), "utf8");
   check("GoldAnalysis.aiscLine typisiert", /aiscLine\?:\s*GoldAiscSeries \| null/.test(schema));
+  check("GoldAnalysis.aiscZoneSpotSource typisiert", /aiscZoneSpotSource\?: string \| null/.test(schema));
   const chart = readFileSync(path.join(root, "client/src/components/gold/GoldPriceChart.tsx"), "utf8");
   check("Chip heißt „Inflations-BE (T10YIE)“", chart.includes('label: "Inflations-BE (T10YIE)"') && !/label: "Breakeven"/.test(chart));
   // AISC ist nicht mehr die gestufte Linie im TA-Chart (Philip 17:48): eigene Sektion 9.

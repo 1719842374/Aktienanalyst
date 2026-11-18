@@ -175,7 +175,8 @@ export default function PortfolioPage() {
       ...Object.keys(historicalPricesByTicker || {}),
     ]);
     const map: Record<string, Array<{ date: string; close: number }> | undefined> = {};
-    for (const t of keys) {
+    // Beleg: keys ist das Set der Ticker aus den beiden Kurs-Maps. Die Schleife bleibt über das Set.
+    for (const t of keys as unknown as string[]) {
       const long = historicalPricesByTickerLong[t];
       map[t] = long && long.length ? long : historicalPricesByTicker[t];
     }

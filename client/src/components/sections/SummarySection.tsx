@@ -209,7 +209,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             Monte Carlo (historisch-empirisch, μ aus Kursrenditen) impliziert{' '}
             <span className={mcExpectedReturn >= 0 ? 'text-emerald-400' : 'text-red-400'}>{mcExpectedReturn >= 0 ? '+' : ''}{mcExpectedReturn.toFixed(1)}%</span>,
             {' '}DCF (fundamental) impliziert{' '}
-            <span className={dcfUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside >= 0 ? '+' : ''}{dcfUpside.toFixed(1)}%</span>
+            {/* Beleg: divergence ist null genau dann, wenn dcfUpside null ist; darüber ist bei null schon zurückgekehrt. */}
+            <span className={dcfUpside! >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside! >= 0 ? '+' : ''}{dcfUpside!.toFixed(1)}%</span>
             {' '}— Differenz {Math.abs(divergence).toFixed(0)} Pp.
             Beide Methoden messen unterschiedliche Dinge: Monte Carlo extrapoliert historischen Kursimpuls,
             DCF bewertet fundamentale Ertragskraft. Große Divergenz signalisiert: entweder Momentum-überschuss oder DCF-Annahmen zu konservativ.
@@ -236,7 +237,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <SummaryRow label="Forward P/E" value={yahooValueMissing(data, data.forwardPE) ? "n/a" : formatNumber(data.forwardPE as number, 1)} note={`Sector: ${formatNumber(data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE, 1)}`} />
             <SummaryRow label="PEG Ratio" value={formatNumber(data.pegRatio, 2)} note={data.pegRatio < 1 ? "Undervalued" : data.pegRatio < 2 ? "Fair" : "Premium"} />
             <SummaryRow label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} note={`Sector: ${formatNumber(data.sectorAvgEVEBITDA, 1)}`} />
-            <SummaryRow label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
+            <SummaryRow label="Beta" value={data.betaLive == null ? "n/a" : formatNumber(data.betaLive)} note="aktuell · 1J vs. SPY" />
             <SummaryRow label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
             <SummaryRow label="FCF Haircut" value={`${haircut}%`} note={haircut > 0 ? `Gov. exposure: ${formatPercentNoSign(data.governmentExposure)}` : "N/A"} />
             <SummaryRow label="Moat" value={data.moatRating} note={data.moatRating === "Wide" ? "Strong" : data.moatRating === "Narrow" ? "Moderate" : "Weak"} />

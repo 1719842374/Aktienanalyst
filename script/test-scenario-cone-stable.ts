@@ -18,7 +18,11 @@ const origWarn = console.warn;
 console.error = () => {};
 console.warn = () => {};
 
-const React = (await import("react")).default;
+const reactNs = await import("react");
+const React = (reactNs as { default?: typeof reactNs }).default ?? reactNs;
+// tsx lässt JSX von TechnicalChart als React.createElement stehen. Ohne dieses
+// Global bricht der Mount mit „React is not defined“ ab, sobald die Komponente läuft.
+(globalThis as { React?: typeof React }).React = React;
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { TechnicalChart } = await import("../client/src/components/sections/TechnicalChart");
@@ -105,6 +109,10 @@ const status = findByTestId(host, "scenario-cone-status");
 assert.ok(status, "Statuszeile");
 assert.match(status!.attributes["data-formula"] ?? "", /σ_η/);
 assert.match(status!.textContent ?? "", /50%-Band und 80%-Band/);
+assert.match(status!.textContent ?? "", /80 %-Intervall \(P10–P90\)/);
+assert.match(status!.textContent ?? "", /50 %-Intervall \(P25–P75\)/);
+assert.match(status!.textContent ?? "", /Prognose P50/);
+assert.match(status!.textContent ?? "", /Prognosestart/);
 assert.match(status!.textContent ?? "", /eigene Kurshistorie/);
 
 await act(async () => { reactPropsOf(findByTestId(host, "button-earnings-yield"))!.onClick(); });

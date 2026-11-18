@@ -25,14 +25,14 @@ export function SegmentGrowthReadout({
   const calculated = calculatedGrowth(fact, annotation);
   const value = typeof fact === "number" && Number.isFinite(fact) ? fact : calculated?.growth ?? null;
   if (value == null) {
-    if (annotation?.basis === "n/a" && annotation.reason) {
-      return (
-        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70" title={annotation.reason}>
-          n/a
-        </span>
-      );
-    }
-    return null;
+    const reason = annotation?.basis === "n/a" && annotation.reason
+      ? annotation.reason
+      : "n/a — keine Wachstumsangabe";
+    return (
+      <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70" title={reason} data-testid="segment-growth-missing">
+        n/a
+      </span>
+    );
   }
   const positive = value >= 0;
   return (

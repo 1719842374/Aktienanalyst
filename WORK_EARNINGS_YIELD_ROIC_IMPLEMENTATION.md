@@ -93,3 +93,16 @@ app.get("/api/chart/roic/:symbol", async (req, res) => {
 
 **Kurz:**  
 Endpoints für Earnings Yield und ROIC, Peer-Logik analog Sektion 9, Dual-Axis im bestehenden Chart. Aktuell nichts davon implementiert.
+
+---
+
+## Soll-Ist 2026-11-02 — Peer-Dividende und Tooltip des Haupttitels
+
+Dieselbe Tabelle wie in `WORK_EARNINGS_YIELD_ROIC_PLOT.md`. Die Skizze oben ist der Plan vom 26.10. Die laufende Peer-Route ist `GET /api/chart/peer-price/:symbol?from&to`, nicht `GET /api/chart/peer/:symbol`.
+
+| | Ist vorher | Soll | Stand |
+| --- | --- | --- | --- |
+| Kette Haupttitel | UI-Tooltip las `_ey` / `_roic`. Die Queries `useEarningsYield` / `useRoicSeries` liefen nur bei Chip an. Bei Peer an und Chip aus war die Note null → `n/a — kein Wert`. Der Peer nutzte `useRoicSeries(peerQuery, peerOn)` und kam an. | UI → Hook → `GET /api/chart/earnings-yield/:symbol` und `GET /api/chart/roic/:symbol` → `loadEarningsYield` / `loadRoicSeries` → Join auf die Kurstage | `fundActive = showEy \|\| showRoic \|\| peerOn`. Tooltip liest `earningsYieldKnown` / `roicKnown`. Ohne FMP-Key beginnt das Yahoo-Jahres-EPS von MSFT am 30.06.2023 (9.68). Am 04.05.2023 bleibt der konkrete Warmup-Grund. |
+| Peer-Dividende | nur die eigene Linie über `useDividendHistory(data.ticker, showDividend)` → `GET /api/dividends/:ticker` | zweite Linie, Formel `Dividende TTM / Kurs`, Quelle FMP zuerst, Yahoo als Fallback. Das gilt auch für `.DE`, wie die Dividendenroute auf main. | `useDividendHistory(peerQuery, showDividend && peerOn)` plus `usePeerPriceBars`, `peerDividendYieldOnDates`. Kein Yahoo-zuerst. |
+| .DE EY/ROIC | Yahoo zuerst, FMP ergänzt | unverändert, nur Earnings Yield und ROIC | deutsche Ticker bleiben in `loadGermanEarningsYield` / `loadGermanRoic`. Die Peer-Dividende nutzt diese Reihenfolge nicht. |
+| Pins / Score / tsc | VOW3 4.735718, SAP 5.174758, MSFT 4.058138, buildBias 5.6381, tsc 101 | unverändert | keine Score-Datei, kein `analyze-route.ts`, kein `researcher.ts`, kein `shared/schema.ts` |

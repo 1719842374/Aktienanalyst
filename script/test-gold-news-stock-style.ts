@@ -46,7 +46,7 @@ const empty = renderToStaticMarkup(React.createElement(GoldNewsCard, { data: {} 
 check("ohne Daten: Flag N/A, keine Meldungen", empty.includes("Flag N/A") && empty.includes("Keine Gold-Meldungen"));
 
 const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
-const iPrice = dash.indexOf("<GoldPriceSection data={data} />"), iNews = dash.indexOf("<GoldNewsCard data={data} />"), iChart = dash.indexOf("<GoldPriceChart data={data} />");
+const iPrice = dash.indexOf("<GoldPriceSection data={data} />"), iNews = dash.indexOf("<GoldNewsCard data={data} />"), iChart = dash.indexOf("<GoldPriceChart data={data}");
 check("Dashboard: News an zweiter Stelle", iPrice > 0 && iPrice < iNews && iNews < iChart && dash.split("<GoldNewsCard").length === 2);
 const s2 = readFileSync(new URL("../client/src/components/sections/Section2.tsx", import.meta.url), "utf8");
 check("Section2 nutzt dieselbe SentimentNewsList", s2.includes('from "../news/SentimentNewsList"') && s2.includes("<SentimentNewsList items={data.newsItems} />"));

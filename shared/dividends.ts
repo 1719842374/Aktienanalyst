@@ -236,6 +236,64 @@ export function dividendOverlaySeries(
   return { points, paymentsPerYear: f, specialExDates: Array.from(specials), correctedBars: corrected };
 }
 
+/** Dieselbe Rechnung wie die eigene Linie: Σ Dividenden 12M / Kurs. */
+export const DIVIDEND_YIELD_FORMULA = "Dividende TTM / Kurs";
+/** Reihenfolge von GET /api/dividends. .DE-EY/ROIC bleibt davon getrennt (Yahoo zuerst). */
+export const DIVIDEND_YIELD_SOURCE_POLICY = "FMP zuerst, Yahoo als Fallback";
+
+export interface PeerDividendYieldPoint {
+  date: string;
+  yieldPct: number | null;
+  ttmDividend: number | null;
+  note: string | null;
+}
+
+export function dividendSourceCaption(source: DividendSource | null | undefined): string {
+  if (source === "fmp") return `FMP. ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+  if (source === "yahoo") return `Yahoo (Fallback). ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+  return `n/a — keine Dividendenquelle. ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+}
+
+/**
+ * Peer-Dividendenrendite auf den Kurstagen des Haupttitels.
+ * Der Kurs ist der letzte Peer-Schluss bis zu diesem Tag, die Dividende die TTM des Peers.
+ * Nichts wird zwischen den Peer-Tagen interpoliert.
+ */
+export function peerDividendYieldOnDates(
+  subjectDates: string[],
+  peerBars: Array<{ date: string; close: number }>,
+  events: DividendEvent[],
+  seriesNote: string | null = null,
+): PeerDividendYieldPoint[] {
+  const dates = subjectDates.filter(d => ISO.test(d)).slice().sort((a, b) => a.localeCompare(b));
+  const emptyNote = seriesNote?.trim() ? seriesNote.trim() : "n/a — keine Dividendenhistorie für den Peer";
+  if (events.length === 0) {
+    return dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: emptyNote }));
+  }
+  const bars = peerBars
+    .filter(b => ISO.test(b.date) && Number.isFinite(b.close) && b.close > 0)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (bars.length === 0) {
+    const note = seriesNote?.trim() ? seriesNote.trim() : "n/a — Peer-Kurs ohne gültige Schlüsse";
+    return dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note }));
+  }
+  const overlay = dividendOverlaySeries(bars, events).points;
+  let cursor = 0;
+  let last: DividendOverlayPoint | null = null;
+  return dates.map(date => {
+    while (cursor < overlay.length && overlay[cursor].date <= date) {
+      last = overlay[cursor];
+      cursor += 1;
+    }
+    if (!last) return { date, yieldPct: null, ttmDividend: null, note: "n/a — noch kein Peer-Kurs bis zu diesem Tag" };
+    if (last.yieldPct == null || !Number.isFinite(last.yieldPct)) {
+      return { date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividende deckt 12 Monate vor diesem Tag noch nicht" };
+    }
+    return { date, yieldPct: last.yieldPct, ttmDividend: last.ttmDividend ?? null, note: null };
+  });
+}
+
 // ─── Section-1 KPI tile: same value as the last point of the price-chart overlay ───
 
 export type DividendKpi =

@@ -165,10 +165,38 @@ export interface GBMMonteCarloResult {
   horizonDays: number;
 }
 
-function boxMuller(): number {
+/**
+ * Fester Startwert der GBM-Ziehung in Sektion 18 und am Szenario-Kegel.
+ * Jeder Aufruf beginnt wieder hier, damit Reload und zweiter Lauf dieselbe
+ * Endkursreihe und dieselbe PoS liefern. Kein Math.random.
+ */
+export const MONTE_CARLO_SEED = 0xC0FFEE;
+
+/** Konstanten von mulberry32. Der Generator liest nur diese Namen. */
+const MULBERRY32 = {
+  increment: 0x6D2B79F5,
+  xorShiftA: 15,
+  xorShiftB: 7,
+  xorShiftC: 14,
+  mix: 61,
+  unit: 4294967296,
+} as const;
+
+/** Eine Ziehung. `seed` weglassen = MONTE_CARLO_SEED. Kein Zustand zwischen Aufrufen. */
+export function monteCarloRandom(seed: number = MONTE_CARLO_SEED): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + MULBERRY32.increment) | 0;
+    let mixed = Math.imul(state ^ (state >>> MULBERRY32.xorShiftA), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> MULBERRY32.xorShiftB), MULBERRY32.mix | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> MULBERRY32.xorShiftC)) >>> 0) / MULBERRY32.unit;
+  };
+}
+
+function boxMuller(rng: () => number): number {
   let u1 = 0, u2 = 0;
-  while (u1 === 0) u1 = Math.random();
-  while (u2 === 0) u2 = Math.random();
+  while (u1 === 0) u1 = rng();
+  while (u2 === 0) u2 = rng();
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
@@ -177,6 +205,7 @@ export function gbmMonteCarlo(
   analystPTMedian: number
 ): GBMMonteCarloResult {
   const { currentPrice, mu, sigma, iterations, tradingDays } = params;
+  const rng = monteCarloRandom(MONTE_CARLO_SEED);
   const dt = 1 / 252;
   const sqrtDt = Math.sqrt(dt);
   const drift = (mu - 0.5 * sigma * sigma) * dt;
@@ -194,7 +223,7 @@ export function gbmMonteCarlo(
     const path: number[] = isSample ? [S] : [];
 
     for (let t = 0; t < tradingDays; t++) {
-      const Z = boxMuller();
+      const Z = boxMuller(rng);
       S = S * Math.exp(drift + sigma * sqrtDt * Z);
       if (S > peak) peak = S;
       const dd = (peak - S) / peak;
