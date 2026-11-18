@@ -94,6 +94,8 @@ export interface FxObservation {
 /**
  * Listing-FX. `rate` ist der Kurs, der schon in der Chart-Historie steckt.
  * `history` ersetzt ihn je Kerze. Ohne Tageskurs kein fester Ersatzkurs.
+ * `rate` <= 0: der Kurs liegt schon in `to` (USD-ADR). Nur die Kennzahl
+ * wird mit dem Tageskurs nach `to` gerechnet. Ein fehlender Kurs bleibt n/a, nie Faktor 1.
  */
 export interface PriceFx {
   from: string;
@@ -346,6 +348,41 @@ function ccyCode(value: string | null | undefined): string {
   return value?.trim().toUpperCase() ?? "";
 }
 
+/**
+ * FX für den Chart. Umgerechnetes Listing behält den Kurs, der schon in den Kerzen steckt.
+ * Sonst, wenn die Kennzahl nicht in der Kurswährung ist, nur die Kennzahl mit dem Tageskurs.
+ * Ohne Tageskurs null. Faktor 1 ist kein Kurs.
+ */
+export function priceFxForOverlay(args: {
+  priceCurrency?: string | null;
+  statementCurrency?: string | null;
+  fxHistory?: FxObservation[] | null;
+  listing?: {
+    converted?: boolean;
+    reportedCurrency?: string | null;
+    tradingCurrency?: string | null;
+    fxRate?: number | null;
+  } | null;
+}): PriceFx | null {
+  const history = (args.fxHistory ?? []).filter(row => row && row.date && row.rate > 0 && row.rate !== 1);
+  if (history.length === 0) return null;
+  const listing = args.listing;
+  const reported = ccyCode(listing?.reportedCurrency);
+  const trading = ccyCode(listing?.tradingCurrency);
+  if (listing?.converted && reported && trading && typeof listing.fxRate === "number" && listing.fxRate > 0 && listing.fxRate !== 1) {
+    return {
+      from: String(listing.reportedCurrency).trim(),
+      to: String(listing.tradingCurrency).trim(),
+      rate: listing.fxRate,
+      history,
+    };
+  }
+  const eps = ccyCode(args.statementCurrency);
+  const price = ccyCode(args.priceCurrency);
+  if (eps && price && eps !== price) return { from: eps, to: price, rate: 0, history };
+  return null;
+}
+
 /** Letzter Wechselkurs mit Datum <= Stichtag. Kein Auffüllen nach vorn. */
 export function fxObservationAt(history: FxObservation[] | null | undefined, asOf: string): FxObservation | null {
   let hit: FxObservation | null = null;
@@ -375,17 +412,23 @@ export function earningsYieldFromTtm(
     const to = ccyCode(fx?.to);
     const day = fx?.history ? fxObservationAt(fx.history, fx.asOf ?? "") : null;
     if (day && from === epsCode && to === priceCode) {
-      const scale = fx && fx.rate > 0 ? fx.rate : day.rate;
+      const listingScale = !!(fx && fx.rate > 0);
+      if (!listingScale && day.rate === 1) {
+        return { value: null, note: `n/a — FX ${from}${to} fehlt, kein Faktor 1` };
+      }
+      const scale = listingScale ? fx.rate : day.rate;
       eps = ttmEps * day.rate;
       price = close / scale * day.rate;
-      fxNote = `${fx?.from ?? ""}${fx?.to ?? ""} ${day.rate} am ${day.date}, Quelle ${day.source}`;
-    } else if (!fx?.history && fx && from === epsCode && to === priceCode && fx.rate > 0) {
+      fxNote = listingScale
+        ? `${fx?.from ?? ""}${fx?.to ?? ""} ${day.rate} am ${day.date}, Quelle ${day.source}`
+        : `umgerechnet ${epsCurrency}→${priceCurrency} (${day.rate} am ${day.date}), Quelle ${day.source}`;
+    } else if (!fx?.history && fx && from === epsCode && to === priceCode && fx.rate > 0 && fx.rate !== 1) {
       eps = ttmEps * fx.rate;
       fxNote = `Fallback: EPS ${epsCurrency} × ${fx.from}${fx.to} ${fx.rate} auf Kurswährung ${priceCurrency}`;
     } else if (fx?.history) {
-      return { value: null, note: `n/a — kein ${fx.from}${fx.to} bis ${fx.asOf ?? "zum Stichtag"}` };
+      return { value: null, note: `n/a — kein ${fx.from}${fx.to} bis ${fx.asOf ?? "zum Stichtag"}, kein Faktor 1` };
     } else {
-      return { value: null, note: `n/a — EPS in ${epsCurrency}, Kurs in ${priceCurrency}` };
+      return { value: null, note: `n/a — EPS in ${epsCurrency}, Kurs in ${priceCurrency}; FX ${epsCode}${priceCode} fehlt, kein Faktor 1` };
     }
   }
   const value = (eps / price) * 100;
