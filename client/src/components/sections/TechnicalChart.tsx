@@ -42,7 +42,7 @@ import {
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, priceFxForOverlay, type FundJoinPoint } from "@shared/earnings-yield-roic";
 import {
   paintPhaseRows, TA_PHASE_BADGE, TA_PHASE_STROKE,
   type TaPhase,
@@ -617,20 +617,29 @@ export function TechnicalChart({
     if (!fundActive) return null;
     const eyLoaded = !!eyQuery.data;
     const eyEmpty = eyLoaded && eyQuery.data!.quarters.length === 0 && eyQuery.data!.ttmPrints.length === 0 && eyQuery.data!.annualEps.length === 0;
+    const statementCurrency = eyQuery.data?.quarters.find(row => row.currency)?.currency
+      ?? eyQuery.data?.ttmPrints.find(row => row.currency)?.currency
+      ?? eyQuery.data?.annualEps.find(row => row.currency)?.currency
+      ?? null;
     const joined = joinFundamentalsOntoPrices(aBuilt.points.map(p => p.date), {
       earningsYield: null,
       epsQuarters: fundActive ? (eyQuery.data?.quarters ?? []) : null,
       ttmPrints: fundActive ? (eyQuery.data?.ttmPrints ?? []) : null,
       annualEps: fundActive ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
-      priceFx: data.currencyInfo?.converted && eyQuery.data?.fxHistory && eyQuery.data.fxHistory.length > 0
-        ? {
-            from: data.currencyInfo.reportedCurrency,
-            to: data.currencyInfo.tradingCurrency,
-            rate: data.currencyInfo.fxRate,
-            history: eyQuery.data.fxHistory,
-          }
-        : null,
+      priceFx: priceFxForOverlay({
+        priceCurrency: data.currency ?? null,
+        statementCurrency,
+        fxHistory: eyQuery.data?.fxHistory,
+        listing: data.currencyInfo
+          ? {
+              converted: data.currencyInfo.converted,
+              reportedCurrency: data.currencyInfo.reportedCurrency,
+              tradingCurrency: data.currencyInfo.tradingCurrency,
+              fxRate: data.currencyInfo.fxRate,
+            }
+          : null,
+      }),
       roic: fundActive ? (roicQuery.data?.points ?? null) : null,
       roicSeriesNote: !fundActive
         ? null
