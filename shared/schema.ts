@@ -424,7 +424,7 @@ export interface CatalystReasoning {
 // === Revenue Segments ===
 export interface RevenueSegment {
   name: string;           // Segment name (e.g. "AWS", "Advertising", "Online Stores")
-  revenue: number;        // Revenue in reporting currency
+  revenue: number;        // Umsatz. In der Analyse USD, sobald ein FX-Kurs da ist; sonst Berichtswährung mit fxNaReason.
   percentage: number;     // Percentage of total revenue
   growth?: number | null; // YoY growth % — null = keine Vorjahreszahl berichtet (NIEMALS 0 als Platzhalter)
   prevRevenue?: number;   // Umsatz der Vergleichsperiode (Nachvollziehbarkeit der YoY-Rate)
@@ -432,6 +432,11 @@ export interface RevenueSegment {
   // show "Quelle: FMP" vs. "Quelle: 10-K FY2025" instead of a silent number.
   // Optional + additive — never renames/removes the fields above.
   source?: "fmp" | "sec" | "curated"; // where this row's numbers came from
+  /** Nach USD-Umrechnung "USD". Sonst die Berichtswährung, wenn der Kurs fehlt. */
+  reportedCurrency?: string;
+  fxFrom?: string;
+  fxRate?: number;
+  fxNaReason?: string;
   fiscalYear?: string;     // e.g. "FY2025" or "2025-06-30" — reporting period label
   // Management-Score-Fix (05.08.2026): Umsatzanteil (%) dieses Segments in der
   // VORPERIODE — noetig fuer ΔSegment-Anteil (S_Segment.S_Share). undefined,

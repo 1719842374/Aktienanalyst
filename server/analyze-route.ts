@@ -1008,7 +1008,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       };
       let revenueSegments: RevenueSegment[] = Array.isArray(segments)
         ? segments
-            .filter((s: any) => s && typeof s === "object" && typeof s.name === "string" && Number(s.revenue) > 0)
+            .filter((s: any) => s && typeof s === "object" && typeof s.name === "string" && Number(s.revenue) > 0 && !s.fxNaReason)
             .map((s: any) => ({
               name: _prettifyProduct(String(s.name)),
               revenue: Number(s.revenue),
@@ -1033,6 +1033,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               ...(typeof s.date === "string" && /^\d{4}/.test(s.date)
                 ? { fiscalYear: s.date.slice(0, 4) }
                 : {}),
+              ...(typeof s.reportedCurrency === "string" ? { reportedCurrency: s.reportedCurrency } : {}),
+              ...(typeof s.fxFrom === "string" ? { fxFrom: s.fxFrom } : {}),
+              ...(typeof s.fxRate === "number" ? { fxRate: s.fxRate } : {}),
             }))
             .slice(0, 8)
         : [];
@@ -1952,7 +1955,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Geographic duplicates are removed before the response:
       // name + revenue (±1%), NON_GEO_PATTERN, then alias keys at the same
       // revenue band (AWS / Amazon Web Services, Azure, GCP).
-      const rawGeo = Array.isArray(geoSegments) ? geoSegments : [];
+      const rawGeo = (Array.isArray(geoSegments) ? geoSegments : []).filter((s: any) => !s?.fxNaReason);
       const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
       // Name + revenue (±1%) and NON_GEO_PATTERN run before the UI.
       // Alias pairs (AWS / Amazon Web Services, Azure, GCP) still drop, but
