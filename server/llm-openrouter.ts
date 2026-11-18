@@ -13,6 +13,7 @@
 // Model Strategy: Claude 3.5 Haiku only (cheap + fast + good JSON; this is what
 // production billing actually shows being used — see MODEL_FALLBACK_CHAIN).
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import OpenAI from "openai";
 import type { Catalyst, Risk, RiskExplanation, PorterSubScore } from "../shared/schema";
 import { porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
@@ -55,6 +56,34 @@ const MODEL_FALLBACK_CHAIN = [
   "google/gemma-3-27b-it",
 ];
 
+type OpenRouterHttpBudget = { remaining: number };
+
+const openRouterHttpBudget = new AsyncLocalStorage<OpenRouterHttpBudget>();
+
+/**
+ * Zählt jeden HTTP-Versuch von callWithFallback, auch den nächsten Modell-Fallback.
+ * Ohne dieses Budget bleibt die Kette für alle bestehenden Aufrufer unverändert.
+ */
+export function withOpenRouterHttpBudget<T>(maxRequests: number, run: () => Promise<T>): Promise<T> {
+  return openRouterHttpBudget.run({ remaining: maxRequests }, run);
+}
+
+export function openRouterHttpBudgetRemaining(): number | null {
+  const budget = openRouterHttpBudget.getStore();
+  return budget ? budget.remaining : null;
+}
+
+function takeOpenRouterHttpAttempt(): void {
+  const budget = openRouterHttpBudget.getStore();
+  if (!budget) return;
+  if (budget.remaining <= 0) {
+    const error = new Error("openrouter-budget") as Error & { budgetExhausted?: boolean };
+    error.budgetExhausted = true;
+    throw error;
+  }
+  budget.remaining -= 1;
+}
+
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
@@ -67,14 +96,20 @@ async function callWithFallback(
     const variants = opts?.online && !model.endsWith(":online") ? [`${model}:online`, model] : [model];
     for (const modelId of variants) {
       try {
+        takeOpenRouterHttpAttempt();
+        const budgetActive = openRouterHttpBudget.getStore() != null;
+        const requestOptions = opts?.signal || budgetActive
+          ? { signal: opts?.signal, maxRetries: budgetActive ? 0 : undefined }
+          : undefined;
         const completion = await (client.chat.completions.create as any)({
           ...params,
           model: modelId,
-        }, opts?.signal ? { signal: opts.signal } : undefined);
+        }, requestOptions);
         const text = completion.choices?.[0]?.message?.content?.trim() || '';
         if (!text) { lastErr = new Error('Empty response'); continue; }
         return { text, modelUsed: modelId, usage: completion.usage };
       } catch (err: any) {
+        if (err?.budgetExhausted) throw err;
         const status = err?.status || err?.response?.status;
         const onlineMiss = modelId.endsWith(":online") && (status === 400 || status === 404 || status === 422);
         // 404 = Modell von OpenRouter entfernt/umbenannt (z.B. claude-3.5-haiku

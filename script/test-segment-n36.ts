@@ -14,7 +14,7 @@ import { SegmentEstimateBlock } from "../client/src/components/sections/Section2
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
-import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
+import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, segmentGapInflightForTests } from "../server/segment-gap-route";
 import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
 delete process.env.OPENROUTER_API_KEY;
@@ -1606,6 +1606,93 @@ try {
   );
 } finally {
   pairServer.close();
+}
+
+resetSegmentGapCacheForTests();
+let inflightRuns = 0;
+await segmentGapInflightForTests("reject-probe", async () => {
+  inflightRuns += 1;
+  throw new Error("erster Fehlschlag");
+}).catch(() => undefined);
+await segmentGapInflightForTests("reject-probe", async () => {
+  inflightRuns += 1;
+  throw new Error("zweiter Start");
+}).catch(() => undefined);
+gap(
+  "inflight-reject-starts-fresh",
+  inflightRuns === 2,
+  `runs=${inflightRuns}`,
+);
+
+resetSegmentGapCacheForTests();
+const budgetFetch = globalThis.fetch;
+const previousKey = process.env.OPENROUTER_API_KEY;
+const previousModel = process.env.OPENROUTER_MODEL;
+delete process.env.OPENROUTER_MODEL;
+process.env.OPENROUTER_API_KEY = "budget-test-not-a-real-key";
+const savedWindow = (globalThis as { window?: unknown }).window;
+delete (globalThis as { window?: unknown }).window;
+let openRouterHttp = 0;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (url.includes("openrouter.ai")) {
+    openRouterHttp += 1;
+    return new Response(JSON.stringify({ error: { message: "rate" } }), {
+      status: 429,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (url.includes("company_tickers.json")) {
+    return Response.json({ "0": { cik_str: 1, ticker: "EXS", title: "Example AG" } });
+  }
+  if (url.includes("/submissions/")) {
+    return Response.json({
+      filings: {
+        recent: {
+          form: ["10-K"],
+          filingDate: ["2025-02-01"],
+          accessionNumber: ["0000000001-25-000001"],
+          primaryDocument: ["example.htm"],
+        },
+      },
+    });
+  }
+  if (url.includes("sec.gov")) {
+    const text = `${"reportable segment revenue by segment. ".repeat(80)}Total revenue 100`;
+    return new Response(`<html><body>${text}</body></html>`, { status: 200 });
+  }
+  return budgetFetch(input, init);
+}) as typeof fetch;
+const budgetApp = express();
+budgetApp.use(express.json());
+registerSegmentGapRoute(budgetApp, {
+  available: () => true,
+  productRows: async () => [],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+});
+const budgetServer = budgetApp.listen(0);
+const budgetPort = (budgetServer.address() as AddressInfo).port;
+try {
+  const worst = await postGap(budgetPort, "EXS");
+  gap(
+    "http-budget-counts-fallback-and-sec",
+    worst.status === 200
+      && openRouterHttp === SEGMENT_GAP_MAX_CALLS
+      && openRouterHttp <= 4
+      && worst.json.cached === false
+      && /nicht abgefragt \(Call-Limit\)/.test(worst.json.reason ?? "")
+      && (worst.json.queried ?? 0) < (worst.json.total ?? 0),
+    `status=${worst.status} http=${openRouterHttp} error=${worst.json.error ?? ""} queried=${worst.json.queried} total=${worst.json.total} reason=${worst.json.reason ?? ""}`,
+  );
+} finally {
+  budgetServer.close();
+  globalThis.fetch = budgetFetch;
+  (globalThis as { window?: unknown }).window = savedWindow;
+  if (previousKey == null) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = previousKey;
+  if (previousModel == null) delete process.env.OPENROUTER_MODEL;
+  else process.env.OPENROUTER_MODEL = previousModel;
 }
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");

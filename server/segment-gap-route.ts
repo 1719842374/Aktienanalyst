@@ -29,7 +29,7 @@ import {
 } from "../shared/segment-gap";
 import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import { convertSegmentRowsToUsd, fmpSegmentationRows, isFmpAvailable, type FmpSegmentRow } from "./fmp";
-import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { callLLMJson, isLLMAvailable, openRouterHttpBudgetRemaining, withOpenRouterHttpBudget } from "./llm-openrouter";
 import { fetchSecBusinessSegments } from "./sec-segments";
 import {
   loadOutlineIdentity,
@@ -48,8 +48,9 @@ const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
 export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p10";
 /**
- * Maximale KI-Calls pro Anfrage. Ressourcengrenze, keine Obergrenze für Werte.
- * Gemessen am Kernbeispiel auf diesem Head: 3 Produkt-Eltern plus ein Regionen-Call.
+ * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
+ * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
+ * Höchstens so viele Eltern-Aufgaben, weil jeder Start mindestens einen Request kostet.
  */
 export const SEGMENT_GAP_MAX_CALLS = 4;
 const gapCache = new Map<string, { at: number; ttl: number; body: { items: SegmentGapItem[]; reason: string | null } }>();
@@ -612,6 +613,10 @@ function unreachableNote(label: string, status: number | null): string {
   return `n/a — KI nicht erreichbar${code}: ${label}`;
 }
 
+export function segmentGapInflightForTests(key: string, run: () => Promise<ParentAttempt>): Promise<ParentAttempt> {
+  return shareParentAttempt(key, run);
+}
+
 function shareParentAttempt(key: string, run: () => Promise<ParentAttempt>): Promise<ParentAttempt> {
   const pending = gapInflight.get(key);
   if (pending) return pending;
@@ -629,6 +634,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
     const now = deps.now?.() ?? Date.now();
     const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
     try {
+      await withOpenRouterHttpBudget(SEGMENT_GAP_MAX_CALLS, async () => {
       const identity = deps.identity ? await deps.identity(ticker) : await loadOutlineIdentity(ticker);
       if (!identity?.companyName) return res.json({ items: [], reason: OUTLINE_NO_IDENTITY });
       const available = deps.available ?? isFmpAvailable;
@@ -750,6 +756,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       let transportFails = 0;
       let successes = 0;
       let fromCacheCount = 0;
+      let budgetSkips = 0;
       for (const task of queriedTasks) {
         const key = parentCacheKey(ticker, task);
         const stored = freshParent(key, now);
@@ -763,6 +770,11 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
             seen.add(id);
             merged.push(item);
           }
+          continue;
+        }
+        if (openRouterHttpBudgetRemaining() === 0) {
+          notes.push(`n/a — nicht abgefragt (Call-Limit): ${task.label}`);
+          budgetSkips += 1;
           continue;
         }
         const attempt = await shareParentAttempt(key, async () => {
@@ -844,8 +856,9 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
           total: tasks.length,
         });
       }
-      const cached = fromCacheCount === queriedTasks.length && skipped.length === 0 && transportFails === 0;
-      return res.json(reply(merged, notes, queriedTasks.length, tasks.length, cached));
+      const cached = budgetSkips === 0 && fromCacheCount === queriedTasks.length && skipped.length === 0 && transportFails === 0;
+      return res.json(reply(merged, notes, queriedTasks.length - budgetSkips, tasks.length, cached));
+      });
     } catch {
       return res.status(502).json({ error: "n/a — fehlende Segmente nicht erreichbar" });
     }
