@@ -255,7 +255,7 @@ gap(
   prompt.slice(0, 420),
 );
   const names = (json.items ?? []).map((item) => `${item.parent}/${item.name}`);
-  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct === 8 && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
+  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct == null && /nicht belegbar: FSD/.test(json.reason ?? "") && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
   gap("drops-echo-and-unknown-parent", !names.includes("Automotive/Automotive") && !names.includes("Automotive/United States") && !names.some((name) => name.startsWith("Software/")), names.join(",") || json.reason || "");
   const third = await fetch(`http://127.0.0.1:${port}/api/segment-gaps`, {
     method: "POST",
@@ -478,22 +478,26 @@ try {
 
 const loadedGapRoute = await import("../server/segment-gap-route");
 const segmentGapCacheKey = (loadedGapRoute as {
-  segmentGapCacheKey?: (ticker: string, products: readonly string[], regions: readonly string[]) => string;
+  segmentGapCacheKey?: (ticker: string, products: readonly string[], regions: readonly string[], revenues?: readonly (number | null)[]) => string;
 }).segmentGapCacheKey;
 const keyA = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"], ["North"]) : "";
 const keyB = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Beta"], ["North"]) : "";
 const keyAgain = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"], ["North"]) : "";
 const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) : "";
+const keyRevenue = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"], ["North"], [100]) : "";
+const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"], ["North"], [125]) : "";
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p7")
+    && keyA.includes("n36-gap-p8")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
     && keyA !== keyRegion
+    && keyA !== keyRevenue
+    && keyRevenue !== keyRevenueNext
     && !keyA.includes("Alpha"),
-  `a=${keyA} b=${keyB} region=${keyRegion}`,
+  `a=${keyA} b=${keyB} region=${keyRegion} rev=${keyRevenue}`,
 );
 
 resetSegmentGapCacheForTests();
@@ -974,8 +978,8 @@ try {
     "tsla-product-child-not-country",
     tsla.status === 200
       && tslaNames.includes("product:Automotive/FSD")
-      && fsd?.shareOfParentPct === 8
-      && fsd.shareOrigin === "estimate"
+      && fsd?.shareOfParentPct == null
+      && /nicht belegbar: FSD/.test(tsla.json.reason ?? "")
       && !tslaNames.some((name) => name.endsWith("/Mexico") || name.endsWith("/Germany") || name.endsWith("/India"))
       && /nicht als Produkt-Unterposten: Mexico/.test(tsla.json.reason ?? "")
       && /nicht als Produkt-Unterposten: Germany/.test(tsla.json.reason ?? "")
@@ -1010,7 +1014,8 @@ try {
       && /passt nicht unter UNITED STATES: Asia Pacific/.test(msft.json.reason ?? "")
       && germany?.parent === "EMEA"
       && germany.kind === "geographic"
-      && germany.shareOfParentPct === 12
+      && germany.shareOfParentPct == null
+      && /nicht belegbar: Germany/.test(msft.json.reason ?? "")
       && azure?.parent === "Intelligent Cloud"
       && azure.kind === "product",
     `names=${msftNames.join(",")} reason=${msft.json.reason ?? ""}`,
@@ -1024,7 +1029,8 @@ try {
     sap.status === 200
       && sapNames.length === 1
       && platform?.parent === "Cloud"
-      && platform.shareOfParentPct === 12
+      && platform.shareOfParentPct == null
+      && /nicht belegbar: Business Technology Platform/.test(sap.json.reason ?? "")
       && /Elternsegment nicht in der Liste: RISE/.test(sap.json.reason ?? "")
       && /Elternsegment nicht in der Liste: Employee Central/.test(sap.json.reason ?? "")
       && sapPrompt.includes("Cloud")
@@ -1122,7 +1128,7 @@ registerSegmentGapRoute(fxApp, {
 const fxServer = fxApp.listen(0);
 const fxPort = (fxServer.address() as AddressInfo).port;
 try {
-  const nvo = await postGap(fxPort, "NVO");
+  const nvo = await postGap(fxPort, "NVO", { products: [{ name: "Diabetes and Obesity care", revenue: 500 }] });
   const wegovy = nvo.json.items?.find((item) => item.name === "Wegovy");
   const rybelsus = nvo.json.items?.find((item) => item.name === "Rybelsus");
   const nvoPrompt = fxPrompts.find((prompt) => prompt.includes("Ticker NVO.")) ?? "";
@@ -1293,7 +1299,7 @@ registerSegmentGapRoute(shownApp, {
       return [{
         fiscalYear: "2025",
         reportedCurrency: "USD",
-        data: { Automotive: 100, "Energy Generation and Storage": 80, "Services and Other": 40, "Model 3": 10 },
+        data: { Automotive: 100, "Energy Generation and Storage": 80, "Services and Other": 100, "Model 3": 10 },
       }];
     }
     return [{
@@ -1335,7 +1341,9 @@ registerSegmentGapRoute(shownApp, {
           children: [
             citedChild("Server", "Azure", "Microsoft Corporation", {
               source: "Microsoft Annual Report 2025",
-              shareOfParentPct: 30,
+              shareOfParentPct: 99,
+              revenue: 27,
+              currency: "USD",
             }),
             citedChild("Intelligent Cloud", "Azure Legacy", "Microsoft Corporation", {
               source: "Microsoft Annual Report 2025",
@@ -1355,8 +1363,8 @@ registerSegmentGapRoute(shownApp, {
             parent: "Services & Other",
             name: "FSD / Software",
             owner: "Tesla, Inc.",
-            shareOfParentPct: 12,
-            revenue: 1_504_560_000,
+            shareOfParentPct: 40,
+            revenue: 12,
             currency: "USD",
             basis: "Tesla Annual Report 2025. FSD-Abos sind nicht separat ausgewiesen",
             source: null,
@@ -1379,7 +1387,8 @@ try {
     tsla.status === 200
       && fsd?.parent === "Services & Other"
       && fsd.shareOfParentPct === 12
-      && fsd.shareOrigin === "estimate"
+      && fsd.shareOrigin === "fact"
+      && (fsd.basis ?? "").includes("Formel: 12 / 100")
       && (fsd.basis ?? "").includes("Annual Report 2025")
       && robotaxi?.shareOfParentPct == null
       && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
@@ -1397,6 +1406,8 @@ try {
     msft.status === 200
       && azure?.parent === "Server"
       && azure.shareOfParentPct === 30
+      && azure.shareOrigin === "fact"
+      && (azure.basis ?? "").includes("Formel: 27 / 90")
       && legacy == null
       && /Elternsegment nicht in der Liste: Azure Legacy/.test(msft.json.reason ?? "")
       && msftPrompt.includes("Server")

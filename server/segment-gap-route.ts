@@ -45,7 +45,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p7";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p8";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -77,8 +77,14 @@ export function resetSegmentGapCacheForTests(): void {
   rateBuckets.clear();
 }
 
-export function segmentGapCacheKey(ticker: string, products: readonly string[], regions: readonly string[]): string {
-  const names = `p:${products.slice(0, 24).join("\n")}\nr:${regions.slice(0, 24).join("\n")}`;
+export function segmentGapCacheKey(
+  ticker: string,
+  products: readonly string[],
+  regions: readonly string[],
+  revenues: readonly (number | null)[] = [],
+): string {
+  const basis = revenues.slice(0, 48).map((value) => (value == null ? "" : String(value))).join("\n");
+  const names = `p:${products.slice(0, 24).join("\n")}\nr:${regions.slice(0, 24).join("\n")}\nv:${basis}`;
   const hash = createHash("sha256").update(names).digest("hex");
   return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${hash}`;
 }
@@ -176,6 +182,13 @@ export function segmentGapPrompt(input: {
       row.revenueUsd != null && row.revenueUsd > 0 ? `${row.name} ${row.revenueUsd} USD` : `${row.name} n/a`
     )).join(" | ")
     : "n/a";
+  const eachParent = input.products.map((name) => {
+    const services = /service|abo|subscription|software|support/i.test(name);
+    const task = services
+      ? "fehlende Produktlinien nur dieses Elterns. Software, Services und Abos, die nicht separat ausgewiesen sind, gehören unter genau diese Zeichenfolge"
+      : "fehlende Produktlinien nur dieses Elterns";
+    return `- ${name}: ${task}.`;
+  }).join("\n");
   return [
     "Bekannte Fakten. Diese Namen und Zahlen nicht ersetzen und nicht als neues Top-Level-Segment anlegen.",
     `Ticker ${input.ticker}. Firma: ${input.companyName}.`,
@@ -186,14 +199,15 @@ export function segmentGapPrompt(input: {
     "parent ist genau eine dieser Zeichenfolgen. Jeder andere Elternname ist ungültig und wird verworfen.",
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
     "Nenne auch Geschäftsbereiche, die diese Firma real führt und die in den Listen nicht stehen, etwa Software, Services oder Abos.",
-    "Software, Services und Abos, die kein eigenes Segment in der Produktliste sind, hängen unter der Zeichenfolge des Service-Segments aus dieser Liste.",
+    "Jedes Produkt-Eltern bekommt eigene Kinder. Nicht alle Zeilen unter das erste oder das größte Segment legen.",
+    eachParent,
     "Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Ein Land oder eine Region ist kein Produkt-Unterposten. Eine Region nur unter dem Regionen-Eltern, das sie geografisch enthält, nicht unter einem anderen Land.",
     "Währung der Elternumsätze: USD.",
     `Elternumsätze in USD: ${parentLine}.`,
     input.fxNote ? input.fxNote : "",
-    "shareOfParentPct ist der Anteil am Elternsegment in Prozent. Die Zahl nur zusammen mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. Nie 0.",
-    "revenue ist der Umsatz des Unterpostens in USD. currency ist USD. Eine andere Währung wird nicht umgerechnet und nicht als Anteil verwendet.",
+    "shareOfParentPct bleibt null. Der Anteil wird nur aus revenue und dem Elternumsatz derselben Währung gerechnet.",
+    "revenue ist der Umsatz des Unterpostens in USD und nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. currency ist USD. Nie 0.",
     "basis nennt die Lücke und darf nicht leer sein.",
     `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
   ].filter((line) => line.length > 0).join("\n");
@@ -249,10 +263,6 @@ function shownParents(value: unknown): ShownParent[] {
 
 function overlayShownRevenue(shown: readonly ShownParent[], revenues: Map<string, number>, fmpNames: readonly string[]): void {
   for (const row of shown) {
-    if (row.revenue != null) {
-      revenues.set(fold(row.name), row.revenue);
-      continue;
-    }
     const hit = fmpNames.find((name) => sameShownParent(name, row.name));
     if (!hit) continue;
     const value = revenues.get(fold(hit));
@@ -334,6 +344,9 @@ export function reviewSegmentGaps(
         notes.push(`n/a — Währung passt nicht zur Elternzeile: ${child.name}`);
       }
       enriched.push(item);
+      if (item.shareOfParentPct == null && item.shareNote && !notes.some((note) => note.includes(item.shareNote ?? "") && note.includes(child.name))) {
+        notes.push(`${item.shareNote}: ${child.name}`);
+      }
     }
     const shareSum = enriched.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
     if (enriched.some((row) => row.shareOfParentPct != null) && shareSum > 100) {
@@ -452,28 +465,30 @@ function toGapItem(
   companyName: string,
   childCurrency: string,
 ): SegmentGapItem {
-  let share = child.shareOfParentPct != null && child.shareOfParentPct > 0 ? child.shareOfParentPct : null;
-  let shareOrigin: SegmentGapItem["shareOrigin"] = share != null ? "estimate" : null;
-  let basis = child.basis ?? "";
+  const basis = child.basis ?? "";
   const sourced = concreteSource(basis, companyName);
-  if (share != null && !sourced) {
-    share = null;
-    shareOrigin = null;
-  }
-  if (
-    share == null
-    && child.revenue != null && child.revenue > 0
-    && parentRevenue != null && parentRevenue > 0
-    && sourced
-    && childCurrency === "USD"
-  ) {
-    const rounded = Math.round((child.revenue / parentRevenue) * 1000) / 10;
+  const revenue = child.revenue != null && child.revenue > 0 ? child.revenue : null;
+  const parentUsd = parentRevenue != null && parentRevenue > 0 ? parentRevenue : null;
+  let share: number | null = null;
+  let shareOrigin: SegmentGapItem["shareOrigin"] = null;
+  let shareNote: string | null = null;
+  let shownBasis = basis;
+  if (revenue != null && parentUsd != null && childCurrency === "USD" && sourced) {
+    const rounded = Math.round((revenue / parentUsd) * 1000) / 10;
     if (rounded > 0 && rounded <= 100) {
       share = rounded;
       shareOrigin = "fact";
-      const formula = `Formel: ${child.revenue} / ${parentRevenue}`;
-      if (!basis.includes(formula)) basis = `${basis} · ${formula}`;
+      const formula = `Formel: ${revenue} / ${parentUsd}`;
+      if (!shownBasis.includes(formula)) shownBasis = `${shownBasis} · ${formula}`;
+    } else {
+      shareNote = "n/a — Anteil nicht belegbar";
     }
+  } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
+    shareNote = "n/a — Währung passt nicht zur Elternzeile";
+  } else if (!sourced) {
+    shareNote = "n/a — Schätzung ohne Quelle";
+  } else {
+    shareNote = "n/a — Anteil nicht belegbar";
   }
   return {
     parent,
@@ -481,8 +496,9 @@ function toGapItem(
     name: child.name,
     shareOfParentPct: share,
     growthPct: child.growthPct ?? null,
-    basis,
+    basis: shownBasis,
     shareOrigin,
+    shareNote,
   };
 }
 
@@ -524,7 +540,12 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         if (!cachedNames) rememberSecNames(ticker, now, secNames);
         if (secNames.length > 0) products = secNames;
       }
-      const key = segmentGapCacheKey(ticker, products, regions);
+      const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
+      const usd = await usdParentRevenues(productRaw, regionRaw, convert, identity.currency ?? "");
+      overlayShownRevenue(shownProducts, usd.revenues, fmpProducts);
+      overlayShownRevenue(shownRegions, usd.revenues, fmpRegions);
+      const revenueBasis = [...products, ...regions].map((name) => usd.revenues.get(fold(name)) ?? null);
+      const key = segmentGapCacheKey(ticker, products, regions, revenueBasis);
       pruneGapCache(now);
       const hit = gapCache.get(key);
       if (hit && now - hit.at < hit.ttl) return res.json(hit.body);
@@ -541,10 +562,6 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         });
         for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
       }
-      const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
-      const usd = await usdParentRevenues(productRaw, regionRaw, convert, identity.currency ?? "");
-      overlayShownRevenue(shownProducts, usd.revenues, fmpProducts);
-      overlayShownRevenue(shownRegions, usd.revenues, fmpRegions);
       const parentsUsd = [...products, ...regions].slice(0, 24).map((name) => ({
         name,
         revenueUsd: usd.revenues.get(fold(name)) ?? null,
@@ -554,7 +571,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       let payload: unknown = null;
       try {
         const result = await run({
-          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Nenne auch Software, Services und Abos, die die Firma führt und die Listen nicht ausweisen. Bekannte Namen nicht wiederholen. revenue und currency in USD. Eine Zahl nur mit Quelle, nie 0. Das Label ist KI-Schätzung, kein Override.",
+          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Jedes Produkt-Eltern bekommt eigene Kinder, nicht nur das größte. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.",
           prompt: segmentGapPrompt({
             ticker,
             companyName: identity.companyName,

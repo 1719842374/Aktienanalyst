@@ -5,8 +5,10 @@ export interface SegmentGapItem {
   shareOfParentPct: number | null;
   growthPct: number | null;
   basis: string;
-  /** fact = Umsatz / Elternumsatz; estimate = KI-Zahl mit Quelle; null = kein Beleg. */
+  /** fact = Umsatz / Elternumsatz in derselben Währung. null = nicht belegbar. */
   shareOrigin?: "fact" | "estimate" | null;
+  /** Sichtbarer Grund, wenn shareOfParentPct null ist. */
+  shareNote?: string | null;
 }
 
 export interface SegmentGapResult {

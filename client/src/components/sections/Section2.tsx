@@ -888,7 +888,7 @@ export function SegmentEstimateBlock({ data }: Props) {
                   <div key={i} className="max-w-full">
                   <SegmentLine name={seg.name} open={openBusiness[seg.name] === true} onToggle={() => setOpenBusiness((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                     <div className="flex items-center justify-between text-xs mb-0.5">
-                      <span className="font-medium truncate mr-2">{seg.name}</span>
+                      <span className="min-w-0 break-words font-medium mr-2 sm:truncate" data-testid={`segment-name-${seg.name}`}>{seg.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {seg.revenue > 0 && (
                           <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
@@ -1011,7 +1011,7 @@ export function SegmentEstimateBlock({ data }: Props) {
                 <div key={i} className="max-w-full">
                 <SegmentLine name={seg.name} open={openGeo[seg.name] === true} onToggle={() => setOpenGeo((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                   <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-medium truncate mr-2">{seg.name}</span>
+                    <span className="min-w-0 break-words font-medium mr-2 sm:truncate" data-testid={`segment-name-${seg.name}`}>{seg.name}</span>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {seg.revenue > 0 && (
                         <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>

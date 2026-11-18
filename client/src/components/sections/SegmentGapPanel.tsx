@@ -125,7 +125,7 @@ export function SegmentGapList({ data }: { data: SegmentGapResult }) {
 function GapRow({ item }: { item: SegmentGapItem }) {
   const share = item.shareOfParentPct != null && item.shareOfParentPct > 0
     ? `${item.shareOfParentPct.toFixed(1)} %`
-    : "n/a — ohne Quelle";
+    : (item.shareNote && item.shareNote.trim() ? item.shareNote : "n/a — ohne Quelle");
   const growth = item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${item.growthPct.toFixed(1)}%` : "n/a";
   const estimate = item.shareOrigin === "estimate" && item.shareOfParentPct != null && item.shareOfParentPct > 0;
   return (
