@@ -1,6 +1,11 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
 > Stand 11.10.2026 · Kopf-Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`) · Index-HEAD davor `a0979593fe13792fd13aa7eaf183cb808b396791` (#209 Gold-Chart im BTC-Design, parent `f0943dd5e9de8fd87a1b1f7ed8f4e6791e0f9ea2` #206 Ampel Gold MA50; Feature-Tip Gold `98ccc928be5bfd0b5b1fc464ef13771207a3c9bc` #201; Index davor Tip `8add9ed1e6d599283368896127711486955855f3` #200) · Companion `WORK_IST_VS_SOLL.md`
+> **21:30 Europe/Madrid (18.11.2026) · #468 · main `806772f2` · HEAD main `806772f2c9a25b0c92c21b82e4ef7458520c395d` · Ampel 🟡 nur noch bis Prod-Smoke**
+> - DC-Lauf `run-d8063a19` ist da und GO für #468 auf `806772f2`. `script/test-recession-growth-pp-render.ts`: Exit 0, 10/10, 0 HTTP. tsc 76 auf `806772f2` und auf dem Parent `1c4c2e7c`, Normdiff 0.
+> - Bytegleich zum Parent `1c4c2e7c`: `client/src/hooks/useRecessionGrowth.ts` (`798b4f62`), `server/recession-growth-route.ts` (`ac422ba9`), `shared/recession-growth.ts` (`ef6f647c`).
+> - Prod-Smoke `806772f2` läuft (Tester: SPY 1440/375 hell+dunkel, EU/Asien als Stichprobe). Testlücken bleiben sichtbar: Implied Gap als Zahl, negative und Null-Werte.
+> - Ampel #468: 🟡 nur noch bis Prod-Smoke. Kein `fertig_`, kein Ticket neu abgeschlossen. `WORK_RECESSION_GROWTH_GAP.md` bleibt ohne Prefix, Spec offen. Der Block 21:21 darunter bleibt der Stand vor diesem DC-Lauf.
 > **21:21 Europe/Madrid (18.11.2026) · #468 · main `806772f2` · HEAD main `806772f2c9a25b0c92c21b82e4ef7458520c395d` (neu, über `1c4c2e7c`) · Ampel 🟡**
 > - #468 (https://github.com/1719842374/Aktienanalyst/pull/468) „fix(recession): Differenzen als Prozentpunkte anzeigen“ squash-merged als `806772f2` (21:20 Europe/Madrid). 1 Parent `1c4c2e7c`, Tree `cbebe0b6`, 2 Dateien +379/−2, keine Deletes: `client/src/components/recession/RecessionGrowthSection.tsx` (M +8/−2), `script/test-recession-growth-pp-render.ts` (A +371). Growth Gap, Implied Gap und Abstand zum Median zeigen Pp statt %; EPS-YoY, Forward, Median, g*, Perzentil bleiben Prozent. Rein Client + Test; Server/Schema unberührt.
 > - DC Post-Merge #468 `806772f2` KLAR (statisch): linearer Squash, blobgleich zu PR-Head `e05714a4` (`b64a65e1`, `cdf38fd8`); 0 Deletes/Renames/Marker; `analyze-route.ts` (2791) und `researcher.ts` (1554) unberührt.
