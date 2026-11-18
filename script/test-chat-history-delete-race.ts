@@ -7,6 +7,9 @@
  * Fall B: der schon abgesendete PUT erreicht den Server erst nach erfolgreichem DELETE.
  * Er darf den gelöschten Thread serverseitig nicht wiederbeleben. Ein bewusstes
  * Speichern nach dem Löschen bleibt ein eigenes Szenario. Abort liegt in apiRequest.
+ * Fall Zwei-Tab: eine andere Epoche löscht (DELETE 200). Dieser Tab schreibt danach
+ * PUT und bekommt 200 {rejected:"stale-write"}. Genau dieser Thread muss aus
+ * sessionStorage und State verschwinden und nach Remount wegbleiben. Andere Chats bleiben.
  *
  * react-dom/client und der Hook werden erst nach installFakeDom geladen (Fenster muss stehen).
  * Ausführen (Repo-Root):
@@ -46,6 +49,7 @@ type Hold = {
   markServerDone: () => void;
   status: number | null;
   bodyIds: string[];
+  rejected: string | null;
 };
 
 const trace: string[] = [];
@@ -82,7 +86,7 @@ function createHold(method: string, stage: HoldStage, urlPart?: string, fail?: "
   });
   const hold: Hold = {
     method, stage, urlPart, fail, release, gate, clientSent, markClientSent, serverDone, markServerDone,
-    status: null, bodyIds: [],
+    status: null, bodyIds: [], rejected: null,
   };
   queue.push(hold);
   armed.push(hold);
@@ -112,11 +116,15 @@ function synth(id: string, content: string, dashboard: ChatThread["dashboard"] =
   };
 }
 
-function storedIds(sessionId: string): string[] {
+function storedThreads(sessionId: string): ChatThread[] {
   const raw = sessionStorage.getItem(`chatThreads:v1:${sessionId}`);
   if (!raw) return [];
   const parsed = JSON.parse(raw) as ChatThread[];
-  return parsed.map(thread => thread.id).sort();
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function storedIds(sessionId: string): string[] {
+  return storedThreads(sessionId).map(thread => thread.id).sort();
 }
 
 function assertOrder(parts: string[]) {
@@ -174,13 +182,22 @@ async function main() {
     const buf = await res.arrayBuffer();
     const text = new TextDecoder().decode(buf);
     let bodyIds: string[] = [];
-    try { bodyIds = idsOfBody(JSON.parse(text)); } catch { bodyIds = []; }
+    let rejected: string | null = null;
+    try {
+      const parsed = JSON.parse(text) as { rejected?: unknown };
+      bodyIds = idsOfBody(parsed);
+      rejected = typeof parsed.rejected === "string" ? parsed.rejected : null;
+    } catch {
+      bodyIds = [];
+      rejected = null;
+    }
     if (hold) {
       hold.status = res.status;
       hold.bodyIds = bodyIds;
+      hold.rejected = rejected;
       hold.markServerDone();
     }
-    note(`server-finished ${method} status=${res.status} body=${bodyIds.join(",")}`);
+    note(`server-finished ${method} status=${res.status} body=${bodyIds.join(",")} rejected=${rejected ?? ""}`);
     if (hold?.stage === "after-server") {
       note(`hold-after-server ${method} ${url}`);
       await hold.gate;
@@ -673,14 +690,107 @@ async function main() {
       assert.equal(oldest?.id, "synth-m4-flood", "der älteste fremde Vermerk wird verdrängt");
       assert.equal(newest, null, "ein junger fremder Vermerk bleibt");
     });
+
+    await scenario("Zwei Tabs: stale-write verwirft nur den abgelehnten Thread", async () => {
+      const sessionId = "sess-stale-tab";
+      const deleted = synth("synth-stale-del", "synthetic-stale-deleted-title");
+      const keeper = synth("synth-stale-keep", "synthetic-stale-keeper-server");
+      const unsaved = synth("synth-stale-local", "synthetic-stale-unsaved-other");
+      const btc = synth("synth-stale-btc", "synthetic-stale-btc", "btc", null);
+      begin(sessionId);
+      const seededDeleted = await seed(sessionId, deleted);
+      const seededKeeper = await seed(sessionId, keeper);
+      const keeperDraft = {
+        ...seededKeeper,
+        title: "synthetic-stale-keeper-unsaved",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+        messages: [{ role: "user" as const, content: "synthetic-stale-keeper-unsaved" }],
+      };
+      sessionStorage.setItem(`chatThreads:v1:${sessionId}`, JSON.stringify([seededDeleted, keeperDraft, unsaved, btc]));
+      const tabB = await mount();
+      await settle(() => trace.some(line => line.startsWith("deliver-response GET")));
+      assert.equal(apiOf(tabB.bag).threads.find(thread => thread.id === keeper.id)?.messages[0]?.content, "synthetic-stale-keeper-unsaved", "ungespeicherter Keeper bleibt vor dem fremden DELETE sichtbar");
+      assert.equal(localIds(tabB.bag).includes(unsaved.id), true, "ungespeicherter fremder Thread bleibt in der Liste");
+      assert.equal(localIds(tabB.bag).includes(btc.id), false, "anderer Dashboard-Thread bleibt aus der Aktienliste");
+      assert.equal(storedIds(sessionId).includes(btc.id), true);
+      const del = await revisionWrite("DELETE", sessionId, deleted.id, "epoch-tab-a-stale", 1);
+      assert.equal(del.status, 200);
+      assert.equal(del.body.ok, true);
+      assert.deepEqual(await observe("GET-nach-anderem-Tab-DELETE", sessionId), [keeper.id]);
+      assert.equal(localIds(tabB.bag).includes(deleted.id), true, "Tab B hat lokal noch den Titel, den der andere Tab schon gelöscht hat");
+      const late = {
+        ...seededDeleted,
+        title: seededDeleted.title,
+        updatedAt: new Date().toISOString(),
+        messages: [
+          ...seededDeleted.messages,
+          { role: "assistant" as const, content: "synthetic-stale-old-answer" },
+          { role: "user" as const, content: "synthetic-stale-late-keystroke" },
+        ],
+      };
+      const holds = [createHold("PUT", "after-server", deleted.id), createHold("PUT", "after-server", deleted.id), createHold("PUT", "after-server", deleted.id)];
+      let save1: Promise<void> = Promise.resolve();
+      let save2: Promise<void> = Promise.resolve();
+      let save3: Promise<void> = Promise.resolve();
+      await act(async () => {
+        save1 = apiOf(tabB.bag).save(late);
+        save2 = apiOf(tabB.bag).save(late);
+        save3 = apiOf(tabB.bag).save(late);
+      });
+      await holds[0].serverDone;
+      await holds[1].serverDone;
+      await holds[2].serverDone;
+      assert.deepEqual(holds.map(hold => hold.status), [200, 200, 200]);
+      assert.deepEqual(holds.map(hold => hold.rejected), ["stale-write", "stale-write", "stale-write"]);
+      assert.deepEqual(holds.map(hold => hold.bodyIds), [[], [], []]);
+      assert.deepEqual(await observe("drei-PUTs-nach-DELETE", sessionId), [keeper.id], "abgelehnte PUTs legen den Thread serverseitig nicht wieder an");
+      assert.equal(localIds(tabB.bag).includes(deleted.id), true, "vor der Antwort steht der optimistische Stand noch");
+      await deliverSave(holds[0], save1);
+      await deliverSave(holds[1], save2);
+      await deliverSave(holds[2], save3);
+      const localAfter = localIds(tabB.bag);
+      const storedAfter = storedThreads(sessionId);
+      const storedJson = JSON.stringify(storedAfter);
+      note(`local-after-stale ids=${localAfter.join(",")} stored=${storedAfter.map(thread => thread.id).join(",")}`);
+      assert.equal(localAfter.includes(deleted.id), false, `stale-write ließ den gelöschten Titel lokal stehen: ${localAfter.join(",")}`);
+      assert.equal(storedAfter.some(thread => thread.id === deleted.id), false, `stale-write ließ den Thread in sessionStorage: ${storedAfter.map(thread => thread.id).join(",")}`);
+      assert.equal(storedJson.includes("synthetic-stale-deleted-title"), false, "der gelöschte Titel liegt noch im sessionStorage");
+      assert.equal(storedJson.includes("synthetic-stale-late-keystroke"), false, "die abgelehnte Eingabe liegt noch im sessionStorage");
+      assert.equal(apiOf(tabB.bag).threads.find(thread => thread.id === keeper.id)?.messages[0]?.content, "synthetic-stale-keeper-unsaved", "ungespeicherte Eingabe eines anderen Chats bleibt");
+      assert.equal(localAfter.includes(unsaved.id), true, "ungespeicherter fremder Thread bleibt");
+      assert.equal(storedAfter.find(thread => thread.id === btc.id)?.messages[0]?.content, "synthetic-stale-btc", "Thread eines anderen Dashboards bleibt in der Session");
+      assert.equal(localAfter.includes(btc.id), false);
+      await tabB.unmount();
+      live.pop();
+      const remountGet = createHold("GET", "after-server");
+      const remount = await mount();
+      await remountGet.serverDone;
+      const hydrated = localIds(remount.bag);
+      note(`remount-before-get ids=${hydrated.join(",")}`);
+      assert.equal(hydrated.includes(deleted.id), false, `Reload aus sessionStorage zeigt den gelöschten Titel: ${hydrated.join(",")}`);
+      assert.equal(apiOf(remount.bag).threads.find(thread => thread.id === keeper.id)?.messages[0]?.content, "synthetic-stale-keeper-unsaved");
+      assert.equal(hydrated.includes(unsaved.id), true, "Reload behält den ungespeicherten fremden Thread");
+      await deliver(remountGet);
+      const remountIds = localIds(remount.bag);
+      const selectable = apiOf(remount.bag).threads.map(thread => thread.id);
+      note(`remount-after-get ids=${remountIds.join(",")}`);
+      assert.equal(remountGet.status, 200);
+      assert.equal(remountGet.bodyIds.includes(deleted.id), false, "der Server-GET nach dem Löschen enthält den Thread nicht");
+      assert.equal(selectable.includes(deleted.id), false, `Auswahl liest threads und bietet den gelöschten Verlauf an: ${selectable.join(",")}`);
+      assert.equal(remountIds.includes(keeper.id), true);
+      assert.equal(apiOf(remount.bag).threads.find(thread => thread.id === keeper.id)?.messages[0]?.content, "synthetic-stale-keeper-unsaved");
+      assert.equal(remountIds.includes(unsaved.id), true);
+      assert.equal(storedIds(sessionId).includes(btc.id), true);
+      assert.equal(storedIds(sessionId).includes(deleted.id), false);
+    });
   } finally {
     releaseArmed();
     globalThis.fetch = realFetch;
     await new Promise<void>(resolve => srv.close(() => resolve()));
   }
 
-  console.log("\nGrenze: dieselbe Browser-Session (sessionStorage + Hook-Instanzen in diesem Fenster).");
-  console.log("Keine Aussage über fremde Clients, einen zweiten Tab oder einen Server-Neustart.");
+  console.log("\nGrenze: sessionStorage dieses Fensters. Ein zweiter Tab ist eine andere Epoche auf demselben Server, nicht eine zweite Hook-Instanz.");
+  console.log("Fall stale-write: DELETE der anderen Epoche, danach PUT dieses Tabs mit 200 rejected. Nur dieser Thread fällt lokal weg.");
   console.log("Fall B: ein vor dem DELETE ausgelöster PUT darf den Thread serverseitig nicht wiederbeleben.");
   console.log("Der Hook bricht den Fetch nicht ab; apiRequest besitzt den AbortController. Belegt ist HTTP 200.");
   console.log("Kein Live-UI-PASS. UI-Dateien wurden nicht gerendert.");
