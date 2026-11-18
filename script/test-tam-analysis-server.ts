@@ -41,7 +41,9 @@ console.log("=== 1. Ohne Umsatz → n/a ===");
 for (const [sec, ind, desc] of SECTORS) for (const rev of [0, NaN, -1]) for (const segs of [undefined, SEGS]) {
   const r: any = generateTAMAnalysis(sec, ind, desc, rev, 0, segs);
   const ok = r.tamTotal === null && r.companyGrowth === null && r.companyRevenue === null && r.marketShare === null && r.outperforming === null
-    && r.companyDataMissing === "no-revenue" && typeof r.tamCAGR === "number" && r.quality === "weak" && typeof r.tamLabel === "string";
+    && r.companyDataMissing === "no-revenue" && r.quality === "weak" && typeof r.tamLabel === "string"
+    // Follow-up #292 (SAP.DE/VOW3.DE): ohne Sektor UND Branche kein Sektor-Default mehr → tamCAGR null (n/a).
+    && (sec === "" && ind === "" ? r.tamCAGR === null : typeof r.tamCAGR === "number");
   if (!ok || (rev === 0 && !segs)) check(`'${sec || "(leer)"}' rev=${rev} segs=${segs ? 2 : 0}: n/a, tamCAGR ${r.tamCAGR}, quality ${r.quality}`, ok, JSON.stringify({ t: r.tamTotal, g: r.companyGrowth, rv: r.companyRevenue, m: r.marketShare }));
 }
 
@@ -67,7 +69,9 @@ try {
       const o: any = legacy.generateTAMAnalysis(sec, ind, desc, 0, g, undefined), nn: any = generateTAMAnalysis(sec, ind, desc, 0, g, undefined);
       const capO = JSON.stringify(legacy.dcfGrowthCapFromTam({ quality: o.quality ?? "weak", tamCAGR: o.tamCAGR, companyGrowth: g }));
       const capN = JSON.stringify(dcfGrowthCapFromTam({ quality: nn.quality ?? "weak", tamCAGR: nn.tamCAGR, companyGrowth: g }));
-      if (capO === capN && o.tamCAGR === nn.tamCAGR && o.quality === nn.quality) same++;
+      // Follow-up #292: leerer Sektor/Branche → tamCAGR jetzt null statt Default 5; DCF-Gate muss trotzdem identisch sein.
+      const cagrOk = sec === "" && ind === "" ? nn.tamCAGR === null : o.tamCAGR === nn.tamCAGR;
+      if (capO === capN && cagrOk && o.quality === nn.quality) same++;
     }
     check(`dcfGrowthCapFromTam/tamCAGR/quality identisch (${same}/${tot})`, same === tot);
   }
