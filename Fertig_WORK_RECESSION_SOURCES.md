@@ -112,3 +112,62 @@ SONST Standard-Risiko
 ```
 
 Öl-Schock-Flag: `z(Δ WTI 4w) > 1.5` aus `DCOILWTICO`, nicht Hormuz-String.
+
+---
+
+## US-Wert 2026-11-02, nicht Teil der Freigabe
+
+Philip hat nur drei Bewegungen freigegeben: Eurozone 70→45, Blended 40→35, ASHR g_fwd +68 %→+13 %. Den US-Wert ändert dieser Stand nicht.
+
+Der Tester liest US P_rez12 als 40, auf diesem Stand und auf Prod. **Soll ist 40, unverändert.** Die 30 im vorherigen PR-Text war keine Freigabe. Sie war eine lokale Lesart des Handlungsbuchs `recession_full` und ist nicht der US-Katalog. Die Kachel „Katalog Rez.“ der USA (`catalog-rez-US`) bleibt der Prod-Wert 40. Handlungstext P_rez12 und P_korr12 bleiben die US-Bücher; ihr Rechenweg wird hier nicht angefasst.
+
+---
+
+## Growth Gap: Horizont, adjTTM, Gewicht (Philip, Mitte-zu-Mitte)
+
+Dieser Abschnitt ergänzt die Datei. Der Name bleibt `Fertig_WORK_RECESSION_SOURCES.md`.
+
+### Definition
+
+t ist der Abstand Mitte zu Mitte: Tage bis zum FY-Ende der Konsenszeile (FMP `date`) plus 182. Annualisiert wird mit dem Exponenten 365/t. Keine Schwelle, keine Regel fürs nächste FY, kein Floor und kein Cap. Ein nahes FY, auch ein Stub und ein FY das heute endet, bleibt das gewählte FY.
+
+\[
+g_{\text{ann}} = \left(\frac{\text{consensus}}{\text{adjTTM}}\right)^{365/t} - 1
+\]
+
+g_ann wird nicht gedämpft. Nicht (EPS / Tage) × 365 und nicht der unannualisierte Quotient.
+
+adjTTM = Summe der letzten 4 gemeldeten `epsActual` aus FMP `/stable/earnings`. Ein FY-Abschluss zählt nicht als Quartal. Fehlen die 4 Drucke, bleibt Yahoo nur, wenn `earningsHistoryNonGaap` oder `earningsNonGaap.earningsChart` vier adjusted Quartale liefert, mit Quellenangabe in der Zeile. `trailingEps` und ein Yahoo-+1y ohne echtes t zählen nicht. GAAP `/stable/ratios-ttm` und ein GAAP/non-GAAP-Mix werden nicht gegen den adjusted Konsens gestellt.
+
+adjTTM ≤ 0 oder Konsens ≤ 0: der Ticker ist nicht im Mittel, der Grund steht in der Abdeckung, das Index-Gewicht ist dort ausgewiesen.
+
+### Technische Stabilisierung
+
+Die Stabilisierung sitzt im Aggregationsgewicht, nicht in g. t in der Formel ist der neue Abstand Mitte zu Mitte.
+
+\[
+w_i = w^{\text{Index}}_i \times \min\left(1, \frac{t_i}{365}\right) \times h_i
+\]
+
+h ist das Huber-Gewicht auf dem MAD-z von g_ann: 1 bei |z| ≤ 2,5, sonst 2,5/|z|. Symmetrisch. Kein harter Ausschluss. Ein Ticker ohne vier adjusted Quartale oder ohne echtes t ist nicht im Mittel. Sein Grund steht in der Zeile, sein Index-Gewicht in der Abdeckung.
+
+\[
+g_{\text{fwd}} = \frac{\sum_i w_i \, g_{\text{ann},i}}{\sum_i w_i}
+\]
+
+Die Karte zeigt pro Ticker g, t, Gewicht und Quelle. Die Abdeckung bleibt sichtbar.
+
+Der frühere ASHR-Wert +13,4 % war der harte Schnitt bei |z| > 2,5. Die Freigabe von 22:38 ersetzt den Schnitt durch Huber-Gewichte. Dieselben neun g-Werte, ohne bekanntes t, ergeben im Mittel etwa +28,6 %. Das ist der alte Rechenweg ohne Horizont, nicht der Stand mit t = Tage bis FY-Ende + 182.
+
+### Soll-Ist
+
+| Punkt | Soll | Ist auf `cursor/eurostat-growth-gap-59aa` |
+|---|---|---|
+| t und g_ann | t = Tage bis FY-Ende + 182, Potenz 365/t, kein Floor, kein Cap, kein Folgejahr | `midToMidDays`, `consensusForOneYear`, `annualizedFwdPct` in `shared/recession-growth.ts` |
+| adjTTM | Summe der letzten 4 adjusted Quartale, Yahoo nur als non-GAAP-4Q mit Quelle, kein `trailingEps`, kein +1y ohne t, kein GAAP-Mix | `adjTtmFromEarnings`, `adjTtmFromYahooAdjusted`, `adjTtmOf` |
+| ≤ 0 | Ticker raus mit Grund, Gewicht in der Abdeckung | `excludeReason`, Abdeckungstext und Zeile in der Karte |
+| Gewicht | Index × min(1, t/365) × Huber(MAD-z), mit dem neuen t | `horizonWeightFactor`, `weightedHoldingsForward` |
+| Karte | pro Ticker g, t, Gewicht, Quelle, plus Abdeckung | `ForwardHoldingLine.source` über `useRecessionGrowth` → `GET /api/recession/growth-gap/:index` → `RecessionGrowthSection` |
+| Tests | NVDA 84→t=266, META 59→t=241, t=40 und t=449, AMZN/GOOGL GAAP gegen adjusted | `script/test-recession-growth.ts` |
+| US P_rez12 | 40, unverändert | dieser Abschnitt fasst den US-Katalog nicht an |
+| Pins, tsc, `analyze-route.ts`, `researcher.ts`, `shared/schema.ts` | Pins unverändert, tsc bleibt 101, die drei Dateien byte-gleich | nicht angefasst |
