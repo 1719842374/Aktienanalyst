@@ -125,6 +125,18 @@ function finite(v: unknown): number | null {
   return null;
 }
 
+/** Modellzahlen dürfen Ziffernstrings sein. Text und leere Felder bleiben leer. */
+function modelNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim().replace(/%$/, "").trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.includes(",") && !trimmed.includes(".") ? trimmed.replace(",", ".") : trimmed;
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 function cleanText(v: unknown, max: number): string | null {
   if (typeof v !== "string") return null;
   const s = v.replace(/\s+/g, " ").trim();
@@ -338,25 +350,27 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     const unmatched = seg.matched === false;
     const lockedTam = factTamSize(seg);
     const lockedCagr = factTamCagr(seg);
-    const estimatedGrowth = factGrowth === null ? parseEstimatedGrowth(rec.segmentGrowth) : null;
+    const estimatedGrowth = factGrowth === null ? parseEstimatedGrowth(modelNumber(rec.segmentGrowth)) : null;
 
     let tamSize: number | undefined;
     let tamCAGR: number | undefined;
     let tamLabel: string | undefined;
     let tamSource: string | undefined;
     if (unmatched || lockedTam === null) {
-      const size = finite(rec.tamSize);
-      const cagr = finite(rec.tamCAGR);
+      const size = modelNumber(rec.tamSize);
+      const cagr = modelNumber(rec.tamCAGR);
       const label = cleanText(rec.tamLabel, 120);
       const source = cleanText(rec.tamSource, 160);
       const formula = cleanText(rec.formula, 180);
       const rationale = cleanText(rec.rationale, 140);
       const cagrOk = cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX;
       const sizeOk = size !== null && size > 0 && size <= TAM_SIZE_MAX_BN;
-      const sourcedWithoutCagr = sizeOk && cagr === null && Boolean(source) && Boolean(formula || rationale);
-      if (sizeOk && (cagrOk || sourcedWithoutCagr)) {
+      const evidenced = Boolean(source) && Boolean(formula || rationale);
+      const sourcedWithoutCagr = sizeOk && cagr === null && evidenced;
+      const sourcedWithUnusableCagr = sizeOk && cagr !== null && !cagrOk && evidenced;
+      if (size !== null && sizeOk && (cagrOk || sourcedWithoutCagr || sourcedWithUnusableCagr)) {
         tamSize = size;
-        if (cagrOk) tamCAGR = cagr;
+        if (cagrOk && cagr !== null) tamCAGR = cagr;
         if (label) tamLabel = label;
         if (source) tamSource = source;
       }
