@@ -74,6 +74,8 @@ export interface FundamentalDeps {
   /** .DE: Suche und Profil, um das FMP-Symbol datengetrieben zu finden. */
   search?: (query: string) => Promise<FmpSearchHit[]>;
   profile?: (symbol: string) => Promise<FmpProfileHit>;
+  /** Tageskurse der Berichtswährung gegen USD. Standard ist Yahoo `CCYUSD=X`. */
+  fxBars?: (symbol: string, from: string, to: string) => Promise<Array<{ date: string; close: number }>>;
 }
 
 const defaultDeps: FundamentalDeps = {
@@ -436,15 +438,28 @@ async function germanFmpSymbol(symbol: string, deps: FundamentalDeps, now: numbe
   return { fetchSymbol: listing.fmpSymbol, listing, miss: null };
 }
 
-async function fxHistoryFor(currency: string | null, now: number): Promise<FxObservation[]> {
+async function fxHistoryFor(
+  currency: string | null,
+  now: number,
+  fetchBars?: FundamentalDeps["fxBars"],
+): Promise<FxObservation[]> {
   const code = (currency ?? "").trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(code) || code === "USD") return [];
   const from = overlayHistoryStart(new Date(now));
   const to = new Date(now).toISOString().slice(0, 10);
-  const bars = await yahooFetch(`${code}USD=X`, from, to).catch(() => []);
+  const load = fetchBars ?? yahooFetch;
+  const bars = await load(`${code}USD=X`, from, to).catch(() => []);
   return bars
-    .filter(bar => bar.close > 0)
+    .filter(bar => bar.close > 0 && bar.close !== 1)
     .map(bar => ({ date: bar.date, rate: bar.close, source: `Yahoo ${code}USD=X` }));
+}
+
+async function attachFxHistory(body: EarningsYieldResponse, deps: FundamentalDeps, now: number): Promise<EarningsYieldResponse> {
+  const epsCurrency = body.quarters.find(row => row.currency)?.currency
+    ?? body.ttmPrints.find(row => row.currency)?.currency
+    ?? body.annualEps.find(row => row.currency)?.currency
+    ?? null;
+  return { ...body, fxHistory: await fxHistoryFor(epsCurrency, now, deps.fxBars) };
 }
 
 function tagQuarters(rows: EpsQuarter[], source: string): EpsQuarter[] {
@@ -533,11 +548,7 @@ async function loadGermanEarningsYield(symbol: string, deps: FundamentalDeps, no
   const body = quarters.length || prints.length || annual.length
     ? yieldBody(symbol, quarters, source, note, prints, annual)
     : yieldBody(symbol, [], source, note ?? "n/a — weder Yahoo noch FMP mit EPS", prints, annual);
-  const epsCurrency = body.quarters.find(row => row.currency)?.currency
-    ?? body.ttmPrints.find(row => row.currency)?.currency
-    ?? body.annualEps.find(row => row.currency)?.currency
-    ?? null;
-  const withFx = { ...body, fxHistory: await fxHistoryFor(epsCurrency, now) };
+  const withFx = await attachFxHistory(body, deps, now);
   if (withFx.quarters.length > 0 || withFx.ttmPrints.length > 0 || withFx.annualEps.length > 0) eyCache.set(symbol, { at: now, body: withFx });
   return withFx;
 }
@@ -636,8 +647,9 @@ export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = 
     const body = quarters.length || prints.length || annual.length
       ? finishEy(yieldBody(symbol, quarters, source, note, prints, annual), german.listing)
       : finishEy(yieldBody(symbol, [], source, note ?? "n/a — weder FMP noch Yahoo mit EPS", prints, annual), german.listing);
-    if (body.quarters.length > 0 || body.ttmPrints.length > 0 || body.annualEps.length > 0) eyCache.set(symbol, { at: now, body });
-    return body;
+    const withFx = await attachFxHistory(body, deps, now);
+    if (withFx.quarters.length > 0 || withFx.ttmPrints.length > 0 || withFx.annualEps.length > 0) eyCache.set(symbol, { at: now, body: withFx });
+    return withFx;
   } catch (err) {
     return yieldBody(symbol, [], EARNINGS_YIELD_SOURCE, errorNote(err));
   }
