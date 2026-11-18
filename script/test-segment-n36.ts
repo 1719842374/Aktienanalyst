@@ -130,8 +130,16 @@ const previousFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (!url.includes("/api/segment-gaps")) return previousFetch(input, init);
-  const asked = JSON.parse(String(init?.body ?? "{}")).ticker as string;
+  const payload = JSON.parse(String(init?.body ?? "{}")) as { ticker?: string; products?: { name?: string }[]; regions?: { name?: string }[] };
+  const asked = payload.ticker ?? "";
   switchPosts.push(asked);
+  const sentNames = [...(payload.products ?? []), ...(payload.regions ?? [])].map((row) => row.name ?? "");
+  if (asked === "TSLA" && !sentNames.includes("Automotive")) {
+    return new Response(JSON.stringify({ items: [], reason: "UI-Eltern fehlen" }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  if (asked === "MSFT" && !sentNames.includes("UNITED STATES")) {
+    return new Response(JSON.stringify({ items: [], reason: "UI-Eltern fehlen" }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   if (asked === "MSFT") {
     await msftGate;
     return new Response(JSON.stringify({
@@ -283,11 +291,11 @@ function keptChild(parent: string, name: string) {
   };
 }
 
-async function postGap(port: number, ticker: string) {
+async function postGap(port: number, ticker: string, extra?: Record<string, unknown>) {
   const response = await fetch(`http://127.0.0.1:${port}/api/segment-gaps`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ticker }),
+    body: JSON.stringify({ ticker, ...(extra ?? {}) }),
   });
   const json = await response.json() as {
     items?: { parent: string; name: string; kind?: string; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null; basis?: string }[];
@@ -479,7 +487,7 @@ const keyRegion = segmentGapCacheKey ? segmentGapCacheKey("exa", [], ["Alpha"]) 
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p6")
+    && keyA.includes("n36-gap-p7")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1255,6 +1263,150 @@ try {
   );
 } finally {
   identityFxServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const shownPrompts: string[] = [];
+const shownApp = express();
+shownApp.use(express.json());
+const uiProducts = {
+  TSLA: [
+    { name: "Automotive", revenue: 69_530_000_000 },
+    { name: "Energy Generation & Storage", revenue: 12_770_000_000 },
+    { name: "Services & Other", revenue: 12_538_000_000 },
+  ],
+  MSFT: [
+    { name: "Server", revenue: 97_000_000_000 },
+    { name: "Microsoft 365 Commercial", revenue: 80_000_000_000 },
+    { name: "XBOX", revenue: 21_000_000_000 },
+    { name: "LinkedIn", revenue: 16_000_000_000 },
+    { name: "Windows and Devices", revenue: 17_000_000_000 },
+    { name: "Search advertising", revenue: 13_000_000_000 },
+    { name: "Microsoft 365 Consumer", revenue: 7_000_000_000 },
+    { name: "Dynamics", revenue: 7_000_000_000 },
+  ],
+};
+registerSegmentGapRoute(shownApp, {
+  available: () => true,
+  productRows: async (ticker) => {
+    if (ticker.toUpperCase() === "TSLA") {
+      return [{
+        fiscalYear: "2025",
+        reportedCurrency: "USD",
+        data: { Automotive: 100, "Energy Generation and Storage": 80, "Services and Other": 40, "Model 3": 10 },
+      }];
+    }
+    return [{
+      fiscalYear: "2025",
+      reportedCurrency: "USD",
+      data: {
+        "Intelligent Cloud": 100,
+        "Productivity And Business Processes": 80,
+        "More Personal Computing": 50,
+        "Server products and cloud services": 90,
+        Gaming: 20,
+      },
+    }];
+  },
+  regionRows: async () => [],
+  identity: async (ticker) => {
+    if (ticker.toUpperCase() === "MSFT") {
+      return {
+        companyName: "Microsoft Corporation",
+        exchange: "NASDAQ",
+        country: "US",
+        sector: "Technology",
+        industry: "Software - Infrastructure",
+        description: "Microsoft verkauft Software.",
+        fiscalYear: "2025",
+        currency: "USD",
+      };
+    }
+    return fixtureIdentity;
+  },
+  llm: async (opts) => {
+    shownPrompts.push(opts.prompt);
+    if (opts.prompt.includes("Ticker MSFT.")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Microsoft Corporation",
+          industryEcho: "Software - Infrastructure",
+          children: [
+            citedChild("Server", "Azure", "Microsoft Corporation", {
+              source: "Microsoft Annual Report 2025",
+              shareOfParentPct: 30,
+            }),
+            citedChild("Intelligent Cloud", "Azure Legacy", "Microsoft Corporation", {
+              source: "Microsoft Annual Report 2025",
+              shareOfParentPct: 10,
+            }),
+          ],
+        },
+      };
+    }
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Tesla, Inc.",
+        industryEcho: "Auto Manufacturers",
+        children: [
+          {
+            parent: "Services & Other",
+            name: "FSD / Software",
+            owner: "Tesla, Inc.",
+            shareOfParentPct: 12,
+            revenue: 1_504_560_000,
+            currency: "USD",
+            basis: "Tesla Annual Report 2025. FSD-Abos sind nicht separat ausgewiesen",
+            source: null,
+          },
+          citedChild("Automotive", "Robotaxi", "Tesla, Inc.", { shareOfParentPct: 4, source: null, basis: "Pilot ohne Beleg" }),
+        ],
+      },
+    };
+  },
+});
+const shownServer = shownApp.listen(0);
+const shownPort = (shownServer.address() as AddressInfo).port;
+try {
+  const tsla = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
+  const fsd = tsla.json.items?.find((item) => item.name === "FSD / Software");
+  const robotaxi = tsla.json.items?.find((item) => item.name === "Robotaxi");
+  const tslaPrompt = shownPrompts.find((prompt) => prompt.includes("Ticker TSLA.")) ?? "";
+  gap(
+    "tsla-fsd-under-shown-services",
+    tsla.status === 200
+      && fsd?.parent === "Services & Other"
+      && fsd.shareOfParentPct === 12
+      && fsd.shareOrigin === "estimate"
+      && (fsd.basis ?? "").includes("Annual Report 2025")
+      && robotaxi?.shareOfParentPct == null
+      && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
+      && tslaPrompt.includes("Services & Other")
+      && !tslaPrompt.includes("FSD")
+      && !tslaPrompt.includes("Intelligent Cloud"),
+    `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${tslaPrompt.slice(0, 500)}`,
+  );
+  const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
+  const azure = msft.json.items?.find((item) => item.name === "Azure");
+  const legacy = msft.json.items?.find((item) => item.name === "Azure Legacy");
+  const msftPrompt = shownPrompts.find((prompt) => prompt.includes("Ticker MSFT.")) ?? "";
+  gap(
+    "msft-items-use-shown-parents",
+    msft.status === 200
+      && azure?.parent === "Server"
+      && azure.shareOfParentPct === 30
+      && legacy == null
+      && /Elternsegment nicht in der Liste: Azure Legacy/.test(msft.json.reason ?? "")
+      && msftPrompt.includes("Server")
+      && msftPrompt.includes("Microsoft 365 Commercial")
+      && msftPrompt.includes("XBOX")
+      && !msftPrompt.includes("Intelligent Cloud"),
+    `azure=${JSON.stringify(azure)} legacy=${JSON.stringify(legacy)} reason=${msft.json.reason ?? ""} prompt=${msftPrompt.slice(0, 400)}`,
+  );
+} finally {
+  shownServer.close();
 }
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");

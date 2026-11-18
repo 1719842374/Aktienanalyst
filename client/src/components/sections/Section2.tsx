@@ -873,7 +873,12 @@ export function SegmentEstimateBlock({ data }: Props) {
             </p>
           )}
         </div>
-        <SegmentGapPanel ticker={data.ticker} onResult={setGapResult} />
+        <SegmentGapPanel
+          ticker={data.ticker}
+          products={data.revenueSegments ?? []}
+          regions={data.geoSegments ?? []}
+          onResult={setGapResult}
+        />
     </>
   );
 }

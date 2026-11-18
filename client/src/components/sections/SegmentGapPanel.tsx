@@ -9,22 +9,35 @@ const useIsoLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : u
 
 export function SegmentGapPanel({
   ticker,
+  products = [],
+  regions = [],
   request = apiRequest,
   onResult,
 }: {
   ticker: string;
+  products?: readonly { name: string; revenue?: number | null }[];
+  regions?: readonly { name: string; revenue?: number | null }[];
   request?: GapRequest;
   onResult?: (data: SegmentGapResult | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const shown = JSON.stringify({
+    products: products.slice(0, 24).map((row) => ({ name: row.name, revenue: typeof row.revenue === "number" ? row.revenue : null })),
+    regions: regions.slice(0, 24).map((row) => ({ name: row.name, revenue: typeof row.revenue === "number" ? row.revenue : null })),
+  });
   const query = useQuery({
-    queryKey: ["/api/segment-gaps", ticker],
+    queryKey: ["/api/segment-gaps", ticker, shown],
     enabled: open && ticker.trim().length > 0,
     retry: false,
     staleTime: 15 * 60 * 1000,
     queryFn: async ({ queryKey }): Promise<SegmentGapResult> => {
       const asked = typeof queryKey[1] === "string" ? queryKey[1] : "";
-      const response = await request("POST", "/api/segment-gaps", { ticker: asked });
+      const parents = JSON.parse(typeof queryKey[2] === "string" ? queryKey[2] : "{}") as { products?: unknown; regions?: unknown };
+      const response = await request("POST", "/api/segment-gaps", {
+        ticker: asked,
+        products: parents.products ?? [],
+        regions: parents.regions ?? [],
+      });
       const body = await response.json().catch(() => null) as (SegmentGapResult & { error?: string }) | null;
       if (!response.ok) throw new Error(body?.error || "n/a — fehlende Segmente nicht erreichbar");
       return { items: body?.items ?? [], reason: body?.reason ?? null };

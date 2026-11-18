@@ -22,9 +22,11 @@ import {
 import {
   isGeographicPlace,
   regionFitsParent,
+  segmentGapKey,
   type SegmentGapItem,
   type SegmentGapResult,
 } from "../shared/segment-gap";
+import { prettifyProductSegmentName } from "../shared/segment-growth-calc";
 import { convertSegmentRowsToUsd, fmpSegmentationRows, isFmpAvailable, type FmpSegmentRow } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { fetchSecBusinessSegments } from "./sec-segments";
@@ -43,7 +45,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p6";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p7";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -183,7 +185,8 @@ export function segmentGapPrompt(input: {
     `Erlaubte Regionen-Eltern, nur diese Zeichenfolgen: ${closed(input.regions)}.`,
     "parent ist genau eine dieser Zeichenfolgen. Jeder andere Elternname ist ungültig und wird verworfen.",
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
-    "Nenne auch Geschäftsbereiche, die diese Firma real führt und die in den Listen nicht stehen, etwa Software, Services oder Abos. Sie hängen unter dem passenden Elternsegment.",
+    "Nenne auch Geschäftsbereiche, die diese Firma real führt und die in den Listen nicht stehen, etwa Software, Services oder Abos.",
+    "Software, Services und Abos, die kein eigenes Segment in der Produktliste sind, hängen unter der Zeichenfolge des Service-Segments aus dieser Liste.",
     "Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Ein Land oder eine Region ist kein Produkt-Unterposten. Eine Region nur unter dem Regionen-Eltern, das sie geografisch enthält, nicht unter einem anderen Land.",
     "Währung der Elternumsätze: USD.",
@@ -200,6 +203,63 @@ function fold(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function sameShownParent(left: string, right: string): boolean {
+  const shown = segmentGapKey(right);
+  return segmentGapKey(left) === shown || segmentGapKey(prettifyProductSegmentName(left)) === shown;
+}
+
+function canonicalParent(parent: string, allowed: readonly string[]): string | null {
+  for (let i = 0; i < allowed.length; i++) {
+    const name = allowed[i] ?? "";
+    if (name && sameShownParent(parent, name)) return name;
+  }
+  return null;
+}
+
+function citeConcreteSource(item: unknown, companyName: string): unknown {
+  if (!item || typeof item !== "object") return item;
+  const row = item as { source?: unknown; basis?: unknown };
+  const source = typeof row.source === "string" ? row.source.trim() : "";
+  const basis = typeof row.basis === "string" ? row.basis.trim() : "";
+  if (concreteSource(source, companyName)) return item;
+  const combined = [basis, source].filter((part) => part.length > 0).join(" · ");
+  if (!basis || !concreteSource(combined, companyName)) return item;
+  return { ...row, source: combined };
+}
+
+interface ShownParent {
+  name: string;
+  revenue: number | null;
+}
+
+function shownParents(value: unknown): ShownParent[] {
+  if (!Array.isArray(value)) return [];
+  const out: ShownParent[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const name = clip((item as { name?: unknown }).name, 120);
+    if (!name || out.some((row) => segmentGapKey(row.name) === segmentGapKey(name))) continue;
+    const revenueRaw = (item as { revenue?: unknown }).revenue;
+    const revenue = typeof revenueRaw === "number" && Number.isFinite(revenueRaw) && revenueRaw > 0 ? revenueRaw : null;
+    out.push({ name, revenue });
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+function overlayShownRevenue(shown: readonly ShownParent[], revenues: Map<string, number>, fmpNames: readonly string[]): void {
+  for (const row of shown) {
+    if (row.revenue != null) {
+      revenues.set(fold(row.name), row.revenue);
+      continue;
+    }
+    const hit = fmpNames.find((name) => sameShownParent(name, row.name));
+    if (!hit) continue;
+    const value = revenues.get(fold(hit));
+    if (value != null) revenues.set(fold(row.name), value);
+  }
+}
+
 export function reviewSegmentGaps(
   payload: unknown,
   products: readonly string[],
@@ -211,7 +271,8 @@ export function reviewSegmentGaps(
 ): SegmentGapResult {
   const record = payload && typeof payload === "object" ? payload as { children?: unknown } : {};
   const raw = Array.isArray(record.children) ? record.children : [];
-  const known = new Set([...products, ...regions].map(fold));
+  const allowed = [...products, ...regions];
+  const known = new Set(allowed.map(segmentGapKey));
   const grouped = new Map<string, { kind: "product" | "geographic"; rows: unknown[] }>();
   const notes: string[] = [];
   for (const item of raw) {
@@ -219,13 +280,14 @@ export function reviewSegmentGaps(
     const row = item as { parent?: unknown; name?: unknown; shareOfParentPct?: unknown };
     const parent = clip(row.parent, 120);
     const name = clip(row.name, 80);
-    if (!parent || !known.has(fold(parent))) {
+    const canonical = parent ? canonicalParent(parent, allowed) : null;
+    if (!canonical) {
       if (name) notes.push(`n/a — Elternsegment nicht in der Liste: ${name}`);
       continue;
     }
     if (row.shareOfParentPct === 0 && name) notes.push(`n/a — Anteil 0 verworfen: ${name}`);
-    const parentIsRegion = regions.some((region) => fold(region) === fold(parent));
-    const parentIsProduct = products.some((product) => fold(product) === fold(parent));
+    const parentIsRegion = regions.some((region) => segmentGapKey(region) === segmentGapKey(canonical));
+    const parentIsProduct = products.some((product) => segmentGapKey(product) === segmentGapKey(canonical));
     if (name && isGeographicPlace(name) && !parentIsRegion) {
       notes.push(`n/a — Region nicht als Produkt-Unterposten: ${name}`);
       continue;
@@ -239,9 +301,9 @@ export function reviewSegmentGaps(
       : parentIsRegion && !parentIsProduct
         ? "geographic"
         : "product";
-    const bucket = grouped.get(`${kind}:${fold(parent)}`) ?? { kind, rows: [] };
-    bucket.rows.push(item);
-    grouped.set(`${kind}:${fold(parent)}`, bucket);
+    const bucket = grouped.get(`${kind}:${segmentGapKey(canonical)}`) ?? { kind, rows: [] };
+    bucket.rows.push(citeConcreteSource({ ...row, parent: canonical }, companyName));
+    grouped.set(`${kind}:${segmentGapKey(canonical)}`, bucket);
   }
   const items: SegmentGapItem[] = [];
   for (const bucket of Array.from(grouped.values())) {
@@ -258,7 +320,7 @@ export function reviewSegmentGaps(
     if (reviewed.reason) notes.push(reviewed.reason);
     const enriched: SegmentGapItem[] = [];
     for (const child of reviewed.children) {
-      if (known.has(fold(child.name))) continue;
+      if (known.has(segmentGapKey(child.name))) continue;
       const childCurrency = currencyOnRows(bucket.rows, child.name);
       const parentUsd = parentRevenue.get(fold(parent)) ?? null;
       const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency);
@@ -446,6 +508,12 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         products = segmentNamesFromFmpRows(productRaw);
         regions = segmentNamesFromFmpRows(regionRaw);
       }
+      const fmpProducts = products.slice();
+      const fmpRegions = regions.slice();
+      const shownProducts = shownParents(req.body?.products);
+      const shownRegions = shownParents(req.body?.regions);
+      if (shownProducts.length > 0) products = shownProducts.map((row) => row.name);
+      if (shownRegions.length > 0) regions = shownRegions.map((row) => row.name);
       if (products.length === 0) {
         const cachedNames = cachedSecNames(ticker, now);
         const secNames = cachedNames ?? namesFromSecSegments(
@@ -475,6 +543,8 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       }
       const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
       const usd = await usdParentRevenues(productRaw, regionRaw, convert, identity.currency ?? "");
+      overlayShownRevenue(shownProducts, usd.revenues, fmpProducts);
+      overlayShownRevenue(shownRegions, usd.revenues, fmpRegions);
       const parentsUsd = [...products, ...regions].slice(0, 24).map((name) => ({
         name,
         revenueUsd: usd.revenues.get(fold(name)) ?? null,
