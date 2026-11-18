@@ -59,17 +59,26 @@ function signed(value: number): string {
   return `${sign}${value.toFixed(1)} %`;
 }
 
+export interface KiGrowthHint {
+  pct: number;
+  model?: string | null;
+  source?: string | null;
+}
+
 /** Eingerückte Ergänzung. Die Balken der Elternsegmente zeichnet Section2. */
 export function SegmentSupplementBody({
   data,
   drafts = {},
   onDraft,
   onConfirm,
+  kiGrowth,
 }: {
   data: SegmentSupplement;
   drafts?: Record<string, string>;
   onDraft?: (name: string, value: string) => void;
   onConfirm?: (name: string) => void;
+  /** KI-YoY nur, wenn der deterministische Median fehlt. */
+  kiGrowth?: Record<string, KiGrowthHint>;
 }) {
   const share = data.reportedSharePct == null ? (data.reportedShareReason ?? "n/a") : `${data.reportedSharePct.toFixed(1)} %`;
   return (
@@ -85,7 +94,19 @@ export function SegmentSupplementBody({
         <div key={row.name} className="pl-4 text-[10px]" data-testid={`segment-growth-${row.name}`}>
           <span className="text-muted-foreground">{row.name}, nächstes Jahr: </span>
           {row.nextYearGrowthPct == null ? (
-            <span>{row.label}</span>
+            kiGrowth?.[row.name] && typeof kiGrowth[row.name].pct === "number" ? (
+              <span
+                className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200"
+                data-testid="segment-growth-ki"
+                title={kiGrowth[row.name].source ?? row.label}
+              >
+                {`KI-Schätzung ${signed(kiGrowth[row.name].pct)}`}
+                {kiGrowth[row.name].model ? ` · ${kiGrowth[row.name].model}` : ""}
+                {kiGrowth[row.name].source ? ` · ${kiGrowth[row.name].source}` : ""}
+              </span>
+            ) : (
+              <span>{row.label}</span>
+            )
           ) : row.override ? (
             <span
               className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-700 dark:text-amber-300"
@@ -147,10 +168,12 @@ export function SegmentSupplementView({
   ticker,
   segments,
   request,
+  kiGrowth,
 }: {
   ticker: string;
   segments: OfficialSegment[];
   request?: RequestFn;
+  kiGrowth?: Record<string, KiGrowthHint>;
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
@@ -185,6 +208,7 @@ export function SegmentSupplementView({
     <SegmentSupplementBody
       data={shown}
       drafts={drafts}
+      kiGrowth={kiGrowth}
       onDraft={(name, value) => setDrafts((current) => ({ ...current, [name]: value }))}
       onConfirm={(name) => setConfirmed((current) => ({ ...current, [name]: true }))}
     />
