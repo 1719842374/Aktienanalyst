@@ -19,7 +19,11 @@ export function TaPlotScroll({
   minWidth?: number;
   children: ReactNode;
   testId?: string;
-  /** Liegt auf dem sichtbaren Scrollport, nicht auf dem rechten Ende der Serie. */
+  /**
+   * Eigene Zeile über dem Scrollport. Nicht ins overflow-x legen:
+   * `absolute` darin wandert mit scrollLeft (rechter Abstand = 4 px + scrollLeft)
+   * und deckt im Plot die rechte Achse.
+   */
   overlay?: ReactNode;
   /**
    * 1 = bisherige Breite (Chart pixelgleich).
@@ -44,22 +48,30 @@ export function TaPlotScroll({
     return () => obs.disconnect();
   }, [scrollToEnd, width, minWidth]);
   return (
-    <div
-      ref={scroller}
-      className="relative w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
-      style={{ WebkitOverflowScrolling: "touch" }}
-      data-testid={testId}
-      data-min-width={minWidth ?? undefined}
-      data-scroll-end={scrollToEnd ? "1" : undefined}
-    >
+    <div className="w-full min-w-0 max-w-full">
+      {/* Lane bleibt im Baum, damit der Scrollport beim Umschalten nicht neu gemountet wird. */}
       <div
-        data-testid={`${testId}-inner`}
-        data-width-scale={widthScale > 1 ? widthScale : undefined}
-        style={{ width, minWidth: minWidth || undefined }}
+        className={overlay ? "relative mb-1 h-8 w-full min-w-0" : "hidden"}
+        data-testid={overlay ? `${testId}-overlay-lane` : undefined}
       >
-        {children}
+        {overlay}
       </div>
-      {overlay}
+      <div
+        ref={scroller}
+        className="relative w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+        style={{ WebkitOverflowScrolling: "touch" }}
+        data-testid={testId}
+        data-min-width={minWidth ?? undefined}
+        data-scroll-end={scrollToEnd ? "1" : undefined}
+      >
+        <div
+          data-testid={`${testId}-inner`}
+          data-width-scale={widthScale > 1 ? widthScale : undefined}
+          style={{ width, minWidth: minWidth || undefined }}
+        >
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
