@@ -45,7 +45,7 @@ function requestOf(context: ChatRequestBody["context"], sectionId: number | null
 }
 
 function prioritySum(): number {
-  return CHAT_FACT_PRIORITY.wachstumsthese + CHAT_FACT_PRIORITY.rationale + CHAT_FACT_PRIORITY.notes;
+  return Object.values(CHAT_FACT_PRIORITY).reduce((a, b) => a + b, 0);
 }
 
 async function main() {
@@ -114,7 +114,7 @@ async function main() {
 
   const bulky = structuredClone(ctx);
   const noteLen = 5_000;
-  const rationaleLen = 8_000;
+  const rationaleLen = Math.floor((CHAT_LIMITS.maxRationaleChars * 2) / 3);
   bulky.notes = Array.from({ length: CHAT_LIMITS.maxNotes }, () => repeat("N", noteLen));
   bulky.gates = [{ id: "g1", active: true, cap: 70, severity: "high", rationale: repeat("R", rationaleLen) }];
   assert.ok(JSON.stringify(bulky).length > CHAT_CONTEXT_BUDGET, "Fixture muss über dem Budget liegen");
@@ -149,7 +149,7 @@ async function main() {
   });
   assert.equal(llm.http, 200);
   assert.equal(llm.body.status, "ok");
-  assert.equal(llm.body.answer, "ok");
+  assert.match(llm.body.answer ?? "", /^ok\n\nQuelle: geladene Dashboard-Daten /);
   assert.deepEqual(llm.body.sectionRefs, [3]);
   assert.ok(seen.includes(repeat("W", 1200)));
   assert.ok(!seen.includes(repeat("N", noteLen)));

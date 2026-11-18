@@ -4,6 +4,7 @@
  * Links nur http(s) und mailto. Bilder werden nicht geladen (kein Remote-Pixel).
  * Tabellen und Codeblöcke scrollen horizontal, damit 375 px und 1440 px lesbar bleiben.
  */
+import React from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
