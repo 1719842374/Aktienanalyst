@@ -3,8 +3,10 @@
  *
  * Fehlende Produktlinien und Regionen, die FMP/SEC nicht führen.
  * Kein Ticker-Hardcoding. Treffer hängen an einem vorhandenen Elternsegment.
- * Top-Level-Summen und FMP-Zeilen bleiben unangetastet. Fehler werden nicht 24 h gecacht.
+ * Top-Level-Summen und FMP-Zeilen bleiben unangetastet.
+ * Treffer liegen 24 h im Speicher, leere 200er 60 s. Fehlerantworten werden nicht gecacht.
  */
+import { createHash } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import {
   OUTLINE_MISMATCH,
@@ -14,31 +16,29 @@ import {
   segmentNamesFromFmpRows,
   type SegmentChild,
 } from "../shared/segment-children";
+import { type SegmentGapItem, type SegmentGapResult } from "../shared/segment-gap";
 import { fmpSegmentationRows, isFmpAvailable } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { fetchSecBusinessSegments } from "./sec-segments";
 import {
   loadOutlineIdentity,
   SEGMENT_CHILDREN_KI_TIMEOUT_MS,
   type OutlineIdentity,
 } from "./segment-growth-route";
 
+export type { SegmentGapItem, SegmentGapResult };
+
 const GAP_CACHE_MS = 24 * 60 * 60 * 1000;
+const GAP_EMPTY_CACHE_MS = 60 * 1000;
+const GAP_CACHE_MAX = 400;
+const DEFAULT_RATE_MAX = 20;
+const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
-const gapCache = new Map<string, { at: number; body: SegmentGapResult }>();
-
-export interface SegmentGapItem {
-  parent: string;
-  kind: "product" | "geographic";
-  name: string;
-  shareOfParentPct: number | null;
-  growthPct: number | null;
-  basis: string;
-}
-
-export interface SegmentGapResult {
-  items: SegmentGapItem[];
-  reason: string | null;
-}
+/** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p2";
+const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
+const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
+const rateBuckets = new Map<string, number[]>();
 
 type Llm = (opts: {
   prompt: string;
@@ -55,10 +55,90 @@ export interface SegmentGapDeps {
   identity?: (ticker: string) => Promise<OutlineIdentity | null>;
   llm?: Llm;
   now?: () => number;
+  rateLimit?: { max: number; windowMs: number };
+  secSegments?: (ticker: string, companyName: string) => Promise<{ segments: Array<{ name: string }> } | null>;
 }
 
 export function resetSegmentGapCacheForTests(): void {
   gapCache.clear();
+  secNameCache.clear();
+  rateBuckets.clear();
+}
+
+export function segmentGapCacheKey(ticker: string, products: readonly string[], regions: readonly string[]): string {
+  const names = `p:${products.slice(0, 24).join("\n")}\nr:${regions.slice(0, 24).join("\n")}`;
+  const hash = createHash("sha256").update(names).digest("hex");
+  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${hash}`;
+}
+
+function pruneGapCache(now: number): void {
+  const expired: string[] = [];
+  gapCache.forEach((entry, key) => {
+    if (now - entry.at >= entry.ttl) expired.push(key);
+  });
+  for (let i = 0; i < expired.length; i++) gapCache.delete(expired[i]);
+}
+
+function rememberGap(key: string, entry: { at: number; ttl: number; body: SegmentGapResult }): void {
+  if (!gapCache.has(key) && gapCache.size >= GAP_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    gapCache.forEach((cached, cachedKey) => {
+      if (cached.at < oldestAt) {
+        oldestAt = cached.at;
+        oldestKey = cachedKey;
+      }
+    });
+    if (oldestKey) gapCache.delete(oldestKey);
+  }
+  gapCache.set(key, entry);
+}
+
+function cachedSecNames(ticker: string, now: number): string[] | null {
+  const entry = secNameCache.get(ticker.toUpperCase());
+  if (!entry) return null;
+  if (now - entry.at >= entry.ttl) {
+    secNameCache.delete(ticker.toUpperCase());
+    return null;
+  }
+  return entry.names;
+}
+
+function rememberSecNames(ticker: string, now: number, names: string[]): void {
+  const key = ticker.toUpperCase();
+  if (!secNameCache.has(key) && secNameCache.size >= GAP_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    secNameCache.forEach((entry, entryKey) => {
+      if (entry.at < oldestAt) {
+        oldestAt = entry.at;
+        oldestKey = entryKey;
+      }
+    });
+    if (oldestKey) secNameCache.delete(oldestKey);
+  }
+  secNameCache.set(key, { at: now, ttl: names.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS, names });
+}
+
+function namesFromSecSegments(sec: { segments?: ReadonlyArray<{ name?: unknown }> } | null): string[] {
+  const names: string[] = [];
+  for (const segment of sec?.segments ?? []) {
+    const name = typeof segment.name === "string" ? segment.name.trim() : "";
+    if (!name || names.some((current) => current.toLowerCase() === name.toLowerCase())) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+function takeGapSlot(ip: string, now: number, max: number, windowMs: number): boolean {
+  const recent = (rateBuckets.get(ip) ?? []).filter((at) => now - at < windowMs);
+  if (recent.length >= max) {
+    rateBuckets.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  rateBuckets.set(ip, recent);
+  return true;
 }
 
 function clip(value: unknown, max: number): string {
@@ -157,9 +237,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
     const ticker = typeof req.body?.ticker === "string" ? req.body.ticker.trim() : "";
     if (!TICKER_RE.test(ticker)) return res.status(400).json({ error: "ticker fehlt oder ist ungültig" });
     const now = deps.now?.() ?? Date.now();
-    const key = ticker.toUpperCase();
-    const hit = gapCache.get(key);
-    if (hit && now - hit.at < GAP_CACHE_MS) return res.json(hit.body);
+    const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
     try {
       const identity = deps.identity ? await deps.identity(ticker) : await loadOutlineIdentity(ticker);
       if (!identity?.companyName) return res.json({ items: [], reason: OUTLINE_NO_IDENTITY });
@@ -171,6 +249,33 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         const regionRows = deps.regionRows ? await deps.regionRows(ticker) : await fmpSegmentationRows("geographic", ticker, "annual");
         products = segmentNamesFromFmpRows(Array.isArray(productRows) ? productRows : []);
         regions = segmentNamesFromFmpRows(Array.isArray(regionRows) ? regionRows : []);
+      }
+      if (products.length === 0) {
+        const cachedNames = cachedSecNames(ticker, now);
+        const secNames = cachedNames ?? namesFromSecSegments(
+          deps.secSegments
+            ? await deps.secSegments(ticker, identity.companyName)
+            : await fetchSecBusinessSegments(ticker, identity.companyName),
+        );
+        if (!cachedNames) rememberSecNames(ticker, now, secNames);
+        if (secNames.length > 0) products = secNames;
+      }
+      const key = segmentGapCacheKey(ticker, products, regions);
+      pruneGapCache(now);
+      const hit = gapCache.get(key);
+      if (hit && now - hit.at < hit.ttl) return res.json(hit.body);
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!takeGapSlot(ip, now, limit.max, limit.windowMs)) {
+        return res.status(429).json({ error: "Zu viele Abfragen" });
+      }
+      if (rateBuckets.size > 2000) {
+        const stale: string[] = [];
+        rateBuckets.forEach((stamps, stampKey) => {
+          const fresh = stamps.filter((at) => now - at < limit.windowMs);
+          if (fresh.length === 0) stale.push(stampKey);
+          else rateBuckets.set(stampKey, fresh);
+        });
+        for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
       }
       const run = deps.llm ?? callLLMJson;
       if (!deps.llm && !isLLMAvailable()) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
@@ -198,11 +303,11 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         return res.json({ items: [], reason: OUTLINE_MISMATCH });
       }
       const body = reviewSegmentGaps(payload, products, regions, identity.companyName, ticker, identity.description ?? "");
-      gapCache.set(key, { at: now, body });
+      const ttl = body.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
+      rememberGap(key, { at: now, ttl, body });
       return res.json(body);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Fehlende Segmente fehlgeschlagen";
-      return res.status(502).json({ error: message.slice(0, 200) });
+    } catch {
+      return res.status(502).json({ error: "n/a — fehlende Segmente nicht erreichbar" });
     }
   });
 }

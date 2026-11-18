@@ -1,20 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-
-interface SegmentGapItem {
-  parent: string;
-  kind: "product" | "geographic";
-  name: string;
-  shareOfParentPct: number | null;
-  growthPct: number | null;
-  basis: string;
-}
-
-interface SegmentGapResult {
-  items: SegmentGapItem[];
-  reason: string | null;
-}
+import type { SegmentGapItem, SegmentGapResult } from "@shared/segment-gap";
 
 export type GapRequest = (method: string, url: string, data?: unknown) => Promise<Response>;
 
