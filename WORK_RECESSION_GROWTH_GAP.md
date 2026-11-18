@@ -1,6 +1,8 @@
 # WORK – Prognostiziertes Wachstum & Gap-Analyse im Rezessions-Dashboard
 
 **Stand:** 26.10.2026  
+**Status 21:30 Europe/Madrid (18.11.2026) · #468 · main `806772f2`:** DC-Lauf `run-d8063a19` GO (test-recession-growth-pp-render Exit 0, 10/10, 0 HTTP; tsc 76, Normdiff 0; Hook, Route und `shared/recession-growth.ts` bytegleich). Ampel 🟡 nur noch bis Prod-Smoke `806772f2` (Tester läuft, SPY 1440/375 hell+dunkel, EU/Asien als Stichprobe). Testlücken bleiben: Implied Gap als Zahl, negative und Null-Werte. Spec bleibt offen, kein `fertig_`-Rename.  
+**Status 21:21 Europe/Madrid (18.11.2026) · #468 · main `806772f2`:** Pp-Darstellung der Differenzen (Growth Gap, Implied Gap, Abstand Median) auf main `806772f2c9a25b0c92c21b82e4ef7458520c395d` (#468). Tester-PASS eng (SPY 1440/375 light/dark). Nicht getestet: Implied Gap als Zahl, negative und Null-Werte, EU (VGK) und Asien (ASHR). Spec bleibt offen, kein `fertig_`-Rename.  
 **Ziel:** Markt-prognostiziertes Wachstum als Plot + Gap-Analyse analog Inventory Gap im Aktien-Dashboard. Index-Ebene.
 
 ---
