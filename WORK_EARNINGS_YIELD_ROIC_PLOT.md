@@ -91,5 +91,4 @@ Die Abschnitte oben bleiben der Plan vom 26.10. Peer-Preis ist `GET /api/chart/p
 | Peer Div. Yield | keine zweite Linie | Overlay Div. Yield zeigt die Peer-Rendite. Formel `Dividende TTM / Kurs`. Quelle FMP zuerst, Yahoo als Fallback, auch bei `.DE` (dieselbe Route wie auf main). | `GET /api/dividends/:peer` und Peer-Kurs, Linie `_peerDivYield`. Kein Yahoo-zuerst. |
 | Schätzung | — | Badge `Schätzung` plus Quelle und Formel | Badge nur, wenn der Hinweis `Schätzung` enthält. Berichtete Fallbacks bleiben `Fallback:` |
 | Negatives EPS | wird angezeigt | bleibt angezeigt (#434) | keine Untergrenze, Test mit EPS −1 |
-| .DE EY/ROIC | Yahoo zuerst, FMP ergänzt | unverändert, nur Earnings Yield und ROIC | `loadGermanEarningsYield` / `loadGermanRoic`. Die Peer-Dividende bleibt FMP zuerst. |
 | Pins / Score | VOW3 4.735718, SAP 5.174758, MSFT 4.058138, buildBias 5.6381 | unverändert | Overlay-Test prüft die drei Pins. analyze-route, researcher, schema unangetastet |

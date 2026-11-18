@@ -120,9 +120,7 @@ FMP-402, Yahoo, Dividenden-Plot, Credit, Buffett, Chart-Bündel, regionale Gauge
 
 ### (a) Umsetzbare Soll-Punkte
 
-1. Kette: Perplexity → FMP → **Yahoo nur bei FMP-Fehler, besonders 402** → klarer Frontend-Fehler. Neue Datei `server/yahoo-fetcher.ts`. Mapping nur Kurs, Market Cap, PE, EPS, History. Cache und Rate-Limit. Tests: `VOW3.DE`, `BMW.DE`, `SAP.DE` fallen auf Yahoo; `AAPL` bleibt auf FMP; ungültiger Ticker crasht nicht.
 2. Frontend-Text bei 402: Plan deckt das Symbol nicht, Fallback aktiv bzw. warum nicht.
-3. `.DE` nicht auf ein anderes Listing auflösen.
 4. Dividendenrendite: KPI in Sektion 1, Overlay in `TechnicalChart.tsx` (Sektion 10), nur wenn Dividende > 0. Historische Yield = Dividende / Kurs.
 5. Credit-Risiko (5Y-CDS, lange Bond-Yield, Rating) in Sektion 8, optional Stress in Sektion 6. Quelle ist **nicht** frei auf FMP/Yahoo.
 6. Buffett robuster: Retry, `period2` aktuell, letzter Punkt für die Annotation, Fehlertext statt generischer roter Box, Fehler nicht cachen. Globalisierung: Foreign-Revenue nicht hardcoded, optional LLM, Fallback markieren.
@@ -178,7 +176,6 @@ Yahoo bei 402: deutsche Ticker, die heute 502 sind, liefern eine **dünne** Anal
 
 ### (f) Mini-PRs
 
-- **PR 4** Yahoo nur bei `fmpStatus === 402` (und klarem Upstream-Fail), plus Satz im Fehler/Erfolg „Plan-Limit, Yahoo-Kurs/History“. Kein Fundamentals-Ersatz.
 - **PR 6** Gauge-Umschalter auf vorhandene Katalog-P. US-Default. Hinweis bei vielen N/A.
 - **PR 7** Dividenden-Overlay nur mit vorhandener Serie (FMP-Historie oder später Yahoo). Punkt-KPI kann früher, wenn `dividendYield` schon in der Analyse-Response liegt.
 - **PR 8** Chart-Panes erst ohne `RegionRsiPanel.tsx` (#195).
@@ -470,7 +467,6 @@ Jede PR eine Sache, live prüfbar, US-Handlung und #193-Formel nicht nebenbei ä
 | 1 | Peer-Add: Poll sendet Overrides, Reload behält sie | Future_Work | keines | keine neuen |
 | 2 | Trends Last-Good 12 h + UI-Alter, Zonen gleich | Future_2 Punkt 4, Future_3, Future_4, Future_5 | **P ändert sich**, wenn ein stale Wert wieder zählt | `SERPAPI_KEY` |
 | 3 | Gold-Chart MA50 + Cross-Marker, ohne Score | Future_Work Gold, Future_10 §4/§7 | keines | keine |
-| 4 | Yahoo nur bei FMP 402, dünnes Mapping, klarer Text | Future_1 §1–10 | neue Daten für `.DE`, kein Formel-Bruch | `FMP_API_KEY` bleibt; Yahoo ohne Key |
 | 5 | VIX-Yahoo wenn FRED leer; VSTOXX-Yahoo nur als dritte Stufe | Future_2 | **P ändert sich**, wenn Slot heute N/A ist | keine |
 | 6 | Region-Buttons auf Katalog-P, US-Default, US-Handlung bleibt | Future_1 §17–18 | Anzeige, nicht die US-Formel | keine |
 | 7 | Dividenden-KPI/Overlay nur mit echter Serie | Future_1 §11.1 | keines an den Gates | FMP, später Yahoo |
