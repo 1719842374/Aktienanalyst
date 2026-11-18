@@ -2,11 +2,12 @@
  * KI-Chatbot (WORK_DASHBOARD_FEATURES_2026-10.md §4/§4c): Client-Hook.
  * DATENFLUSS: Dashboard-Provider (z.B. buildStockChatContext) → useDashboardChat → apiRequest
  * POST /api/chat → server/chat-route.ts handleChat → callLLMJson (OpenRouter).
- * Der Verlauf lebt nur im Speicher dieses Widgets; keine Secrets im Client.
+ * Der Verlauf dieses Fensters liegt im State. useChatHistory schreibt ihn zusätzlich
+ * in den Session-Cache (sessionStorage und /api/chat/history). Keine Secrets im Client.
  */
 import { useCallback, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
-import { CHAT_LIMITS, type ChatContext, type ChatMessage, type ChatResponseBody } from "@shared/chat-context";
+import { CHAT_LIMITS, type ChatContext, type ChatContextTrimEntry, type ChatMessage, type ChatResponseBody } from "@shared/chat-context";
 
 export interface ChatEntry extends ChatMessage {
   sectionRefs?: number[];
@@ -17,6 +18,7 @@ export interface ChatEntry extends ChatMessage {
 export function useDashboardChat(context: ChatContext | null, sectionId: number | null) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [pending, setPending] = useState(false);
+  const [contextTrimmed, setContextTrimmed] = useState<ChatContextTrimEntry[] | undefined>();
   const reqRef = useRef(0);
 
   const send = useCallback(async (text: string) => {
@@ -31,6 +33,7 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
       const res = await apiRequest("POST", "/api/chat", { dashboard: context.dashboard, sectionId, context, messages: history }, 45000);
       const body = (await res.json().catch(() => null)) as ChatResponseBody | null;
       if (reqId !== reqRef.current) return;
+      setContextTrimmed(body?.contextTrimmed?.length ? body.contextTrimmed : undefined);
       if (body?.ok && body.answer) {
         setEntries(prev => [...prev, { role: "assistant", content: body.answer!, sectionRefs: body.sectionRefs, status: "ok" }]);
       } else {
@@ -45,6 +48,12 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
     }
   }, [context, sectionId, entries, pending]);
 
-  const reset = useCallback(() => { reqRef.current++; setEntries([]); setPending(false); }, []);
-  return { entries, pending, send, reset };
+  const reset = useCallback(() => { reqRef.current++; setEntries([]); setPending(false); setContextTrimmed(undefined); }, []);
+  const load = useCallback((next: ChatEntry[]) => {
+    reqRef.current++;
+    setEntries(next);
+    setPending(false);
+    setContextTrimmed(undefined);
+  }, []);
+  return { entries, pending, send, reset, load, contextTrimmed };
 }

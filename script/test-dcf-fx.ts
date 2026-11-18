@@ -77,19 +77,30 @@ globalThis.fetch = (async (input: any) => {
   check("currencyInfo: CADUSD 0.7075 converted", ci.converted && ci.fxPair === "CADUSD" && ci.fxRate === 0.7075 && ci.tradingCurrency === "USD" && /CAD/.test(ci.note), ci.note);
   check("RSL/MA-Verhältnisse bleiben (konstanter Faktor)", near(ryU.ohlcv.historical[0].close / ryU.quote.priceAvg200, 280.01 / 250));
 
-  console.log("\n=== SHEL.L (GBp, FMP): Pence → Pfund → USD in einem Schritt ===");
+  console.log("\n=== SHEL.L (GBp, FMP): Pence → Pfund, nicht weiter nach USD ===");
   const sh = {
     quote: { price: 3938, marketCap: 224e9 }, profile: { currency: "GBp", price: 3938 },
     ohlcv: [{ close: 3938, open: 3900, high: 3950, low: 3890 }], financials: { income: [{ revenue: 272e9 }] },
     analyst: { priceTarget: { targetMedian: 4500 } },
   };
   const shU: any = normalizeListingToUsd(sh, 1.3329, STMT);
-  check("Kurs 3938 GBp → 39.38 GBP × 1.3329", near(shU.quote.price, 39.38 * 1.3329), String(shU.quote.price));
-  check("Bars ÷100 × 1.3329", near(shU.ohlcv[0].close, 39.38 * 1.3329));
-  check("Market Cap (FMP schon GBP) × 1.3329, nicht ÷100", near(shU.quote.marketCap, 224e9 * 1.3329));
-  check("Kursziel in Pence erkannt → 45 GBP × 1.3329", near(shU.analyst.priceTarget.targetMedian, 45 * 1.3329), String(shU.analyst.priceTarget.targetMedian));
-  check("Statements bleiben USD (kein #244-USD→GBP mehr)", shU.financials === sh.financials);
-  check("currencyInfo nennt Pence-Faktor", /÷ 100/.test(currencyInfoFromListingFx(shU.profile._listingFx)!.note));
+  check("Kurs 3938 GBp → 39.38 GBP (nicht × 1.3329 nach USD)", near(shU.quote.price, 39.38), String(shU.quote.price));
+  check("Bars ÷100, nicht zusätzlich × FX", near(shU.ohlcv[0].close, 39.38) && near(shU.ohlcv[0].open, 39), String(shU.ohlcv[0].close));
+  check("Market Cap bleibt GBP (FMP schon Major), nicht × FX", near(shU.quote.marketCap, 224e9));
+  check("Kursziel in Pence erkannt → 45 GBP, nicht × FX", near(shU.analyst.priceTarget.targetMedian, 45), String(shU.analyst.priceTarget.targetMedian));
+  check("Statements USD → GBP mit dem übergebenen FX", near(shU.financials.income[0].revenue, 272e9 / 1.3329) && shU.financials.income[0].reportedCurrency === "GBP");
+  check("profile.currency = GBP, kein USD-_listingFx", shU.profile.currency === "GBP" && shU.profile._listingFx == null);
+  // 01.11.2026 live: FMP GBp wird nach USD gerechnet und profile.currency = USD → UI „Dollar“ statt £.
+  // Soll: Minor-Unit-Listing bleibt in der Major-Währung (3938 GBp → 39.38 GBP), Statements USD → GBP mit demselben FX.
+  const shGbp: any = normalizeListingToUsd({
+    quote: { price: 3938, marketCap: 224e9 }, profile: { currency: "GBp", price: 3938 },
+    ohlcv: [{ close: 3938 }], financials: { income: [{ reportedCurrency: "USD", revenue: 272e9, eps: 3.06 }], cashflow: [], balanceSheet: [] },
+    analyst: { estimates: [{ reportedCurrency: "USD", epsAvg: 6.05397 }] },
+  }, 1.3329, STMT);
+  check("SHEL.L bleibt GBP: 3938 GBp → 39.38, nicht × FX nach USD", near(shGbp.quote.price, 39.38) && shGbp.profile.currency === "GBP" && shGbp.profile.currency !== "USD", `price=${shGbp.quote.price} ccy=${shGbp.profile.currency}`);
+  check("SHEL.L Statements USD → GBP mit Live-FX, nicht hart", near(shGbp.financials.income[0].revenue, 272e9 / 1.3329) && near(shGbp.financials.income[0].eps, 3.06 / 1.3329) && shGbp.financials.income[0].reportedCurrency === "GBP");
+  check("SHEL.L Market Cap bleibt GBP (nicht × FX)", near(shGbp.quote.marketCap, 224e9));
+  check("SHEL.L ohne _listingFx-USD (Antwort-Währung = profile.currency GBP)", shGbp.profile._listingFx == null);
 
   console.log("\n=== FX fehlt ===");
   const eurNoFx: any = normalizeListingToUsd({ quote: { price: 68.68 }, profile: { currency: "EUR", price: 68.68 } }, 1, STMT);
@@ -103,8 +114,8 @@ globalThis.fetch = (async (input: any) => {
 
   console.log("\n=== Yahoo-Shape (Bars Major, Quote-EPS) ===");
   const yS: any = normalizeListingToUsd({ quote: { price: 3938, eps: 3.38, pe: 11.65, marketCap: 224e9, currency: "GBp" }, profile: { currency: "GBp", price: 3938, marketCap: 224e9 }, ohlcv: [{ close: 39.38 }] }, 1.3329, [], { barsInMajor: true });
-  check("Yahoo SHEL.L: Bars × 1.3329 (nicht ÷100)", near(yS.ohlcv[0].close, 39.38 * 1.3329));
-  check("Yahoo SHEL.L: EPS 3.38 ist Pfund (Kurs/EPS ≠ KGV) → × 1.3329", near(yS.quote.eps, 3.38 * 1.3329), String(yS.quote.eps));
+  check("Yahoo SHEL.L: Bars bleiben GBP (nicht × FX, nicht nochmal ÷100)", near(yS.ohlcv[0].close, 39.38) && near(yS.quote.price, 39.38));
+  check("Yahoo SHEL.L: EPS 3.38 ist Pfund → bleibt 3.38, Währung GBP", near(yS.quote.eps, 3.38) && yS.profile.currency === "GBP", String(yS.quote.eps));
   check("KGV bleibt (Verhältnis)", yS.quote.pe === 11.65);
   check("epsUnitFactor: EPS in Pence erkannt", epsUnitFactor({ price: 3938, eps: 338, pe: 11.65 }, 100) === 100 && epsUnitFactor({ price: 3938, eps: 3.38, pe: 11.65 }, 100) === 1);
 
@@ -119,6 +130,8 @@ globalThis.fetch = (async (input: any) => {
   const { loadDividendHistory } = await import("../server/dividend-route");
   const divRes = await loadDividendHistory("RY.TO", { fmp: async () => [{ date: "2026-07-24", dividend: 1.54, adjDividend: 1.54 }], yahoo: async () => Object.assign([], { currency: null }), listingCurrency: async () => "CAD", fxToUsd: async () => 0.7075 });
   check("loadDividendHistory RY.TO: Beträge USD", divRes.currency === "USD" && near(divRes.events[0]?.amount, 1.54 * 0.7075), JSON.stringify(divRes).slice(0, 160));
+  const shelDiv = await loadDividendHistory("SHEL.L", { fmp: async () => [{ date: "2026-08-13", dividend: 28.92 }], yahoo: async () => Object.assign([], { currency: null }), listingCurrency: async () => "GBp", fxToUsd: async () => 1.33939 });
+  check("SHEL.L Dividende bleibt GBP (Kurs ist Pfund, nicht USD)", shelDiv.currency === "GBP" && near(shelDiv.events[0]?.amount, 0.2892), JSON.stringify(shelDiv).slice(0, 180));
   const divOld = await loadDividendHistory("RY.TO", { fmp: async () => [{ date: "2026-07-24", dividend: 1.54, adjDividend: 1.54 }], yahoo: async () => Object.assign([], { currency: null }), listingCurrency: async () => "CAD" });
   check("ohne fxToUsd-Dep: Verhalten wie bisher", divOld.events[0]?.amount === 1.54);
 
@@ -128,6 +141,7 @@ globalThis.fetch = (async (input: any) => {
   check("VOW3.DE Yahoo „USD“ ohne currencyInfo → verwerfen", isPreDcfFxEntry("VOW3.DE", { currency: "USD", dataSource: "yahoo" }) === true);
   check("AAPL/NVO USD → behalten", isPreDcfFxEntry("AAPL", { currency: "USD", dataSource: "fmp" }) === false && isPreDcfFxEntry("NVO", { currency: "USD" }) === false);
   check("umgerechnet → behalten, FX fehlte → neu versuchen", isPreDcfFxEntry("RY.TO", { currency: "USD", currencyInfo: { converted: true } }) === false && isPreDcfFxEntry("RY.TO", { currency: "CAD", currencyInfo: { converted: false } }) === true);
+  check("SHEL.L USD-Cache (DCF-FX) → verwerfen, GBP-Cache behalten", isPreDcfFxEntry("analyze:SHEL.L:llm:0", { ticker: "SHEL.L", currency: "USD", currencyInfo: { converted: true, reportedCurrency: "GBP" } }) === true && isPreDcfFxEntry("analyze:SHEL.L:llm:0", { ticker: "SHEL.L", currency: "GBP" }) === false);
 
   console.log("\n=== Yahoo-Fallback, quoteSummary LEER (Prod-Fall VOW3.DE) ===");
   const { yahooFallbackData } = await import("../server/analyze-helpers");

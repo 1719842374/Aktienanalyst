@@ -10,6 +10,7 @@
  */
 import type { StockAnalysis } from "./schema";
 import { sumUpsideGb } from "./bias-fixes";
+import type { EarningsCallBrief } from "./chat-earnings";
 
 export type ChatDashboard = "stock" | "btc" | "gold" | "recession";
 export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold", "recession"];
@@ -80,6 +81,15 @@ export interface ChatRequestBody {
   messages: ChatMessage[];
 }
 
+/** Faktart, die das Budget gekürzt oder entfernt hat. */
+export type ChatTrimKind = "notes" | "facts" | "rationale" | "wachstumsthese";
+
+export interface ChatContextTrimEntry {
+  kind: ChatTrimKind;
+  /** Zeichen, die bei dieser Faktart gekürzt oder gelöscht wurden. */
+  removedChars: number;
+}
+
 export interface ChatResponseBody {
   ok: boolean;
   answer: string | null;
@@ -89,16 +99,75 @@ export interface ChatResponseBody {
   /** "ok" | "no-key" | "timeout" | "llm-error" | "invalid" */
   status: "ok" | "no-key" | "timeout" | "llm-error" | "invalid";
   error: string | null;
+  /** Fehlt, wenn nichts gekürzt wurde. Sonst je Faktart die entfernten Zeichen. */
+  contextTrimmed?: ChatContextTrimEntry[];
 }
 
-/** Grenzen, serverseitig erzwungen (Client kürzt vorab gleich). */
+/** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */
+export const CHAT_CONTEXT_BUDGET = 36_000;
+
+/**
+ * WORK_KI_CHAT_BIG_PICTURE: so viele Schlagzeilen stehen im Prompt („News: Top 5“).
+ * Fenster, kein Score-Schwellenwert.
+ */
+export const CHAT_NEWS_HEADLINE_COUNT = 5;
+
+/** Schema-Stufe „Hoch“ ist die starke / rote Exposure. Kein numerischer Cutoff. */
+export const PESTEL_STRONG_RATING = "Hoch" as const;
+
+export function pestelIsStrong(p: { overallExposure?: string | null; factors?: Array<{ exposureRating?: string | null }> | null } | null | undefined): boolean {
+  if (!p) return false;
+  if (p.overallExposure === PESTEL_STRONG_RATING) return true;
+  return (p.factors ?? []).some(f => f?.exposureRating === PESTEL_STRONG_RATING);
+}
+
+/** Dominante Thesis-Klasse = größter Anteil. Keine Wachstumsschwelle. */
+export function dominantThesisClass(shares: Record<string, number> | null | undefined): { name: string; share: number } | null {
+  if (!shares) return null;
+  let best: { name: string; share: number } | null = null;
+  for (const [name, share] of Object.entries(shares)) {
+    if (typeof share !== "number" || !Number.isFinite(share)) continue;
+    if (!best || share > best.share) best = { name, share };
+  }
+  return best;
+}
+
+/**
+ * Relative Priorität beim Behalten von Text: Wachstumsthese > Rationale > Notes.
+ * Das sind Ränge, keine Zeichenzahl. Gewicht = Rang / Summe.
+ * allowedChars = floor(CHAT_CONTEXT_BUDGET * Gewicht).
+ */
+export const CHAT_FACT_PRIORITY = {
+  wachstumsthese: 3,
+  rationale: 2,
+  notes: 1,
+} as const;
+
+export type ChatFactKind = keyof typeof CHAT_FACT_PRIORITY;
+
+function chatFactPrioritySum(): number {
+  return CHAT_FACT_PRIORITY.wachstumsthese + CHAT_FACT_PRIORITY.rationale + CHAT_FACT_PRIORITY.notes;
+}
+
+export function chatFactWeight(kind: ChatFactKind): number {
+  return CHAT_FACT_PRIORITY[kind] / chatFactPrioritySum();
+}
+
+/** allowedChars = floor(totalBudget * weight[factType]), ganzzahlig ohne Rundungsrest. */
+export function chatFactAllowedChars(kind: ChatFactKind): number {
+  return Math.floor((CHAT_CONTEXT_BUDGET * CHAT_FACT_PRIORITY[kind]) / chatFactPrioritySum());
+}
+
+/** Grenzen. Textlängen von Fakten, Rationale und Notes hängen am Budget, nicht an einem festen 400/1000. */
 export const CHAT_LIMITS = {
   maxMessages: 12,
   maxMessageChars: 2000,
   maxSections: 30,
   maxFactsPerSection: 40,
   maxFactKeyChars: 60,
-  maxFactValueChars: 400,
+  maxFactValueChars: chatFactAllowedChars("wachstumsthese"),
+  maxRationaleChars: chatFactAllowedChars("rationale"),
+  maxNoteChars: chatFactAllowedChars("notes"),
   maxGates: 20,
   maxNotes: 10,
   maxContextChars: 40_000,
@@ -131,6 +200,43 @@ export const STOCK_SECTION_LABELS: Record<number, string> = {
   19: "Management-Score", 20: "Zusammenfassung",
 };
 
+function newsTitles(items: unknown, tone?: "bullish" | "bearish"): string[] {
+  if (!Array.isArray(items)) return [];
+  const titles: string[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { title?: unknown; sentiment?: unknown; source?: unknown };
+    if (typeof rec.title !== "string" || !rec.title.trim()) continue;
+    if (tone && rec.sentiment !== tone) continue;
+    const source = typeof rec.source === "string" && rec.source.trim() ? `, ${rec.source.trim()}` : "";
+    const label = tone === "bullish" ? "positiv" : tone === "bearish" ? "negativ" : (rec.sentiment === "bullish" ? "positiv" : rec.sentiment === "bearish" ? "negativ" : rec.sentiment === "neutral" ? "neutral" : "Stimmung n/a");
+    titles.push(tone ? rec.title.trim() : `${rec.title.trim()} (${label}${source})`);
+  }
+  return titles;
+}
+
+function newsFact(items: unknown, tone?: "bullish" | "bearish"): string | null {
+  const titles = newsTitles(items, tone).slice(0, CHAT_NEWS_HEADLINE_COUNT);
+  return titles.length ? str(titles.join(" | ")) : null;
+}
+
+function catalystKiText(catalysts: unknown[]): string | null {
+  const parts: string[] = [];
+  for (const c of catalysts) {
+    if (!c || typeof c !== "object") continue;
+    const rec = c as { name?: unknown; deepDive?: Record<string, unknown> | null };
+    const dive = rec.deepDive;
+    if (!dive || typeof dive !== "object") continue;
+    const bits = ["unternehmenskontext", "posHerleitung", "bewertungsauswirkung", "marktumfeld", "risiken"]
+      .map(k => dive[k])
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    if (!bits.length) continue;
+    const name = typeof rec.name === "string" && rec.name.trim() ? rec.name.trim() : "Katalysator";
+    parts.push(`${name}: ${bits.join(" ")}`);
+  }
+  return parts.length ? str(parts.join(" | ")) : null;
+}
+
 /**
  * Aktien-Provider: baut aus der geladenen Analyse (Antwort von POST /api/analyze) den Chat-Kontext
  * für alle 20 Sektionen + Scoring-Gates. Reine Funktion, mutiert `data` nicht.
@@ -141,6 +247,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
   const ti = d.technicalIndicators?.currentStatus;
   const sc = d.scoring;
   const catalysts = Array.isArray(d.catalysts) ? d.catalysts : [];
+  const kiCatalysts = catalystKiText(catalysts);
   const risks = Array.isArray(d.risks) ? d.risks : [];
   const lastPrice = Array.isArray(d.historicalPrices) && d.historicalPrices.length ? d.historicalPrices[d.historicalPrices.length - 1] : null;
 
@@ -163,9 +270,14 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       thesisStrengthScore: num(d.thesisStrengthScore, 1),
     }),
     s(3, {
-      wachstumsthese: str(d.growthThesis, 1200), strukturelleTrends: list(d.structuralTrends),
+      wachstumsthese: str(d.growthThesis), strukturelleTrends: list(d.structuralTrends),
       lynchKlasse: str(d.lynchClass), moatRating: str(d.moatRating),
       warumInteressant: str(d.catalystReasoning?.whyInteresting),
+      newsTop: newsFact(d.newsItems) ?? "n/a — keine News in der geladenen Analyse",
+      newsPositiv: newsFact(d.newsItems, "bullish") ?? (newsTitles(d.newsItems).length ? "n/a — keine positive Schlagzeile in den geladenen News" : "n/a — keine News in der geladenen Analyse"),
+      newsNegativ: newsFact(d.newsItems, "bearish") ?? (newsTitles(d.newsItems).length ? "n/a — keine negative Schlagzeile in den geladenen News" : "n/a — keine News in der geladenen Analyse"),
+      analystenThesen: "n/a — keine narrativen Analysten-Thesen in den geladenen Daten, nur Buy/Hold/Sell in S1",
+      beatMiss: "n/a — Beat/Miss liegt nicht in der geladenen Analyse",
     }),
     s(4, {
       umsatz: num(d.revenue, 0), ebitda: num(d.ebitda, 0), operatingIncome: num(d.operatingIncome, 0),
@@ -222,6 +334,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       gesamtExposure: str(d.pestelAnalysis?.overallExposure), geopolitikScore: num(d.pestelAnalysis?.geopoliticalScore, 0),
       makroZusammenfassung: str(d.pestelAnalysis?.macroSummary), zinsAusblick: str(d.pestelAnalysis?.interestRateOutlook),
       kategorien: list((d.pestelAnalysis?.factors ?? []).map((f: any) => `${f.categoryDE ?? f.category}: ${f.exposureRating}`)),
+      pestelStark: d.pestelAnalysis ? (pestelIsStrong(d.pestelAnalysis) ? "ja" : "nein") : "n/a — keine PESTEL-Analyse geladen",
     }),
     s(15, {
       makroSensitivitaet: str(d.macroCorrelations?.overallMacroSensitivity), kernaussage: str(d.macroCorrelations?.keyInsight),
@@ -231,6 +344,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     s(17, {
       quelle: str(d.catalystsSource), kiModus: typeof d.llmMode === "boolean" ? d.llmMode : null,
       katalysatoren: list(catalysts.map((c: any) => `${c.name} (PoS ${num(c.pos, 0) ?? "n/a"}%, netto ${num(c.nettoUpside, 1) ?? "n/a"}%, GB ${num(c.gb, 2) ?? "n/a"})`), 8),
+      ...(kiCatalysts ? { kiAntwort: kiCatalysts } : {}),
     }),
     s(18, {
       hinweis: "Monte Carlo (GBM, 10.000 Pfade) wird im Client berechnet",
@@ -245,7 +359,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
   ];
 
   const gates: ChatGate[] = (sc?.gates ?? []).slice(0, CHAT_LIMITS.maxGates).map(g => ({
-    id: String(g.id), active: !!g.active, cap: num(g.cap, 1), severity: String(g.severity ?? ""), rationale: str(g.rationale) ?? "",
+    id: String(g.id), active: !!g.active, cap: num(g.cap, 1), severity: String(g.severity ?? ""), rationale: str(g.rationale, CHAT_LIMITS.maxRationaleChars) ?? "",
   }));
 
   const notes: string[] = [];
@@ -260,6 +374,25 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     sections,
     gates,
     notes,
+  };
+}
+
+/** Earnings-Call in S3 (Investmentthese). `null` = Abruf läuft noch. Mutiert `ctx` nicht. Null-Felder werden weggelassen; der Grund steht in `earningsCallHinweis`. */
+export function withEarningsBriefFacts(ctx: ChatContext, brief: EarningsCallBrief | null): ChatContext {
+  const quarter = brief && brief.year != null && brief.quarter != null ? `FY${brief.year} Q${brief.quarter}` : null;
+  const facts: Record<string, ChatFactValue> = {};
+  if (brief?.date) facts.earningsCallDatum = brief.date;
+  if (quarter) facts.earningsCallQuartal = quarter;
+  if (brief?.summary) facts.earningsCallZusammenfassung = brief.summary;
+  if (brief?.excerpt) facts.earningsCallAuszug = brief.excerpt;
+  if (brief?.source) facts.earningsCallQuelle = brief.source;
+  const hinweis = brief?.summary
+    ? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null)
+    : (brief?.reason ?? "n/a — Earnings-Call noch nicht geladen");
+  if (hinweis) facts.earningsCallHinweis = hinweis;
+  return {
+    ...ctx,
+    sections: ctx.sections.map(s => (s.id === 3 ? { ...s, facts: { ...s.facts, ...facts } } : s)),
   };
 }
 
@@ -280,7 +413,7 @@ function sec(id: number, label: string, facts: Record<string, ChatFactValue>): C
 function gatesFrom(list: any): ChatGate[] {
   return (Array.isArray(list) ? list : []).slice(0, CHAT_LIMITS.maxGates).map((g: any) => ({
     id: String(g?.id ?? "n/a").slice(0, 60), active: !!g?.active, cap: num(g?.cap, 1),
-    severity: String(g?.severity ?? "").slice(0, 30), rationale: str(g?.rationale) ?? "",
+    severity: String(g?.severity ?? "").slice(0, 30), rationale: str(g?.rationale, CHAT_LIMITS.maxRationaleChars) ?? "",
   }));
 }
 
@@ -330,9 +463,29 @@ export function buildBtcChatContext(data: any): ChatContext {
 
 /** Labels/IDs identisch mit SECTIONS in client/src/pages/GoldDashboard.tsx (News = 100). */
 export const GOLD_SECTION_LABELS: Record<number, string> = {
-  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
+  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 9: "Miner-Breakeven", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
   6: "Preisschätzung", 7: "Zyklus", 8: "Zusammenfassung",
 };
+
+/** Dieselben Zahlen wie Sektion 9. Fehlendes Feld = Offline-Fallback, null = n/a. */
+function goldMinerFacts(zone: any): Record<string, ChatFactValue> {
+  if (zone === undefined) return { hinweis: "AISC n/a — Offline-Daten, keine Minendaten in dieser Antwort" };
+  if (zone == null) return { hinweis: "n/a" };
+  const latest = zone.latest;
+  const days = num(zone.thresholds?.obs, 0);
+  if (!latest || zone.naReason) return { hinweis: zone.naReason ? `n/a — ${zone.naReason}` : "n/a", tage: days };
+  return {
+    zone: str(latest.zone),
+    multiple: num(latest.multiple, 2),
+    aiscUsd: num(latest.aisc, 0),
+    margeUsd: num(latest.marginUsd, 0),
+    margePct: num(typeof latest.marginPct === "number" ? latest.marginPct * 100 : null, 1),
+    score: num(latest.score, 0),
+    quartal: str(latest.quarter),
+    tage: days,
+    inScore: false,
+  };
+}
 
 export function buildGoldChatContext(data: any): ChatContext {
   const d = data ?? {};
@@ -343,6 +496,7 @@ export function buildGoldChatContext(data: any): ChatContext {
     sec(1, L[1], { kursUSD: num(d.spotPrice), aenderungPct: num(d.changePercent), jahresHoch: num(d.yearHigh), jahresTief: num(d.yearLow), ma200: num(d.ma200), abweichungMA200Pct: num(d.deviationFromMA200, 1), stand: str(d.priceTimestamp), teilausfall: d.partial === true ? (list(d.partialReasons) ?? "ja") : null }),
     sec(100, L[100], { newsFlag: d.goldNews ? num(d.goldNews.flag, 2) : null, newsZusammenfassung: str(d.goldNews?.summary, 600), hinweis: d.goldNews ? null : "News-Abruf lief nicht (n/a)" }),
     sec(2, L[2], { rsi14: num(d.rsi14, 1), historiePunkte: Array.isArray(d.historicalPrices) ? d.historicalPrices.length : null, technikSignale: list((d.technicalSignals ?? []).map((s: any) => `${s.id}: ${s.available === false ? "n/a" : `Richtung ${s.direction ?? "n/a"}`}${s.detail ? ` (${s.detail})` : ""}`), 6) }),
+    sec(9, L[9], goldMinerFacts(d.aiscZone)),
     sec(3, L[3], { indikatoren: list((d.indicators ?? []).map((i: any) => `${i.name}: ${i.value} (Score ${i.score}, Gewicht ${num(i.weight * 100, 1) ?? "n/a"}%)`), 10), gis: num(d.gis, 4), adaptiverScore: num(ad?.score, 3), scoreDelta: num(d.scoreDelta ?? ad?.scoreDelta, 3) }),
     sec(4, L[4], { fvBasis: num(fv?.fvBasis, 0), fvAdj: num(fv?.fvAdj, 0), praemie: num(fv?.premium, 2), support1: num(fv?.support1, 0), resistance1: num(fv?.resistance1, 0), realzinsModellFV: num(ry?.fairValue?.fairValue, 0), realzinsRegime: str(ry?.regime?.regime) }),
     sec(5, L[5], { mc3M: mc(d.monteCarlo3M), mc6M: mc(d.monteCarlo6M), mc12M: mc(d.monteCarlo12M) }),
@@ -371,10 +525,13 @@ export const RECESSION_SECTION_DEFS: ReadonlyArray<{ key: string; label: string;
   { key: "indikatoren", label: "Indikatoren-Tabelle" }, { key: "untergruppen", label: "Score-Übersicht (5 Untergruppen)" },
   { key: "prozent", label: "Prozentschätzungen" },
   { key: "regionen", label: "Regionale Kataloge", when: "regions" },
-  { key: "rsi", label: "RSI" }, { key: "markt", label: "Marktcharts" }, { key: "buffett", label: "Buffett-Indikator" },
+  { key: "rsi", label: "RSI" }, { key: "markt", label: "Marktcharts" }, { key: "ta", label: "Technische Analyse" }, { key: "buffett", label: "Buffett-Indikator" },
   { key: "summary", label: "Zusammenfassung & Top-3 Treiber" },
   { key: "fazit", label: "Fazit & Makro-Risiko", when: "fazit" },
   { key: "quellen", label: "Quellenliste" },
+  { key: "lager", label: "Lager/Nachfrage-Lücke" },
+  { key: "makroSchicht", label: "Makro-Schicht" },
+  { key: "gewinn", label: "Gewinnwachstum & Growth Gap" },
 ];
 
 /** Nummerierung wie in client/src/pages/RecessionDashboard.tsx (abhängig von Regionen/Fazit). */
@@ -421,7 +578,10 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
     // "recession_full" (server/recession.ts); für die übrigen Gruppen gibt es sie nicht → nicht als n/a melden.
     prozent: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`P ${num(s.probability, 1) ?? "n/a"}% (${s.horizon ?? "n/a"}), Netto ${num(s.netScore, 1) ?? "n/a"}/${num(s.maxScore, 1) ?? "n/a"}${typeof s.nyFedAnchor === "number" ? `, NY-Fed-Anker ${num(s.nyFedAnchor, 1)}%, final ${num(s.finalProbability, 1) ?? "n/a"}%` : ""}${s.formula ? ` | ${s.formula}` : ""}`)])),
     regionen: regionFacts(opts.regions),
-    rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
+    rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, ta: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
+    lager: { hinweis: SELF_LOADED },
+    makroSchicht: { hinweis: SELF_LOADED },
+    gewinn: { hinweis: SELF_LOADED },
     summary: { topTreiber: list(d.topDrivers), interpretation: str(d.interpretation, 800) },
     fazit: { risiko: str(d.fazit?.riskLevel), zusammenfassung: str(d.fazit?.summary, 800), abschnitte: list((d.fazit?.sections ?? []).map((s: any) => s.title)) },
     quellen: { anzahl: Array.isArray(d.sources) ? d.sources.length : null, quellen: list((d.sources ?? []).map((s: any) => s.name), 8) },
@@ -429,7 +589,7 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
   const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => ({ ...sec(s.id, s.label, facts[s.key] ?? {}), key: s.key }));
   return {
     dashboard: "recession", entity: "US-Rezession", title: "Rezessions-Dashboard", asOf: str(d.asOf ?? d.date, 40), sections, gates: [],
-    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts und Buffett-Indikator laden eigene Daten und fehlen im Kontext"],
+    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts, Technische Analyse, Buffett-Indikator, Lager/Nachfrage-Lücke, Makro-Schicht und Gewinnwachstum laden eigene Daten und fehlen im Kontext, bis sie geladen sind"],
   };
 }
 
@@ -443,15 +603,14 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
 //   - aktive Gates (in der Gate-Sektion des Dashboards),
 //   - fehlende Werte (n/a-Felder) und nicht geladene Selbstlade-Sektionen.
 //
-// Kontext-Budget (dokumentiert, geprüft in script/test-chat-context-full.ts):
-//   Server-Limit CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Client-Ziel CHAT_CONTEXT_BUDGET
-//   = 36 000 Zeichen (10 % Reserve). Je Fakt ≤ 400 Zeichen, ≤ 40 Fakten je Sektion, Auffälligkeiten
-//   ≤ 400 Zeichen. Wird das Ziel überschritten, kürzt fitChatContextBudget zuerst die längsten
-//   Textwerte (auf min. 80 Zeichen), danach die letzten Fakten der größten Sektion — Zahlen,
-//   Gates und "auffaelligkeiten" bleiben bis zuletzt erhalten.
+// Kontext-Budget (geprüft in script/test-chat-context-full.ts und script/test-chat-fact-limit.ts):
+//   Server-Decke CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Ziel CHAT_CONTEXT_BUDGET = 36 000.
+//   allowedChars = floor(Budget * Priorität / Summe). Priorität: wachstumsthese > rationale > notes.
+//   Kein festes 400- oder 1000-Zeichen-Limit. Liegt der Payload darüber, kürzt fitChatContextBudget
+//   proportional: zuerst Notes, dann übrige Fakten (längste zuerst, ab 80 Zeichen halbiert,
+//   Auffälligkeiten ausgenommen), dann Rationale, die Wachstumsthese zuletzt.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const CHAT_CONTEXT_BUDGET = 36_000;
 export const CHAT_WEAKNESS_KEY = "auffaelligkeiten";
 /** Schlüssel, unter dem Publisher angezeigte Warn-Flags liefern (wird in `auffaelligkeiten` überführt). */
 export const CHAT_LIVE_FLAGS_KEY = "_auffaelligkeiten";
@@ -508,22 +667,158 @@ export function enrichChatContext(
   return fitChatContextBudget({ ...ctx, sections, notes: notes.slice(0, CHAT_LIMITS.maxNotes) });
 }
 
-/** Hält den Kontext unter `budget` Zeichen (JSON). Reine Funktion. */
+const CHAT_TRIM_LABEL: Record<ChatTrimKind, string> = {
+  notes: "Notizen",
+  facts: "Fakten",
+  rationale: "Rationale",
+  wachstumsthese: "Wachstumsthese",
+};
+
+function chatTrimChars(ctx: ChatContext): Record<ChatTrimKind, number> {
+  const out: Record<ChatTrimKind, number> = { notes: 0, facts: 0, rationale: 0, wachstumsthese: 0 };
+  for (const n of ctx.notes ?? []) if (typeof n === "string") out.notes += n.length;
+  for (const g of ctx.gates ?? []) if (typeof g?.rationale === "string") out.rationale += g.rationale.length;
+  for (const s of ctx.sections ?? []) for (const [k, v] of Object.entries(s.facts ?? {})) {
+    if (typeof v !== "string") continue;
+    if (k === "wachstumsthese") out.wachstumsthese += v.length;
+    else out.facts += v.length;
+  }
+  return out;
+}
+
+/** Differenz der Textlängen. `undefined`, wenn nichts gekürzt oder gelöscht wurde. */
+export function chatContextTrimReport(before: ChatContext, after: ChatContext): ChatContextTrimEntry[] | undefined {
+  const a = chatTrimChars(before);
+  const b = chatTrimChars(after);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = a[kind] - b[kind];
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+const trimByContext = new WeakMap<ChatContext, ChatContextTrimEntry[]>();
+
+/** Kürzung, die `fitChatContextBudget` an diesem Kontext-Objekt hinterlegt hat. */
+export function chatContextTrimOf(ctx: ChatContext | null | undefined): ChatContextTrimEntry[] | undefined {
+  if (!ctx) return undefined;
+  const found = trimByContext.get(ctx);
+  return found?.length ? found : undefined;
+}
+
+export function mergeChatContextTrim(
+  a: ChatContextTrimEntry[] | undefined,
+  b: ChatContextTrimEntry[] | undefined,
+): ChatContextTrimEntry[] | undefined {
+  const sums = new Map<ChatTrimKind, number>();
+  for (const e of [...(a ?? []), ...(b ?? [])]) sums.set(e.kind, (sums.get(e.kind) ?? 0) + e.removedChars);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = sums.get(kind) ?? 0;
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+function groupedInt(n: number): string {
+  return String(Math.abs(Math.trunc(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+/** Hinweiszeile, z. B. „Kontext gekürzt: Notizen −2.140 Zeichen“. `null`, wenn nichts gekürzt wurde. */
+export function formatChatContextTrim(entries: ChatContextTrimEntry[] | undefined): string | null {
+  if (!entries?.length) return null;
+  const parts = entries.map(e => `${CHAT_TRIM_LABEL[e.kind]} −${groupedInt(e.removedChars)} Zeichen`);
+  return `Kontext gekürzt: ${parts.join(", ")}`;
+}
+
+function clipTo(text: string, max: number): string {
+  if (text.length <= max) return text;
+  if (max <= 1) return "…";
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function overTypeCap(ctx: ChatContext): boolean {
+  const factMax = CHAT_LIMITS.maxFactValueChars;
+  const ratMax = CHAT_LIMITS.maxRationaleChars;
+  const noteMax = CHAT_LIMITS.maxNoteChars;
+  if (ctx.notes.some(n => typeof n === "string" && n.length > noteMax)) return true;
+  if (ctx.gates.some(g => typeof g.rationale === "string" && g.rationale.length > ratMax)) return true;
+  return ctx.sections.some(s => Object.values(s.facts).some(v => typeof v === "string" && v.length > factMax));
+}
+
+function cappedCopy(ctx: ChatContext): ChatContext {
+  const factMax = CHAT_LIMITS.maxFactValueChars;
+  const ratMax = CHAT_LIMITS.maxRationaleChars;
+  const noteMax = CHAT_LIMITS.maxNoteChars;
+  return {
+    ...ctx,
+    sections: ctx.sections.map(s => ({
+      ...s,
+      facts: Object.fromEntries(Object.entries(s.facts).map(([k, v]) => [k, typeof v === "string" ? clipTo(v, factMax) : v])),
+    })),
+    gates: ctx.gates.map(g => ({ ...g, rationale: typeof g.rationale === "string" ? clipTo(g.rationale, ratMax) : g.rationale })),
+    notes: ctx.notes.map(n => (typeof n === "string" ? clipTo(n, noteMax) : n)),
+  };
+}
+
+/** Kürzt jede Zeichenkette im Bucket um denselben Anteil, bis `overflow` Zeichen weg sind. */
+function shrinkProportionally(values: string[], overflow: number): string[] | null {
+  if (overflow <= 0) return null;
+  const flexible = values.map((s, i) => ({ i, len: s.length })).filter(x => x.len > 1);
+  if (!flexible.length) return null;
+  const total = flexible.reduce((a, x) => a + x.len, 0);
+  const remove = Math.min(total - flexible.length, overflow);
+  if (remove <= 0) return null;
+  const keepRatio = (total - remove) / total;
+  const next = values.slice();
+  let changed = false;
+  for (const x of flexible) {
+    const target = Math.max(1, Math.floor(x.len * keepRatio));
+    if (target < x.len) {
+      next[x.i] = clipTo(values[x.i], target);
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** Hält den Kontext unter `budget` Zeichen (JSON). Kürzt weich, lehnt nicht ab. Reine Funktion. */
 export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CONTEXT_BUDGET): ChatContext {
   const size = (c: ChatContext) => JSON.stringify(c).length;
-  if (size(ctx) <= budget) return ctx;
-  const out: ChatContext = { ...ctx, sections: ctx.sections.map(s => ({ ...s, facts: { ...s.facts } })) };
+  if (size(ctx) <= budget && !overTypeCap(ctx)) return ctx;
+  const out = cappedCopy(ctx);
   for (let guard = 0; guard < 6000 && size(out) > budget; guard++) {
+    const overflow = size(out) - budget;
+    if (out.notes.every(n => typeof n === "string")) {
+      const notesNext = shrinkProportionally(out.notes, overflow);
+      if (notesNext) { out.notes = notesNext; continue; }
+    }
     let best: { s: ChatSection; k: string; len: number } | null = null;
     for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
-      if (k === CHAT_WEAKNESS_KEY || typeof v !== "string" || v.length <= 80) continue;
+      if (k === CHAT_WEAKNESS_KEY || k === "wachstumsthese" || typeof v !== "string" || v.length <= 80) continue;
       if (!best || v.length > best.len) best = { s, k, len: v.length };
     }
     if (best) { const v = best.s.facts[best.k] as string; best.s.facts[best.k] = `${v.slice(0, Math.max(80, Math.floor(v.length / 2)) - 1)}…`; continue; }
+    if (out.gates.every(g => typeof g.rationale === "string")) {
+      const ratNext = shrinkProportionally(out.gates.map(g => g.rationale), overflow);
+      if (ratNext) { out.gates.forEach((g, i) => { g.rationale = ratNext[i]; }); continue; }
+    }
+    const thesisLoc: Array<{ s: ChatSection; k: string }> = [];
+    const theses: string[] = [];
+    for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
+      if (k === "wachstumsthese" && typeof v === "string" && v.length > 1) { thesisLoc.push({ s, k }); theses.push(v); }
+    }
+    const thesisNext = shrinkProportionally(theses, overflow);
+    if (thesisNext) { thesisLoc.forEach((loc, i) => { loc.s.facts[loc.k] = thesisNext[i]; }); continue; }
+    if (!out.sections.length) break;
     const big = out.sections.reduce((a, b) => (Object.keys(b.facts).length > Object.keys(a.facts).length ? b : a));
-    const keys = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
+    const plain = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY && k !== "wachstumsthese");
+    const keys = plain.length ? plain : Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
     if (!keys.length) break;
     delete big.facts[keys[keys.length - 1]];
   }
+  const report = chatContextTrimReport(ctx, out);
+  if (report) trimByContext.set(out, report);
   return out;
 }

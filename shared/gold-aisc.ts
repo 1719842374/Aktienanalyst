@@ -20,6 +20,48 @@ import type {
 
 export const GOLD_AISC_COMPANY_CODES: readonly GoldAiscCompanyCode[] = ["NEM", "B", "AEM"];
 export const GOLD_AISC_MIN_COMPANIES = 2;
+
+/** Eine Firma, mehrere Ticker. Die Liste kommt aus der AISC-Datei (ticker + aliases), nicht aus einem UI-Sonderfall. */
+export interface TickerAliasGroup {
+  code: string;
+  tickers: readonly string[];
+}
+
+export function tickerAliasGroupsFromCompanies(
+  companies: Record<string, { ticker?: string | null; aliases?: readonly string[] | null } | null | undefined> | null | undefined,
+): TickerAliasGroup[] {
+  if (!companies) return [];
+  const groups: TickerAliasGroup[] = [];
+  for (const [code, meta] of Object.entries(companies)) {
+    const tickers = new Set<string>();
+    const add = (value: string | null | undefined) => {
+      const ticker = String(value ?? "").trim().toUpperCase();
+      if (ticker) tickers.add(ticker);
+    };
+    add(code);
+    add(meta?.ticker);
+    for (const alias of meta?.aliases ?? []) add(alias);
+    if (tickers.size === 0) continue;
+    groups.push({ code: code.trim().toUpperCase(), tickers: Array.from(tickers) });
+  }
+  return groups;
+}
+
+/** Alle Ticker der Gruppe, wenn das Symbol genau einer Firma gehört. Mehrdeutig → kein Treffer. */
+export function lookupAliasCodes(symbol: string, groups: readonly TickerAliasGroup[]): { codes: string[]; ambiguous: boolean } {
+  const key = symbol.trim().toUpperCase();
+  if (!key) return { codes: [], ambiguous: false };
+  const owners = groups.filter(g => g.code === key || g.tickers.includes(key));
+  const codes = Array.from(new Set(owners.map(g => g.code)));
+  if (codes.length > 1) return { codes: [], ambiguous: true };
+  if (codes.length === 1) {
+    const group = owners.find(g => g.code === codes[0]);
+    const all = new Set<string>([codes[0]]);
+    for (const ticker of group?.tickers ?? []) all.add(ticker);
+    return { codes: Array.from(all), ambiguous: false };
+  }
+  return { codes: [key], ambiguous: false };
+}
 export const GOLD_AISC_LAG_DAYS = 60;
 export const GOLD_AISC_STRESS_LOW = 1.10;
 export const GOLD_AISC_STRESS_HIGH = 1.15;
@@ -129,15 +171,46 @@ export function buildGoldAiscSeries(
   };
 }
 
-/** Zum Datum gültige Stufe (letzte mit availableFrom <= date). n/a-Stufe oder vor dem ersten Quartal -> null. */
-export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
+/**
+ * Ø je Quartal, an jedem Kurstag die zu diesem Tag gültige Stufe (wie eine SMA je Datum,
+ * hier die letzte Quartalsstufe mit availableFrom ≤ Datum). Keine Interpolation.
+ * minCompanies und lagDays kommen aus der Reihe (Defaults GOLD_AISC_MIN_COMPANIES, GOLD_AISC_LAG_DAYS).
+ */
+export const GOLD_AISC_FORMULA =
+  "Ø = gerundet(Mittelwert der belegten Quartals-AISC), nur wenn Anzahl ≥ minCompanies; Stufe ab Quartalsende + lagDays; Multiple = Spot / Ø; Marge = (Spot − Ø) / Spot. Keine Interpolation.";
+
+/** Letzte Stufe mit availableFrom ≤ date, auch wenn ihr AISC n/a ist. Vor der ersten Stufe → null. */
+export function goldAiscCovering(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
   if (!series) return null;
   let hit: GoldAiscQuarterStep | null = null;
   for (const q of series.quarters) {
     if (q.availableFrom <= date) hit = q;
     else break;
   }
+  return hit;
+}
+
+/** Zum Datum gültige Stufe (letzte mit availableFrom <= date). n/a-Stufe oder vor dem ersten Quartal -> null. */
+export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
+  const hit = goldAiscCovering(series, date);
   return hit && hit.aisc != null ? hit : null;
+}
+
+/**
+ * Grund, warum an diesem Datum kein AISC steht. null = eine belegte Stufe gilt.
+ * Lücken bleiben Lücken: die vorherige Stufe wird nicht fortgeschrieben.
+ */
+export function goldAiscNaReason(series: GoldAiscSeries | null | undefined, date: string): string | null {
+  if (!series || series.quarters.length === 0) return "keine belegte AISC-Reihe";
+  const hit = goldAiscCovering(series, date);
+  if (hit?.aisc != null) return null;
+  const first = series.quarters[0];
+  if (!hit) {
+    return `vor der ersten belegten Stufe ${first.quarter} (gültig ab ${first.availableFrom}, Lag ${series.lagDays} Tage nach Quartalsende). Nicht interpoliert.`;
+  }
+  const gaps = series.gaps.filter(gap => gap.endsWith(hit.quarter));
+  const missing = gaps.length > 0 ? gaps.join(", ") : "belegte Firmen unter dem Minimum";
+  return `${hit.quarter}: nur ${hit.count} von ${GOLD_AISC_COMPANY_CODES.length} Firmen belegt (Minimum minCompanies=${series.minCompanies}). ${missing}. Nicht interpoliert.`;
 }
 
 /** Hinweis, wenn die Antwort kein `aiscLine` trägt (z. B. Client-Offline-Fallback): sichtbar statt stillem Verschwinden. */

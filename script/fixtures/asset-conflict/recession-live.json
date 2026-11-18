@@ -1,0 +1,36 @@
+{
+ "date": "25.10.2026",
+ "subgroups": [
+  {
+   "name": "recession_coincident",
+   "label": "Rezession Coincident",
+   "horizon": "3M",
+   "probability": 40
+  },
+  {
+   "name": "recession_leading",
+   "label": "Rezession Leading",
+   "horizon": "6M",
+   "probability": 40
+  },
+  {
+   "name": "recession_full",
+   "label": "Rezession Vollständig",
+   "horizon": "12M",
+   "probability": 30,
+   "finalProbability": 30
+  },
+  {
+   "name": "correction_sentiment",
+   "label": "Korrektur Sentiment",
+   "horizon": "3-6M",
+   "probability": 50
+  },
+  {
+   "name": "correction_full",
+   "label": "Korrektur Vollständig",
+   "horizon": "12M",
+   "probability": 80
+  }
+ ]
+}

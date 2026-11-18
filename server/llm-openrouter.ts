@@ -58,7 +58,7 @@ const MODEL_FALLBACK_CHAIN = [
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean },
+  opts?: { online?: boolean; signal?: AbortSignal },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
   const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
@@ -70,7 +70,7 @@ async function callWithFallback(
         const completion = await (client.chat.completions.create as any)({
           ...params,
           model: modelId,
-        });
+        }, opts?.signal ? { signal: opts.signal } : undefined);
         const text = completion.choices?.[0]?.message?.content?.trim() || '';
         if (!text) { lastErr = new Error('Empty response'); continue; }
         return { text, modelUsed: modelId, usage: completion.usage };
@@ -134,6 +134,7 @@ export interface CombinedLLMInput {
     url: string;
     sentiment?: string;
     sentimentScore?: number;
+    sentimentSource?: string;
     matchedCatalyst?: string;
     matchedCatalystIdx?: number;
   }[];
@@ -146,9 +147,51 @@ export interface CombinedLLMResult {
   completionTokens?: number;
 }
 
+export type OpenRouterLimitReason = "402" | "429";
+
+/** Nur gesetzt, wenn der Enrich-Handler den OpenRouter-Status durchreichen will. Der Analyze-Pfad übergibt keinen Sink. */
+export type LlmSkipSink = { llmSkipReason: OpenRouterLimitReason | null };
+
+export function openRouterLimitReason(status: unknown): OpenRouterLimitReason | null {
+  const code = typeof status === "string" && status.trim() !== "" ? Number(status) : status;
+  if (code === 402) return "402";
+  if (code === 429) return "429";
+  return null;
+}
+
+export function assignOpenRouterLimit(sink: LlmSkipSink | undefined, status: unknown): OpenRouterLimitReason | null {
+  const reason = openRouterLimitReason(status);
+  if (sink) sink.llmSkipReason = reason;
+  return reason;
+}
+
+export function takeOpenRouterLimit(sink: LlmSkipSink): OpenRouterLimitReason | null {
+  const reason = sink.llmSkipReason === "402" || sink.llmSkipReason === "429" ? sink.llmSkipReason : null;
+  sink.llmSkipReason = null;
+  return reason;
+}
+
+export function catalystEnrichSkipBody(catalysts: unknown, reason: OpenRouterLimitReason | null): {
+  _llmSkipped: true;
+  catalysts: unknown;
+  modelUsed: null;
+  llmSkipReason?: OpenRouterLimitReason;
+} {
+  const body: {
+    _llmSkipped: true;
+    catalysts: unknown;
+    modelUsed: null;
+    llmSkipReason?: OpenRouterLimitReason;
+  } = { _llmSkipped: true, catalysts, modelUsed: null };
+  if (reason) body.llmSkipReason = reason;
+  return body;
+}
+
 export async function generateCatalystsAndMatchNews(
-  input: CombinedLLMInput
+  input: CombinedLLMInput,
+  sink?: LlmSkipSink,
 ): Promise<CombinedLLMResult | null> {
+  if (sink) sink.llmSkipReason = null;
   const client = getClient();
   if (!client) return null;
 
@@ -341,8 +384,9 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
     const msg = err?.message || String(err);
-    if (status === 402) {
-      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    const reason = assignOpenRouterLimit(sink, status);
+    if (reason) {
+      console.warn(`[LLM] ${ticker}: ${reason} token budget exhausted — skipping LLM: ${msg.substring(0, 300)}`);
     } else {
       console.error(`[LLM] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
     }
@@ -807,6 +851,8 @@ export async function callLLMJson(opts: {
   systemPrompt?: string;
   /** OpenRouter-Websuche nur fuer diesen Abruf. Andere Aufrufer bleiben offline. */
   online?: boolean;
+  /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
+  signal?: AbortSignal;
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -819,7 +865,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online });
+    }, { online: opts.online, signal: opts.signal });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
@@ -1022,7 +1068,7 @@ export async function generateCompanySpecificRisks(input: {
   topCatalysts: Array<{ name: string; context: string }>;
   capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
   recentNewsHeadlines?: string[];
-}): Promise<Array<{ name: string; category: string; ew: number; impact: number }> | null> {
+}): Promise<Array<{ name: string; category: "Binary" | "Gradual" | "Correlated"; ew: number; impact: number }> | null> {
   const client = getClient();
   if (!client) return null;
 
@@ -1096,11 +1142,12 @@ SCHLECHTE Beispiele (VERBOTEN — kein Firmenbezug):
 Antworte NUR mit diesem JSON (GENAU 5 risks-Objekte, kein Markdown):
 {"risks":[{"name":"Konkreter Name max 6 Wörter","category":"Binary|Gradual|Correlated","ew":25,"impact":20},{"name":"...","category":"...","ew":20,"impact":30},{"name":"...","category":"...","ew":15,"impact":25},{"name":"...","category":"...","ew":30,"impact":15},{"name":"...","category":"...","ew":20,"impact":20}]}`;
 
-  const validate = (risks: any[]): Array<{ name: string; category: string; ew: number; impact: number }> | null => {
+  const validate = (risks: any[]): Array<{ name: string; category: "Binary" | "Gradual" | "Correlated"; ew: number; impact: number }> | null => {
     if (!Array.isArray(risks) || risks.length < 3) return null;
     return risks.slice(0, 5).map((r: any) => ({
       name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
-      category: ["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual",
+      // Beleg: includes lässt nur Binary, Gradual oder Correlated durch, sonst steht hier "Gradual".
+      category: (["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual") as "Binary" | "Gradual" | "Correlated",
       ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
       impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),
     }));

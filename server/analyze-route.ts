@@ -46,6 +46,7 @@ import {
 } from "./sector-data";
 import { generateMacroCorrelations } from "./macro-correlations";
 import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
+import { liveBetaForCloses } from "./live-beta";
 
 import {
   calcImpliedGStar,
@@ -99,6 +100,8 @@ import {
   generatePorterFiveForces,
   generatePESTELAnalysis as generateLLMPESTEL,
   isLLMAvailable,
+  catalystEnrichSkipBody,
+  type LlmSkipSink,
 } from "./llm-openrouter";
 import { requestTamNaFills } from "./tam-na-fill";
 import { requestPeerNaFills } from "./peer-na-fill";
@@ -591,6 +594,38 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               console.warn(`[ANALYZE] Disk hit OHLCV refresh failed for ${upperTicker}: ${ohlcvErr?.message?.substring(0, 80)}`);
             }
           }
+          // A cached result still flagged incomplete gets one left-extension attempt.
+          // Converted listings are skipped: cached bars are USD, alt bars would be listing currency.
+          const cachedBars: OHLCVPoint[] = Array.isArray(served.ohlcvData) ? served.ohlcvData : [];
+          if (served.historyTruncated === true && cachedBars.length > 0 && served.currencyInfo?.converted !== true) {
+            try {
+              const { bars, source, truncated } = await fetchDailyHistory({
+                symbol: upperTicker,
+                timeframe: "10Y",
+                fetchFrom: indicatorWarmupFromDate(),
+                fmpFetch: async () => cachedBars.map((p) => ({ ...p, source: "fmp" as const })),
+                altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+              });
+              if (bars.length > 0 && bars[0].date < cachedBars[0].date) {
+                const ohlcvPoints = bars.slice(-TA_OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
+                const px = Number(served.currentPrice) || ohlcvPoints[ohlcvPoints.length - 1].close;
+                served = {
+                  ...served,
+                  historicalPrices: ohlcvPoints.map((pt) => ({ date: pt.date, close: pt.close })),
+                  ohlcvData: ohlcvPoints,
+                  technicalIndicators: buildTechnicalIndicators(ohlcvPoints, px),
+                  historyDataSource: source === "fmp+onvista" ? "fmp+onvista"
+                    : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : served.historyDataSource,
+                  historyTruncated: truncated,
+                };
+                diskCacheSet(cacheKey, served);
+                console.log(`[HISTORY-FALLBACK] Disk hit ${upperTicker}: source=${served.historyDataSource} truncated=${truncated} points=${ohlcvPoints.length}`);
+              }
+            } catch (histErr: any) {
+              console.warn(`[HISTORY-FALLBACK] Disk hit extension failed for ${upperTicker}: ${histErr?.message?.substring(0, 80)}`);
+            }
+          }
+          served = { ...served, betaLive: await liveBetaForCloses(served.historicalPrices) };
           analysisCache.set(cacheKey, {
             result: served,
             timestamp: Date.now(),
@@ -631,6 +666,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
       // C1 (#252): FMP 402 → Yahoo-Fallback ohne Statements. Dann keine Bewertung (DCF/Score/Rating null).
       const yahooOnly = (fmpData as any).source === "yahoo";
+      // FMP-ADR: 402-Listing mit Fundamentaldaten über das US-/ADR-Symbol (analyze-helpers fmpViaAdrData). Volle
+      // Bewertung (source 'fmp'); weitere FMP-Calls dieses Laufs gehen an das ADR-Symbol, Kurs/Chart bleiben lokal.
+      const adrInfo = (fmpData as any).adr ?? null;
+      const fmpSymbol: string = (fmpData as any).fmpSymbol ?? upperTicker;
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -794,7 +833,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           if (bars.length > ohlcvPoints.length) {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
           }
-          historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
+          historyDataSource = (
+            source === "fmp+onvista" ? "fmp+onvista"
+              : source === "fmp+nasdaq" ? "fmp+nasdaq" : source === "fmp+alt" ? "fmp+yahoo" : "fmp"
+          ) as StockAnalysis["historyDataSource"];
           historyTruncated = truncated;
           console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
         }
@@ -810,9 +852,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Nur echte zukünftige Kalendertermine werden gezeigt. Fehlt FMPs Termin,
       // bleibt das Feld null; die UI zeigt transparent "n/a" statt einer Schätzung.
       const todayIso = new Date().toISOString().slice(0, 10);
-      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);
+      const earningsRows = await fmpEarningsCalendar(fmpSymbol).catch(() => []);
       const nextEarnings = earningsRows
-        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
+        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === fmpSymbol) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
         .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))[0] ?? null;
       const nextEarningsDate = nextEarnings?.date ? String(nextEarnings.date).slice(0, 10) : null;
       const nextEarningsTimeRaw = String(nextEarnings?.time ?? "").toLowerCase();
@@ -1070,7 +1112,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             { name: "Other", pct: 3 },
           ],
         };
-        const fb = productFallback[upperTicker];
+        const fb = productFallback[upperTicker] ?? (adrInfo ? productFallback[fmpSymbol] : undefined);
         if (fb) {
           revenueSegments = fb.map(row => ({
             name: row.name,
@@ -1130,7 +1172,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             const enrichCacheKey = `segments_growth__${upperTicker}`;
             let enrichResult = diskResearcherGet(enrichCacheKey) as { segments: RevenueSegment[]; _empty?: boolean } | null;
             if (!enrichResult) {
-              const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+              const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
               enrichResult = fetched && fetched.segments.length > 0
                 ? { segments: fetched.segments.map(s => ({ name: s.name, revenue: s.revenue, percentage: s.percentage, ...(typeof s.prevRevenue === "number" && s.prevRevenue > 0 && !s.noPriorYearMatch ? { prevRevenue: s.prevRevenue } : {}) })) }
                 : { segments: [], _empty: true };
@@ -1175,7 +1217,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           | null;
 
         if (!secResult) {
-          const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+          const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
           if (fetched && fetched.segments.length > 0) {
             const total = fetched.segments.reduce((sum, s) => sum + s.revenue, 0);
             secResult = {
@@ -1615,7 +1657,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let quarterlyRevenueChronological: number[] | null = null;
       let quarterlyIncomeRows: any[] = [];
       try {
-        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
+        const qRows: any[] = await fmpIncomeStatementQuarterly(fmpSymbol, 16);
         if (Array.isArray(qRows) && qRows.length > 0) {
           quarterlyIncomeRows = qRows;
           quarterlyRevenueChronological = qRows
@@ -1672,7 +1714,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const dcfGrowthRate = Math.min(Math.max(revenueGrowth / 100, -0.05), 0.25);
       const dcfTerminalGrowth = 0.025;
       const dcfYears = 5;
-      let dcfFairValue = 0;
+      // #326: Ohne berechenbaren FCF-DCF bleibt der Wert null (n/a) statt einer erfundenen 0.
+      // Negativer FCF bekommt den Grund 'negativer FCF' (gleiche Regel wie dcfApplicable §3.3).
+      let dcfFairValue: number | null = null;
+      const dcfNaReason: "negativer FCF" | null = fcfTTM < 0 ? "negativer FCF" : null;
       if (fcfTTM > 0 && sharesOutstanding > 0 && dcfWacc > dcfTerminalGrowth) {
         let pvFCF = 0;
         for (let y = 1; y <= dcfYears; y++) {
@@ -1682,7 +1727,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         dcfFairValue = Math.round((pvFCF + terminalValue - netDebt) / sharesOutstanding * 100) / 100;
       }
 
-      const upsidePotential = dcfFairValue > 0 && price > 0
+      const upsidePotential = dcfFairValue != null && dcfFairValue > 0 && price > 0
         ? Math.round((dcfFairValue / price - 1) * 1000) / 10
         : analystPTMedian > 0 && price > 0
           ? Math.round((analystPTMedian / price - 1) * 1000) / 10
@@ -1925,6 +1970,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
       // schema fields. shared/schema.ts:StockAnalysis is the source of truth
       // for what the frontend actually reads.
+      const betaLive = await liveBetaForCloses(historicalPrices);
       const analysis = {
         // ─── Section 1: Datenaktualität (Section1.tsx) ───
         ticker: upperTicker,
@@ -1975,6 +2021,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         evEbitda,
         beta5Y: beta,
         beta,
+        betaLive,
         fcfTTM,
         fcfMargin,
         fcfAvailable,
@@ -2038,7 +2085,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 10
         ohlcvData: ohlcvPoints,
-        historyDataSource: yahooOnly ? "yahoo" : historyDataSource,
+        // FMP-ADR: Chart kommt vom lokalen Listing (Yahoo), nicht vom ADR.
+        historyDataSource: yahooOnly || adrInfo ? "yahoo" : historyDataSource,
         historyTruncated,
         technicalIndicators,
 
@@ -2107,6 +2155,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         llmModelUsed,
         dataSource: yahooOnly ? "yahoo" as const : "fmp" as const,
         ...(yahooOnly ? { valuationNotice: YAHOO_NO_VALUATION_NOTICE } : {}),
+        ...(adrInfo ? { adrSource: adrInfo } : {}),
         dataTimestamp: new Date().toISOString(),
         _useLLM: useLLM,
 
@@ -2121,6 +2170,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         returnOnEquity,
         wacc,
         dcfFairValue: yahooOnly ? null : dcfFairValue,
+        ...(!yahooOnly && dcfNaReason ? { dcfNaReason } : {}),
         upsidePotential: yahooOnly ? null : upsidePotential,
         impliedGStar: yahooOnly ? null : (impliedGStar ?? 0),
         pbRatio,
@@ -2433,6 +2483,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
       }
 
+      const llmSkip: LlmSkipSink = { llmSkipReason: null };
       const llmResult = await generateCatalystsAndMatchNews({
         ticker: a.ticker,
         companyName: a.companyName,
@@ -2456,10 +2507,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           sentimentScore: n.sentimentScore, matchedCatalyst: n.matchedCatalyst,
           matchedCatalystIdx: n.matchedCatalystIdx,
         })),
-      });
+      }, llmSkip);
 
       if (!llmResult) {
-        return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
+        return res.json(catalystEnrichSkipBody(a.catalysts, llmSkip.llmSkipReason));
       }
 
       // FactPack: LLM-Zahlen gegen FMP-Kontext aus Cache (Estimates ggf. leer)

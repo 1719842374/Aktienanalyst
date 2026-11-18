@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { RefreshCw, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../../shared/schema";
+import { usePublishChatSection } from "@/lib/chatSectionData";
+import { dominantThesisClass } from "@shared/chat-context";
 
 interface Props { data: StockAnalysis; onScore?: (score: number) => void }
 interface Result { finalScore:number; classificationConfidence:number; catalystConfidence?:number; styleConfidences:Record<string,number>; blendedWeights:Record<string,number>; subScores:Record<string,number>; flags:string[]; turnaroundEvidence:{evidence:number;signals:string[]}; sectorReferences:{sector:string;peer_count:number;metrics:Record<string,{median:number|null;std:number|null}>}; growthCoverage?:{coverage:number|null;gRequired:number|null;gThesis:number|null;gRequiredBreakdown?:{gStar:number|null;consensus:number|null;sector:number|null;floor:number;used:number|null;usedSource:string|null}}; growthEvidence?:{evidence:number;peerScore:number;segScore:number;cagrScore:number;lynchBoostActive:boolean;cyclicalPeFlag?:boolean}; }
@@ -10,6 +12,15 @@ export function ThesisStrengthPanel({data,onScore}:Props){
  const [result,setResult]=useState<Result|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null);
  const run=async(force=false)=>{setLoading(true);setError(null);try{const res=await apiRequest("POST","/api/thesis-strength",{ticker:data.ticker,sector:data.sector,industry:data.industry,segments:(data.revenueSegments??[]).map(s=>({name:s.name,revenue:s.revenue,percentage:s.percentage,growth:s.growth??null,prevRevenue:s.prevRevenue,prevPercentage:s.prevPercentage,fiscalYear:s.fiscalYear})),revenueGrowth:data.financialStatements?.incomeStatement?.revenueGrowth??null,fcfTTM:data.fcfTTM,marketCap:data.marketCap??null,impliedGStar:data.impliedGStar??data.scoring?.gateInputs?.impliedGrowthPercent??null,catalysts:data.catalysts??[],lynchClass:data.lynchClass??null,epsGrowth5Y:data.epsGrowth5Y??null,peTTM:data.peRatio??null,thesisText:data.growthThesis??null,force},120000);if(!res.ok){const b=await res.json().catch(()=>({}));throw new Error(b.error||`HTTP ${res.status}`)}const json=await res.json();setResult(json);if(typeof json?.finalScore==="number")onScore?.(json.finalScore)}catch(e:any){setError(e?.message||"Berechnung fehlgeschlagen")}finally{setLoading(false)}};
  useEffect(()=>{void run(false)},[data.ticker]);
+ const dom = result ? dominantThesisClass(result.styleConfidences) : null;
+ const mix = result
+   ? Object.entries(result.styleConfidences).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1])).map(([k, v]) => `${k} ${Math.round(v * 1000) / 10}%`).join("; ")
+   : "";
+ usePublishChatSection("stock", "3", result ? {
+   thesisDominanteKlasse: dom ? dom.name : "n/a — Thesis-Klassen ohne Anteil",
+   ...(dom ? { thesisAnteilPct: Math.round(dom.share * 1000) / 10 } : {}),
+   ...(mix ? { thesisMix: mix } : {}),
+ } : null);
  return <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-xs font-semibold uppercase tracking-wider">Thesis Strength Score</h3><p className="text-[10px] text-muted-foreground">Messung zukünftiger Cashflow-Treiber, separat von bestehenden Scoring-Gates.</p></div><button onClick={()=>run(!!result)} disabled={loading} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-xs text-primary disabled:opacity-50"><RefreshCw className={`w-3 h-3 ${loading?"animate-spin":""}`}/>{loading?"Berechne …":result?"Neu berechnen":"Thesis-Score berechnen"}</button></div>
   {error&&<p className="text-xs text-amber-400">{error}</p>}

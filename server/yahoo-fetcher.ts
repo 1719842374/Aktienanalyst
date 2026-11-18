@@ -22,6 +22,7 @@ import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fa
 import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+export const YAHOO_BROWSER_UA = UA;
 export const YAHOO_CACHE_TTL_MS = Number(process.env.YAHOO_CACHE_TTL_MS ?? 15 * 60 * 1000);
 const YAHOO_FAIL_TTL_MS = 2 * 60 * 1000;
 const YAHOO_MIN_INTERVAL_MS = Number(process.env.YAHOO_MIN_INTERVAL_MS ?? 500);
@@ -66,7 +67,14 @@ export function spaceYahooCall(): Promise<void> {
 // nie geloggt: bekannte Werte und typische Muster (crumb=…, Cookie-Paare) werden zu *** maskiert.
 // Nur Logging — Rückgabewerte und Ablauf bleiben unverändert (kein Retry, kein neuer Header).
 export const YAHOO_DIAG_PREFIX = "[YAHOO-DIAG]";
-export type YahooDiagStage = "cookie" | "crumb" | "quoteSummary" | "chart" | "timeseries";
+export type YahooDiagStage = "cookie" | "crumb" | "quoteSummary" | "chart" | "timeseries" | "v7quote";
+
+/** Sichtbarer Grund, wenn ein Yahoo-Call kein KGV liefert. Detail ist maskiert und gekürzt. */
+export interface YahooCallDiag {
+  stage: "cookie" | "crumb" | "quoteSummary" | "v7quote" | "timeseries" | "html";
+  status: number | null;
+  detail: string;
+}
 
 /** Ersetzt Geheimnisse (Cookie-/Crumb-Werte) und typische Muster durch ***. */
 export function maskYahooSecrets(text: string, secrets: Array<string | null | undefined> = []): string {
@@ -134,8 +142,21 @@ async function bodySnippet(resp: Response): Promise<string> {
 }
 
 let _crumb: { cookie: string; crumb: string; at: number } | null = null;
-async function getCrumb(ticker = "-"): Promise<{ cookie: string; crumb: string } | null> {
+/** Gleicher Fehlschlag (Cookie/Crumb) gilt für alle Symbole. Sonst wiederholt jeder Sektor-ETF den 429. */
+let _crumbMiss: { at: number; diag: YahooCallDiag } | null = null;
+const CRUMB_MISS_TTL_MS = 60_000;
+
+function noteCrumbMiss(diag: YahooCallDiag, sink?: YahooCallDiag[]): void {
+  _crumbMiss = { at: Date.now(), diag };
+  sink?.push(diag);
+}
+
+async function getCrumb(ticker = "-", sink?: YahooCallDiag[]): Promise<{ cookie: string; crumb: string } | null> {
   if (_crumb && Date.now() - _crumb.at < 60 * 60 * 1000) return _crumb;
+  if (_crumbMiss && Date.now() - _crumbMiss.at < CRUMB_MISS_TTL_MS) {
+    sink?.push(_crumbMiss.diag);
+    return null;
+  }
   let stage: "cookie" | "crumb" = "cookie";
   let cookie = "";
   let crumb = "";
@@ -146,6 +167,7 @@ async function getCrumb(ticker = "-"): Promise<{ cookie: string; crumb: string }
     cookie = (setCookie as string[]).map((c) => c.split(";")[0]).filter(Boolean).join("; ");
     if (!cookie) {
       yahooDiag(ticker, "cookie", r1.status, `kein Set-Cookie von fc.yahoo.com${redirectNote(r1)} → quoteSummary null`);
+      noteCrumbMiss({ stage: "cookie", status: r1.status, detail: `kein Set-Cookie von fc.yahoo.com${redirectNote(r1)}` }, sink);
       return null;
     }
     yahooDiag(ticker, "cookie", r1.status, `ok (${(setCookie as string[]).filter(Boolean).length} Set-Cookie)${redirectNote(r1)}`, [cookie]);
@@ -159,13 +181,20 @@ async function getCrumb(ticker = "-"): Promise<{ cookie: string; crumb: string }
       const shown = looksLikeBody ? crumb : (crumb ? "***" : "");
       const reason = !r2.ok ? "getcrumb nicht ok" : !crumb ? "Crumb leer" : "Crumb ungültig";
       yahooDiag(ticker, "crumb", r2.status, `${reason}${statusHint(r2.status)}${redirectNote(r2)} (Länge ${crumb.length}): ${shown}`, looksLikeBody ? [cookie] : [cookie, crumb]);
+      noteCrumbMiss({
+        stage: "crumb",
+        status: r2.status,
+        detail: maskYahooSecrets(`${reason}${statusHint(r2.status)}${redirectNote(r2)} (Länge ${crumb.length}): ${shown}`, looksLikeBody ? [cookie] : [cookie, crumb]).replace(/\s+/g, " ").trim().slice(0, 180),
+      }, sink);
       return null;
     }
+    _crumbMiss = null;
     _crumb = { cookie, crumb, at: Date.now() };
     yahooDiag(ticker, "crumb", r2.status, `ok (Länge ${crumb.length})`, [cookie, crumb]);
     return _crumb;
   } catch (err) {
     yahooDiag(ticker, stage, null, `Fehler: ${errText(err)}`, [cookie, crumb]);
+    noteCrumbMiss({ stage, status: null, detail: maskYahooSecrets(`Fehler: ${errText(err)}`, [cookie, crumb]).replace(/\s+/g, " ").trim().slice(0, 180) }, sink);
     return null;
   }
 }
@@ -260,7 +289,7 @@ function finalizeSnapshotCurrency(snap: YahooSnapshot | null, qsCurrency: string
 const cache = new Map<string, { value: YahooSnapshot | null; at: number }>();
 const inflight = new Map<string, Promise<YahooSnapshot | null>>();
 
-export function clearYahooCache(): void { cache.clear(); inflight.clear(); _crumb = null; tsCache.clear(); }
+export function clearYahooCache(): void { cache.clear(); inflight.clear(); _crumb = null; _crumbMiss = null; tsCache.clear(); }
 
 /**
  * Yahoo-Snapshot für ein Symbol (gecacht). Braucht mindestens einen Kurs
@@ -585,4 +614,112 @@ export async function applyTimeseriesFundamentals(snap: YahooSnapshot | null): P
     fundamentalsSource: YAHOO_TIMESERIES_SOURCE,
     timeseriesAsOf: { shares: f.asOf.shares, eps: f.asOf.eps },
   };
+}
+
+function pushDiag(sink: YahooCallDiag[] | undefined, diag: YahooCallDiag): void {
+  if (!sink) return;
+  sink.push({ ...diag, detail: diag.detail.replace(/\s+/g, " ").trim().slice(0, 180) });
+}
+
+/** quoteSummary-Modulblock (result[0]). null bei fehlendem Crumb oder HTTP-Fehler, wirft nie. */
+export async function fetchYahooQuoteSummaryResult(symbol: string, modules: readonly string[], sink?: YahooCallDiag[]): Promise<Record<string, unknown> | null> {
+  const sym = String(symbol || "").trim();
+  if (!sym || modules.length === 0) return null;
+  const auth = await getCrumb(sym, sink);
+  if (!auth) {
+    pushDiag(sink, { stage: "quoteSummary", status: null, detail: "nicht gesendet: kein Cookie/Crumb" });
+    return null;
+  }
+  try {
+    await spaceYahooCall();
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${encodeURIComponent(modules.join(","))}&crumb=${encodeURIComponent(auth.crumb)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Cookie: auth.cookie, Accept: "application/json" } });
+    if (resp.status === 401) _crumb = null;
+    if (!resp.ok) {
+      const snippet = maskYahooSecrets(await bodySnippet(resp), [auth.cookie, auth.crumb]);
+      yahooDiag(sym, "quoteSummary", resp.status, `module ${modules.join(",")} nicht ok${statusHint(resp.status)}: ${snippet}`, [auth.cookie, auth.crumb]);
+      pushDiag(sink, { stage: "quoteSummary", status: resp.status, detail: snippet });
+      return null;
+    }
+    const json: any = await resp.json();
+    const result = json?.quoteSummary?.result?.[0];
+    if (!result || typeof result !== "object") {
+      const err = json?.quoteSummary?.error;
+      const detail = err ? maskYahooSecrets(JSON.stringify(err), [auth.cookie, auth.crumb]) : "result leer";
+      yahooDiag(sym, "quoteSummary", resp.status, `result leer${err ? `: ${detail}` : ""}`, [auth.cookie, auth.crumb]);
+      pushDiag(sink, { stage: "quoteSummary", status: resp.status, detail });
+      return null;
+    }
+    yahooDiag(sym, "quoteSummary", resp.status, `ok module ${modules.join(",")}`, [auth.cookie, auth.crumb]);
+    return result as Record<string, unknown>;
+  } catch (err) {
+    const detail = maskYahooSecrets(errText(err), [auth.cookie, auth.crumb]);
+    yahooDiag(sym, "quoteSummary", null, `Fehler: ${detail}`);
+    pushDiag(sink, { stage: "quoteSummary", status: null, detail });
+    return null;
+  }
+}
+
+/**
+ * v7 quote. Dieselbe Crumb-Pflicht wie quoteSummary: ohne Cookie antwortet Yahoo 401
+ * „User is unable to access this feature“. Wirft nie.
+ */
+export async function fetchYahooV7Quote(symbol: string, sink?: YahooCallDiag[]): Promise<unknown | null> {
+  const sym = String(symbol || "").trim();
+  if (!sym) return null;
+  const auth = await getCrumb(sym, sink);
+  if (!auth) {
+    pushDiag(sink, { stage: "v7quote", status: null, detail: "nicht gesendet: kein Cookie/Crumb" });
+    return null;
+  }
+  try {
+    await spaceYahooCall();
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(sym)}&crumb=${encodeURIComponent(auth.crumb)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Cookie: auth.cookie, Accept: "application/json" } });
+    if (resp.status === 401) _crumb = null;
+    const text = await resp.text();
+    const detail = maskYahooSecrets(text, [auth.cookie, auth.crumb]);
+    if (!resp.ok) {
+      yahooDiag(sym, "v7quote", resp.status, `nicht ok${statusHint(resp.status)}: ${detail}`, [auth.cookie, auth.crumb]);
+      pushDiag(sink, { stage: "v7quote", status: resp.status, detail });
+      return null;
+    }
+    yahooDiag(sym, "v7quote", resp.status, "ok", [auth.cookie, auth.crumb]);
+    try {
+      return JSON.parse(text) as unknown;
+    } catch (err) {
+      const parseDetail = maskYahooSecrets(errText(err), [auth.cookie, auth.crumb]);
+      pushDiag(sink, { stage: "v7quote", status: resp.status, detail: parseDetail });
+      return null;
+    }
+  } catch (err) {
+    const detail = maskYahooSecrets(errText(err), [auth.cookie, auth.crumb]);
+    yahooDiag(sym, "v7quote", null, `Fehler: ${detail}`);
+    pushDiag(sink, { stage: "v7quote", status: null, detail });
+    return null;
+  }
+}
+
+/** fundamentals-timeseries ohne Crumb. null bei HTTP- oder Netzfehler, wirft nie. */
+export async function fetchYahooTimeseriesDocument(symbol: string, types: readonly string[], period1Sec: number, period2Sec: number, sink?: YahooCallDiag[]): Promise<unknown | null> {
+  const sym = String(symbol || "").trim();
+  if (!sym || types.length === 0) return null;
+  try {
+    await spaceYahooCall();
+    const url = `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${encodeURIComponent(types.join(","))}&period1=${Math.floor(period1Sec)}&period2=${Math.floor(period2Sec)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Accept: "application/json" } });
+    if (!resp.ok) {
+      const snippet = await bodySnippet(resp);
+      yahooDiag(sym, "timeseries", resp.status, `Jahresreihe nicht ok${statusHint(resp.status)}: ${snippet}`);
+      pushDiag(sink, { stage: "timeseries", status: resp.status, detail: snippet });
+      return null;
+    }
+    yahooDiag(sym, "timeseries", resp.status, `ok types ${types.length}`);
+    return await resp.json();
+  } catch (err) {
+    const detail = errText(err);
+    yahooDiag(sym, "timeseries", null, `Fehler: ${detail}`);
+    pushDiag(sink, { stage: "timeseries", status: null, detail });
+    return null;
+  }
 }

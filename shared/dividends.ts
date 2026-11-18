@@ -236,6 +236,64 @@ export function dividendOverlaySeries(
   return { points, paymentsPerYear: f, specialExDates: Array.from(specials), correctedBars: corrected };
 }
 
+/** Dieselbe Rechnung wie die eigene Linie: Σ Dividenden 12M / Kurs. */
+export const DIVIDEND_YIELD_FORMULA = "Dividende TTM / Kurs";
+/** Reihenfolge von GET /api/dividends. .DE-EY/ROIC bleibt davon getrennt (Yahoo zuerst). */
+export const DIVIDEND_YIELD_SOURCE_POLICY = "FMP zuerst, Yahoo als Fallback";
+
+export interface PeerDividendYieldPoint {
+  date: string;
+  yieldPct: number | null;
+  ttmDividend: number | null;
+  note: string | null;
+}
+
+export function dividendSourceCaption(source: DividendSource | null | undefined): string {
+  if (source === "fmp") return `FMP. ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+  if (source === "yahoo") return `Yahoo (Fallback). ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+  return `n/a — keine Dividendenquelle. ${DIVIDEND_YIELD_SOURCE_POLICY}`;
+}
+
+/**
+ * Peer-Dividendenrendite auf den Kurstagen des Haupttitels.
+ * Der Kurs ist der letzte Peer-Schluss bis zu diesem Tag, die Dividende die TTM des Peers.
+ * Nichts wird zwischen den Peer-Tagen interpoliert.
+ */
+export function peerDividendYieldOnDates(
+  subjectDates: string[],
+  peerBars: Array<{ date: string; close: number }>,
+  events: DividendEvent[],
+  seriesNote: string | null = null,
+): PeerDividendYieldPoint[] {
+  const dates = subjectDates.filter(d => ISO.test(d)).slice().sort((a, b) => a.localeCompare(b));
+  const emptyNote = seriesNote?.trim() ? seriesNote.trim() : "n/a — keine Dividendenhistorie für den Peer";
+  if (events.length === 0) {
+    return dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note: emptyNote }));
+  }
+  const bars = peerBars
+    .filter(b => ISO.test(b.date) && Number.isFinite(b.close) && b.close > 0)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (bars.length === 0) {
+    const note = seriesNote?.trim() ? seriesNote.trim() : "n/a — Peer-Kurs ohne gültige Schlüsse";
+    return dates.map(date => ({ date, yieldPct: null, ttmDividend: null, note }));
+  }
+  const overlay = dividendOverlaySeries(bars, events).points;
+  let cursor = 0;
+  let last: DividendOverlayPoint | null = null;
+  return dates.map(date => {
+    while (cursor < overlay.length && overlay[cursor].date <= date) {
+      last = overlay[cursor];
+      cursor += 1;
+    }
+    if (!last) return { date, yieldPct: null, ttmDividend: null, note: "n/a — noch kein Peer-Kurs bis zu diesem Tag" };
+    if (last.yieldPct == null || !Number.isFinite(last.yieldPct)) {
+      return { date, yieldPct: null, ttmDividend: null, note: "n/a — Peer-Dividende deckt 12 Monate vor diesem Tag noch nicht" };
+    }
+    return { date, yieldPct: last.yieldPct, ttmDividend: last.ttmDividend ?? null, note: null };
+  });
+}
+
 // ─── Section-1 KPI tile: same value as the last point of the price-chart overlay ───
 
 export type DividendKpi =
@@ -278,4 +336,171 @@ export function dividendMarkerLines(
     out.push({ cls: "text-violet-400", text: `inkl. Sonderdividende (Ex-Tag ${p.specialExDates.map(fmtDate).join(", ")})` });
   }
   return out;
+}
+
+// ─── F1-14 (Future_1_Work.md:299): attractive-yield band on the TA dividend axis ───
+
+/** „>4 % attraktiv“ (Future_1_Work.md:299). Display only: no score, no rating, no Fazit factor. */
+export const DIV_ATTRACTIVE_YIELD_PCT = 4;
+
+/** True when a TTM yield is in the attractive range (≥ 4 %). null/NaN → false (n/a, nothing marked). */
+export function isAttractiveDividendYield(yieldPct: number | null | undefined): boolean {
+  return typeof yieldPct === "number" && Number.isFinite(yieldPct) && yieldPct >= DIV_ATTRACTIVE_YIELD_PCT;
+}
+
+/**
+ * Band from 4 % up to the top of the dividend axis. The axis is NOT stretched to reach 4 %:
+ * axis top ≤ 4 % → null (no band, the line never gets there in this window).
+ */
+export function attractiveYieldBand(axisMax: number): { y1: number; y2: number } | null {
+  if (!Number.isFinite(axisMax) || axisMax <= DIV_ATTRACTIVE_YIELD_PCT) return null;
+  return { y1: DIV_ATTRACTIVE_YIELD_PCT, y2: axisMax };
+}
+
+// ─── F1-17 / F1-18: yield vs own history and peers. Display only, no score. ───
+
+/**
+ * Auffällig = Mid-Rank der eigenen TTM-Historie im äußeren Dezil.
+ * notableTailPercentile 0.9 → P ≥ 90 oder P ≤ 10. Kein fester Rendite-Prozentwert
+ * (Future_1_Work.md Z.313, Philip 01.11.: Schwelle als benannter Perzentil-Parameter).
+ * minSpanPoints 2: unter zwei gültigen TTM-Punkten ist ein Rang nicht definiert.
+ * midrankTieWeight 0.5: gleiche Konvention wie shared/sector-attr-band.ts.
+ */
+export const DIVIDEND_YIELD_DISPLAY_PARAMS = {
+  notableTailPercentile: 0.9,
+  minSpanPoints: 2,
+  midrankTieWeight: 0.5,
+  percentScale: 100,
+} as const;
+
+export type DividendYieldDisplayParams = {
+  notableTailPercentile: number;
+  minSpanPoints: number;
+  midrankTieWeight: number;
+  percentScale: number;
+};
+
+export type DividendYieldSpan =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      currentPct: number;
+      asOf: string | null;
+      percentile: number;
+      median: number;
+      min: number;
+      max: number;
+      n: number;
+      notable: boolean;
+      notableSide: "high" | "low" | null;
+    };
+
+export type DividendMedianResult =
+  | { available: true; medianPct: number; n: number }
+  | { available: false; reason: string };
+
+function finiteYields(values: Array<number | null | undefined>): number[] {
+  return values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+}
+
+function medianOf(sorted: number[]): number {
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Perzentil, Median, Min, Max der eigenen TTM-Renditen. Der letzte Wert ist die aktuelle Rendite. */
+export function dividendYieldSpanFromValues(
+  yields: Array<number | null | undefined>,
+  params: DividendYieldDisplayParams = DIVIDEND_YIELD_DISPLAY_PARAMS,
+): DividendYieldSpan {
+  const vals = finiteYields(yields);
+  if (vals.length < params.minSpanPoints) {
+    return { available: false, reason: `zu wenig TTM-Renditen (${vals.length}, mindestens ${params.minSpanPoints})` };
+  }
+  const current = vals[vals.length - 1];
+  const sorted = vals.slice().sort((a, b) => a - b);
+  let less = 0;
+  let equal = 0;
+  for (const v of vals) {
+    if (v < current) less++;
+    else if (v === current) equal++;
+  }
+  const rank = (less + params.midrankTieWeight * equal) / vals.length;
+  const high = params.notableTailPercentile;
+  const low = 1 - high;
+  // 0.1 ist in IEEE nicht exakt; die Grenze selbst zählt noch als auffällig.
+  const eps = 1e-12;
+  const notableSide = rank + eps >= high ? "high" as const : rank - eps <= low ? "low" as const : null;
+  return {
+    available: true,
+    currentPct: current,
+    asOf: null,
+    percentile: rank * params.percentScale,
+    median: medianOf(sorted),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    n: vals.length,
+    notable: notableSide != null,
+    notableSide,
+  };
+}
+
+/**
+ * TTM-Spanne aus /api/dividends (Events) und den Kursbars der Analyse.
+ * Dieselbe Glättung wie das Overlay (dividendOverlaySeries). Keine Rendite bei Währungsbruch.
+ */
+export function dividendYieldSpan(
+  history: DividendHistoryResponse | null | undefined,
+  bars: Array<{ date: string; close: number }> | null | undefined,
+  priceCurrency: string | null | undefined,
+  params: DividendYieldDisplayParams = DIVIDEND_YIELD_DISPLAY_PARAMS,
+): DividendYieldSpan {
+  if (!history) return { available: false, reason: "Dividendenhistorie fehlt (/api/dividends)" };
+  if (history.source === "none" || history.events.length === 0) {
+    const why = history.note?.trim() ? history.note.trim() : "keine Dividenden in /api/dividends";
+    return { available: false, reason: history.note?.trim() ? `keine Dividenden (${why})` : why };
+  }
+  if (dividendCurrencyCheck(history.currency, priceCurrency) === "mismatch") {
+    return { available: false, reason: `Dividende ${history.currency} ≠ Kurs ${priceCurrency}` };
+  }
+  const seriesBars = (bars ?? []).filter(b => typeof b?.date === "string" && Number.isFinite(b.close) && b.close > 0);
+  if (seriesBars.length === 0) return { available: false, reason: "keine Kurse für die historische Rendite" };
+  const series = dividendOverlaySeries(seriesBars, history.events);
+  const vals = series.points.map(p => p.yieldPct);
+  const span = dividendYieldSpanFromValues(vals, params);
+  if (!span.available) return span;
+  const asOf = [...series.points].reverse().find(p => p.yieldPct != null)?.date ?? null;
+  return { ...span, asOf };
+}
+
+/** Median der Peer-Renditen in %. null/undefined zählt nicht. 0 zählt (keine Dividende). */
+export function peerDividendMedian(
+  yields: Array<number | null | undefined> | null | undefined,
+  peersPresent: boolean,
+): DividendMedianResult {
+  if (!peersPresent) return { available: false, reason: "kein Peer-Set in der Analyse" };
+  const ys = (yields ?? []).filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0);
+  if (ys.length === 0) return { available: false, reason: "Peer-Set ohne Dividendenrendite (Feld fehlt, nicht als 0 gesetzt)" };
+  const sorted = ys.slice().sort((a, b) => a - b);
+  return { available: true, medianPct: medianOf(sorted), n: ys.length };
+}
+
+/** Sektor-Median, nur wenn eine Quelle ihn liefert. Damodaran-Profil hat heute keinen. */
+export function sectorDividendMedian(pct: number | null | undefined): DividendMedianResult {
+  if (typeof pct === "number" && Number.isFinite(pct) && pct >= 0) return { available: true, medianPct: pct, n: 1 };
+  return { available: false, reason: "Sektorprofil ohne Dividendenrendite (Damodaran liefert keinen Dividend-Yield-Median)" };
+}
+
+/** Kurzer Hinweis nur bei auffälliger eigener Historie. Sonst null. Kein Score. */
+export function dividendNotableHint(
+  span: DividendYieldSpan,
+  params: DividendYieldDisplayParams = DIVIDEND_YIELD_DISPLAY_PARAMS,
+): string | null {
+  if (!span.available || !span.notable || span.notableSide == null) return null;
+  const hi = Math.round(params.notableTailPercentile * params.percentScale);
+  const lo = params.percentScale - hi;
+  const where = span.notableSide === "high"
+    ? `über P${hi} der eigenen Historie`
+    : `unter P${lo} der eigenen Historie`;
+  return `Dividendenrendite ${span.currentPct.toFixed(2)} % ist auffällig (${where}, Perzentil ${span.percentile.toFixed(0)}). Nur Hinweis, kein Score.`;
 }

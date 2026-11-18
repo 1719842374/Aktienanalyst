@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { RegulatoryPestelRisks } from "./RegulatoryPestelRisks";
 
@@ -24,6 +25,12 @@ export function PolicyContextPanel({ data, testIdSuffix }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const chatKey = testIdSuffix === "pestel" ? "14" : testIdSuffix === "moat" ? "13" : "";
+  const kiAntwort = policy
+    ? [`USA: ${policy.usa}`, `Europa: ${policy.europa}`, `Asien: ${policy.asien}`, policy.moatImpact ? `Moat: ${policy.moatImpact}` : ""].filter(Boolean).join(" | ")
+    : "";
+  usePublishChatSection("stock", chatKey || "13", chatKey && kiAntwort ? { kiAntwort } : null);
+  useEffect(() => { setPolicy(null); setError(null); }, [data.ticker]);
 
   async function trigger() {
     setLoading(true);

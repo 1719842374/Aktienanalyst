@@ -5,6 +5,7 @@ import { useDividendKpi } from "@/lib/useDividendHistory";
 import { currencySymbol, statementCurrency } from "@/lib/formatters";
 import { isYahooOnly } from "@shared/data-source";
 import { YahooNoValuationNotice } from "../YahooNoValuationCard";
+import { AnnualFinancials } from "./AnnualFinancials";
 
 interface Props { data: StockAnalysis }
 
@@ -147,6 +148,7 @@ export function FinancialStatements({ data }: Props) {
           <WaterfallBar label="FCF" value={cf.fcfMargin} maxVal={80} color="bg-cyan-500/60" />
         </div>
       </div>
+      <AnnualFinancials ticker={data.ticker} segments={annualSegments(data)} />
     </SectionCard>
   );
 }
@@ -184,8 +186,18 @@ function YahooFinancialStatements({ data, eps, divKpi }: { data: StockAnalysis; 
         ))}
       </div>
       <div className="text-[10px] text-muted-foreground">Margen-Wasserfall: n/a</div>
+      <AnnualFinancials ticker={data.ticker} segments={annualSegments(data)} />
     </SectionCard>
   );
+}
+
+export function annualSegments(data: StockAnalysis): { name: string; revenue: number | null; fiscalYear: string | null; currency: string | null }[] {
+  return (data.revenueSegments ?? []).map((segment) => ({
+    name: segment.name,
+    revenue: segment.revenue > 0 ? segment.revenue : null,
+    fiscalYear: segment.fiscalYear ?? null,
+    currency: null,
+  }));
 }
 
 function Row({ label, value, sub, subColor, bold }: { label: string; value: string; sub?: string; subColor?: string; bold?: boolean }) {

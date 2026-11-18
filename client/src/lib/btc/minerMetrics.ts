@@ -12,6 +12,12 @@
  * classifyMinerZone behandelt mpiZone='neutral' als "kein Signal" (±0 Punkte),
  * es wird also nichts mit einem Fake-Default verfälscht.
  */
+import {
+  MINER_ZONE_BAND_FILL,
+  MINER_ZONE_SMOOTH_WINDOW,
+  buildMinerZoneBandSegments,
+  smoothMinerZoneBands,
+} from "../../../../shared/miner-zone-bands";
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -354,21 +360,9 @@ export function buildMinerZoneSeries(params: {
  */
 export function smoothZones(
   zones: (MinerZone | null)[],
-  window = 7
+  window = MINER_ZONE_SMOOTH_WINDOW
 ): (MinerZone | null)[] {
-  return zones.map((z, i) => {
-    if (z == null) return null;
-    const slice = zones.slice(Math.max(0, i - window + 1), i + 1).filter((x): x is MinerZone => x != null);
-    if (slice.length === 0) return z;
-    const counts = new Map<MinerZone, number>();
-    for (const s of slice) counts.set(s, (counts.get(s) ?? 0) + 1);
-    let best: MinerZone = z;
-    let bestCount = -1;
-    for (const [zone, count] of counts) {
-      if (count > bestCount) { best = zone; bestCount = count; }
-    }
-    return best;
-  });
+  return smoothMinerZoneBands(zones, window);
 }
 
 // ─── Zonen-Segmente für Recharts ReferenceAreas ───────────────────────────────
@@ -379,30 +373,13 @@ export interface ZoneSegment {
 }
 
 /** Gruppiert aufeinanderfolgende Tage gleicher Zone zu Segmenten (mit Glättung). */
-export function buildZoneSegments(series: MinerSeriesPoint[], smoothWindow = 7): ZoneSegment[] {
+export function buildZoneSegments(series: MinerSeriesPoint[], smoothWindow = MINER_ZONE_SMOOTH_WINDOW): ZoneSegment[] {
   const smoothed = smoothZones(series.map(p => p.zone), smoothWindow);
-  const segments: ZoneSegment[] = [];
-  let current: ZoneSegment | null = null;
-  for (let i = 0; i < series.length; i++) {
-    const zone = smoothed[i];
-    if (zone == null) { current = null; continue; }
-    if (current && current.zone === zone) {
-      current.x2 = series[i].date;
-    } else {
-      current = { x1: series[i].date, x2: series[i].date, zone };
-      segments.push(current);
-    }
-  }
-  return segments;
+  return buildMinerZoneBandSegments(series.map(p => p.date), smoothed);
 }
 
-/** Farben nach WORK_BTC_MINER.md §4 */
-export const ZONE_FILL: Record<MinerZone, string> = {
-  capitulation: 'rgba(239, 68, 68, 0.18)',
-  transition: 'rgba(234, 179, 8, 0.12)',
-  profitable: 'rgba(34, 197, 94, 0.10)',
-  euphoria: 'rgba(168, 85, 247, 0.12)',
-};
+/** Farben nach WORK_BTC_MINER.md §4, dieselbe Fläche wie die Gold-Sektion 9. */
+export const ZONE_FILL: Record<MinerZone, string> = MINER_ZONE_BAND_FILL;
 
 export const ZONE_LABEL: Record<MinerZone, string> = {
   capitulation: 'Miner-Kapitulation',

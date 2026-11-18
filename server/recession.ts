@@ -21,9 +21,18 @@ import {
   acceptGoogleTrendsFetch,
   freshGoogleTrends,
   parseSerpApiGoogleTrends,
+  parseSerpApiTrendPoints,
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
 } from "./cache/google-trends-cache";
+import {
+  GOOGLE_TRENDS_EMPTY_NA,
+  GOOGLE_TRENDS_RATE_LIMIT_NA,
+  PYTRENDS_TIMEOUT_MS,
+  PYTRENDS_USER_AGENT,
+  readPytrendsOutcome,
+  type TrendsHttpResponse,
+} from "./cache/google-trends-pytrends";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
@@ -48,6 +57,24 @@ function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string
     });
   } catch {
     return "";
+  }
+}
+
+/** Same curl as fetchUrl, plus the HTTP status. A 429 body is not a market value. */
+function fetchUrlResult(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): { status: number; body: string } {
+  try {
+    const headerArgs = Object.entries(headers)
+      .map(([k, v]) => `-H "${k}: ${v.replace(/"/g, "\\\"")}"`)
+      .join(" ");
+    const raw = execSync(
+      `curl -sL --max-time ${Math.floor(timeoutMs / 1000)} -w "\\n__STATUS__%{http_code}" ${headerArgs} "${url}"`,
+      { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 50 * 1024 * 1024 },
+    );
+    const match = raw.match(/\n__STATUS__(\d{3})$/);
+    if (!match) return { status: 0, body: raw };
+    return { status: Number(match[1]), body: raw.slice(0, -match[0].length) };
+  } catch {
+    return { status: 0, body: "" };
   }
 }
 
@@ -500,40 +527,106 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 }
 
 // 11. Google Trends "Recession"
-// One cache: server/cache/google-trends-cache.ts. No second store, no extra route.
-// A miss inside 48h is scored with the last print. Older than that, the slot closes.
+// Order: fresh cache → SerpApi only when a key is set → pytrends → n/a with a reason.
+// A Google 429 is n/a and is not written into the cache. Other misses still keep
+// the last print inside 48h. One cache, no second route.
+export type GoogleTrendsTransport = (
+  url: string,
+  timeoutMs: number,
+  headers?: Record<string, string>,
+) => TrendsHttpResponse | string;
+
+let trendsTransport: GoogleTrendsTransport | null = null;
+
+/** Tests inject a mock. Production uses curl. */
+export function setGoogleTrendsTransportForTests(transport: GoogleTrendsTransport | null): void {
+  trendsTransport = transport;
+}
+
+export function scoreGoogleTrendsForTests(): IndicatorResult {
+  return scoreGoogleTrends();
+}
+
+function trendsGet(url: string, timeoutMs: number, headers?: Record<string, string>): TrendsHttpResponse {
+  const raw = trendsTransport
+    ? trendsTransport(url, timeoutMs, headers)
+    : fetchUrlResult(url, timeoutMs, headers ?? {});
+  if (typeof raw === "string") return { status: 0, body: raw };
+  return raw;
+}
+
 function scoreGoogleTrends(): IndicatorResult {
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
-  if (!serpKey) {
-    console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
-    return googleReading(null);
-  }
-
   const now = Date.now();
   const cached = readGoogleTrendsCache();
   const fresh = freshGoogleTrends(cached, now);
   if (fresh) {
-    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h)`);
+    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h${fresh.naReason ? " reason" : ""})`);
+    if (fresh.naReason) return googleReading(null, fresh.source, fresh, fresh.naReason);
+    if (fresh.value == null) return googleReading(null, fresh.source, fresh, GOOGLE_TRENDS_EMPTY_NA);
     return googleReading(fresh.value, fresh.source, fresh);
   }
 
-  let fetched: { value: number; source: string } | null = null;
-  try {
-    const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const parsed = parseSerpApiGoogleTrends(fetchUrl(url, 12000));
-    if (parsed) {
-      fetched = { value: parsed.value, source: parsed.source };
-      console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+  let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
+  if (serpKey) {
+    try {
+      const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
+      const res = trendsGet(url, 12000);
+      if (res.status === 429) {
+        console.log("  Google Trends SerpApi: n/a — 429, weiter zu pytrends");
+      } else {
+        const parsed = parseSerpApiGoogleTrends(res.body);
+        if (parsed) {
+          const points = parseSerpApiTrendPoints(res.body) ?? undefined;
+          fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
+          console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+        }
+      }
+    } catch (err: any) {
+      console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
     }
-  } catch (err: any) {
-    console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
+  } else {
+    console.log("  Google Trends: kein SERPAPI_KEY, pytrends als Ersatz");
+  }
+
+  let googleRateLimited = false;
+  if (!fetched) {
+    const py = readPytrendsOutcome(url => trendsGet(url, PYTRENDS_TIMEOUT_MS, { "User-Agent": PYTRENDS_USER_AGENT }));
+    if (py.kind === "print") {
+      fetched = { value: py.print.value, source: py.print.source, ...(py.print.points.length ? { points: py.print.points } : {}) };
+      console.log(`  Google Trends pytrends: avg=${py.print.value}, latest=${py.print.latest}, peak=${py.print.peak}`);
+    } else if (py.kind === "rate_limited") {
+      googleRateLimited = true;
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_RATE_LIMIT_NA}`);
+    } else if (py.kind === "miss") {
+      console.log(`  Google Trends pytrends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    } else {
+      const unreachable: never = py;
+      console.log(`  Google Trends pytrends: unbekannter Ausgang ${String(unreachable)}`);
+    }
+  }
+
+  if (googleRateLimited) {
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_RATE_LIMIT_NA,
+    });
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_RATE_LIMIT_NA);
   }
 
   const decided = acceptGoogleTrendsFetch(fetched, cached, now);
   if (decided.store) writeGoogleTrendsCache(decided.store);
   if (decided.value == null) {
-    console.log("  Google Trends: no value within 48h — reporting N/A");
-    return googleReading(null);
+    console.log(`  Google Trends: ${GOOGLE_TRENDS_EMPTY_NA}`);
+    writeGoogleTrendsCache({
+      value: null,
+      timestamp: now,
+      source: "Google Trends (N/A)",
+      naReason: GOOGLE_TRENDS_EMPTY_NA,
+    });
+    return googleReading(null, "Google Trends (N/A)", undefined, GOOGLE_TRENDS_EMPTY_NA);
   }
   if (!fetched) {
     console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale})`);
@@ -1078,7 +1171,8 @@ export function latestMultplCape(html: string): { date: string; value: number } 
   if (!html || html.includes("Just a moment")) return null;
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
   for (const row of rows) {
-    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    // Beleg: matchAll liefert die Zellen derselben Tabellenzeile. Spread bleibt der Iterator.
+    const cells = [...(row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) as unknown as RegExpExecArray[])].map(match => htmlCell(match[1]));
     if (cells.length < 2) continue;
     const date = englishLongDate(cells[0]);
     const value = Number(cells[1].replace(/,/g, ""));
@@ -1154,12 +1248,48 @@ export function liveBuffettValue(indicator: Pick<IndicatorResult, "value" | "ava
   return indicator.value;
 }
 
-export function buffettFazitClause(indicator: Pick<IndicatorResult, "value" | "available"> | undefined): string {
+/** Half a displayed percent. The live slot is an integer, the chart series is one decimal. */
+const BUFFETT_PEAK_TOLERANCE = 0.5;
+
+function formatSeriesPct(ratio: number): string {
+  const rounded = Math.round(ratio * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+/**
+ * Rank of the live print against the chart series.
+ * At the maximum, name the first year of that series.
+ * Otherwise name the higher print and its date.
+ * An empty series makes no historical claim.
+ */
+export function buffettSeriesNote(
+  currentPct: number,
+  series: { date: string; ratio: number }[],
+): string | null {
+  const points = series
+    .filter(point => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.ratio))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (points.length === 0 || !Number.isFinite(currentPct)) return null;
+  const higher = points.filter(point => point.ratio > currentPct + BUFFETT_PEAK_TOLERANCE);
+  if (higher.length === 0) return `höchster Wert der Reihe seit ${points[0].date.slice(0, 4)}`;
+  let peak = higher[0];
+  for (const point of higher) {
+    if (point.ratio > peak.ratio || (point.ratio === peak.ratio && point.date > peak.date)) peak = point;
+  }
+  return `der vorherige höhere Wert lag am ${peak.date} bei ${formatSeriesPct(peak.ratio)}`;
+}
+
+export function buffettFazitClause(
+  indicator: Pick<IndicatorResult, "value" | "available"> | undefined,
+  series: { date: string; ratio: number }[] = [],
+): string {
   const value = liveBuffettValue(indicator);
   if (value == null) return "";
   const buffettVal = parseFloat(String(value).replace("%", ""));
   if (!Number.isFinite(buffettVal) || buffettVal <= 180) return "";
-  return `Der Buffett-Indikator steht bei ${value} — das höchste Niveau seit der Dotcom-Blase. `
+  const note = buffettSeriesNote(buffettVal, series);
+  const rank = note ? ` — ${note}` : "";
+  return `Der Buffett-Indikator steht bei ${value}${rank}. `
     + `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
 }
 
@@ -1245,6 +1375,7 @@ export function googleReading(
   trend: number | null,
   source = "Google Trends",
   freshness?: { ageHours: number; isStale: boolean },
+  naReason?: string,
 ): IndicatorResult {
   const base = {
     name: "Google Trends \"Recession\"",
@@ -1253,7 +1384,10 @@ export function googleReading(
     source: trend == null ? "Google Trends (N/A)" : source,
     description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
   };
-  if (trend == null || !Number.isFinite(trend)) return closedIndicator(base);
+  if (trend == null || !Number.isFinite(trend)) {
+    const value = naReason && naReason.startsWith("n/a —") ? naReason : "N/A";
+    return closedIndicator(base, value);
+  }
   let rawScore = -4;
   let zone = `Niedrig (${trend} <30) → Sorglosigkeit`;
   if (trend > 75) { rawScore = 7; zone = `Extrem hoch (${trend} >75) → Panik-Suchen`; }
@@ -1414,6 +1548,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
   const bridgePromise = fetchBridge();
+  // Chart-Reihe für den Fazit-Satz, parallel zur Analyse. Der Import bleibt dynamisch,
+  // damit der statische Import oben nur die Wilshire-Konstante zieht (Score-Wächter).
+  const buffettSeriesPromise = import("./buffett-route")
+    .then(mod => mod.loadUsBuffettRatios())
+    .catch(() => [] as { date: string; ratio: number }[]);
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
@@ -1445,7 +1584,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     console.log(`  ${ind.name}: ${ind.value} → Score ${ind.weightedScore} (max ${ind.maxWeighted})`);
   });
 
-  const googleAvailable = indicators.find(i => i.name.includes("Google"))?.value !== "N/A";
+  const googleHit = indicators.find(i => i.name.includes("Google"));
+  const googleAvailable = googleHit != null && googleHit.available !== false;
   const nyFedValue = getNYFedRecessionProb();
   console.log(`[RECESSION] NY Fed recession prob: ${nyFedValue}`);
 
@@ -1594,7 +1734,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     lines: driverAssessment.lines,
     cards: driverAssessment.cards,
   };
-  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers);
+  const buffettSeries = await buffettSeriesPromise;
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers, buffettSeries);
 
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
@@ -1657,6 +1798,7 @@ export function generateFazit(
   topDrivers: string[],
   bridge: RecessionBridge,
   drivers: DriverView,
+  buffettSeries: { date: string; ratio: number }[] = [],
 ): { summary: string; riskLevel: string; sections: FazitSection[] } {
   // Extract key indicator values
   const get = (name: string) => indicators.find(i => i.name.includes(name));
@@ -1702,7 +1844,7 @@ export function generateFazit(
 
   // Section 2: Valuation Risk — never an empty heading; closed slots get an honest hint.
   let valuationText = "";
-  valuationText += buffettFazitClause(buffett);
+  valuationText += buffettFazitClause(buffett, buffettSeries);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
   if (!isNaN(capeVal) && capeVal > 30) {
     valuationText += `Das Shiller CAPE-Ratio von ${capeVal} liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. `;

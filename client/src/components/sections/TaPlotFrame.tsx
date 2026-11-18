@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Bar, ComposedChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { TA_VOLUME_BAND_PX } from "@/lib/taChartScale";
 
@@ -12,21 +12,65 @@ export function TaPlotScroll({
   minWidth,
   children,
   testId = "ta-plot-scroll",
+  widthScale = 1,
+  scrollToEnd = false,
+  overlay = null,
 }: {
   minWidth?: number;
   children: ReactNode;
   testId?: string;
+  /**
+   * Eigene Zeile über dem Scrollport. Nicht ins overflow-x legen:
+   * `absolute` darin wandert mit scrollLeft (rechter Abstand = 4 px + scrollLeft)
+   * und deckt im Plot die rechte Achse.
+   */
+  overlay?: ReactNode;
+  /**
+   * 1 = bisherige Breite (Chart pixelgleich).
+   * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien.
+   * Der Szenario-Kegel übergibt 1: eine Verlängerung schiebt den Vorlauf aus dem sichtbaren Scrollport.
+   */
+  widthScale?: number;
+  /** true = rechte Kante (Kegelspitze) im Scrollport halten, wenn die Mindestbreite darüber hinausragt. */
+  scrollToEnd?: boolean;
 }) {
-  const width = minWidth ? `max(100%, ${minWidth}px)` : "100%";
+  const scroller = useRef<HTMLDivElement>(null);
+  const base = minWidth ? `max(100%, ${minWidth}px)` : "100%";
+  const width = widthScale > 1 ? `calc(${base} * ${widthScale})` : base;
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !scrollToEnd) return;
+    const pin = () => { el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth); };
+    pin();
+    if (typeof ResizeObserver === "undefined") return;
+    const obs = new ResizeObserver(pin);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [scrollToEnd, width, minWidth]);
   return (
-    <div
-      className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
-      style={{ WebkitOverflowScrolling: "touch" }}
-      data-testid={testId}
-      data-min-width={minWidth ?? undefined}
-    >
-      <div data-testid={`${testId}-inner`} style={{ width, minWidth: minWidth || undefined }}>
-        {children}
+    <div className="w-full min-w-0 max-w-full">
+      {/* Lane bleibt im Baum, damit der Scrollport beim Umschalten nicht neu gemountet wird. */}
+      <div
+        className={overlay ? "relative mb-1 h-8 w-full min-w-0" : "hidden"}
+        data-testid={overlay ? `${testId}-overlay-lane` : undefined}
+      >
+        {overlay}
+      </div>
+      <div
+        ref={scroller}
+        className="relative w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+        style={{ WebkitOverflowScrolling: "touch" }}
+        data-testid={testId}
+        data-min-width={minWidth ?? undefined}
+        data-scroll-end={scrollToEnd ? "1" : undefined}
+      >
+        <div
+          data-testid={`${testId}-inner`}
+          data-width-scale={widthScale > 1 ? widthScale : undefined}
+          style={{ width, minWidth: minWidth || undefined }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -1,14 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
+import { guardModule, invalidateCrossModuleQueries, useCrossModuleHandler, writeResearcherScope } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
-  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus
+  Zap, Flame, ListPlus, Mic
 } from "lucide-react";
+import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
+import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
-import { MacroPanel } from "@/components/researcher/MacroPanel";
+import { toBriefingKeyEvent } from "@shared/briefing-key-event";
+import { KeyEventCard, MacroPanel } from "@/components/researcher/MacroPanel";
 import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
 import { RegionalStocksStrip } from "@/components/researcher/RegionalStocksStrip";
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
@@ -50,6 +56,43 @@ const IMPACT_COLORS: Record<string, string> = {
   low: "bg-foreground/10 text-foreground/60",
 };
 
+/** Symbole, die die Researcher-Ansicht schon zeigt. Der Podcast-Knopf bleibt, wo er ist. */
+function symbolsInResearcherView(data: Record<string, unknown>, briefing: unknown): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const symbol = value.trim().toUpperCase();
+    if (!/^[A-Z0-9.\-]{1,24}$/.test(symbol) || seen.has(symbol)) return;
+    seen.add(symbol);
+    found.push(symbol);
+  };
+  const walk = (node: unknown, key: string | null, depth: number) => {
+    if (found.length >= 12 || depth > 8 || node == null) return;
+    if (typeof node === "string") {
+      if (key === "ticker" || key === "symbol") push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      if (key === "topPlayers" || key === "affectedTickers" || key === "tickers") {
+        for (const item of node) push(item);
+        return;
+      }
+      for (const item of node) walk(item, key, depth + 1);
+      return;
+    }
+    if (typeof node !== "object") return;
+    for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      if (childKey.startsWith("_")) continue;
+      if (childKey === "ticker" || childKey === "symbol") push(child);
+      else walk(child, childKey, depth + 1);
+    }
+  };
+  walk(data, null, 0);
+  walk(briefing, null, 0);
+  return found;
+}
+
 export default function Researcher() {
   const [activeTab, setActiveTab] = useState<Tab>("macro");
   const [region, setRegion] = useState<Region>("US");
@@ -59,6 +102,33 @@ export default function Researcher() {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [fiscalBridgeCount, setFiscalBridgeCount] = useState<number | null>(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const regionRef = useRef(region);
+  regionRef.current = region;
+  const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
+  const [podcastError, setPodcastError] = useState<string | null>(null);
+
+  async function runPodcast() {
+    setPodcastPhase("loading");
+    setPodcastError(null);
+    try {
+      const res = await apiRequest("POST", "/api/podcast/brief", { symbols: symbolsInResearcherView(data, briefingData) }, PODCAST_REQUEST_TIMEOUT_MS);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || typeof body !== "object") {
+        setPodcastPhase("error");
+        setPodcastError(`n/a — Podcast-Abruf HTTP ${res.status}`);
+        return;
+      }
+      setPodcastResult(body as PodcastProbeResult);
+      setPodcastPhase("done");
+    } catch (err: unknown) {
+      setPodcastPhase("error");
+      setPodcastError(err instanceof Error ? err.message : "n/a — Podcast-Abruf fehlgeschlagen");
+    }
+  }
 
   async function runBriefing(force = false) {
     setBriefingOpen(true);
@@ -100,6 +170,10 @@ export default function Researcher() {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+          }
           const json = await res.json();
           if (json?.__error) throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           return json;
@@ -130,6 +204,36 @@ export default function Researcher() {
       }
       setError(friendly);
     },
+  });
+
+  useEffect(() => {
+    writeResearcherScope(activeTab, region);
+  }, [activeTab, region]);
+
+  useCrossModuleHandler("researcher", async () => {
+    const tab = activeTabRef.current;
+    const reg = regionRef.current;
+    await guardModule(tab, () => mutation.mutateAsync({ tab, force: true, region: reg }));
+    if (tab !== "capex") {
+      await guardModule("capex", async () => {
+        const res = await apiRequest("POST", "/api/researcher/capex", { region: reg, force: true }, 120000);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+        }
+        const json = await res.json();
+        setData((prev) => ({ ...prev, [`capex_${reg}`]: json }));
+      });
+    }
+    await guardModule("fiscal", async () => {
+      const fiscalRes = await apiRequest("GET", "/api/researcher/fiscal-programs");
+      if (!fiscalRes.ok) {
+        const text = await fiscalRes.text();
+          throw new Error(`HTTP ${fiscalRes.status}: ${text.slice(0, 180)}`);
+        }
+        const body = await fiscalRes.json();
+      setFiscalBridgeCount(typeof body?.count === "number" ? body.count : null);
+    });
   });
 
   const cacheKey = `${activeTab}_${region}`;
@@ -197,6 +301,7 @@ export default function Researcher() {
               <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
               <span className="text-[10px] text-foreground/40 hidden md:inline truncate">Hedge-Fund-Style Macro & Stock Discovery</span>
             </div>
+            <CrossModuleRefreshButton className="h-8 px-2 text-[11px] font-medium text-foreground/70 hover:bg-muted/40 rounded-md transition-colors flex items-center gap-1 border border-border/40 shrink-0" label="Refresh" />
             <button
               onClick={() => runBriefing(false)}
               className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30 shrink-0"
@@ -205,6 +310,15 @@ export default function Researcher() {
             >
               <Flame className="w-3 h-3" />
               <span className="hidden xs:inline sm:inline">Briefing</span>
+            </button>
+            <button
+              onClick={() => { void runPodcast(); }}
+              className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-violet-300 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30 shrink-0"
+              title="Key Driver für Börse, Wirtschaft und Finanzen, danach ein Podcast-Skript"
+              data-testid="button-podcast"
+            >
+              <Mic className="w-3 h-3" />
+              <span className="hidden sm:inline">Podcast</span>
             </button>
             <div className="hidden sm:flex items-center gap-1 bg-muted/30 rounded-md p-0.5 shrink-0">
               {REGION_OPTIONS.map(r => (
@@ -259,7 +373,12 @@ export default function Researcher() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-3 sm:p-4">
+      <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
+        {podcastPhase !== "idle" && (
+          <div className="mb-4 min-w-0">
+            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+          </div>
+        )}
         {activeTab === "macro" && (
           <div className="mb-4 space-y-4">
             <LiquidityBriefingPanel />
@@ -291,8 +410,14 @@ export default function Researcher() {
                 Gecachte Analyse ohne KI-Inhalt — bitte „Aktualisieren“ klicken
               </div>
             )}
+            {fiscalBridgeCount != null && (
+              <div className="text-[10px] text-foreground/50 mt-1" data-testid="fiscal-bridge-count">
+                Fiskal-Bridge: {fiscalBridgeCount} Programme aus der Discovery (kein Score)
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
             {!currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(false)}
@@ -304,13 +429,13 @@ export default function Researcher() {
             )}
             {currentData && !loadingForCurrentView && (
               <button
-                onClick={() => runAnalysis(true)}
+                onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
                 className={
                   isStale
                     ? "px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-400/60 text-amber-200 text-[11px] font-semibold flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(251,191,36,0.35)] hover:bg-amber-500/25"
                     : "px-2 py-1.5 rounded-md text-foreground/50 hover:text-foreground hover:bg-muted/40 text-[10px] flex items-center gap-1 transition-colors"
                 }
-                title={isStale ? "KI-Inhalt fehlt — neu generieren" : "Neue Analyse erzwingen (verbraucht Credits)"}
+                title={isStale ? "KI-Inhalt fehlt — Analyse, Researcher und Portfolio neu laden" : "Aktualisiert Analyse, Researcher und Portfolio gemeinsam (kann Credits verbrauchen)"}
                 data-testid="button-refresh-analysis"
               >
                 <RefreshCw className={isStale ? "w-3.5 h-3.5" : "w-3 h-3"} /> Aktualisieren
@@ -321,6 +446,8 @@ export default function Researcher() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysiere…
               </div>
             )}
+            </div>
+            <CrossModuleRefreshNotice />
           </div>
         </div>
 
@@ -337,7 +464,7 @@ export default function Researcher() {
           </div>
         )}
 
-        {activeTab === "capex" && <GeoMapPanel />}
+        {activeTab === "capex" && <GeoMapPanel onOpenSectorOpportunity={() => setActiveTab("sectors")} />}
 
         {!currentData && !loadingForCurrentView && !error && activeTab !== "sectors" && (
           <EmptyState />
@@ -395,7 +522,6 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
   onForceRefresh: () => void;
 }) {
   const briefing = data?.briefing;
-  const diag = data?.diagnostics;
   const isCached = !!data?._cached;
   const cacheAge = data?._cacheAgeMin;
   const regions = Array.isArray(data?.regions)
@@ -404,17 +530,21 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
       ? briefing.regions
       : null;
   const isV2 = Array.isArray(regions) && regions.length === 3;
-  const cross = Array.isArray(data?.cross)
-    ? data.cross
-    : Array.isArray(briefing?.cross)
-      ? briefing.cross
-      : [];
-  const headline = briefing?.headline || data?.headline || "";
+  const headline = textOrNa(briefing?.headline || data?.headline, "keine Headline in der Briefing-Antwort");
   const tacticalStance = data?.tacticalStance || briefing?.tacticalStance || "";
   const stanceRationale = data?.stanceRationale || briefing?.stanceRationale || "";
+  const heroBody = isV2
+    ? textOrNa(stanceRationale, "keine Makro-Zusammenfassung in der Briefing-Antwort")
+    : textOrNa(briefing?.summary, "keine Makro-Zusammenfassung in der Briefing-Antwort");
+  const stanceTag = isV2
+    ? textOrNa(tacticalStance, "keine taktische Haltung in der Briefing-Antwort")
+    : textOrNa(briefing?.recommendation, "keine taktische Haltung in der Briefing-Antwort");
+  const events: Array<{ raw: any; card: ReturnType<typeof toBriefingKeyEvent> }> = (Array.isArray(briefing?.topChanges) ? briefing.topChanges : [])
+    .filter((c: any) => c && c.title && c.title !== "none")
+    .map((c: any) => ({ raw: c, card: toBriefingKeyEvent(c) }));
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className={`w-full ${isV2 ? "max-w-5xl" : "max-w-3xl"} bg-card border border-border/50 rounded-lg shadow-2xl`}>
+      <div className="w-full max-w-5xl bg-card border border-border/50 rounded-lg shadow-2xl">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 bg-gradient-to-r from-amber-500/10 to-orange-500/5">
           <Flame className="w-4 h-4 text-amber-400" />
           <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
@@ -454,160 +584,67 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
             </div>
           )}
 
-          {briefing && !loading && !isV2 && (
-            <>
-              <div className="rounded-lg bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] border border-amber-500/30 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Headline</div>
-                <div className="text-sm font-semibold text-foreground">{briefing.headline}</div>
-                <p className="text-[12px] text-foreground/80 leading-relaxed mt-2">{briefing.summary}</p>
+          {briefing && !loading && (
+            <div className="space-y-4">
+              <div data-testid="briefing-hero" className="rounded-lg border border-border/40 bg-card/30 p-4">
+                <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">Macro Synthesis</div>
+                <div className="text-xs font-semibold text-foreground/90 leading-relaxed">{headline}</div>
+                <p className="text-xs text-foreground/85 leading-relaxed mt-2">{heroBody}</p>
+                <div className="mt-4 p-2.5 rounded border border-border/30 bg-background/40 flex items-start gap-2">
+                  <span data-testid="briefing-stance-tag" className="text-[10px] font-semibold px-2 py-0.5 rounded border border-border/40">{stanceTag}</span>
+                </div>
               </div>
-
-              {Array.isArray(briefing.topChanges) && briefing.topChanges.length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Top Changes</div>
-                  <div className="space-y-2">
-                    {briefing.topChanges.map((c: any) => (
-                      <BriefingChangeCard key={c.rank} change={c} />
+              <div className="rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.04] to-orange-500/[0.02] p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <h3 className="text-xs font-semibold text-foreground/90">Aktuelle Key Events & Geopolitik</h3>
+                  <span className="text-[10px] text-foreground/40">({events.length} Events autonom erkannt)</span>
+                </div>
+                {events.length > 0 && (
+                  <div data-testid="briefing-events" className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {events.map(({ raw, card }, i) => (
+                      <div key={`${raw.region || ""}-${raw.title}-${raw.rank ?? i}`} data-testid="briefing-event-card" className="space-y-2">
+                        <KeyEventCard ev={card} />
+                        <BriefingTickerRow change={raw} />
+                      </div>
                     ))}
                   </div>
-                </div>
-              )}
-
-              {briefing.keyMetricsShift && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <MetricShift label="Inflation" value={briefing.keyMetricsShift.inflationView} />
-                  <MetricShift label="Zinsen / 10Y" value={briefing.keyMetricsShift.rateView} />
-                  <MetricShift label="Equities" value={briefing.keyMetricsShift.equityView} />
-                </div>
-              )}
-
-              {briefing.recommendation && (
-                <div className="rounded border border-violet-400/30 bg-violet-500/[0.06] p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-1">Pre-Market Action</div>
-                  <p className="text-[12px] text-foreground/85 leading-relaxed">{briefing.recommendation}</p>
-                </div>
-              )}
-            </>
-          )}
-
-          {isV2 && !loading && (
-            <>
-              <div className="rounded-lg bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] border border-amber-500/30 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Headline</div>
-                <div className="text-sm font-semibold text-foreground">{headline}</div>
+                )}
               </div>
-
-              <div data-testid="briefing-cross" className="rounded border border-border/40 bg-background/40 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-1">Cross</div>
-                <div className="space-y-1">
-                  {cross.slice(0, 3).map((line: string, i: number) => (
-                    <p key={i} className="text-[12px] text-foreground/80 leading-relaxed">{line}</p>
-                  ))}
-                </div>
-              </div>
-
-              <div data-testid="briefing-regions" className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                {regions.map((r: any) => (
-                  <div key={r.region} data-testid={`briefing-region-${r.region}`} className="rounded border border-border/40 bg-background/40 p-3 space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[12px] font-semibold text-foreground">{r.region}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/70">{r.stance}</span>
-                    </div>
-                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Geld </span>{r.money}</p>
-                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Fiskal </span>{r.fiscal}</p>
-                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Handel </span>{r.trade}</p>
-                    <p className="text-[10px] font-mono text-foreground/60">
-                      LI {fmtBriefingNum(r.li)} · r {fmtBriefingNum(r.realRatePct)} · V {fmtBriefingNum(r.velocity)} · π {fmtBriefingNum(r.pricedIn)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {Array.isArray(briefing?.topChanges) && briefing.topChanges.length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Top Changes</div>
-                  <div className="space-y-2">
-                    {briefing.topChanges.map((c: any, i: number) => (
-                      <BriefingChangeCard key={`${c.region}-${c.title}-${i}`} change={c} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {(tacticalStance || stanceRationale) && (
-                <div className="rounded border border-violet-400/30 bg-violet-500/[0.06] p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-1">Tactical Stance</div>
-                  <p className="text-[12px] text-foreground/85 leading-relaxed">{tacticalStance}{stanceRationale ? `: ${stanceRationale}` : ""}</p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const SEVERITY_DOT: Record<string, string> = {
-  high: "bg-red-400",
-  medium: "bg-amber-400",
-  low: "bg-emerald-400",
-};
-
-function BriefingChangeCard({ change }: { change: any }) {
-  const dcf = change.dcfImplications || {};
-  const tickers = Array.isArray(change.affectedTickers) ? change.affectedTickers : [];
-  const actionText = change.action || change.dcfImplication || "";
-  return (
-    <div className="rounded border border-border/40 bg-background/40 p-3">
-      <div className="flex items-start gap-2">
-        <div className="text-[10px] font-mono text-foreground/40 mt-0.5">#{change.rank}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-            <span className="text-[12px] font-semibold text-foreground">{change.title}</span>
-            {change.region && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.08] text-foreground/60 border border-border/30">{change.region}</span>
-            )}
-          </div>
-          <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{change.description}</p>
-          {tickers.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1 items-center">
-              {tickers.slice(0, 8).map((t: string, i: number) => (
-                <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">
-                  {t}
-                  <TickerAddButtons ticker={t} source="researcher" region={change.region} compact />
-                </span>
-              ))}
-              <button
-                type="button"
-                className="text-[9px] px-1.5 py-0.5 rounded border border-border/40 text-foreground/60 hover:bg-muted/40"
-                onClick={() => {
-                  const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher", change.region);
-                  window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen`);
-                }}
-              >
-                Alle → Watchlist
-              </button>
             </div>
           )}
-          {actionText && (
-            <div className="mt-2 text-[11px] text-foreground/85 italic border-l-2 border-violet-400/40 pl-2">{actionText}</div>
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-function fmtBriefingNum(n: number | null | undefined): string {
-  return typeof n === "number" && Number.isFinite(n) ? String(n) : "n/v";
+function textOrNa(value: unknown, reason: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return `n/a — ${reason}`;
 }
 
-function MetricShift({ label, value }: { label: string; value: string }) {
+function BriefingTickerRow({ change }: { change: any }) {
+  const tickers = Array.isArray(change?.affectedTickers) ? change.affectedTickers : [];
+  if (!tickers.length) return null;
   return (
-    <div className="rounded bg-background/40 border border-border/30 p-2.5">
-      <div className="text-[9px] uppercase tracking-wider text-foreground/40 mb-1">{label}</div>
-      <p className="text-[11px] text-foreground/80 leading-relaxed">{value}</p>
+    <div className="flex flex-wrap gap-1 items-center">
+      {tickers.slice(0, 8).map((t: string, i: number) => (
+        <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">
+          {t}
+          <TickerAddButtons ticker={t} source="researcher" region={change.region} compact />
+        </span>
+      ))}
+      <button
+        type="button"
+        className="text-[9px] px-1.5 py-0.5 rounded border border-border/40 text-foreground/60 hover:bg-muted/40"
+        onClick={() => {
+          const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher", change.region);
+          window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen`);
+        }}
+      >
+        Alle → Watchlist
+      </button>
     </div>
   );
 }
