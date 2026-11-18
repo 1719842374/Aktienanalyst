@@ -109,6 +109,14 @@ In Sektion 17 einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzuf
 
 **Aufwand:** ~8–10 Stunden.
 
+### Status 18.11.2026 · HEAD main `f6b88795d93bca042676a8f81dfb6dec3f443c9e` · §4b bleibt OFFEN
+
+- Soll: „Event hinzufügen“ in Sektion 17, Berechnung per KI-Schema, Fluss in den DCF. Abschnitt und Dateiname `WORK_DASHBOARD_FEATURES_2026-10.md` bleiben. Kein `fertig_`/`Fertig_`.
+- Ist #494 (https://github.com/1719842374/Aktienanalyst/pull/494) „fix(s15): Katalysator-Enrich lädt die Analyse bei Cache-404 einmal neu“. Squash `58f6c237198c026197349e76ea8e03308b69008f` über `2bc8e7bd`. 7 Dateien +786/−50: `client/src/components/sections/CatalystsSection.tsx`, `client/src/lib/catalystEnrichFlow.ts` (neu), `client/src/pages/Dashboard.tsx`, `server/analyze-route.ts`, `server/llm-openrouter.ts`, `script/test-catalyst-enrich-reload.ts`, `script/test-catalyst-follow-up-ticker.ts`.
+- Kette auf `58f6c237` (Ancestor von `f6b88795`): Sektion 17 `CatalystsSection` → `apiRequest` POST `/api/catalyst-enrich` → `server/analyze-route.ts` (404 ohne Cache-Eintrag; `llmSkipReason` am Skip). Bei diesem 404 einmal `onReloadAnalysis` → `Dashboard.tsx` `startAnalyze` (`force: false`) → `apiRequest` POST `/api/analyze` → `server/routes.ts` `registerAnalyzeRoute` → derselbe Analyze-Handler. Nachzug nur über `applyCatalystFollowUp` beim gleichen Ticker. `researcher.ts`, Schema und `scoring-*` unberührt. Plausibel für diesen Cache-404-Nachzug. §4b ist damit nicht abgeschlossen.
+- Doublecheck Post-Merge KLAR (1 Parent, blob-identisch zu PR-Head `c8a3e571`, keine Deletes, keine Konflikt-Marker). Pins `2bc8e7bd`→`58f6c237` unverändert: VOW3 4.735718, SAP 5.174758, MSFT 4.058138, Buffett MSFT 5.638130. Ratings unverändert. tsc 76/76. Build rc 0. Render LIVE `58f6c237`. Stabschef-Freigabe: Ampel #494 🟢 mit SHA `58f6c237`.
+- Offen: §4b bleibt OFFEN. Rest-Punkt `llmEnrichedCatalysts` wird beim Tickerwechsel nicht zurückgesetzt, also nicht erledigt; separater Fix-Agent `bc-5e3f11e0`. Prod-Smoke #494+#489 auf `f6b88795` durch Tester steht aus. `fertig_WORK_BIAS_FIXES_INVERSE_DCF` bleibt `fertig_` und ist in diesem Nachtrag nicht angefasst. Kein Rename. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
 ---
 
 ## 4c. Vollständige interaktive KI-Chatbot-Anbindung für alle Assets
