@@ -255,14 +255,14 @@ gap(
   prompt.slice(0, 420),
 );
   const names = (json.items ?? []).map((item) => `${item.parent}/${item.name}`);
-  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct == null && /nicht belegbar: FSD/.test(json.reason ?? "") && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
+  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct == null && /Schätzung ohne Quelle: FSD/.test(json.reason ?? "") && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
   gap("drops-echo-and-unknown-parent", !names.includes("Automotive/Automotive") && !names.includes("Automotive/United States") && !names.some((name) => name.startsWith("Software/")), names.join(",") || json.reason || "");
   const third = await fetch(`http://127.0.0.1:${port}/api/segment-gaps`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ticker: "TSLA" }),
   });
-  gap("success-cached", third.status === 200 && llmCalls === 2, `status=${third.status} calls=${llmCalls}`);
+  gap("success-cached", third.status === 200 && llmCalls === 4, `status=${third.status} calls=${llmCalls}`);
 } finally {
   server.close();
 }
@@ -298,9 +298,11 @@ async function postGap(port: number, ticker: string, extra?: Record<string, unkn
     body: JSON.stringify({ ticker, ...(extra ?? {}) }),
   });
   const json = await response.json() as {
-    items?: { parent: string; name: string; kind?: string; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null; basis?: string }[];
+    items?: { parent: string; name: string; kind?: string; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null; basis?: string; shareNote?: string | null }[];
     reason?: string | null;
     error?: string;
+    promptVersion?: string | null;
+    cached?: boolean;
   };
   return { status: response.status, json };
 }
@@ -399,9 +401,9 @@ try {
     first.status === 200
       && (first.json.items?.length ?? 0) === 1
       && withinDay.status === 200
-      && afterHour === 1
+      && afterHour === 2
       && nextDay.status === 200
-      && fullCalls === 2,
+      && fullCalls === 4,
     `status=${first.status}/${withinDay.status}/${nextDay.status} calls=${afterHour},${fullCalls} items=${first.json.items?.length ?? "fehl"}`,
   );
 } finally {
@@ -489,7 +491,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p8")
+    && keyA.includes("n36-gap-p9")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -555,7 +557,7 @@ try {
   const second = await postGap(secPort, "EXF");
   gap(
     "sec-skipped-when-fmp-has-names",
-    secCalls === 1 && second.status === 200 && secLlm === 2,
+    secCalls === 1 && second.status === 200 && secLlm === 4,
     `sec=${secCalls} status=${second.status} llm=${secLlm}`,
   );
 } finally {
@@ -979,7 +981,7 @@ try {
     tsla.status === 200
       && tslaNames.includes("product:Automotive/FSD")
       && fsd?.shareOfParentPct == null
-      && /nicht belegbar: FSD/.test(tsla.json.reason ?? "")
+      && /Schätzung ohne Quelle: FSD/.test(tsla.json.reason ?? "")
       && !tslaNames.some((name) => name.endsWith("/Mexico") || name.endsWith("/Germany") || name.endsWith("/India"))
       && /nicht als Produkt-Unterposten: Mexico/.test(tsla.json.reason ?? "")
       && /nicht als Produkt-Unterposten: Germany/.test(tsla.json.reason ?? "")
@@ -1015,7 +1017,7 @@ try {
       && germany?.parent === "EMEA"
       && germany.kind === "geographic"
       && germany.shareOfParentPct == null
-      && /nicht belegbar: Germany/.test(msft.json.reason ?? "")
+      && /Schätzung ohne Quelle: Germany/.test(msft.json.reason ?? "")
       && azure?.parent === "Intelligent Cloud"
       && azure.kind === "product",
     `names=${msftNames.join(",")} reason=${msft.json.reason ?? ""}`,
@@ -1030,7 +1032,7 @@ try {
       && sapNames.length === 1
       && platform?.parent === "Cloud"
       && platform.shareOfParentPct == null
-      && /nicht belegbar: Business Technology Platform/.test(sap.json.reason ?? "")
+      && /Schätzung ohne Quelle: Business Technology Platform/.test(sap.json.reason ?? "")
       && /Elternsegment nicht in der Liste: RISE/.test(sap.json.reason ?? "")
       && /Elternsegment nicht in der Liste: Employee Central/.test(sap.json.reason ?? "")
       && sapPrompt.includes("Cloud")
@@ -1361,12 +1363,12 @@ registerSegmentGapRoute(shownApp, {
         children: [
           {
             parent: "Services & Other",
-            name: "FSD / Software",
+            name: "Software-Abo",
             owner: "Tesla, Inc.",
-            shareOfParentPct: 40,
-            revenue: 12,
+            shareOfParentPct: null,
+            revenue: null,
             currency: "USD",
-            basis: "Tesla Annual Report 2025. FSD-Abos sind nicht separat ausgewiesen",
+            basis: "Software-Abo ist nicht separat ausgewiesen",
             source: null,
           },
           citedChild("Automotive", "Robotaxi", "Tesla, Inc.", { shareOfParentPct: 4, source: null, basis: "Pilot ohne Beleg" }),
@@ -1379,23 +1381,31 @@ const shownServer = shownApp.listen(0);
 const shownPort = (shownServer.address() as AddressInfo).port;
 try {
   const tsla = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
-  const fsd = tsla.json.items?.find((item) => item.name === "FSD / Software");
+  const fsd = tsla.json.items?.find((item) => item.name === "Software-Abo");
   const robotaxi = tsla.json.items?.find((item) => item.name === "Robotaxi");
-  const tslaPrompt = shownPrompts.find((prompt) => prompt.includes("Ticker TSLA.")) ?? "";
+  const servicePrompt = shownPrompts.find((prompt) => prompt.includes('nur das Elternsegment "Services & Other"')) ?? "";
+  const parentCalls = uiProducts.TSLA.every((row) => shownPrompts.some((prompt) => prompt.includes(`nur das Elternsegment "${row.name}"`)));
   gap(
     "tsla-fsd-under-shown-services",
     tsla.status === 200
+      && parentCalls
+      && servicePrompt.includes("Software, Services und Abos")
       && fsd?.parent === "Services & Other"
-      && fsd.shareOfParentPct === 12
-      && fsd.shareOrigin === "fact"
-      && (fsd.basis ?? "").includes("Formel: 12 / 100")
-      && (fsd.basis ?? "").includes("Annual Report 2025")
+      && fsd.shareOfParentPct == null
+      && fsd.shareNote === "n/a — Schätzung ohne Quelle"
+      && /Schätzung ohne Quelle: Software-Abo/.test(tsla.json.reason ?? "")
       && robotaxi?.shareOfParentPct == null
       && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
-      && tslaPrompt.includes("Services & Other")
-      && !tslaPrompt.includes("FSD")
-      && !tslaPrompt.includes("Intelligent Cloud"),
-    `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${tslaPrompt.slice(0, 500)}`,
+      && !servicePrompt.includes("FSD")
+      && tsla.json.promptVersion === "n36-gap-p9"
+      && tsla.json.cached === false,
+    `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
+  );
+  const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
+  gap(
+    "gap-response-marks-cache",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p9",
+    `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
   const azure = msft.json.items?.find((item) => item.name === "Azure");

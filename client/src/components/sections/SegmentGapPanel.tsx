@@ -40,7 +40,12 @@ export function SegmentGapPanel({
       });
       const body = await response.json().catch(() => null) as (SegmentGapResult & { error?: string }) | null;
       if (!response.ok) throw new Error(body?.error || "n/a — fehlende Segmente nicht erreichbar");
-      return { items: body?.items ?? [], reason: body?.reason ?? null };
+      return {
+        items: body?.items ?? [],
+        reason: body?.reason ?? null,
+        promptVersion: body?.promptVersion ?? null,
+        cached: body?.cached === true,
+      };
     },
   });
   useIsoLayoutEffect(() => {

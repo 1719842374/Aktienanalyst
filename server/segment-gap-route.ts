@@ -45,7 +45,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p8";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p9";
 const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
@@ -174,6 +174,8 @@ export function segmentGapPrompt(input: {
   sector?: string;
   parentsUsd?: ReadonlyArray<{ name: string; revenueUsd: number | null }>;
   fxNote?: string | null;
+  /** Dieser Aufruf füllt nur dieses Elternsegment. Leer = alle Produkt-Eltern. */
+  only?: string;
 }): string {
   const closed = (rows: string[]) => (rows.length > 0 ? rows.slice(0, 24).join(" | ") : "keine");
   const industryEcho = input.industry || input.sector || "";
@@ -182,13 +184,17 @@ export function segmentGapPrompt(input: {
       row.revenueUsd != null && row.revenueUsd > 0 ? `${row.name} ${row.revenueUsd} USD` : `${row.name} n/a`
     )).join(" | ")
     : "n/a";
-  const eachParent = input.products.map((name) => {
+  const focusNames = input.only ? [input.only] : input.products;
+  const eachParent = focusNames.map((name) => {
     const services = /service|abo|subscription|software|support/i.test(name);
     const task = services
       ? "fehlende Produktlinien nur dieses Elterns. Software, Services und Abos, die nicht separat ausgewiesen sind, gehören unter genau diese Zeichenfolge"
       : "fehlende Produktlinien nur dieses Elterns";
     return `- ${name}: ${task}.`;
   }).join("\n");
+  const focusLine = input.only
+    ? `Dieser Aufruf füllt nur das Elternsegment "${input.only}". Kinder eines anderen Elterns gehören nicht in diese Antwort.`
+    : "";
   return [
     "Bekannte Fakten. Diese Namen und Zahlen nicht ersetzen und nicht als neues Top-Level-Segment anlegen.",
     `Ticker ${input.ticker}. Firma: ${input.companyName}.`,
@@ -199,7 +205,8 @@ export function segmentGapPrompt(input: {
     "parent ist genau eine dieser Zeichenfolgen. Jeder andere Elternname ist ungültig und wird verworfen.",
     "Nenne Produktlinien und Regionen, die diese Firma führt und die in den beiden Listen fehlen.",
     "Nenne auch Geschäftsbereiche, die diese Firma real führt und die in den Listen nicht stehen, etwa Software, Services oder Abos.",
-    "Jedes Produkt-Eltern bekommt eigene Kinder. Nicht alle Zeilen unter das erste oder das größte Segment legen.",
+    "Jedes Produkt-Eltern bekommt einen eigenen Aufruf. Nicht alle Zeilen unter das erste oder das größte Segment legen.",
+    focusLine,
     eachParent,
     "Ein bekannter Name kommt nicht noch einmal als Treffer.",
     "Ein Land oder eine Region ist kein Produkt-Unterposten. Eine Region nur unter dem Regionen-Eltern, das sie geografisch enthält, nicht unter einem anderen Land.",
@@ -485,10 +492,8 @@ function toGapItem(
     }
   } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
     shareNote = "n/a — Währung passt nicht zur Elternzeile";
-  } else if (!sourced) {
-    shareNote = "n/a — Schätzung ohne Quelle";
   } else {
-    shareNote = "n/a — Anteil nicht belegbar";
+    shareNote = "n/a — Schätzung ohne Quelle";
   }
   return {
     parent,
@@ -548,7 +553,9 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       const key = segmentGapCacheKey(ticker, products, regions, revenueBasis);
       pruneGapCache(now);
       const hit = gapCache.get(key);
-      if (hit && now - hit.at < hit.ttl) return res.json(hit.body);
+      if (hit && now - hit.at < hit.ttl) {
+        return res.json({ ...hit.body, promptVersion: hit.body.promptVersion ?? SEGMENT_GAP_PROMPT_VERSION, cached: true });
+      }
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       if (!takeGapSlot(ip, now, limit.max, limit.windowMs)) {
         return res.status(429).json({ error: "Zu viele Abfragen" });
@@ -568,38 +575,68 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       }));
       const run = deps.llm ?? callLLMJson;
       if (!deps.llm && !isLLMAvailable()) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
-      let payload: unknown = null;
-      try {
-        const result = await run({
-          systemPrompt: "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau eine der genannten Zeichenfolgen. Jedes Produkt-Eltern bekommt eigene Kinder, nicht nur das größte. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.",
-          prompt: segmentGapPrompt({
-            ticker,
-            companyName: identity.companyName,
-            description: identity.description ?? "",
-            products,
-            regions,
-            industry: identity.industry,
-            sector: identity.sector,
-            parentsUsd,
-            fxNote: usd.fxNote,
-          }),
-          maxTokens: 800,
-          temperature: 0.2,
-          signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
-        });
-        payload = result?.data ?? null;
-      } catch {
-        payload = null;
+      const tasks: { only: string; taskProducts: string[]; taskRegions: string[] }[] = [];
+      for (const name of products) tasks.push({ only: name, taskProducts: [name], taskRegions: [] });
+      if (regions.length > 0) tasks.push({ only: "", taskProducts: [], taskRegions: regions });
+      if (tasks.length === 0) tasks.push({ only: "", taskProducts: [], taskRegions: [] });
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const merged: SegmentGapItem[] = [];
+      const seen = new Set<string>();
+      const notes: string[] = [];
+      for (const task of tasks) {
+        let payload: unknown = null;
+        try {
+          const result = await run({
+            systemPrompt,
+            prompt: segmentGapPrompt({
+              ticker,
+              companyName: identity.companyName,
+              description: identity.description ?? "",
+              products,
+              regions,
+              industry: identity.industry,
+              sector: identity.sector,
+              parentsUsd,
+              fxNote: usd.fxNote,
+              only: task.only,
+            }),
+            maxTokens: 800,
+            temperature: 0.2,
+            signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+          });
+          payload = result?.data ?? null;
+        } catch {
+          payload = null;
+        }
+        if (payload == null) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
+        if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
+          notes.push(OUTLINE_MISMATCH);
+          continue;
+        }
+        const reviewed = reviewSegmentGaps(
+          payload,
+          task.only ? task.taskProducts : [],
+          task.taskRegions,
+          identity.companyName,
+          ticker,
+          identity.description ?? "",
+          usd.revenues,
+        );
+        if (reviewed.reason) notes.push(reviewed.reason);
+        for (const item of reviewed.items) {
+          const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          merged.push(item);
+        }
       }
-      if (payload == null) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
-      if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
-        return res.json({ items: [], reason: OUTLINE_MISMATCH });
+      if (merged.length === 0 && notes.some((note) => note === OUTLINE_MISMATCH)) {
+        return res.json({ items: [], reason: OUTLINE_MISMATCH, promptVersion: SEGMENT_GAP_PROMPT_VERSION, cached: false });
       }
-      const reviewed = reviewSegmentGaps(payload, products, regions, identity.companyName, ticker, identity.description ?? "", usd.revenues);
-      const reason = [reviewed.reason, usd.fxNote && !(reviewed.reason ?? "").includes(usd.fxNote) ? usd.fxNote : ""]
+      const reason = [...notes, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : ""]
         .filter((note) => note && note.trim())
         .join(" ") || null;
-      const body = { items: reviewed.items, reason };
+      const body: SegmentGapResult = { items: merged, reason, promptVersion: SEGMENT_GAP_PROMPT_VERSION, cached: false };
       const ttl = body.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
       rememberGap(key, { at: now, ttl, body });
       return res.json(body);

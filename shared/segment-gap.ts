@@ -14,6 +14,10 @@ export interface SegmentGapItem {
 export interface SegmentGapResult {
   items: SegmentGapItem[];
   reason: string | null;
+  /** Prompt-Stand, damit ein Client eine alte Antwort von einer neuen unterscheidet. */
+  promptVersion?: string | null;
+  /** true, wenn der Handler die gespeicherte Antwort ausliefert. */
+  cached?: boolean;
 }
 
 /** Gleicher Schlüssel für „A & B“ und „A and B“. Kein Ticker-Mapping. */
