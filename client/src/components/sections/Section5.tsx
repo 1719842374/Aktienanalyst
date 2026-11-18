@@ -6,6 +6,8 @@ import {
   sectorImpliedBetaFromAnalysis, betaForDcfSource, dcfBetaDivergedFromMarket,
   type DcfBetaSource, type FCFFDCFParams, type FCFFDCFResult
 } from "../../lib/calculations";
+import { buildBiasDecision } from "../../../../shared/bias-fixes";
+import { DCF_CALIBRATION, calibrationLineText, calibrationSumText, tvExtrapolationHint } from "../../../../shared/dcf-calibration";
 import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { usePublishChatSection } from "@/lib/chatSectionData";
@@ -136,13 +138,19 @@ export function Section5({ data }: Props) {
 
   // Calculate main FCFF DCF
   const mainResult = useMemo(() => calculateFCFFDCF(effectiveParams), [effectiveParams]);
+  // Neu aus health, nicht aus data.calibration (alte Caches ohne das Feld, kein gespeicherter Zielwert).
+  const calibration = useMemo(
+    () => (DCF_CALIBRATION.enabled ? buildBiasDecision(data).calibration ?? null : null),
+    [data],
+  );
+  const tvHint = calibration ? tvExtrapolationHint(calibration.tvSharePct) : null;
 
   // Detect if WACC was capped (compare raw CAPM to final)
   const rawRe = params.riskFreeRate + params.beta * params.erp;
   const dvCalc = Math.min(params.debtRatio, 60) / 100;
   const evCalc = 1 - dvCalc;
   const rawWaccCalc = evCalc * rawRe + dvCalc * params.costOfDebt * (1 - params.taxRate / 100);
-  const waccWasCapped = !waccOverrideEnabled && Math.abs(mainResult.wacc - rawWaccCalc) > 0.01;
+  const waccWasCapped = !waccOverrideEnabled && Math.abs(mainResult.wacc - rawWaccCalc - (effectiveParams.waccHealthAddPp ?? 0)) > 0.01;
 
   // Build 3 scenarios: Conservative (main), Optimistic, Macro-Stress
   const optimisticParams = useMemo<FCFFDCFParams>(() => ({
@@ -533,6 +541,14 @@ export function Section5({ data }: Props) {
           </div>
         );
       })()}
+
+      {calibration ? (
+        <div className="text-[11px] bg-muted/40 rounded-md px-2 py-1.5 border border-border/60" data-testid="dcf-calibration-line">
+          {calibrationLineText(calibration)}
+          <div className="text-[10px] text-muted-foreground mt-0.5">{calibrationSumText(calibration)}</div>
+          {tvHint ? <div className="text-[10px] text-amber-500 mt-0.5" data-testid="dcf-tv-warn">{tvHint}</div> : null}
+        </div>
+      ) : null}
 
       {/* Three scenario cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

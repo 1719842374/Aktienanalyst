@@ -4,7 +4,8 @@
  * Flow: Analysis data → Claude generates structured HTML → Playwright renders to PDF
  */
 import { chromium } from 'playwright-core';
-import { sumUpsideGb } from '../shared/bias-fixes';
+import { buildBiasDecision, sumUpsideGb } from '../shared/bias-fixes';
+import { DCF_CALIBRATION, calibrationLineText, calibrationSumText, tvExtrapolationHint } from '../shared/dcf-calibration';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
@@ -158,6 +159,21 @@ export function pdfCatalystTarget(data: any, fe: FazitEntryExport | null, totalG
   if (!Number.isFinite(target)) return null;
   const baseLabel = info.source === 'dcf' ? 'Fazit-Entscheidungsbasis' : info.source === 'analyst-pt' ? 'Analyst PT' : 'Kurs';
   return { target, base: info.base, baseLabel, label: formatCurrency(target, 2, ccy) + ` (${baseLabel} ${formatCurrency(info.base, 2, ccy)} × (1 + ${f(totalGB,2)}%))` };
+}
+
+/** S5-Zeile der Bilanz-Kalibrierung. Leer, solange das Flag aus ist oder die Analyse keine Basis hat. */
+export function pdfCalibrationRows(data: any): string {
+  if (!DCF_CALIBRATION.enabled) return "";
+  try {
+    const view = buildBiasDecision(data).calibration;
+    if (!view) return "";
+    const hint = tvExtrapolationHint(view.tvSharePct);
+    return `<div class="row" data-testid="pdf-s5-calibration"><span class="row-label">Bilanz-Kalibrierung</span><span class="row-val">${esc(calibrationLineText(view))}</span></div>`
+      + `<div class="para">${esc(calibrationSumText(view))}</div>`
+      + (hint ? `<div class="para" data-testid="pdf-s5-tv-warn">${esc(hint)}</div>` : "");
+  } catch {
+    return "";
+  }
 }
 
 // ===== Normalize data (fill computed fields the frontend calculates) =====
@@ -540,7 +556,7 @@ ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</di
 <table><tr><th>Szenario</th><th>WACC</th><th>Wachstum</th><th>Fair Value/Aktie</th><th>vs. Kurs</th></tr>
 ${([['Konservativ', wS.kons, g*0.7, konsFV], ['Base Case', wS.avg, g, baseFV], ['Optimistisch', wS.opt, g*1.2, optFV]] as Array<[string, number, number, number]>).map(([n, w, gr, fv]) => { const na = pdfDcfNa(data, fv); return `<tr data-testid="pdf-s5-scen"><td>${n}</td><td>${w}%</td><td>${f(gr)}%</td><td>${na ? esc(na) : `${cS}${f(fv,2)}`}</td><td>${na ? 'n/a' : pct(data.currentPrice ? (fv/data.currentPrice-1)*100 : null)}</td></tr>`; }).join('\n')}
 </table>
-<div class="row" data-testid="pdf-s5-cat-target"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">${catTarget ? esc(catTarget.label) : 'n/a — Fazit-Wert nicht berechenbar'}</span></div>
+<div class="row" data-testid="pdf-s5-cat-target"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">${catTarget ? esc(catTarget.label) : 'n/a — Fazit-Wert nicht berechenbar'}</span></div>${pdfCalibrationRows(data)}
 <div class="row" data-testid="pdf-s5-dcf-vs-kurs"><span class="row-label">DCF vs Kurs</span><span class="row-val">${pdfDcfNa(data, konsFV) ? esc(pdfDcfNa(data, konsFV)!) : `${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)} ${data.currentPrice && konsFV < data.currentPrice * 0.9 ? '→ Überbewertet' : data.currentPrice && konsFV > data.currentPrice * 1.1 ? '→ Unterbewertet' : '→ Fair'}`}</span></div>` : ''}
 
 <!-- S6: CRV -->
