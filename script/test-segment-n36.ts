@@ -14,7 +14,7 @@ import { SegmentEstimateBlock } from "../client/src/components/sections/Section2
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
-import { registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
+import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests } from "../server/segment-gap-route";
 import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
 delete process.env.OPENROUTER_API_KEY;
@@ -193,7 +193,7 @@ try {
 resetSegmentGapCacheForTests();
 const prompts: string[] = [];
 let llmCalls = 0;
-let failOnce = true;
+let failAutomotive = true;
 const app = express();
 app.use(express.json());
 registerSegmentGapRoute(app, {
@@ -213,9 +213,30 @@ registerSegmentGapRoute(app, {
   llm: async (opts) => {
     llmCalls += 1;
     prompts.push(opts.prompt);
-    if (failOnce) {
-      failOnce = false;
-      return null;
+    const focus = /nur das Elternsegment "([^"]+)"/.exec(opts.prompt)?.[1] ?? "";
+    if (failAutomotive && focus === "Automotive") {
+      failAutomotive = false;
+      const error = new Error("openrouter") as Error & { status?: number };
+      error.status = 429;
+      throw error;
+    }
+    if (focus === "Energy generation and storage") {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          companyEcho: "Tesla, Inc.",
+          industryEcho: "Auto Manufacturers",
+          children: [{
+            parent: focus,
+            name: "Megapack",
+            owner: "Tesla, Inc.",
+            basis: "Speicher",
+            source: "Tesla Annual Report 2025",
+            shareOfParentPct: null,
+            growthPct: null,
+          }],
+        },
+      };
     }
     return {
       modelUsed: "mock-model",
@@ -240,7 +261,16 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ticker: "TSLA" }),
   });
-  gap("error-not-cached", first.status === 503 && llmCalls === 1, `status=${first.status} calls=${llmCalls}`);
+  const firstJson = await first.json() as { items?: { parent: string; name: string }[]; reason?: string };
+  const firstNames = (firstJson.items ?? []).map((item) => `${item.parent}/${item.name}`);
+  gap(
+    "error-isolated-siblings-kept",
+    first.status === 200
+      && llmCalls === 3
+      && /KI nicht erreichbar \(429\): Automotive/.test(firstJson.reason ?? "")
+      && firstNames.includes("Energy generation and storage/Megapack"),
+    `status=${first.status} calls=${llmCalls} names=${firstNames.join(",")} reason=${firstJson.reason ?? ""}`,
+  );
   const second = await fetch(`http://127.0.0.1:${port}/api/segment-gaps`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -257,6 +287,13 @@ gap(
   const names = (json.items ?? []).map((item) => `${item.parent}/${item.name}`);
   gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct == null && /Schätzung ohne Quelle: FSD/.test(json.reason ?? "") && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
   gap("drops-echo-and-unknown-parent", !names.includes("Automotive/Automotive") && !names.includes("Automotive/United States") && !names.some((name) => name.startsWith("Software/")), names.join(",") || json.reason || "");
+  gap(
+    "partial-cache-retries-only-failed-parent",
+    llmCalls === 4
+      && prompts.slice(3).every((prompt) => prompt.includes('nur das Elternsegment "Automotive"'))
+      && names.includes("Energy generation and storage/Megapack"),
+    `calls=${llmCalls} prompts=${prompts.length} names=${names.join(",")}`,
+  );
   const third = await fetch(`http://127.0.0.1:${port}/api/segment-gaps`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -303,6 +340,8 @@ async function postGap(port: number, ticker: string, extra?: Record<string, unkn
     error?: string;
     promptVersion?: string | null;
     cached?: boolean;
+    queried?: number | null;
+    total?: number | null;
   };
   return { status: response.status, json };
 }
@@ -491,7 +530,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p9")
+    && keyA.includes("n36-gap-p10")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1397,14 +1436,14 @@ try {
       && robotaxi?.shareOfParentPct == null
       && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p9"
+      && tsla.json.promptVersion === "n36-gap-p10"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p9",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p10",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -1428,6 +1467,145 @@ try {
   );
 } finally {
   shownServer.close();
+}
+
+resetSegmentGapCacheForTests();
+let fitCalls = 0;
+const fitParents = [
+  { name: "Automotive", revenue: 69_530_000_000 },
+  { name: "Energy Generation & Storage", revenue: 12_770_000_000 },
+  { name: "Services & Other", revenue: 12_538_000_000 },
+];
+const fitRegions = [
+  { name: "United States", revenue: 41_200_000_000 },
+  { name: "China", revenue: 20_900_000_000 },
+];
+const fitApp = express();
+fitApp.use(express.json());
+registerSegmentGapRoute(fitApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Automotive: 100, "Energy Generation and Storage": 80, "Services and Other": 70 } }],
+  regionRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { "United States": 60, China: 40 } }],
+  identity: async () => fixtureIdentity,
+  llm: async () => {
+    fitCalls += 1;
+    return { modelUsed: "mock-model", data: { companyEcho: "Tesla, Inc.", industryEcho: "Auto Manufacturers", children: [] } };
+  },
+});
+const fitServer = fitApp.listen(0);
+const fitPort = (fitServer.address() as AddressInfo).port;
+try {
+  const fit = await postGap(fitPort, "TSLA", { products: fitParents, regions: fitRegions });
+  gap(
+    "tsla-fits-call-limit",
+    fitParents.length + 1 <= SEGMENT_GAP_MAX_CALLS
+      && fit.status === 200
+      && fitCalls === fitParents.length + 1
+      && fit.json.queried === fitParents.length + 1
+      && fit.json.total === fitParents.length + 1
+      && !/nicht abgefragt \(Call-Limit\)/.test(fit.json.reason ?? ""),
+    `limit=${SEGMENT_GAP_MAX_CALLS} parents=${fitParents.length} calls=${fitCalls} queried=${fit.json.queried} total=${fit.json.total} reason=${fit.json.reason ?? ""}`,
+  );
+} finally {
+  fitServer.close();
+}
+
+resetSegmentGapCacheForTests();
+let overCalls = 0;
+const overPrompts: string[] = [];
+const overApp = express();
+overApp.use(express.json());
+registerSegmentGapRoute(overApp, {
+  now: () => 1_700_000_000_000,
+  available: () => true,
+  productRows: async () => [],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  secSegments: async () => null,
+  llm: async (opts) => {
+    overCalls += 1;
+    overPrompts.push(opts.prompt);
+    const focus = /nur das Elternsegment "([^"]+)"/.exec(opts.prompt)?.[1] ?? "keine";
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Tesla, Inc.",
+        industryEcho: "Auto Manufacturers",
+        children: [keptChild(focus, "Zeile")],
+      },
+    };
+  },
+});
+const overServer = overApp.listen(0);
+const overPort = (overServer.address() as AddressInfo).port;
+try {
+  const overParents = [
+    { name: "Huge", revenue: 50 },
+    { name: "Large", revenue: 40 },
+    { name: "Mid", revenue: 30 },
+    { name: "Small", revenue: 20 },
+    { name: "Tiny", revenue: 10 },
+  ];
+  const first = await postGap(overPort, "EXL", { products: overParents, regions: [] });
+  const afterFirst = overCalls;
+  const second = await postGap(overPort, "EXL", { products: overParents, regions: [] });
+  const huge = second.json.items?.find((item) => item.parent === "Huge");
+  gap(
+    "call-limit-na-not-full-cache",
+    first.status === 200
+      && first.json.queried === SEGMENT_GAP_MAX_CALLS
+      && first.json.total === overParents.length
+      && /nicht abgefragt \(Call-Limit\): Tiny/.test(first.json.reason ?? "")
+      && first.json.cached === false
+      && afterFirst === SEGMENT_GAP_MAX_CALLS
+      && second.status === 200
+      && overCalls === afterFirst
+      && second.json.cached === false
+      && /nicht abgefragt \(Call-Limit\): Tiny/.test(second.json.reason ?? "")
+      && huge?.name === "Zeile"
+      && overPrompts.filter((prompt) => prompt.includes('nur das Elternsegment "Huge"')).length === 1,
+    `first=${first.json.queried}/${first.json.total} calls=${afterFirst},${overCalls} cached=${String(first.json.cached)}/${String(second.json.cached)} reason=${second.json.reason ?? ""}`,
+  );
+} finally {
+  overServer.close();
+}
+
+resetSegmentGapCacheForTests();
+let pairedCalls = 0;
+let releasePair: () => void = () => {};
+const pairGate = new Promise<void>((resolve) => { releasePair = resolve; });
+const pairApp = express();
+pairApp.use(express.json());
+registerSegmentGapRoute(pairApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Only: 10 } }],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  llm: async () => {
+    pairedCalls += 1;
+    await pairGate;
+    return {
+      modelUsed: "mock-model",
+      data: { companyEcho: "Tesla, Inc.", industryEcho: "Auto Manufacturers", children: [keptChild("Only", "Zeile")] },
+    };
+  },
+});
+const pairServer = pairApp.listen(0);
+const pairPort = (pairServer.address() as AddressInfo).port;
+try {
+  const left = postGap(pairPort, "EXP");
+  const right = postGap(pairPort, "EXP");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const during = pairedCalls;
+  releasePair();
+  const both = await Promise.all([left, right]);
+  gap(
+    "inflight-dedupes-same-parent",
+    during === 1 && pairedCalls === 1 && both.every((row) => row.status === 200 && (row.json.items?.length ?? 0) === 1),
+    `during=${during} calls=${pairedCalls} status=${both.map((row) => row.status).join(",")}`,
+  );
+} finally {
+  pairServer.close();
 }
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");

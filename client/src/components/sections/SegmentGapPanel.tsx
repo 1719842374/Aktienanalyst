@@ -45,6 +45,8 @@ export function SegmentGapPanel({
         reason: body?.reason ?? null,
         promptVersion: body?.promptVersion ?? null,
         cached: body?.cached === true,
+        queried: typeof body?.queried === "number" ? body.queried : null,
+        total: typeof body?.total === "number" ? body.total : null,
       };
     },
   });
@@ -67,6 +69,11 @@ export function SegmentGapPanel({
       >
         {open ? "Fehlende Segmente/Regionen ausblenden" : "Fehlende Segmente/Regionen anzeigen"}
       </button>
+      {open && query.data && typeof query.data.queried === "number" && typeof query.data.total === "number" ? (
+        <p className="mt-1 text-[10px] text-muted-foreground" data-testid="segment-gap-coverage">
+          abgefragt {query.data.queried} von {query.data.total}
+        </p>
+      ) : null}
       {open && query.isLoading ? <p className="mt-1 text-[10px] text-muted-foreground">Fehlende Segmente …</p> : null}
       {open && query.isError ? (
         <p className="mt-1 text-[10px] text-red-500" data-testid="segment-gap-error">
@@ -116,6 +123,9 @@ export function SegmentGapList({ data }: { data: SegmentGapResult }) {
   }
   return (
     <div className="mt-1 max-w-full space-y-1 overflow-x-hidden" data-testid="segment-gap-list">
+      {typeof data.queried === "number" && typeof data.total === "number" ? (
+        <p className="text-[10px] text-muted-foreground" data-testid="segment-gap-coverage">abgefragt {data.queried} von {data.total}</p>
+      ) : null}
       {data.reason ? <p className="break-words text-[10px] text-muted-foreground">{data.reason}</p> : null}
       {Array.from(parents.entries()).map(([bucket, rows]) => (
         <div key={bucket}>

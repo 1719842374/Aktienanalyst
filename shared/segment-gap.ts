@@ -18,6 +18,10 @@ export interface SegmentGapResult {
   promptVersion?: string | null;
   /** true, wenn der Handler die gespeicherte Antwort ausliefert. */
   cached?: boolean;
+  /** Eltern, die in dieser Anfrage an die KI oder den Cache gingen. */
+  queried?: number | null;
+  /** Eltern dieser Anfrage, einschließlich der nicht abgefragten. */
+  total?: number | null;
 }
 
 /** Gleicher Schlüssel für „A & B“ und „A and B“. Kein Ticker-Mapping. */

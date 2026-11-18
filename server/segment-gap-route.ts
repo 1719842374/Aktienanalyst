@@ -4,7 +4,8 @@
  * Fehlende Produktlinien und Regionen, die FMP/SEC nicht führen.
  * Kein Ticker-Hardcoding. Treffer hängen an einem vorhandenen Elternsegment.
  * Top-Level-Summen und FMP-Zeilen bleiben unangetastet.
- * Treffer liegen 24 h im Speicher, leere 200er 60 s. Fehlerantworten werden nicht gecacht.
+ * Treffer liegen je Elternsegment 24 h im Speicher. Fehler und nicht abgefragte Segmente nicht.
+ * Leere Antworten ohne Eltern 60 s. Ein KI-Fehler in einem Segment lässt die übrigen stehen.
  */
 import { createHash } from "node:crypto";
 import type { Express, Request, Response } from "express";
@@ -45,8 +46,14 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p9";
-const gapCache = new Map<string, { at: number; ttl: number; body: SegmentGapResult }>();
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p10";
+/**
+ * Maximale KI-Calls pro Anfrage. Ressourcengrenze, keine Obergrenze für Werte.
+ * Gemessen am Kernbeispiel auf diesem Head: 3 Produkt-Eltern plus ein Regionen-Call.
+ */
+export const SEGMENT_GAP_MAX_CALLS = 4;
+const gapCache = new Map<string, { at: number; ttl: number; body: { items: SegmentGapItem[]; reason: string | null } }>();
+const gapInflight = new Map<string, Promise<ParentAttempt>>();
 const secNameCache = new Map<string, { at: number; ttl: number; names: string[] }>();
 const rateBuckets = new Map<string, number[]>();
 
@@ -73,6 +80,7 @@ export interface SegmentGapDeps {
 
 export function resetSegmentGapCacheForTests(): void {
   gapCache.clear();
+  gapInflight.clear();
   secNameCache.clear();
   rateBuckets.clear();
 }
@@ -97,7 +105,7 @@ function pruneGapCache(now: number): void {
   for (let i = 0; i < expired.length; i++) gapCache.delete(expired[i]);
 }
 
-function rememberGap(key: string, entry: { at: number; ttl: number; body: SegmentGapResult }): void {
+function rememberGap(key: string, entry: { at: number; ttl: number; body: { items: SegmentGapItem[]; reason: string | null } }): void {
   if (!gapCache.has(key) && gapCache.size >= GAP_CACHE_MAX) {
     let oldestKey: string | null = null;
     let oldestAt = Number.POSITIVE_INFINITY;
@@ -507,6 +515,113 @@ function toGapItem(
   };
 }
 
+type ParentAttempt = {
+  ok: boolean;
+  status: number | null;
+  items: SegmentGapItem[];
+  reason: string | null;
+  fromCache: boolean;
+};
+
+type GapTask = {
+  label: string;
+  only: string;
+  taskProducts: string[];
+  taskRegions: string[];
+  /** Server-USD für den Cache-Schlüssel. Nicht die Client-Zahl. */
+  revenue: number | null;
+  /** Reihenfolge der Abfrage. Angezeigter Umsatz, sonst Server-USD. */
+  sortRevenue: number | null;
+  placeholder: boolean;
+};
+
+function gapTasks(
+  products: readonly string[],
+  regions: readonly string[],
+  revenues: ReadonlyMap<string, number>,
+  order: ReadonlyMap<string, number>,
+): GapTask[] {
+  const ranked = (name: string) => order.get(fold(name)) ?? revenues.get(fold(name)) ?? null;
+  const tasks: GapTask[] = products.map((name) => ({
+    label: name,
+    only: name,
+    taskProducts: [name],
+    taskRegions: [],
+    revenue: revenues.get(fold(name)) ?? null,
+    sortRevenue: ranked(name),
+    placeholder: false,
+  }));
+  if (regions.length > 0) {
+    let bestUsd: number | null = null;
+    let bestSort: number | null = null;
+    for (const name of regions) {
+      const usdValue = revenues.get(fold(name)) ?? null;
+      const sortValue = ranked(name);
+      if (usdValue != null && (bestUsd == null || usdValue > bestUsd)) bestUsd = usdValue;
+      if (sortValue != null && (bestSort == null || sortValue > bestSort)) bestSort = sortValue;
+    }
+    tasks.push({
+      label: regions.join(", "),
+      only: "",
+      taskProducts: [],
+      taskRegions: regions.slice(),
+      revenue: bestUsd,
+      sortRevenue: bestSort,
+      placeholder: false,
+    });
+  }
+  if (tasks.length === 0) {
+    tasks.push({
+      label: "keine",
+      only: "",
+      taskProducts: [],
+      taskRegions: [],
+      revenue: null,
+      sortRevenue: null,
+      placeholder: true,
+    });
+  }
+  tasks.sort((a, b) => (b.sortRevenue ?? -1) - (a.sortRevenue ?? -1) || a.label.localeCompare(b.label));
+  return tasks;
+}
+
+function parentCacheKey(ticker: string, task: GapTask): string {
+  const basis = task.revenue != null && task.revenue > 0 ? String(task.revenue) : "";
+  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${task.label}|v:${basis}`;
+}
+
+function freshParent(key: string, now: number): { items: SegmentGapItem[]; reason: string | null } | null {
+  const hit = gapCache.get(key);
+  if (!hit || now - hit.at >= hit.ttl) {
+    if (hit) gapCache.delete(key);
+    return null;
+  }
+  return hit.body;
+}
+
+function failureStatus(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const record = err as { status?: unknown; response?: { status?: unknown } };
+  const raw = record.status ?? record.response?.status;
+  const code = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+  return code === 429 || code === 402 ? code : null;
+}
+
+function unreachableNote(label: string, status: number | null): string {
+  const code = status === 429 || status === 402 ? ` (${status})` : "";
+  return `n/a — KI nicht erreichbar${code}: ${label}`;
+}
+
+function shareParentAttempt(key: string, run: () => Promise<ParentAttempt>): Promise<ParentAttempt> {
+  const pending = gapInflight.get(key);
+  if (pending) return pending;
+  const promise = run().finally(() => {
+    gapInflight.delete(key);
+  });
+  gapInflight.set(key, promise);
+  return promise;
+}
+
 export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {}): void {
   app.post("/api/segment-gaps", async (req: Request, res: Response) => {
     const ticker = typeof req.body?.ticker === "string" ? req.body.ticker.trim() : "";
@@ -535,26 +650,79 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       const shownRegions = shownParents(req.body?.regions);
       if (shownProducts.length > 0) products = shownProducts.map((row) => row.name);
       if (shownRegions.length > 0) regions = shownRegions.map((row) => row.name);
-      if (products.length === 0) {
+      if (products.length === 0 && shownProducts.length === 0) {
         const cachedNames = cachedSecNames(ticker, now);
-        const secNames = cachedNames ?? namesFromSecSegments(
-          deps.secSegments
-            ? await deps.secSegments(ticker, identity.companyName)
-            : await fetchSecBusinessSegments(ticker, identity.companyName),
-        );
-        if (!cachedNames) rememberSecNames(ticker, now, secNames);
-        if (secNames.length > 0) products = secNames;
+        if (cachedNames) products = cachedNames;
       }
       const convert = deps.convertSegments ?? convertSegmentRowsToUsd;
       const usd = await usdParentRevenues(productRaw, regionRaw, convert, identity.currency ?? "");
       overlayShownRevenue(shownProducts, usd.revenues, fmpProducts);
       overlayShownRevenue(shownRegions, usd.revenues, fmpRegions);
-      const revenueBasis = [...products, ...regions].map((name) => usd.revenues.get(fold(name)) ?? null);
-      const key = segmentGapCacheKey(ticker, products, regions, revenueBasis);
       pruneGapCache(now);
-      const hit = gapCache.get(key);
-      if (hit && now - hit.at < hit.ttl) {
-        return res.json({ ...hit.body, promptVersion: hit.body.promptVersion ?? SEGMENT_GAP_PROMPT_VERSION, cached: true });
+      const parentsKnown = products.length > 0 || regions.length > 0 || cachedSecNames(ticker, now) !== null;
+      const order = new Map<string, number>();
+      for (const row of [...shownProducts, ...shownRegions]) {
+        if (row.revenue != null) order.set(fold(row.name), row.revenue);
+      }
+      let tasks = gapTasks(products, regions, usd.revenues, order);
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const run = deps.llm ?? callLLMJson;
+      const reply = (
+        merged: SegmentGapItem[],
+        notes: string[],
+        queried: number,
+        total: number,
+        cached: boolean,
+      ) => {
+        const coverage = `abgefragt ${queried} von ${total}`;
+        const reason = [...notes, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
+          .filter((note) => note && note.trim())
+          .join(" ") || null;
+        const body: SegmentGapResult = {
+          items: merged,
+          reason,
+          promptVersion: SEGMENT_GAP_PROMPT_VERSION,
+          cached,
+          queried,
+          total,
+        };
+        return body;
+      };
+      const fromCache = (list: GapTask[]) => {
+        const queriedTasks = list.slice(0, SEGMENT_GAP_MAX_CALLS);
+        const skipped = list.slice(SEGMENT_GAP_MAX_CALLS);
+        const hits = queriedTasks.map((task) => freshParent(parentCacheKey(ticker, task), now));
+        if (hits.some((hit) => hit == null)) return null;
+        const merged: SegmentGapItem[] = [];
+        const seen = new Set<string>();
+        const notes: string[] = [];
+        for (const hit of hits) {
+          if (hit?.reason) notes.push(hit.reason);
+          for (const item of hit?.items ?? []) {
+            const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            merged.push(item);
+          }
+        }
+        for (const task of skipped) notes.push(`n/a — nicht abgefragt (Call-Limit): ${task.label}`);
+        return reply(merged, notes, queriedTasks.length, list.length, skipped.length === 0);
+      };
+      if (parentsKnown) {
+        const early = fromCache(tasks);
+        if (early) return res.json(early);
+      }
+      if (products.length === 0 && shownProducts.length === 0 && cachedSecNames(ticker, now) === null) {
+        const secNames = namesFromSecSegments(
+          deps.secSegments
+            ? await deps.secSegments(ticker, identity.companyName)
+            : await fetchSecBusinessSegments(ticker, identity.companyName),
+        );
+        rememberSecNames(ticker, now, secNames);
+        if (secNames.length > 0) products = secNames;
+        tasks = gapTasks(products, regions, usd.revenues, order);
+        const early = fromCache(tasks);
+        if (early) return res.json(early);
       }
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       if (!takeGapSlot(ip, now, limit.max, limit.windowMs)) {
@@ -569,77 +737,115 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         });
         for (let i = 0; i < stale.length; i++) rateBuckets.delete(stale[i]);
       }
-      const parentsUsd = [...products, ...regions].slice(0, 24).map((name) => ({
+      if (!deps.llm && !isLLMAvailable()) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
+      const parentsUsd = [...products, ...regions].map((name) => ({
         name,
         revenueUsd: usd.revenues.get(fold(name)) ?? null,
       }));
-      const run = deps.llm ?? callLLMJson;
-      if (!deps.llm && !isLLMAvailable()) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
-      const tasks: { only: string; taskProducts: string[]; taskRegions: string[] }[] = [];
-      for (const name of products) tasks.push({ only: name, taskProducts: [name], taskRegions: [] });
-      if (regions.length > 0) tasks.push({ only: "", taskProducts: [], taskRegions: regions });
-      if (tasks.length === 0) tasks.push({ only: "", taskProducts: [], taskRegions: [] });
-      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const queriedTasks = tasks.slice(0, SEGMENT_GAP_MAX_CALLS);
+      const skipped = tasks.slice(SEGMENT_GAP_MAX_CALLS);
       const merged: SegmentGapItem[] = [];
       const seen = new Set<string>();
       const notes: string[] = [];
-      for (const task of tasks) {
-        let payload: unknown = null;
-        try {
-          const result = await run({
-            systemPrompt,
-            prompt: segmentGapPrompt({
-              ticker,
-              companyName: identity.companyName,
-              description: identity.description ?? "",
-              products,
-              regions,
-              industry: identity.industry,
-              sector: identity.sector,
-              parentsUsd,
-              fxNote: usd.fxNote,
-              only: task.only,
-            }),
-            maxTokens: 800,
-            temperature: 0.2,
-            signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
-          });
-          payload = result?.data ?? null;
-        } catch {
-          payload = null;
-        }
-        if (payload == null) return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
-        if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
-          notes.push(OUTLINE_MISMATCH);
+      let transportFails = 0;
+      let successes = 0;
+      let fromCacheCount = 0;
+      for (const task of queriedTasks) {
+        const key = parentCacheKey(ticker, task);
+        const stored = freshParent(key, now);
+        if (stored) {
+          successes += 1;
+          fromCacheCount += 1;
+          if (stored.reason) notes.push(stored.reason);
+          for (const item of stored.items) {
+            const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            merged.push(item);
+          }
           continue;
         }
-        const reviewed = reviewSegmentGaps(
-          payload,
-          task.only ? task.taskProducts : [],
-          task.taskRegions,
-          identity.companyName,
-          ticker,
-          identity.description ?? "",
-          usd.revenues,
-        );
-        if (reviewed.reason) notes.push(reviewed.reason);
-        for (const item of reviewed.items) {
+        const attempt = await shareParentAttempt(key, async () => {
+          const again = freshParent(key, now);
+          if (again) return { ok: true, status: null, items: again.items, reason: again.reason, fromCache: true };
+          let payload: unknown = null;
+          let status: number | null = null;
+          try {
+            const result = await run({
+              systemPrompt,
+              prompt: segmentGapPrompt({
+                ticker,
+                companyName: identity.companyName,
+                description: identity.description ?? "",
+                products,
+                regions,
+                industry: identity.industry,
+                sector: identity.sector,
+                parentsUsd,
+                fxNote: usd.fxNote,
+                only: task.only,
+              }),
+              maxTokens: 800,
+              temperature: 0.2,
+              signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+            }) as { data?: unknown; status?: unknown } | null;
+            payload = result?.data ?? null;
+            if (payload == null) status = failureStatus({ status: result?.status });
+          } catch (err) {
+            payload = null;
+            status = failureStatus(err);
+          }
+          if (payload == null) return { ok: false, status, items: [], reason: unreachableNote(task.label, status), fromCache: false };
+          if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
+            return { ok: false, status: null, items: [], reason: OUTLINE_MISMATCH, fromCache: false };
+          }
+          const reviewed = reviewSegmentGaps(
+            payload,
+            task.only ? task.taskProducts : [],
+            task.taskRegions,
+            identity.companyName,
+            ticker,
+            identity.description ?? "",
+            usd.revenues,
+          );
+          const ttl = task.placeholder && reviewed.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
+          rememberGap(key, { at: now, ttl, body: { items: reviewed.items, reason: reviewed.reason } });
+          return { ok: true, status: null, items: reviewed.items, reason: reviewed.reason, fromCache: false };
+        });
+        if (!attempt.ok) {
+          if (attempt.reason === OUTLINE_MISMATCH) notes.push(OUTLINE_MISMATCH);
+          else {
+            transportFails += 1;
+            notes.push(attempt.reason ?? unreachableNote(task.label, attempt.status));
+          }
+          continue;
+        }
+        successes += 1;
+        if (attempt.fromCache) fromCacheCount += 1;
+        if (attempt.reason) notes.push(attempt.reason);
+        for (const item of attempt.items) {
           const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
           if (seen.has(id)) continue;
           seen.add(id);
           merged.push(item);
         }
       }
-      if (merged.length === 0 && notes.some((note) => note === OUTLINE_MISMATCH)) {
-        return res.json({ items: [], reason: OUTLINE_MISMATCH, promptVersion: SEGMENT_GAP_PROMPT_VERSION, cached: false });
+      for (const task of skipped) notes.push(`n/a — nicht abgefragt (Call-Limit): ${task.label}`);
+      if (successes === 0 && transportFails === queriedTasks.length) {
+        return res.status(503).json({ error: "n/a — KI nicht erreichbar" });
       }
-      const reason = [...notes, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : ""]
-        .filter((note) => note && note.trim())
-        .join(" ") || null;
-      const body: SegmentGapResult = { items: merged, reason, promptVersion: SEGMENT_GAP_PROMPT_VERSION, cached: false };
-      const ttl = body.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
-      rememberGap(key, { at: now, ttl, body });
-      return res.json(body);
+      if (merged.length === 0 && notes.some((note) => note === OUTLINE_MISMATCH) && successes === 0) {
+        return res.json({
+          items: [],
+          reason: OUTLINE_MISMATCH,
+          promptVersion: SEGMENT_GAP_PROMPT_VERSION,
+          cached: false,
+          queried: queriedTasks.length,
+          total: tasks.length,
+        });
+      }
+      const cached = fromCacheCount === queriedTasks.length && skipped.length === 0 && transportFails === 0;
+      return res.json(reply(merged, notes, queriedTasks.length, tasks.length, cached));
     } catch {
       return res.status(502).json({ error: "n/a — fehlende Segmente nicht erreichbar" });
     }
