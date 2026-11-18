@@ -2,16 +2,39 @@
  * Chat-Verlauf pro Browser-Session.
  * Kette: sessionStorage (lokal) und apiRequest → GET/PUT/DELETE /api/chat/history
  * → server/routes.ts → chat-history-route. Kein Supabase.
+ * Eine Antwort, deren Auftrag vor dem Löschen begann, schreibt den Chat nicht zurück.
+ * Dieselbe Schreibfolge geht mit PUT und DELETE an den Server. Ein späteres Lesen zeigt dessen Stand.
  */
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  CHAT_SESSION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
+  CHAT_SESSION_HEADER, CHAT_WRITE_EPOCH_HEADER, CHAT_WRITE_REVISION_HEADER, isChatSessionId, mergeChatThreads, newChatId,
   type ChatThread,
 } from "@shared/chat-history";
 
 const SESSION_KEY = "chatSession:v1";
 let memorySession = "";
+
+/**
+ * Schreibfolge nur in diesem Seitenlauf. Reload und ein zweiter Tab haben eine neue Epoche.
+ * `deletedAtRevision` gilt nur für verspätete Antworten in diesem Fenster.
+ */
+const historyEpoch = newChatId();
+let historyRevision = 0;
+const deletedAtRevision = new Map<string, number>();
+
+function responseMayApply(id: string, issuedAt: number): boolean {
+  const deletedAt = deletedAtRevision.get(id);
+  return deletedAt == null || issuedAt >= deletedAt;
+}
+
+function revisionHeaders(sessionId: string, revision: number): Record<string, string> {
+  return {
+    [CHAT_SESSION_HEADER]: sessionId,
+    [CHAT_WRITE_REVISION_HEADER]: String(revision),
+    [CHAT_WRITE_EPOCH_HEADER]: historyEpoch,
+  };
+}
 
 function storage(): Storage | null {
   try {
@@ -56,8 +79,9 @@ export function useChatHistory(dashboard: string, entity: string | null) {
   const sessionId = chatSessionId();
   const [threads, setThreads] = useState<ChatThread[]>(() => readThreads(sessionId));
 
-  const remember = useCallback((next: ChatThread[]) => {
-    const merged = mergeChatThreads(readThreads(sessionId), next);
+  const remember = useCallback((next: ChatThread[], issuedAt: number) => {
+    const applicable = next.filter(thread => responseMayApply(thread.id, issuedAt));
+    const merged = mergeChatThreads(readThreads(sessionId), applicable);
     writeThreads(sessionId, merged);
     setThreads(merged);
   }, [sessionId]);
@@ -65,37 +89,41 @@ export function useChatHistory(dashboard: string, entity: string | null) {
   useEffect(() => {
     const params = new URLSearchParams({ dashboard });
     if (entity) params.set("entity", entity);
+    const issuedAt = historyRevision;
     let cancel = false;
     apiRequest("GET", `/api/chat/history?${params.toString()}`, undefined, 15000, { [CHAT_SESSION_HEADER]: sessionId })
       .then(async (res) => {
         if (!res.ok || cancel) return;
         const body = await res.json().catch(() => null) as { threads?: ChatThread[] } | null;
-        if (!cancel && Array.isArray(body?.threads)) remember(body.threads);
+        if (!cancel && Array.isArray(body?.threads)) remember(body.threads, issuedAt);
       })
       .catch(() => { /* lokaler Cache bleibt */ });
     return () => { cancel = true; };
   }, [dashboard, entity, sessionId, remember]);
 
   const save = useCallback(async (thread: ChatThread) => {
-    remember([thread]);
+    const issuedAt = ++historyRevision;
+    remember([thread], issuedAt);
     try {
       const res = await apiRequest("PUT", `/api/chat/history/${encodeURIComponent(thread.id)}`, {
         dashboard: thread.dashboard,
         entity: thread.entity,
         messages: thread.messages,
-      }, 15000, { [CHAT_SESSION_HEADER]: sessionId });
+      }, 15000, revisionHeaders(sessionId, issuedAt));
       if (!res.ok) return;
       const body = await res.json().catch(() => null) as { thread?: ChatThread } | null;
-      if (body?.thread) remember([body.thread]);
+      if (body?.thread) remember([body.thread], issuedAt);
     } catch { /* lokaler Cache bleibt */ }
   }, [remember, sessionId]);
 
   const remove = useCallback(async (id: string) => {
+    const deletedAt = ++historyRevision;
+    deletedAtRevision.set(id, deletedAt);
     const next = readThreads(sessionId).filter(t => t.id !== id);
     writeThreads(sessionId, next);
     setThreads(next);
     try {
-      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, { [CHAT_SESSION_HEADER]: sessionId });
+      await apiRequest("DELETE", `/api/chat/history/${encodeURIComponent(id)}`, undefined, 15000, revisionHeaders(sessionId, deletedAt));
     } catch { /* lokal ist gelöscht */ }
   }, [sessionId]);
 

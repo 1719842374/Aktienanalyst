@@ -185,7 +185,8 @@ function fiscalNextUrl(current: string, link: string): string | null {
   if (link.startsWith("&") || link.startsWith("?")) {
     const url = new URL(current);
     const extra = new URLSearchParams(link.replace(/^[?&]/, ""));
-    for (const [key, value] of extra) url.searchParams.set(key, value);
+    // Beleg: extra ist die URLSearchParams des links.next-Suffix. Die Schleife bleibt darüber.
+    for (const [key, value] of extra as unknown as Array<[string, string]>) url.searchParams.set(key, value);
     return url.toString();
   }
   try {

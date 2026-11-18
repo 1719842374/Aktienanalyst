@@ -430,8 +430,17 @@ function assignMaps(
   return out;
 }
 
+function hyphenOnlyDifference(left: string, right: string): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ").trim();
+  const plain = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  return fold(left) === fold(right) && plain(left) !== plain(right);
+}
+
 function isDirectAnnual(hit: Assignment, row: Indexed): boolean {
-  return hit.exact && hit.prevNames.length === 1 && tokenKey(segmentTokens(hit.prevNames[0])) === row.key;
+  if (!(hit.exact && hit.prevNames.length === 1)) return false;
+  const prev = hit.prevNames[0];
+  if (tokenKey(segmentTokens(prev)) !== row.key) return false;
+  return !hyphenOnlyDifference(prev, row.name);
 }
 
 function aggregateWindow(snapshots: SegmentSnapshot[]): Indexed[] {

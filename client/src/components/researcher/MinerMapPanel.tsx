@@ -3,7 +3,7 @@
  * Bubble = Perzentil der genannten MW. Fehlende Zahlen bleiben „n/a — Grund“.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "@/lib/reactSimpleMaps";
 import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Loader2, Pickaxe } from "lucide-react";
 import { useMinerMap } from "@/hooks/useMinerMap";

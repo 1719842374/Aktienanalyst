@@ -27,6 +27,12 @@ Der KI-Chat hat keine History. Simply Wall St hat sie (New Chat, bisherige Konve
 
 **Aufwand:** 6–8 h.
 
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #469 @fb5546ea · HEAD main `63a5cbcf`
+
+- Soll §1: Chat-History (New Chat, bisherigen Chat öffnen, Chat löschen, Verlauf beim Öffnen wieder laden).
+- Ist @`fb5546ea9768140679e72185ba7ff50860e506de` (#469, https://github.com/1719842374/Aktienanalyst/pull/469, Squash über `727ca998`): `ChatWidget` → `client/src/hooks/useChatHistory.ts` → GET/PUT/DELETE `/api/chat/history` → `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. DELETE löscht den Chat. DC Post-Merge KLAR. Prod-Smoke: P1 Löschen+Reload PASS, P3 Chat PASS, P2 Zwei-Tab FAIL (Tab B zeigt den gelöschten Titel nach Reload wieder, trotz PUT stale-write; Client-Wiederbelebung). Fix-Lane läuft. Ampel 🟡 TEILWEISE, nicht grün.
+- §1 bleibt OFFEN. Dateiname `WORK_CHAT_PODCAST_MCP.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
 ---
 
 ## 2. Podcast-Transkript – Economist-Niveau

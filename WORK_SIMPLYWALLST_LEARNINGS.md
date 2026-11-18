@@ -102,6 +102,12 @@ Von Simply Wall St lohnt sich vor allem die saubere Markdown-Darstellung und die
 
 **Aufwand:** 6–8 h.
 
+## Soll-Ist-Teil-Fortschritt 11.11.2026 – #469 @fb5546ea · HEAD main `63a5cbcf`
+
+- Soll §6: Chat-History im Backend (pro User / pro Asset), Liste der bisherigen Chats, „New Chat“.
+- Ist @`fb5546ea9768140679e72185ba7ff50860e506de` (#469, https://github.com/1719842374/Aktienanalyst/pull/469, Squash über `727ca998`): `ChatWidget` → `client/src/hooks/useChatHistory.ts` → GET/PUT/DELETE `/api/chat/history` → `server/routes.ts:559` → `server/chat-history-route.ts` → `shared/chat-history.ts`. Speicher ist die Session im Prozess, gespiegelt in sessionStorage, kein Supabase. DC Post-Merge KLAR. Prod-Smoke: P1 Löschen+Reload PASS, P3 Chat PASS, P2 Zwei-Tab FAIL (Tab B zeigt den gelöschten Titel nach Reload wieder, trotz PUT stale-write; Client-Wiederbelebung). Fix-Lane läuft. Ampel 🟡 TEILWEISE, nicht grün.
+- §6 bleibt OFFEN. Dateiname `WORK_SIMPLYWALLST_LEARNINGS.md` bleibt. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
 ---
 
 ## 7. Podcast-Transkript – Economist-Niveau
