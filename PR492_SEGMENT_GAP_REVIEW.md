@@ -509,3 +509,81 @@ Der Diff löscht keine Datei und setzt keine bestehende Segment-, Score- oder En
 ### Recheck-Verdikt
 
 P3, kein P1, kein P2. N1-Zeile und N4 sind auf `fcbc69a1` umgesetzt und getestet. Offen bleibt nur, dass die Lücken-Zeile eine vage Quelle in `visibleBasis` verwirft. Vorschlag steht bei N1. Nicht eingebaut. Nicht gemergt.
+
+## Recheck 3b5dbd55
+
+Read-only auf Head `3b5dbd557df181854c779724a5548038b4c65206`. Parent `fcbc69a1981d657b2024be210780b3433d6713b1`. `git fetch origin main cursor/missing-segments-1bac`: Branch-Head ist genau `3b5dbd55` (2026-11-19 11:47:01 +0000). main bleibt `7aaa13ce4ceac60e9b54be3f8edf6f4320d70629`. Kein Push nach `main`, kein Merge.
+
+### Git-Historie `fcbc69a1..3b5dbd55`
+
+Ein Commit. Keine Deletes, keine Renames.
+
+| SHA | Datum | Betreff | Dateien | +/− |
+| --- | --- | --- | --- | --- |
+| `3b5dbd557df181854c779724a5548038b4c65206` | 2026-11-19 11:47:01 +0000 | Fix: Vage Quelle bleibt hinter dem n/a-Satz | `server/segment-gap-route.ts` M, `script/test-segment-n36.ts` M | +71 / −5 |
+
+Numstat: Route +13/−5, Test +58/−0. `shared/segment-children.ts` ist nicht im Diff.
+
+### Verdikt dieses Laufs
+
+**Befund P3.** Kein P1, kein P2. Der Schreibpfad von `visibleBasis` ist erfüllt, n36 ist 150/0. Der P3 betrifft nur Einträge, die vor diesem Commit schon im Speicher lagen: die verworfene Quelle steht nicht mehr im Cache-Body, `promptVersion` bleibt `n36-gap-p23`, und das Lesen ruft `visibleBasis` nicht erneut auf.
+
+### Soll-Ist
+
+| Soll | Ist auf `3b5dbd55` |
+| --- | --- |
+| Unkonkrete Quelle hinter dem n/a-Satz, Anteil null, kein Doppelanhängen | `visibleBasis` `:522–533`. Bei leerem `kept` wird `note · citation` zurückgegeben, wenn `citation` nicht schon in `note` steht und `concreteSource` falsch ist. Anteil bleibt null (`toGapItem` `:839–840`). |
+| `Formel:` und `concreteSource` bleiben | `:526–529`. Ist `kept` nicht leer, kehrt die Funktion sofort zurück und hängt die vage Quelle nicht an. |
+| Zweiter n/a-Satz aus `ee10db75` | `splitListedParentNotes` ist in diesem Diff nicht angefasst. n36 inklusive der alten Asserts ist grün. |
+| Test „Lücken-Zeile mit vager Quelle zeigt die Quelle“ | PASS. `basis` ist `n/a — Firma weist FSD nicht separat aus · Tesla shareholder update 2021`, `shareOfParentPct` null. |
+| PR-Body „nicht empirisch geprüft“ | Steht wörtlich: „Umhängepfad nur synthetisch getestet, nicht empirisch geprüft; 20-Ticker-Stichprobe als Folgeauftrag nach FMP-/AI-Freigabe.“ |
+| Gecachte Alt-Antworten | Neue Schreibvorgänge speichern die Quelle in `basis`. Alt-Einträge ohne diese Zeichenkette und ohne Rohfeld `source` bleiben bis TTL so. P3. |
+| N1 Zeile 315 und N4 `\|s:` | `shared/segment-children.ts` Blob `65a8ac3c`, gleich `c4975703`. `parentCacheKey` `:928`, Aufrufe `:1045` und `:1099`. |
+| tsc, Merge, Score/Entry/DCF/PDF | tsc 76 = main, dieselben 9 Dateien. Merge-Tree `69fcb1a086bdc7d1b761c4f8fc09fcfa3506fbb5`, Exit 0. Die genannten Dateien sind blobgleich mit main. |
+
+### Gate 1 — `visibleBasis`
+
+```ts
+function visibleBasis(basis: string, companyName: string, note = "", citation = ""): string {
+  const kept = /* Formel: oder concreteSource */;
+  if (kept) return kept;
+  if (source && !concreteSource(source, companyName) && head && !head.includes(source)) return `${head} · ${source}`;
+  return head;
+}
+```
+
+`toGapItem` (`:844–845`) übergibt den n/a-Satz als `note` und die rohe `source` der Modellzeile als `citation` (`reviewSegmentGaps` `:663–666`). Enthält `head` die Quelle schon, unterbleibt der zweite Anhang (`!head.includes(source)`). Eine konkrete Quelle oder eine Formel bleibt der alleinige Text.
+
+Der neue n36-Fall prüft die Gap-Antwort und das Markup von `SegmentGapUnderParent`. Sichtbare Form: der Anteilstext ist der n/a-Satz (`shareNote`), `basis` wiederholt ihn und setzt die Quelle dahinter. Das ist ein Satz plus Quelle, kein zweites `parent_not_listed` im `reason`-Feld.
+
+### Gate 2 — n36
+
+`env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npx tsx --tsconfig script/tsconfig.jsx.json script/test-segment-n36.ts`
+
+**150 PASS, 0 FAIL**, Exit 0, letzte Zeile `n36 PASS`. Darunter `Lücken-Zeile mit vager Quelle zeigt die Quelle` und `n6-synthetic-zero-wrong-assignments`.
+
+### Gate 3 — PR-Body
+
+Gelesen an #492, Head `3b5dbd55`. Zitat: „Umhängepfad nur synthetisch getestet, nicht empirisch geprüft; 20-Ticker-Stichprobe als Folgeauftrag nach FMP-/AI-Freigabe.“
+
+### Gate 4 — Cache
+
+`visibleBasis` läuft in `toGapItem`, bevor `rememberGap` den Body schreibt (`:1157–1158`). `reply` (`:1016–1040`) kopiert die gespeicherten Items und ruft `placeBundledSoftware` auf. `visibleBasis` wird beim Lesen und im Panel nicht noch einmal angewendet. `SEGMENT_GAP_PROMPT_VERSION` ist weiter `n36-gap-p23` (`:50`). Der Schlüssel aus N4 ändert sich durch diesen Fix nicht.
+
+`SegmentGapItem` (`shared/segment-gap.ts:1–17`) hat kein Feld `source`. Die Probe auf diesem Head schreibt den Cache ohne Schlüssel `"source"`. Die Quelle steckt nur im schon gesetzten `basis`-String. Ein zweiter Request ist `cached: true`, Modellaufrufe bleiben 2, die Quelle bleibt im Text.
+
+Ein Eintrag, den der Code vor `3b5dbd55` geschrieben hat, hat `basis` `n/a — Firma weist FSD nicht separat aus` und kein Rohfeld. Der Leser gibt diesen Body zurück. Die Quelle bleibt bis zur TTL (24 h) oder bis der Prozess neu startet weg. Ein Neustart leert die Map. `visibleBasis` beim Lesen kann eine fehlende Zeichenkette nicht erfinden.
+
+Vorschlag: `SEGMENT_GAP_PROMPT_VERSION` auf `n36-gap-p24` setzen. Kosten: jeder bisher warme Schlüssel verfehlt, die nächste Anfrage macht bis zu 4 OpenRouter-Calls. Risiko: Lastspitze nach dem Deploy, keine Score-Änderung. Nach einem Prozessneustart ist der Speicher ohnehin leer, der Bump wirkt dann nur als zusätzliche Sicherung, falls ein Prozess die alte Map behält. `visibleBasis` erst beim Lesen anzuwenden reicht für Alt-Einträge nicht.
+
+### Gate 5 — Regression
+
+`npm run check`: Head und main `7aaa13ce` je Exit 2 und 76 `error TS`, dieselbe Dateimenge. Merge-Tree Exit 0, einziger Unterschied `WORK_IMPLEMENTIERUNG_OFFEN.md` aus main. Kein Konflikt. Keine Datei gelöscht. Die geänderte Funktion hängt Text an einen n/a-Satz, sie ersetzt keine bestehende Prozent- oder YoY-Zelle.
+
+Blobgleich mit main: `server/scoring-integration.ts`, `shared/bias-fixes.ts`, `shared/fazit-entry.ts`, `server/pdf-export.ts`, `client/src/lib/exportPdf.ts`, `server/sector-data.ts`, `shared/schema.ts`. N1: `shared/segment-children.ts:315` unverändert gegenüber `c4975703`. N4: beide Aufrufe von `parentCacheKey` bleiben `:1045` und `:1099`.
+
+Datenkette der Lücken-Zeile: UI `SegmentGapPanel` → `apiRequest` in `queryClient.ts` → `POST /api/segment-gaps` (`routes.ts`) → `toGapItem` / `visibleBasis` → Typ `SegmentGapItem` in `shared/segment-gap.ts`, nicht in `schema.ts`.
+
+### Recheck-Verdikt
+
+P3 nur für Alt-Cache ohne Rohquelle. Schreibpfad, neuer Cache und n36 sind grün. Nicht gemergt. Der Versions-Bump ist nicht eingebaut.
