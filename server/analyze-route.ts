@@ -100,8 +100,6 @@ import {
   generatePorterFiveForces,
   generatePESTELAnalysis as generateLLMPESTEL,
   isLLMAvailable,
-  catalystEnrichSkipBody,
-  type LlmSkipSink,
 } from "./llm-openrouter";
 import { requestTamNaFills } from "./tam-na-fill";
 import { requestPeerNaFills } from "./peer-na-fill";
@@ -2483,7 +2481,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
       }
 
-      const llmSkip: LlmSkipSink = { llmSkipReason: null };
       const llmResult = await generateCatalystsAndMatchNews({
         ticker: a.ticker,
         companyName: a.companyName,
@@ -2507,10 +2504,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           sentimentScore: n.sentimentScore, matchedCatalyst: n.matchedCatalyst,
           matchedCatalystIdx: n.matchedCatalystIdx,
         })),
-      }, llmSkip);
+      });
 
       if (!llmResult) {
-        return res.json(catalystEnrichSkipBody(a.catalysts, llmSkip.llmSkipReason));
+        return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
       }
 
       // FactPack: LLM-Zahlen gegen FMP-Kontext aus Cache (Estimates ggf. leer)

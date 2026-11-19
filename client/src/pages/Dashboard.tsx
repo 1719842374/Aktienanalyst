@@ -47,7 +47,6 @@ import { Section8 } from "@/components/sections/Section8";
 import { Section9 } from "@/components/sections/Section9";
 import { ReverseDCFSection } from "@/components/sections/ReverseDCFSection";
 import { CatalystsSection } from "@/components/sections/CatalystsSection";
-import { applyCatalystFollowUp } from "@/lib/catalystEnrichFlow";
 import { MonteCarloSection } from "@/components/sections/MonteCarloSection";
 import { SummarySection } from "@/components/sections/SummarySection";
 import { ManagementScoreSection } from "@/components/sections/ManagementScoreSection";
@@ -717,7 +716,6 @@ export default function Dashboard() {
               <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF">{isYahooOnly(data) ? <YahooNoValuationCard number={16} title="REVERSE DCF" data={data} /> : <ReverseDCFSection data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren">{isYahooOnly(data) ? <YahooNoValuationCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)" data={data} /> : <CatalystsSection
                 data={data}
-                onReloadAnalysis={() => startAnalyze({ ticker: data.ticker, llm: useLLMRef.current, force: false })}
                 onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
                   // additive Uebernahme der sofort neu generierten These aus
@@ -729,7 +727,13 @@ export default function Dashboard() {
                   // Pro/Contra/PoS-Satz/Fazit dort auf den alten generischen
                   // Katalysatoren stehen, obwohl S15 hier schon firmen-
                   // spezifisch aktualisiert wird.
-                  setData(prev => applyCatalystFollowUp(prev, data.ticker, enriched, growthThesis, growthThesisGeneratedAt, execSummary));
+                  setData(prev => prev ? {
+                    ...prev, catalysts: enriched,
+                    llmMode: true,
+                    catalystsSource: "llm",
+                    ...(growthThesis ? { growthThesis, growthThesisGeneratedAt: growthThesisGeneratedAt ?? prev.growthThesisGeneratedAt } : {}),
+                    ...(execSummary ? { execSummary } : {}),
+                  } : prev);
                 }}
                 onUserEvent={(cat) => {
                   // S17 „Event hinzufügen“ (§4b Stufe 1): additiv an die bestehende Liste, nur Session-State.
