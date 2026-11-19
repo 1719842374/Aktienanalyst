@@ -46,7 +46,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p13";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p14";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -239,13 +239,31 @@ function serviceParentName(name: string): boolean {
   return /service|abo|subscription|software|support/i.test(name);
 }
 
+const CONCEPT_FILLER = new Set([
+  "and", "the", "und", "of", "for", "other", "segment", "services", "service",
+  "digital", "products", "product", "solutions", "solution", "group",
+]);
+
+function conceptTokens(name: string): string[] {
+  return segmentGapKey(name).split(" ").filter((token) => token.length >= 3 && !CONCEPT_FILLER.has(token));
+}
+
+function sameGapConcept(left: string, right: string): boolean {
+  if (segmentGapKey(left) === segmentGapKey(right)) return true;
+  const a = conceptTokens(left);
+  const b = conceptTokens(right);
+  if (a.length === 0 || b.length === 0) return false;
+  const covered = (part: string[], whole: string[]) => part.every((token) => whole.includes(token));
+  return covered(a, b) || covered(b, a);
+}
+
 function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
   const slot = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
   if (merged.some((row) => `${row.kind}:${segmentGapKey(row.parent)}:${segmentGapKey(row.name)}` === slot)) return;
   if (item.kind === "product") {
     const cross = merged.findIndex((row) => (
       row.kind === "product"
-      && segmentGapKey(row.name) === segmentGapKey(item.name)
+      && sameGapConcept(row.name, item.name)
       && serviceParentName(row.parent) !== serviceParentName(item.parent)
     ));
     if (cross >= 0) {
@@ -262,6 +280,7 @@ const GAP_REASON_CODE = {
   bundled_in_parent: (name: string, parent: string) => `n/a — ${name} ist in ${parent} gebündelt; Firma weist es nicht separat aus`,
   only_qualitative_mention: (name: string, parent: string) => `n/a — ${name} wird bei ${parent} nur qualitativ genannt; Firma weist es nicht separat aus`,
   no_revenue_figure: (name: string, parent: string) => `n/a — für ${name} unter ${parent} fehlt eine Umsatzzahl`,
+  parent_not_listed: (name: string, _parent: string) => `n/a — Firma weist ${name} nicht separat aus`,
 } as const;
 
 function specificGapNote(reason: string, name: string, parent: string, companyName: string): string {
@@ -292,6 +311,17 @@ function canonicalParent(parent: string, allowed: readonly string[]): string | n
     if (name && sameShownParent(parent, name)) return name;
   }
   return null;
+}
+
+function gapRowForReview(item: unknown, companyName: string): unknown {
+  if (!item || typeof item !== "object") return item;
+  const rec = item as { basis?: unknown; source?: unknown; naReason?: unknown; shareOfParentPct?: unknown; revenue?: unknown; growthPct?: unknown };
+  const basis = typeof rec.basis === "string" ? rec.basis.replace(/\s+/g, " ").trim() : "";
+  const source = typeof rec.source === "string" ? rec.source.trim() : "";
+  if (basis) return item;
+  if (source && concreteSource(source, companyName)) return { ...rec, basis: source };
+  const naReason = typeof rec.naReason === "string" && rec.naReason.trim() ? rec.naReason : "not_disclosed_separately";
+  return { ...rec, basis: "Lücke", shareOfParentPct: null, revenue: null, growthPct: null, naReason };
 }
 
 function citeConcreteSource(item: unknown, companyName: string): unknown {
@@ -356,7 +386,7 @@ export function reviewSegmentGaps(
     const name = clip(row.name, 80);
     const canonical = parent ? canonicalParent(parent, allowed) : null;
     if (!canonical) {
-      if (name) notes.push(`n/a — Elternsegment nicht in der Liste: ${name}`);
+      if (name) notes.push(GAP_REASON_CODE.parent_not_listed(name, parent));
       continue;
     }
     if (row.shareOfParentPct === 0 && name) notes.push(`n/a — Anteil 0 verworfen: ${name}`);
@@ -376,7 +406,7 @@ export function reviewSegmentGaps(
         ? "geographic"
         : "product";
     const bucket = grouped.get(`${kind}:${segmentGapKey(canonical)}`) ?? { kind, rows: [] };
-    bucket.rows.push(citeConcreteSource({ ...row, parent: canonical }, companyName));
+    bucket.rows.push(citeConcreteSource(gapRowForReview({ ...row, parent: canonical }, companyName), companyName));
     grouped.set(`${kind}:${segmentGapKey(canonical)}`, bucket);
   }
   const items: SegmentGapItem[] = [];

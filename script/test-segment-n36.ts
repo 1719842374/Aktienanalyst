@@ -531,7 +531,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p13")
+    && keyA.includes("n36-gap-p14")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1076,8 +1076,9 @@ try {
       && platform.shareOfParentPct === 12
       && platform.shareOrigin === "estimate"
       && (platform.basis ?? "").includes("Annual Report 2025")
-      && /Elternsegment nicht in der Liste: RISE/.test(sap.json.reason ?? "")
-      && /Elternsegment nicht in der Liste: Employee Central/.test(sap.json.reason ?? "")
+      && /Firma weist RISE nicht separat aus/.test(sap.json.reason ?? "")
+      && /Firma weist Employee Central nicht separat aus/.test(sap.json.reason ?? "")
+      && !/Elternsegment nicht in der Liste/.test(sap.json.reason ?? "")
       && sapPrompt.includes("Cloud")
       && sapPrompt.includes("Software support")
       && !sapPrompt.includes("S/4HANA")
@@ -1441,14 +1442,14 @@ try {
       && robotaxi?.shareOfParentPct == null
       && /Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p13"
+      && tsla.json.promptVersion === "n36-gap-p14"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p13",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p14",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -1463,7 +1464,8 @@ try {
       && azure.shareOrigin === "fact"
       && (azure.basis ?? "").includes("Formel: 27 / 90")
       && legacy == null
-      && /Elternsegment nicht in der Liste: Azure Legacy/.test(msft.json.reason ?? "")
+      && /Firma weist Azure Legacy nicht separat aus/.test(msft.json.reason ?? "")
+      && !/Elternsegment nicht in der Liste/.test(msft.json.reason ?? "")
       && msftPrompt.includes("Server")
       && msftPrompt.includes("Microsoft 365 Commercial")
       && msftPrompt.includes("XBOX")
@@ -2030,6 +2032,160 @@ try {
   );
 } finally {
   protoServer.close();
+}
+
+const tsla1Measured = "{\"request\":{\"ticker\":\"TSLA\",\"products\":[{\"name\":\"Automotive\",\"revenue\":69526000000},{\"name\":\"Energy Generation & Storage Segment\",\"revenue\":12771000000},{\"name\":\"Services & Other\",\"revenue\":12530000000}],\"regions\":[{\"name\":\"UNITED STATES\",\"revenue\":47627000000},{\"name\":\"Other Countries\",\"revenue\":26238000000},{\"name\":\"CHINA\",\"revenue\":20962000000}]},\"body\":{\"items\":[{\"parent\":\"Automotive\",\"name\":\"Model S\"},{\"parent\":\"Automotive\",\"name\":\"Model 3\"},{\"parent\":\"Automotive\",\"name\":\"Model X\"},{\"parent\":\"Automotive\",\"name\":\"Model Y\"},{\"parent\":\"Automotive\",\"name\":\"Cybertruck\"},{\"parent\":\"Automotive\",\"name\":\"Regulatory Credits\"},{\"parent\":\"Energy Generation & Storage Segment\",\"name\":\"Solar Energy Systems\"},{\"parent\":\"Energy Generation & Storage Segment\",\"name\":\"Battery Energy Storage Systems\"},{\"parent\":\"Energy Generation & Storage Segment\",\"name\":\"Software & Monitoring Services\"},{\"parent\":\"Services & Other\",\"name\":\"Supercharging\"},{\"parent\":\"Services & Other\",\"name\":\"Software & Digital Services\"},{\"parent\":\"Services & Other\",\"name\":\"Service & Maintenance\"},{\"parent\":\"Services & Other\",\"name\":\"Insurance Products\"}] (alle 13: kind product, shareOfParentPct null, growthPct null, shareOrigin null, basis=shareNote='n/a — Firma weist <Name> nicht separat aus'),\"reason\":\"n/a — KI-Schätzung ohne Beleg: Software & Connectivity Services n/a — Firma weist Model S nicht separat aus: Model S ... [je Zeile 'n/a — Firma weist <Name> nicht separat aus: <Name>'] ... n/a — Elternsegment nicht in der Liste: Model S n/a — Elternsegment nicht in der Liste: Model 3 n/a — Elternsegment nicht in der Liste: Model X n/a — Elternsegment nicht in der Liste: Model Y n/a — Elternsegment nicht in der Liste: Cybertruck n/a — Elternsegment nicht in der Liste: Regulatory Credits ... abgefragt 4 von 4\",\"promptVersion\":\"n36-gap-p13\",\"cached\":false,\"queried\":4,\"total\":4}}";
+
+function tsla1Child(parent: string, name: string, extra: Record<string, unknown> = {}) {
+  return {
+    parent,
+    name,
+    owner: "Tesla, Inc.",
+    basis: "Lücke",
+    source: null,
+    shareOfParentPct: null,
+    revenue: null,
+    growthPct: null,
+    ...extra,
+  };
+}
+
+const tsla1Vehicles = ["Model S", "Model 3", "Model X", "Model Y", "Cybertruck", "Regulatory Credits"];
+
+function tsla1Model(prompt: string) {
+  const echo = { companyEcho: "Tesla, Inc.", industryEcho: "Auto Manufacturers" };
+  if (prompt.includes("nur das Elternsegment \"Automotive\"")) {
+    return {
+      ...echo,
+      children: [
+        tsla1Child("Automotive", "Software & Connectivity Services", { basis: "", source: null }),
+        ...tsla1Vehicles.map((name) => tsla1Child("Automotive", name)),
+        tsla1Child("Automotive", "Zusatzlinie"),
+      ],
+    };
+  }
+  if (prompt.includes("nur das Elternsegment \"Energy Generation & Storage Segment\"")) {
+    return {
+      ...echo,
+      children: [
+        tsla1Child("Energy Generation & Storage Segment", "Solar Energy Systems"),
+        tsla1Child("Energy Generation & Storage Segment", "Battery Energy Storage Systems"),
+        tsla1Child("Energy Generation & Storage Segment", "Software & Monitoring Services"),
+        tsla1Child("Energy Generation & Storage Segment", "Zusatzlinie"),
+      ],
+    };
+  }
+  if (prompt.includes("nur das Elternsegment \"Services & Other\"")) {
+    return {
+      ...echo,
+      children: [
+        ...tsla1Vehicles.map((name) => tsla1Child("Automotive", name)),
+        tsla1Child("Services & Other", "Supercharging"),
+        tsla1Child("Services & Other", "Software & Digital Services"),
+        tsla1Child("Services & Other", "Service & Maintenance"),
+        tsla1Child("Services & Other", "Insurance Products"),
+      ],
+    };
+  }
+  return { ...echo, children: [] };
+}
+
+resetSegmentGapCacheForTests();
+const tsla1App = express();
+tsla1App.use(express.json());
+registerSegmentGapRoute(tsla1App, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Automotive: 1 } }],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  llm: async (opts) => ({ modelUsed: "mock-model", data: tsla1Model(opts.prompt) }),
+});
+const tsla1Server = tsla1App.listen(0);
+const tsla1Port = (tsla1Server.address() as AddressInfo).port;
+try {
+  const posted = await postGap(tsla1Port, "TSLA", {
+    products: [
+      { name: "Automotive", revenue: 69526000000 },
+      { name: "Energy Generation & Storage Segment", revenue: 12771000000 },
+      { name: "Services & Other", revenue: 12530000000 },
+    ],
+    regions: [
+      { name: "UNITED STATES", revenue: 47627000000 },
+      { name: "Other Countries", revenue: 26238000000 },
+      { name: "CHINA", revenue: 20962000000 },
+    ],
+  });
+  const items = posted.json.items ?? [];
+  const software = items.find((item) => item.name === "Software & Connectivity Services");
+  const digital = items.find((item) => item.name === "Software & Digital Services");
+  const twins = items.filter((item) => item.name === "Zusatzlinie");
+  const sentence = "n/a — Firma weist Software & Connectivity Services nicht separat aus";
+  const listed = items.map((item) => ({
+    parent: item.parent,
+    kind: item.kind === "geographic" ? "geographic" as const : "product" as const,
+    name: item.name,
+    shareOfParentPct: item.shareOfParentPct,
+    growthPct: item.growthPct,
+    basis: item.basis ?? "",
+    shareOrigin: item.shareOrigin === "fact" || item.shareOrigin === "estimate" ? item.shareOrigin : null,
+    shareNote: item.shareNote ?? null,
+  }));
+  const panel = renderToStaticMarkup(createElement(SegmentGapList, {
+    data: {
+      items: listed,
+      reason: posted.json.reason ?? null,
+      promptVersion: posted.json.promptVersion ?? null,
+      cached: posted.json.cached === true,
+      queried: posted.json.queried ?? null,
+      total: posted.json.total ?? null,
+    },
+  }));
+  const under = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+    parent: "Automotive",
+    kind: "product",
+    items: listed,
+  }));
+  const shown = `${panel}\n${under}`.replace(/&amp;/g, "&");
+  const packed = `${JSON.stringify(posted.json)}\n${shown}`;
+  gap(
+    "tsla-1-software-stays-under-hardware",
+    tsla1Measured.includes("KI-Schätzung ohne Beleg: Software & Connectivity Services")
+      && tsla1Measured.includes("Elternsegment nicht in der Liste: Model S")
+      && posted.status === 200
+      && posted.json.promptVersion === "n36-gap-p14"
+      && posted.json.cached === false
+      && posted.json.queried === 4
+      && posted.json.total === 4
+      && software?.parent === "Automotive"
+      && software.kind === "product"
+      && software.shareOfParentPct == null
+      && software.shareOrigin == null
+      && software.basis === sentence
+      && software.shareNote === sentence
+      && digital == null
+      && shown.includes("Software & Connectivity Services")
+      && shown.includes("pl-4")
+      && shown.includes(sentence),
+    `status=${posted.status} software=${JSON.stringify(software)} digital=${JSON.stringify(digital)} version=${String(posted.json.promptVersion)}`,
+  );
+  gap(
+    "tsla-1-no-blanket-and-no-parent-list-text",
+    !packed.includes("KI-Schätzung ohne Beleg")
+      && !packed.includes("Elternsegment nicht in der Liste")
+      && !panel.includes("KI-Schätzung ohne Beleg")
+      && !panel.includes("Elternsegment nicht in der Liste"),
+    `reason=${posted.json.reason ?? ""}`,
+  );
+  gap(
+    "tsla-1-same-name-on-two-hardware-parents",
+    twins.length === 2
+      && twins.some((item) => item.parent === "Automotive")
+      && twins.some((item) => item.parent === "Energy Generation & Storage Segment")
+      && !twins.some((item) => item.parent === "Services & Other"),
+    `twins=${JSON.stringify(twins)}`,
+  );
+} finally {
+  tsla1Server.close();
 }
 
 gap(
