@@ -50,6 +50,17 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
                   <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${getScoreBg(ind.weightedScore)} ${getScoreColor(ind.weightedScore)}`}>
                     {ind.zone}
                   </span>
+                  {ind.adaptive && (
+                    <div
+                      className="mt-0.5 text-[10px] text-muted-foreground"
+                      data-testid="indicator-adaptive-percentile"
+                      title={`${ind.adaptive.windowYears}-Jahres-Perzentil über ${ind.adaptive.n} Monatswerte (${ind.adaptive.from.slice(0, 7)} bis ${ind.adaptive.to.slice(0, 7)}). Vergleichswert nach Future_8, geht nicht in Netto oder Max.`}
+                    >
+                      {ind.adaptive.windowYears}J-Perzentil {ind.adaptive.percentile.toFixed(0)}
+                      {" · Vergleich "}{ind.adaptive.compareRaw > 0 ? "+" : ""}{ind.adaptive.compareRaw}
+                      {" (kein Score)"}
+                    </div>
+                  )}
                 </td>
                 <td className="py-1.5 px-2 text-center font-mono tabular-nums">{ind.rawScore > 0 ? "+" : ""}{ind.rawScore}</td>
                 <td className="py-1.5 px-2 text-center font-mono tabular-nums text-muted-foreground">×{ind.weight}</td>

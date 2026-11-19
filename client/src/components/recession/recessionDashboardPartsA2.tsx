@@ -111,6 +111,7 @@ export function ScoringZones() {
   ];
 
   return (
+    <div className="space-y-2">
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
@@ -128,6 +129,10 @@ export function ScoringZones() {
           ))}
         </tbody>
       </table>
+    </div>
+      <p className="text-[11px] text-muted-foreground" data-testid="scoring-zones-percentile-note">
+        Perzentil (Buffett, CAPE): Anteil der letzten 20 Jahre Monatswerte, die auf oder unter dem heutigen Wert lagen — 100 heißt so hoch wie nie in diesem Fenster. Die Zeile in der Indikatoren-Tabelle ist nur ein Vergleich und kein Score; gewertet werden allein die Zonen oben.
+      </p>
     </div>
   );
 }
