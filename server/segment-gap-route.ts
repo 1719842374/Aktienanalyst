@@ -470,9 +470,6 @@ export function reviewSegmentGaps(
         notes.push(`n/a — Währung passt nicht zur Elternzeile: ${child.name}`);
       }
       enriched.push(item);
-      if (item.shareOfParentPct == null && item.shareNote && !notes.some((note) => note.includes(item.shareNote ?? "") && note.includes(child.name))) {
-        notes.push(`${item.shareNote}: ${child.name}`);
-      }
     }
     const shareSum = enriched.reduce((sum, row) => sum + (row.shareOfParentPct ?? 0), 0);
     if (enriched.some((row) => row.shareOfParentPct != null) && shareSum > 100) {

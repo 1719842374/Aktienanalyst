@@ -1440,9 +1440,10 @@ try {
       && fsd?.parent === "Services & Other"
       && fsd.shareOfParentPct == null
       && fsd.shareNote === "n/a — Firma weist Software-Abo nicht separat aus"
-      && /Firma weist Software-Abo nicht separat aus/.test(tsla.json.reason ?? "")
+      && !/Firma weist Software-Abo nicht separat aus/.test(tsla.json.reason ?? "")
       && robotaxi?.shareOfParentPct == null
-      && /Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
+      && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
+      && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
       && tsla.json.promptVersion === "n36-gap-p14"
       && tsla.json.cached === false,
@@ -1761,7 +1762,7 @@ try {
     "sourced-estimate-kept-unsourced-is-na",
     trial?.shareOfParentPct == null
       && trial?.shareNote === "n/a — Firma weist Versuch nicht separat aus"
-      && /Firma weist Versuch nicht separat aus/.test(shown.json.reason ?? ""),
+      && !/Firma weist Versuch nicht separat aus/.test(shown.json.reason ?? ""),
     `trial=${JSON.stringify(trial)} reason=${shown.json.reason ?? ""}`,
   );
 } finally {
@@ -2155,7 +2156,7 @@ try {
     (posted.json.internalReason ?? "").includes("n/a — Model S ohne geführtes Eltern: Automotive")
       && (posted.json.internalReason ?? "").includes("n/a — Regulatory Credits ohne geführtes Eltern: Automotive")
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
-      && (posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
+      && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
       && posted.json.promptVersion === "n36-gap-p14"
       && posted.json.cached === false
@@ -2190,20 +2191,26 @@ try {
       && !twins.some((item) => item.parent === "Services & Other"),
     `twins=${JSON.stringify(twins)}`,
   );
-  const rowCounts = listed.map((item) => {
+  const reasonText = posted.json.reason ?? "";
+  const naAbout = (text: string, name: string) => text.split(/(?=n\/a —)/).map((part) => part.trim()).filter((part) => part.startsWith("n/a —") && part.includes(name));
+  const counts = listed.map((item) => {
     const row = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
       parent: item.parent,
       kind: item.kind,
       items: [item],
     })).replace(/&amp;/g, "&");
-    return { name: item.name, na: row.match(/n\/a —/g)?.length ?? 0 };
+    const reasonParagraph = renderToStaticMarkup(createElement("p", null, reasonText)).replace(/&amp;/g, "&");
+    return { name: item.name, parent: item.parent, na: naAbout(`${reasonParagraph}\n${row}`, item.name).length };
   });
+  const modelS = listed.find((item) => item.name === "Model S");
   gap(
     "tsla-1-one-na-sentence-per-item",
-    rowCounts.every((row) => row.na === 1)
+    modelS?.shareNote === "n/a — Firma weist Model S nicht separat aus"
+      && !/Firma weist Zeile/.test(`${reasonText}\n${modelS?.shareNote ?? ""}`)
+      && counts.every((row) => row.na === 1)
       && !shown.includes("ohne geführtes Eltern")
       && (posted.json.internalReason ?? "").includes("ohne geführtes Eltern"),
-    `rows=${JSON.stringify(rowCounts)} reason=${posted.json.reason ?? ""} internal=${posted.json.internalReason ?? ""}`,
+    `modelS=${modelS?.shareNote ?? ""} counts=${JSON.stringify(counts)} reason=${reasonText} internal=${posted.json.internalReason ?? ""}`,
   );
 } finally {
   tsla1Server.close();
