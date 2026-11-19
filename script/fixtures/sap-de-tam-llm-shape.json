@@ -1,6 +1,0 @@
-{
-  "source": "Preview pr-486, 2026-11-18T17:03:43Z, POST /api/segment-tam-estimate SAP.DE, HTTP 422 INCOMPLETE_FILL, model anthropic/claude-haiku-4.5. Server-Log redactTamLlmShape, keine Schlüssel.",
-  "shape": {
-    "fills": []
-  }
-}
