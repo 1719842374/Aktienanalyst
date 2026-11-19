@@ -138,11 +138,15 @@ export function SegmentGapList({ data }: { data: SegmentGapResult }) {
 }
 
 function GapRow({ item }: { item: SegmentGapItem }) {
-  const share = item.shareOfParentPct != null && item.shareOfParentPct > 0
-    ? `${item.shareOfParentPct.toFixed(1)} %`
+  const shareValue = item.shareOfParentPct;
+  const valued = shareValue != null && shareValue > 0;
+  const share = valued
+    ? `${shareValue.toFixed(1)} %`
     : (item.shareNote && item.shareNote.trim() ? item.shareNote : "n/a — ohne Quelle");
-  const growth = item.growthPct != null ? `${item.growthPct > 0 ? "+" : ""}${item.growthPct.toFixed(1)}%` : "n/a";
-  const estimate = item.shareOrigin === "estimate" && item.shareOfParentPct != null && item.shareOfParentPct > 0;
+  const growth = item.growthPct != null
+    ? `${item.growthPct > 0 ? "+" : ""}${item.growthPct.toFixed(1)}%`
+    : valued ? "n/a" : "";
+  const estimate = item.shareOrigin === "estimate" && valued;
   return (
     <div className="flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 overflow-x-hidden text-[10px]" data-testid="segment-gap-row" data-parent={item.parent}>
       <span className="min-w-0 break-words">{item.name}</span>
@@ -152,9 +156,9 @@ function GapRow({ item }: { item: SegmentGapItem }) {
       >
         {share}
       </span>
-      <span className="font-mono" data-testid="segment-gap-growth">{growth}</span>
-      {item.basis && item.basis !== share ? <span className="min-w-0 break-words text-muted-foreground">{item.basis}</span> : !item.basis && item.shareOfParentPct != null ? <span>n/a — ohne Quelle</span> : null}
-      <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200">KI-Schätzung</span>
+      {growth ? <span className="font-mono" data-testid="segment-gap-growth">{growth}</span> : null}
+      {item.basis && item.basis !== share ? <span className="min-w-0 break-words text-muted-foreground">{item.basis}</span> : !item.basis && valued ? <span>n/a — ohne Quelle</span> : null}
+      <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200">{valued ? "KI-Schätzung" : "KI-Vorschlag"}</span>
     </div>
   );
 }

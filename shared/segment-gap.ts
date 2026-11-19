@@ -116,6 +116,14 @@ export function isGeographicPlace(name: string): boolean {
   return canonicalPlace(name) != null;
 }
 
+/** „Non Us“ ist ein Geo-Label: Verneinung plus ein bekannter Ort. Kein Produktname. */
+export function isGeoLabel(name: string): boolean {
+  if (isGeographicPlace(name)) return true;
+  const key = segmentGapKey(name);
+  const stripped = key.replace(/^(non|ex|outside|excl|excluding|except)\s+/, "");
+  return stripped !== key && stripped.length > 0 && isGeographicPlace(stripped);
+}
+
 /** true, wenn die Elternregion die Kindregion geografisch enthält. Ein Land enthält keine andere Region. */
 export function regionFitsParent(parent: string, child: string): boolean {
   const parentPlace = canonicalPlace(parent);

@@ -22,6 +22,7 @@ import {
 } from "../shared/segment-children";
 import {
   isGeographicPlace,
+  isGeoLabel,
   regionFitsParent,
   segmentGapKey,
   type SegmentGapItem,
@@ -289,6 +290,42 @@ function sameGapConcept(left: string, right: string): boolean {
   return a.size === b.size && shared === a.size;
 }
 
+function deviceBoundSoftware(name: string): boolean {
+  if (/abo|subscription|abonnement/i.test(name)) return false;
+  return /software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(name);
+}
+
+function placeBundledSoftware(
+  items: SegmentGapItem[],
+  products: readonly string[],
+  revenues: ReadonlyMap<string, number>,
+): void {
+  const hardware = products.filter((name) => name && !serviceParentName(name));
+  if (hardware.length === 0) return;
+  let host = hardware[0] ?? "";
+  let best = revenues.get(fold(host)) ?? Number.NEGATIVE_INFINITY;
+  for (const name of hardware) {
+    const value = revenues.get(fold(name));
+    if (value != null && value > best) {
+      best = value;
+      host = name;
+    }
+  }
+  if (!host) return;
+  for (const item of items) {
+    if (item.kind !== "product" || !serviceParentName(item.parent) || !deviceBoundSoftware(item.name)) continue;
+    if (segmentGapKey(item.parent) === segmentGapKey(host)) continue;
+    const clash = items.some((other) => (
+      other !== item
+      && other.kind === "product"
+      && segmentGapKey(other.parent) === segmentGapKey(host)
+      && segmentGapKey(other.name) === segmentGapKey(item.name)
+    ));
+    if (clash) continue;
+    item.parent = host;
+  }
+}
+
 function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
   const slot = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
   if (merged.some((row) => `${row.kind}:${segmentGapKey(row.parent)}:${segmentGapKey(row.name)}` === slot)) return;
@@ -424,7 +461,7 @@ export function reviewSegmentGaps(
     if (row.shareOfParentPct === 0 && name) notes.push(`n/a — Anteil 0 verworfen: ${name}`);
     const parentIsRegion = regions.some((region) => segmentGapKey(region) === segmentGapKey(canonical));
     const parentIsProduct = products.some((product) => segmentGapKey(product) === segmentGapKey(canonical));
-    if (name && isGeographicPlace(name) && !parentIsRegion) {
+    if (name && (isGeographicPlace(name) || isGeoLabel(name)) && !parentIsRegion) {
       notes.push(`n/a — Region nicht als Produkt-Unterposten: ${name}`);
       continue;
     }
@@ -810,6 +847,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         cached: boolean,
       ) => {
         const coverage = `abgefragt ${queried} von ${total}`;
+        placeBundledSoftware(merged, products, usd.revenues);
         const split = splitListedParentNotes(merged, notes);
         const reason = [...split.visible, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
           .filter((note) => note && note.trim())

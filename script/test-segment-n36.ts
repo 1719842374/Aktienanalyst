@@ -719,7 +719,9 @@ gap(
   "unsourced-fsd-shows-phrase",
   unsourcedRow.includes("FSD")
     && unsourcedRow.includes("n/a — ohne Quelle")
-    && unsourcedRow.includes("KI-Schätzung")
+    && unsourcedRow.includes("KI-Vorschlag")
+    && !unsourcedRow.includes("KI-Schätzung")
+    && !unsourcedRow.includes("segment-gap-growth")
     && unsourcedRow.includes("pl-4")
     && !unsourcedRow.includes("0.0 %")
     && !unsourcedRow.includes("Automotive / FSD"),
@@ -2168,7 +2170,7 @@ try {
       && software.shareOrigin == null
       && software.basis === sentence
       && software.shareNote === sentence
-      && digital?.parent === "Services & Other"
+      && digital?.parent === "Automotive"
       && digital.shareOfParentPct == null
       && shown.includes("Software & Connectivity Services")
       && shown.includes("pl-4")
@@ -2286,7 +2288,8 @@ try {
     posted.status === 200
       && cloud?.parent === "Services"
       && cloudHardware?.parent === "Geräte"
-      && software?.parent === "Services"
+      && software?.parent === "Geräte"
+      && software.name !== connectivity?.name
       && connectivity?.parent === "Geräte"
       && modules.length === 2
       && modules.some((item) => item.parent === "Geräte")
@@ -2297,6 +2300,161 @@ try {
 } finally {
   conceptServer.close();
 }
+
+const rawServiceParent = reviewSegmentGaps({
+  children: [{
+    parent: "Services & Other",
+    name: "Software & Digital Services",
+    owner: "Tesla, Inc.",
+    basis: "Lücke",
+    source: null,
+    shareOfParentPct: null,
+  }],
+}, ["Services & Other"], [], "Tesla, Inc.", "TSLA", "Tesla baut Fahrzeuge.");
+gap(
+  "raw-service-parent-kept-by-review",
+  rawServiceParent.items[0]?.parent === "Services & Other"
+    && rawServiceParent.items[0]?.name === "Software & Digital Services",
+  JSON.stringify(rawServiceParent.items[0] ?? null),
+);
+
+resetSegmentGapCacheForTests();
+const liveShapeApp = express();
+liveShapeApp.use(express.json());
+registerSegmentGapRoute(liveShapeApp, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: {
+      Automotive: 69526000000,
+      "Energy Generation & Storage Segment": 12771000000,
+      "Services & Other": 12530000000,
+    },
+  }],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Tesla, Inc.", industryEcho: "Auto Manufacturers" };
+    const row = (parent: string, name: string) => ({
+      parent,
+      name,
+      owner: "Tesla, Inc.",
+      basis: "Lücke",
+      source: null,
+      shareOfParentPct: null,
+      revenue: null,
+      growthPct: null,
+    });
+    if (opts.prompt.includes("nur das Elternsegment \"Automotive\"")) {
+      return { modelUsed: "mock-model", data: { ...echo, children: ["Model S", "Model 3", "Model X", "Model Y", "Cybertruck", "Regulatory Credits"].map((name) => row("Automotive", name)) } };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Energy Generation & Storage Segment\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: ["Solar Energy Systems", "Battery Energy Storage Systems", "Software & Monitoring Services"].map((name) => row("Energy Generation & Storage Segment", name)),
+        },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Services & Other\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: ["Supercharging", "Software & Digital Services", "Service & Maintenance", "Insurance Products"].map((name) => row("Services & Other", name)),
+        },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const liveShapeServer = liveShapeApp.listen(0);
+const liveShapePort = (liveShapeServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(liveShapePort, "TSLA", {
+    products: [
+      { name: "Automotive", revenue: 69526000000 },
+      { name: "Energy Generation & Storage Segment", revenue: 12771000000 },
+      { name: "Services & Other", revenue: 12530000000 },
+    ],
+  });
+  const digital = posted.json.items?.find((item) => item.name === "Software & Digital Services");
+  const monitoring = posted.json.items?.find((item) => item.name === "Software & Monitoring Services");
+  const charging = posted.json.items?.find((item) => item.name === "Supercharging");
+  gap(
+    "bundled-software-follows-reporting-hardware-parent",
+    posted.status === 200
+      && digital?.parent === "Automotive"
+      && monitoring?.parent === "Energy Generation & Storage Segment"
+      && charging?.parent === "Services & Other",
+    `digital=${JSON.stringify(digital)} monitoring=${JSON.stringify(monitoring)} charging=${JSON.stringify(charging)}`,
+  );
+} finally {
+  liveShapeServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const geoApp = express();
+geoApp.use(express.json());
+registerSegmentGapRoute(geoApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { XBOX: 40 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async () => ({
+    modelUsed: "mock-model",
+    data: {
+      companyEcho: "Nordlichtwerke",
+      industryEcho: "Industrial Machinery",
+      children: [
+        citedChild("XBOX", "Non Us", "Nordlichtwerke"),
+        citedChild("XBOX", "Controller", "Nordlichtwerke"),
+      ],
+    },
+  }),
+});
+const geoServer = geoApp.listen(0);
+const geoPort = (geoServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(geoPort, "EXN", { products: [{ name: "XBOX", revenue: 40 }] });
+  const names = (posted.json.items ?? []).map((item) => item.name);
+  gap(
+    "geo-label-is-not-a-product-child",
+    posted.status === 200
+      && !names.includes("Non Us")
+      && names.includes("Controller")
+      && /Region nicht als Produkt-Unterposten: Non Us/.test(posted.json.reason ?? ""),
+    `names=${names.join(",")} reason=${posted.json.reason ?? ""}`,
+  );
+} finally {
+  geoServer.close();
+}
+
+const nullShareMarkup = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+  parent: "Geräte",
+  kind: "product",
+  items: [{
+    parent: "Geräte",
+    kind: "product",
+    name: "Modul",
+    shareOfParentPct: null,
+    growthPct: null,
+    basis: "n/a — Firma weist Modul nicht separat aus",
+    shareNote: "n/a — Firma weist Modul nicht separat aus",
+    shareOrigin: null,
+  }],
+})).replace(/&amp;/g, "&");
+gap(
+  "null-share-has-one-na-and-no-estimate-badge",
+  nullShareMarkup.includes("n/a — Firma weist Modul nicht separat aus")
+    && nullShareMarkup.includes("KI-Vorschlag")
+    && !nullShareMarkup.includes("KI-Schätzung")
+    && !nullShareMarkup.includes("segment-gap-growth")
+    && (nullShareMarkup.match(/n\/a —/g) ?? []).length === 1,
+  nullShareMarkup,
+);
 
 gap(
   "segment-gap-does-not-add-online-call",
