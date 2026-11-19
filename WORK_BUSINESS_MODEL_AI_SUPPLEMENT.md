@@ -163,3 +163,11 @@ Services & Other                    13,2 %   +18,9 % YoY
 - Kette auf main geprüft: `SegmentChildrenPanel` → GET `/api/segment-children/:ticker` (`segment-growth-route.ts:701`) → `fmpSearchCompanyName` (`server/fmp.ts`) → `ownClaimBrandQueries` / `reviewKiChildren` (`shared/segment-children.ts`).
 - Offen: P2-3 fail-open; eigene Unterbrands; Flaggschiffe (24-h-KI-Cache); P3 Obergrenze `ownClaimBrandQueries` (270 s gegen 90 s).
 - Der Abschnitt bei Z.146 bleibt der historische #465-Stand und bleibt OFFEN. Kein Rename. Kein `fertig_`/`Fertig_`. `fertig_`/`Fertig_` nicht zurück auf `Offen_`.
+
+## Soll-Ist-Teil-Fortschritt 18.11.2026 – #492 · Basis main `9110156c`
+
+- Spec bleibt **OFFEN**. Kein Rename. Kein `fertig_`/`Fertig_`.
+- Soll §3: Unterposten eingerückt unter dem Elternsegment, Anteil relativ zum Elternsegment, KI-Zeilen als Schätzung markiert. Keine neuen Top-Level-Segmente. Kein festes Ticker-Mapping.
+- Ist vor diesem Delta (Branch `2c2b7253`, Dateien fehlen auf main `9110156c`): `POST /api/segment-gaps` hängt Treffer nur an bekannte Namen, legt sie aber als Block unter die Tabellen. Länder können Produkt-Unterposten sein. `shareOfParentPct` ohne Quelle wird null und in der Zeile „n/a — ohne Quelle“. Tester: TSLA ohne FSD-Anteil und mit Mexiko/Deutschland/Indien unter Automotive; MSFT EMEA und Asia Pacific unter UNITED STATES; SAP.DE 0 Zeilen, weil das Modell Produktnamen statt der FMP-Eltern nennt.
+- Ist nach diesem Delta: `server/segment-gap-route.ts` gibt die FMP- oder SEC-Namen dieser Antwort in den Prompt und verwirft jeden anderen Elternnamen mit Grund. Länder und Regionen sind keine Produkt-Unterposten; eine Region bleibt nur unter einer Elternregion, die sie geografisch enthält. Der Anteil kommt aus `Umsatz / Elternumsatz` mit Formel oder als KI-Schätzung mit Quelle (violett), nie 0; ohne Beleg n/a mit Grund. `SegmentGapUnderParent` steht in `Section2.tsx` in der Elternzeile, nicht als Zeilenblock unter den Tabellen.
+- Weiter offen auf dieser Spec: Wachstumsschätzung für das nächste Jahr am Elternsegment, manuelles Bestätigen oder Überschreiben der Schätzung. Der Perplexity-Footer ist im Baum von main `9110156c` nicht mehr vorhanden.

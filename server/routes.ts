@@ -582,4 +582,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerSegmentGrowthRoute(app);
   const { registerSegmentTamEstimateRoute } = await import("./segment-tam-estimate-route");
   registerSegmentTamEstimateRoute(app);
+  const { registerSegmentGapRoute } = await import("./segment-gap-route");
+  registerSegmentGapRoute(app);
 }

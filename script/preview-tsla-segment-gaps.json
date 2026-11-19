@@ -1,0 +1,150 @@
+{
+  "items": [
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Model S",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Model S nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Model S nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Model 3",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Model 3 nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Model 3 nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Model X",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Model X nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Model X nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Model Y",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Model Y nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Model Y nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Cybertruck",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Cybertruck nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Cybertruck nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Regulatory Credits",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Regulatory Credits nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Regulatory Credits nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Software and Connected Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Software and Connected Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Software and Connected Services nicht separat aus"
+    },
+    {
+      "parent": "Energy Generation and Storage",
+      "kind": "product",
+      "name": "Solar Energy Systems",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Solar Energy Systems nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Solar Energy Systems nicht separat aus"
+    },
+    {
+      "parent": "Energy Generation and Storage",
+      "kind": "product",
+      "name": "Battery Storage Systems",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Battery Storage Systems nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Battery Storage Systems nicht separat aus"
+    },
+    {
+      "parent": "Energy Generation and Storage",
+      "kind": "product",
+      "name": "Energy Software and Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Energy Software and Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Energy Software and Services nicht separat aus"
+    },
+    {
+      "parent": "Automotive",
+      "kind": "product",
+      "name": "Software and Digital Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Software and Digital Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Anteil an Automotive nicht ausgewiesen"
+    },
+    {
+      "parent": "Services and Other",
+      "kind": "product",
+      "name": "Supercharging and Charging Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Supercharging and Charging Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Supercharging and Charging Services nicht separat aus"
+    },
+    {
+      "parent": "Services and Other",
+      "kind": "product",
+      "name": "Maintenance and Repair Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Maintenance and Repair Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Maintenance and Repair Services nicht separat aus"
+    },
+    {
+      "parent": "Services and Other",
+      "kind": "product",
+      "name": "Insurance Services",
+      "shareOfParentPct": null,
+      "growthPct": null,
+      "basis": "n/a — Firma weist Insurance Services nicht separat aus",
+      "shareOrigin": null,
+      "shareNote": "n/a — Firma weist Insurance Services nicht separat aus"
+    }
+  ],
+  "reason": "n/a — Software and Services (Automotive) ohne geführtes Eltern: Automotive n/a — Powerwall ohne geführtes Eltern: Energy Generation and Storage n/a — Megapack ohne geführtes Eltern: Energy Generation and Storage n/a — Solar Roof ohne geführtes Eltern: Energy Generation and Storage n/a — Software and Services (Energy) ohne geführtes Eltern: Energy Generation and Storage abgefragt 4 von 4",
+  "internalReason": "n/a — Regulatory Credits ohne geführtes Eltern: Automotive Software and Digital Services: Services and Other → Automotive",
+  "promptVersion": "n36-gap-p20",
+  "cached": false,
+  "queried": 4,
+  "total": 4
+}

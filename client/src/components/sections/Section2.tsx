@@ -15,6 +15,8 @@ import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from
 import { SegmentGrowthReadout } from "./SegmentGrowthReadout";
 import { SegmentSupplementView } from "./SegmentSupplementView";
 import { SegmentChildrenPanel, SegmentLine, visibleBasis } from "./SegmentChildren";
+import { SegmentGapPanel, SegmentGapUnderParent } from "./SegmentGapPanel";
+import type { SegmentGapResult } from "@shared/segment-gap";
 import { apiRequest } from "../../lib/queryClient";
 
 interface OutlineItem {
@@ -679,6 +681,7 @@ export function SegmentEstimateBlock({ data }: Props) {
   const [productFormula, setProductFormula] = useState<Record<string, string>>({});
   const [geoFormula, setGeoFormula] = useState<Record<string, string>>({});
   const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
+  const [gapResult, setGapResult] = useState<SegmentGapResult | null>(null);
   const tickerRef = useRef(data.ticker);
   const outlineTicket = useRef(0);
   tickerRef.current = data.ticker;
@@ -870,18 +873,22 @@ export function SegmentEstimateBlock({ data }: Props) {
             {data.revenueSegments.length === 1 ? (
               // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
               // 100%-Balke lieber der explizite Hinweistext (Anforderung #3A).
-              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
-                <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
-                {data.revenueSegments[0].revenue > 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
-                )}
+              <div>
+                <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+                  <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
+                  {data.revenueSegments[0].revenue > 0 && (
+                    <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
+                  )}
+                </div>
+                <SegmentGapUnderParent parent={data.revenueSegments[0].name} kind="product" items={gapResult?.items ?? []} />
               </div>
             ) : (
               <div className="space-y-1.5">
                 {data.revenueSegments.map((seg, i) => (
-                  <SegmentLine key={i} name={seg.name} open={openBusiness[seg.name] === true} onToggle={() => setOpenBusiness((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
+                  <div key={i} className="max-w-full">
+                  <SegmentLine name={seg.name} open={openBusiness[seg.name] === true} onToggle={() => setOpenBusiness((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                     <div className="flex items-center justify-between text-xs mb-0.5">
-                      <span className="font-medium truncate mr-2">{seg.name}</span>
+                      <span className="min-w-0 break-words font-medium mr-2 sm:truncate" data-testid={`segment-name-${seg.name}`}>{seg.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {seg.revenue > 0 && (
                           <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
@@ -912,6 +919,8 @@ export function SegmentEstimateBlock({ data }: Props) {
                       <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="product" />
                     )}
                   </SegmentLine>
+                  <SegmentGapUnderParent parent={seg.name} kind="product" items={gapResult?.items ?? []} />
+                  </div>
                 ))}
               </div>
             )}
@@ -999,9 +1008,10 @@ export function SegmentEstimateBlock({ data }: Props) {
           {data.geoSegments && data.geoSegments.length > 0 && (
             <div className="space-y-1.5">
               {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
-                <SegmentLine key={i} name={seg.name} open={openGeo[seg.name] === true} onToggle={() => setOpenGeo((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
+                <div key={i} className="max-w-full">
+                <SegmentLine name={seg.name} open={openGeo[seg.name] === true} onToggle={() => setOpenGeo((current) => ({ ...current, [seg.name]: !current[seg.name] }))}>
                   <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-medium truncate mr-2">{seg.name}</span>
+                    <span className="min-w-0 break-words font-medium mr-2 sm:truncate" data-testid={`segment-name-${seg.name}`}>{seg.name}</span>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {seg.revenue > 0 && (
                         <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
@@ -1032,6 +1042,8 @@ export function SegmentEstimateBlock({ data }: Props) {
                     <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="geographic" />
                   )}
                 </SegmentLine>
+                <SegmentGapUnderParent parent={seg.name} kind="geographic" items={gapResult?.items ?? []} />
+                </div>
               ))}
             </div>
             )}
@@ -1041,6 +1053,12 @@ export function SegmentEstimateBlock({ data }: Props) {
             </p>
           )}
         </div>
+        <SegmentGapPanel
+          ticker={data.ticker}
+          products={data.revenueSegments ?? []}
+          regions={data.geoSegments ?? []}
+          onResult={setGapResult}
+        />
     </>
   );
 }
