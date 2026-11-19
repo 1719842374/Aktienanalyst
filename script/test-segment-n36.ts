@@ -14,7 +14,7 @@ import { SegmentEstimateBlock } from "../client/src/components/sections/Section2
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
-import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, reviewSegmentGaps, segmentGapInflightForTests } from "../server/segment-gap-route";
+import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, reviewSegmentGaps, segmentGapCacheBodiesForTests, segmentGapInflightForTests } from "../server/segment-gap-route";
 import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
 delete process.env.OPENROUTER_API_KEY;
@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p14")
+    && keyA.includes("n36-gap-p15")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p14"
+      && tsla.json.promptVersion === "n36-gap-p15"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p14",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p15",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p14"
+      && posted.json.promptVersion === "n36-gap-p15"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2455,6 +2455,179 @@ gap(
     && (nullShareMarkup.match(/n\/a —/g) ?? []).length === 1,
   nullShareMarkup,
 );
+
+resetSegmentGapCacheForTests();
+const shareMoveApp = express();
+shareMoveApp.use(express.json());
+registerSegmentGapRoute(shareMoveApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Antriebe: 100, Support: 10 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15, growthPct: 4 })],
+        },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const shareMoveServer = shareMoveApp.listen(0);
+const shareMovePort = (shareMoveServer.address() as AddressInfo).port;
+try {
+  const first = await postGap(shareMovePort, "EXS", {
+    products: [
+      { name: "Antriebe", revenue: 100 },
+      { name: "Support", revenue: 10 },
+    ],
+  });
+  const cacheAfterFirst = segmentGapCacheBodiesForTests();
+  const second = await postGap(shareMovePort, "EXS", {
+    products: [
+      { name: "Antriebe", revenue: 100 },
+      { name: "Support", revenue: 10 },
+    ],
+  });
+  const moved = first.json.items?.find((item) => item.name === "Device Software");
+  const again = second.json.items?.find((item) => item.name === "Device Software");
+  const sentence = "n/a — Anteil an Antriebe nicht ausgewiesen";
+  gap(
+    "reparent-clears-old-share-and-keeps-cache",
+    first.status === 200
+      && second.status === 200
+      && second.json.cached === true
+      && moved?.parent === "Antriebe"
+      && moved.shareOfParentPct == null
+      && moved.growthPct == null
+      && moved.shareOrigin == null
+      && moved.shareNote === sentence
+      && !(first.json.reason ?? "").includes(sentence)
+      && (first.json.internalReason ?? "").includes("Support")
+      && (first.json.internalReason ?? "").includes("Antriebe")
+      && again?.parent === moved?.parent
+      && again?.shareOfParentPct === moved?.shareOfParentPct
+      && again?.shareNote === moved?.shareNote
+      && segmentGapCacheBodiesForTests() === cacheAfterFirst
+      && cacheAfterFirst.includes("\"parent\":\"Support\""),
+    `moved=${JSON.stringify(moved)} again=${JSON.stringify(again)} cache=${cacheAfterFirst} internal=${first.json.internalReason ?? ""}`,
+  );
+} finally {
+  shareMoveServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const cloudStayApp = express();
+cloudStayApp.use(express.json());
+registerSegmentGapRoute(cloudStayApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Antriebe: 80, Services: 20 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (opts.prompt.includes("nur das Elternsegment \"Services\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Services", "Cloud Software", "Nordlichtwerke", { shareOfParentPct: 12 })] },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const cloudStayServer = cloudStayApp.listen(0);
+const cloudStayPort = (cloudStayServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(cloudStayPort, "EXC", {
+    products: [
+      { name: "Antriebe", revenue: 80 },
+      { name: "Services", revenue: 20 },
+    ],
+  });
+  const cloud = posted.json.items?.find((item) => item.name === "Cloud Software");
+  gap(
+    "cloud-software-stays-under-services",
+    posted.status === 200
+      && cloud?.parent === "Services"
+      && cloud.shareOfParentPct === 12,
+    JSON.stringify(cloud ?? null),
+  );
+} finally {
+  cloudStayServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const msftShapeApp = express();
+msftShapeApp.use(express.json());
+registerSegmentGapRoute(msftShapeApp, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: {
+      "Productivity and Business Processes": 50,
+      "Intelligent Cloud": 80,
+      "More Personal Computing": 30,
+      Support: 10,
+    },
+  }],
+  regionRows: async () => [],
+  identity: async () => ({
+    companyName: "Nordlichtwerke",
+    exchange: "NYSE",
+    country: "US",
+    sector: "Technology",
+    industry: "Software - Infrastructure",
+    description: "Nordlichtwerke baut Geräte.",
+    fiscalYear: "2025",
+    currency: "USD",
+  }),
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Software - Infrastructure" };
+    if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Support", "Cloud Software", "Nordlichtwerke", { shareOfParentPct: 12 })] },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Intelligent Cloud\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Intelligent Cloud", "Capacity", "Nordlichtwerke")] },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const msftShapeServer = msftShapeApp.listen(0);
+const msftShapePort = (msftShapeServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(msftShapePort, "EXM", {
+    products: [
+      { name: "Productivity and Business Processes", revenue: 50 },
+      { name: "Intelligent Cloud", revenue: 80 },
+      { name: "More Personal Computing", revenue: 30 },
+      { name: "Support", revenue: 10 },
+    ],
+  });
+  const cloud = posted.json.items?.find((item) => item.name === "Cloud Software");
+  const capacity = posted.json.items?.find((item) => item.name === "Capacity");
+  gap(
+    "msft-like-segments-are-not-reparented",
+    posted.status === 200
+      && cloud?.parent === "Support"
+      && capacity?.parent === "Intelligent Cloud"
+      && !(posted.json.internalReason ?? "").includes("→"),
+    `cloud=${JSON.stringify(cloud)} capacity=${JSON.stringify(capacity)} internal=${posted.json.internalReason ?? ""}`,
+  );
+} finally {
+  msftShapeServer.close();
+}
 
 gap(
   "segment-gap-does-not-add-online-call",

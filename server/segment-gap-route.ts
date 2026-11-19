@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p14";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p15";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -78,6 +78,15 @@ export interface SegmentGapDeps {
   secSegments?: (ticker: string, companyName: string) => Promise<{ segments: Array<{ name: string }> } | null>;
   /** Standard ist convertSegmentRowsToUsd aus #505. Tests setzen einen Kurs, ohne das Netz zu rufen. */
   convertSegments?: (rows: FmpSegmentRow[]) => Promise<FmpSegmentRow[]>;
+}
+
+export function segmentGapCacheBodiesForTests(): string {
+  const bodies: { key: string; items: SegmentGapItem[]; reason: string | null }[] = [];
+  gapCache.forEach((entry, key) => {
+    bodies.push({ key, items: entry.body.items, reason: entry.body.reason });
+  });
+  bodies.sort((left, right) => left.key.localeCompare(right.key));
+  return JSON.stringify(bodies);
 }
 
 export function resetSegmentGapCacheForTests(): void {
@@ -291,17 +300,25 @@ function sameGapConcept(left: string, right: string): boolean {
 }
 
 function deviceBoundSoftware(name: string): boolean {
-  if (/abo|subscription|abonnement/i.test(name)) return false;
+  if (/cloud|saas|plattform|platform|as-a-service|as a service|abo|subscription|abonnement/i.test(name)) return false;
+  if (/cloud|saas|plattform|platform|as a service|abo|subscription|abonnement/.test(segmentGapKey(name))) return false;
   return /software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(name);
+}
+
+function hardwareHostName(name: string): boolean {
+  if (!name) return false;
+  const blocked = /cloud|saas|plattform|platform|as-a-service|as a service|service|support|abo|subscription|software/i;
+  if (blocked.test(name) || blocked.test(segmentGapKey(name))) return false;
+  return true;
 }
 
 function placeBundledSoftware(
   items: SegmentGapItem[],
   products: readonly string[],
   revenues: ReadonlyMap<string, number>,
-): void {
-  const hardware = products.filter((name) => name && !serviceParentName(name));
-  if (hardware.length === 0) return;
+): string[] {
+  const hardware = products.filter((name) => hardwareHostName(name));
+  if (hardware.length === 0) return [];
   let host = hardware[0] ?? "";
   let best = revenues.get(fold(host)) ?? Number.NEGATIVE_INFINITY;
   for (const name of hardware) {
@@ -311,9 +328,11 @@ function placeBundledSoftware(
       host = name;
     }
   }
-  if (!host) return;
-  for (const item of items) {
-    if (item.kind !== "product" || !serviceParentName(item.parent) || !deviceBoundSoftware(item.name)) continue;
+  if (!host) return [];
+  const notes: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item || item.kind !== "product" || !serviceParentName(item.parent) || !deviceBoundSoftware(item.name)) continue;
     if (segmentGapKey(item.parent) === segmentGapKey(host)) continue;
     const clash = items.some((other) => (
       other !== item
@@ -322,8 +341,18 @@ function placeBundledSoftware(
       && segmentGapKey(other.name) === segmentGapKey(item.name)
     ));
     if (clash) continue;
-    item.parent = host;
+    const previous = item.parent;
+    items[i] = {
+      ...item,
+      parent: host,
+      shareOfParentPct: null,
+      growthPct: null,
+      shareOrigin: null,
+      shareNote: `n/a — Anteil an ${host} nicht ausgewiesen`,
+    };
+    notes.push(`${item.name}: ${previous} → ${host}`);
   }
+  return notes;
 }
 
 function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
@@ -847,14 +876,15 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         cached: boolean,
       ) => {
         const coverage = `abgefragt ${queried} von ${total}`;
-        placeBundledSoftware(merged, products, usd.revenues);
-        const split = splitListedParentNotes(merged, notes);
+        const placed = merged.map((item) => ({ ...item }));
+        const moveNotes = placeBundledSoftware(placed, products, usd.revenues);
+        const split = splitListedParentNotes(placed, notes);
         const reason = [...split.visible, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
           .filter((note) => note && note.trim())
           .join(" ") || null;
-        const internalReason = split.internal.join(" ").trim() || null;
+        const internalReason = [...split.internal, ...moveNotes].filter((note) => note.trim()).join(" ").trim() || null;
         const body: SegmentGapResult = {
-          items: merged,
+          items: placed,
           reason,
           internalReason,
           promptVersion: SEGMENT_GAP_PROMPT_VERSION,
@@ -979,8 +1009,9 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
             usd.revenues,
           );
           const ttl = task.placeholder && reviewed.items.length === 0 ? GAP_EMPTY_CACHE_MS : GAP_CACHE_MS;
-          rememberGap(key, { at: now, ttl, body: { items: reviewed.items, reason: reviewed.reason } });
-          return { ok: true, status: null, items: reviewed.items, reason: reviewed.reason, fromCache: false };
+          const storedItems = reviewed.items.map((item) => ({ ...item }));
+          rememberGap(key, { at: now, ttl, body: { items: storedItems, reason: reviewed.reason } });
+          return { ok: true, status: null, items: storedItems.map((item) => ({ ...item })), reason: reviewed.reason, fromCache: false };
         });
         if (!attempt.ok) {
           if (attempt.reason === OUTLINE_MISMATCH) notes.push(OUTLINE_MISMATCH);
