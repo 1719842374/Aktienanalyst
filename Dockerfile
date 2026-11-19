@@ -45,6 +45,10 @@ RUN npm ci --production=false
 # Install Playwright Chromium browser (optional — PDF export only)
 RUN npx playwright install chromium --with-deps 2>/dev/null || true
 
+# Piper TTS + de_DE-thorsten-high for the podcast player (optional — without it the player uses the browser voice)
+COPY script/install-piper.sh script/install-piper.sh
+RUN sh script/install-piper.sh vendor/piper
+
 # Copy source
 COPY . .
 

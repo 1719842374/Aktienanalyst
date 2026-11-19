@@ -115,11 +115,11 @@ export function registerChatEarningsRoute(app: Express, depsOverride?: EarningsB
       return;
     }
     const deps: EarningsBriefDeps = depsOverride ?? await (async () => {
-      const fmp = await import("./fmp");
+      const source = await import("./earnings-call-source");
       const llm = await import("./llm-openrouter");
       return {
-        dates: (s) => fmp.fmpEarningCallTranscriptDates(s),
-        transcript: (s, year, quarter) => fmp.fmpEarningCallTranscript(s, year, quarter),
+        dates: (s) => source.fetchTranscriptDates(s),
+        transcript: (s, year, quarter) => source.fetchTranscript(s, year, quarter),
         llmAvailable: llm.isLLMAvailable,
         llm: llm.callLLMJson,
       };

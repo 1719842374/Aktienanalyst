@@ -65,6 +65,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const { registerChatRoute } = await import("./chat-route");
   registerChatRoute(app);
   // POST /api/podcast/brief — Key Driver und Skript, kein Score.
+  const { registerStockPodcastRoute } = await import("./stock-podcast-route");
+  registerStockPodcastRoute(app);
+  const { registerTtsRoute } = await import("./tts-route");
+  registerTtsRoute(app);
   const { registerPodcastRoute } = await import("./podcast-route");
   registerPodcastRoute(app);
   const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");

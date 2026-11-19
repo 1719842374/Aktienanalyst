@@ -18,6 +18,8 @@
 import { trackFmpCall, isFmpBudgetLow } from "./analyze-helpers";
 
 const FMP_BASE = "https://financialmodelingprep.com/stable";
+/** Legacy-Basis (/api/v3, /api/v4). Nur für Diagnose-Versuche über fmpObserved, nie im Score-Pfad. */
+export const FMP_LEGACY_BASE = "https://financialmodelingprep.com/api";
 
 export const FMP_CONFIG = {
   dailyLimit: Number(process.env.FMP_DAILY_LIMIT ?? 15000),
@@ -99,10 +101,11 @@ function redactFmpText(text: string, key: string): string {
 export async function fmpObserved(
   path: string,
   params: Record<string, string> = {},
+  base: string = FMP_BASE,
 ): Promise<{ status: number; json: unknown | null; detail: string }> {
   const key = getApiKey();
   if (!key) return { status: 0, json: null, detail: "FMP_API_KEY not set" };
-  const url = new URL(`${FMP_BASE}${path}`);
+  const url = new URL(`${base}${path}`);
   url.searchParams.set("apikey", key);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   let lastStatus = 0;
