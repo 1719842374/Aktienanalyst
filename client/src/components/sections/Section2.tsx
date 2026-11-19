@@ -143,28 +143,23 @@ export function SegmentCurrencyLine({
   loading,
   failed,
   currency,
-  note,
 }: {
   queried: boolean;
   loading: boolean;
   failed: boolean;
   currency: string | null;
-  note?: string | null;
 }) {
   if (loading) {
     return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="loading">Währung …</p>;
   }
   if (currency) {
-    const text = note ? `Währung ${currency} — ${note}` : `Währung ${currency}`;
-    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="ready">{text}</p>;
+    return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="ready">{`Währung ${currency}`}</p>;
   }
-  const reason = note
-    ? note.replace(/^n\/a — /, "")
-    : !queried
-      ? "keine Segmente, Berichtswährung nicht abgefragt"
-      : failed
-        ? "Segmentdaten nicht erreichbar"
-        : "Berichtswährung fehlt im Abschluss";
+  const reason = !queried
+    ? "keine Segmente, Berichtswährung nicht abgefragt"
+    : failed
+      ? "Segmentdaten nicht erreichbar"
+      : "Berichtswährung fehlt im Abschluss";
   return <p className="text-[10px] text-muted-foreground" data-testid="segment-reported-currency" data-state="na" title={reason}>{`Währung n/a — ${reason}`}</p>;
 }
 
@@ -676,7 +671,6 @@ export function SegmentEstimateBlock({ data }: Props) {
           loading={segmentGrowth.isLoading}
           failed={segmentGrowth.isError}
           currency={reportedCurrency}
-          note={segmentGrowth.data?.currencyNote}
         />
         {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
             Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from

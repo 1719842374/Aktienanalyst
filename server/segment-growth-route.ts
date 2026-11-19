@@ -15,7 +15,6 @@ import {
   type StatementYear,
 } from "../shared/segment-growth-calc";
 import {
-  convertFmpRowsToUsd,
   fmpBalanceSheet,
   fmpCashFlow,
   fmpIncomeStatement,
@@ -24,10 +23,8 @@ import {
   fmpProfile,
   fmpSearchCompanyName,
   fmpSegmentationRows,
-  getFxRateToUsd,
   isFmpAvailable,
   promoteNonGeoRowsToBusiness,
-  scaleSegmentationRows,
 } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { loadPeerGrowthAnchor } from "./peer-growth-anchor";
@@ -64,8 +61,6 @@ interface CacheBody {
   geographic: SegmentGrowthAnnotation[];
   source: string;
   currency: string | null;
-  /** Sichtbar in der Währungszeile. USD-Kurs oder n/a-Grund. Fehlt bei USD-Berichtern. */
-  currencyNote?: string | null;
 }
 
 function incomeReportedCurrency(income: unknown): string | null {
@@ -217,58 +212,21 @@ export async function loadSegmentGrowth(ticker: string): Promise<CacheBody> {
     fmpBalanceSheet(key, 2).catch(() => []),
   ]);
   rememberStatementFacts(key, income);
-  const reported = incomeReportedCurrency(income);
-  let incomeRows: unknown = income;
-  let cashRows: unknown = cashflow;
-  let balanceRows: unknown = balance;
-  let productAnnualRows = productAnnual;
-  let productQuarterRows = productQuarter;
-  let geoAnnualRows = geoAnnual;
-  let geoQuarterRows = geoQuarter;
-  let currency: string | null = reported;
-  let currencyNote: string | null = null;
-  if (reported && reported !== "USD") {
-    const rate = await getFxRateToUsd(reported).catch(() => 1);
-    if (rate > 0 && rate !== 1) {
-      const incomeList = Array.isArray(income) ? income : [];
-      const cashList = Array.isArray(cashflow) ? cashflow : [];
-      const balanceList = Array.isArray(balance) ? balance : [];
-      [incomeRows, cashRows, balanceRows] = await Promise.all([
-        convertFmpRowsToUsd(incomeList),
-        convertFmpRowsToUsd(cashList),
-        convertFmpRowsToUsd(balanceList),
-      ]);
-      productAnnualRows = scaleSegmentationRows(productAnnual, rate);
-      productQuarterRows = scaleSegmentationRows(productQuarter, rate);
-      geoAnnualRows = scaleSegmentationRows(geoAnnual, rate);
-      geoQuarterRows = scaleSegmentationRows(geoQuarter, rate);
-      currency = "USD";
-      currencyNote = `umgerechnet aus ${reported} @ ${rate}, Quelle FMP ${reported}USD`;
-    } else {
-      // KI-Fakten bleiben am rohen Abschluss (rememberStatementFacts oben). Hier nur die Anzeige.
-      incomeRows = [];
-      cashRows = [];
-      balanceRows = [];
-      currency = null;
-      currencyNote = `n/a — FX ${reported}USD fehlt, kein Faktor 1`;
-    }
-  }
-  const statements = statementYearsFromFmp(incomeRows, cashRows, balanceRows);
+  const statements = statementYearsFromFmp(income, cashflow, balance);
   const body: CacheBody = {
     ticker: key,
     business: annotateMissingSegmentGrowth({
-      annual: snapshotsFromFmpRows(productAnnualRows),
-      quarterly: snapshotsFromFmpRows(productQuarterRows),
+      annual: snapshotsFromFmpRows(productAnnual),
+      quarterly: snapshotsFromFmpRows(productQuarter),
       statements,
     }),
     geographic: annotateMissingSegmentGrowth({
-      annual: snapshotsFromFmpRows(geoAnnualRows),
-      quarterly: snapshotsFromFmpRows(geoQuarterRows),
+      annual: snapshotsFromFmpRows(geoAnnual),
+      quarterly: snapshotsFromFmpRows(geoQuarter),
       statements,
     }),
     source: "FMP revenue-product-segmentation, revenue-geographic-segmentation, income-statement, cash-flow-statement, balance-sheet-statement",
-    currency,
-    ...(currencyNote ? { currencyNote } : {}),
+    currency: incomeReportedCurrency(income),
   };
   cache.set(key, { at: Date.now(), body });
   return body;
