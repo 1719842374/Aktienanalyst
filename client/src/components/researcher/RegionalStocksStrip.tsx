@@ -6,25 +6,15 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { formatRegionalStockTiles, type RegionalStocksDisplay, type StockTile } from "./regional-stocks-format";
 
 type Region = "US" | "EU" | "ASIA";
 
-interface RegionalStocks {
-  debtGdpPct: number | null;
-  bondMarketBn: number | null;
-  bondMarketGdpPct: number | null;
-  realRatePct: number | null;
-  tHalfYears: number | null;
-  velocity: number | null;
+interface RegionalStocks extends RegionalStocksDisplay {
   velocityZ: number | null;
   excessMoneyGrowth: number | null;
-  fiscalTrend: number | null;
-  moneyTrend: number | null;
-  pricedIn: number | null;
   unpricedPvBn: number | null;
-  velocityOverMedian: number | null;
   programAgeYears: number | null;
-  piNote: string | null;
   available: { debt: boolean; bonds: boolean; real: boolean; vel: boolean; pi: boolean };
 }
 
@@ -34,9 +24,24 @@ interface BooksPayload {
   error?: string;
 }
 
-function fmt(x: number | null, d = 1, suffix = ""): string {
-  if (x == null || !Number.isFinite(x)) return "n/a";
-  return `${x.toFixed(d)}${suffix}`;
+export function RegionalStocksTiles({ stocks }: { stocks: RegionalStocksDisplay }) {
+  const tiles = formatRegionalStockTiles(stocks);
+  const levels = tiles.filter(tile => tile.row === "levels");
+  const trends = tiles.filter(tile => tile.row === "trends");
+  const pi = tiles.filter(tile => tile.row === "pi");
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-stocks">
+        {levels.map(tile => <Cell key={tile.label} tile={tile} />)}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[11px]" data-testid="row-regional-trends">
+        {trends.map(tile => <Cell key={tile.label} tile={tile} />)}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-pi">
+        {pi.map(tile => <Cell key={tile.label} tile={tile} />)}
+      </div>
+    </>
+  );
 }
 
 export function RegionalStocksStrip({ region }: { region: Region }) {
@@ -70,13 +75,6 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
   }, [region]);
 
   const stocks = data?.stocks;
-  const piText = stocks == null
-    ? "n/a"
-    : stocks.pricedIn != null
-      ? fmt(stocks.pricedIn, 2)
-      : stocks.piNote === "program start unknown"
-        ? "start unknown"
-        : "n/a";
 
   return (
     <div className="rounded-lg border border-border/40 bg-card/30 p-4 space-y-2" data-testid="panel-regional-stocks">
@@ -92,35 +90,19 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Lade regionale Stocks…
         </div>
       )}
-      {stocks && (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-stocks">
-            <Cell label="Debt/GDP" value={fmt(stocks.debtGdpPct, 1, " %")} />
-            <Cell label="Bondmarkt" value={stocks.bondMarketBn == null ? "n/a" : `${fmt(stocks.bondMarketBn, 0)} · ${fmt(stocks.bondMarketGdpPct, 1, " % BIP")}`} />
-            <Cell label="Realzins r" value={fmt(stocks.realRatePct, 2, " %")} />
-            <Cell label="Velocity" value={fmt(stocks.velocity, 3)} />
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-[11px]" data-testid="row-regional-trends">
-            <Cell label="Fiscal trend" value={fmt(stocks.fiscalTrend, 0)} />
-            <Cell label="Geldtrend" value={fmt(stocks.moneyTrend, 0)} />
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-pi">
-            <Cell label="π" value={piText} testId="text-priced-in" />
-            <Cell label="V/V̄" value={fmt(stocks.velocityOverMedian, 2)} testId="text-velocity-ratio" />
-            <Cell label="T½" value={fmt(stocks.tHalfYears, 1, " J")} testId="text-thalf" />
-            <Cell label="V" value={fmt(stocks.velocity, 3)} testId="text-velocity" />
-          </div>
-        </>
-      )}
+      {stocks && <RegionalStocksTiles stocks={stocks} />}
     </div>
   );
 }
 
-function Cell({ label, value, warn, testId }: { label: string; value: string; warn?: boolean; testId?: string }) {
+function Cell({ tile, warn }: { tile: StockTile; warn?: boolean }) {
   return (
-    <div className={`rounded-md border p-2 ${warn ? "border-amber-300 bg-amber-400/30" : "border-border/30 bg-background/40"}`}>
-      <div className={`text-[9px] uppercase tracking-wider ${warn ? "text-amber-100" : "text-foreground/40"}`}>{label}</div>
-      <div className={`text-[12px] font-mono mt-0.5 ${warn ? "text-amber-50" : "text-foreground/85"}`} data-testid={testId}>{value}</div>
+    <div title={tile.title} className={`rounded-md border p-2 ${warn ? "border-amber-300 bg-amber-400/30" : "border-border/30 bg-background/40"}`}>
+      <div className={`text-[9px] uppercase tracking-wider ${warn ? "text-amber-100" : "text-foreground/40"}`}>{tile.label}</div>
+      <div className={`text-[12px] font-mono mt-0.5 ${warn ? "text-amber-50" : "text-foreground/85"}`} data-testid={tile.testId}>{tile.value}</div>
+      {tile.hint ? (
+        <div className={`text-[9px] mt-0.5 ${warn ? "text-amber-100/80" : "text-foreground/45"}`}>{tile.hint}</div>
+      ) : null}
     </div>
   );
 }

@@ -21,9 +21,15 @@ export interface RegionalStocks {
   debtGdpPct: number | null;
   bondMarketBn: number | null;
   bondMarketGdpPct: number | null;
+  /** Display only. Home-currency billions, for example "Mrd. $". */
+  bondMarketUnit: string | null;
+  bondMarketSource: string | null;
+  bondMarketAsOf: string | null;
   realRatePct: number | null;
   tHalfYears: number | null;
   velocity: number | null;
+  /** Display only. Series that produced `velocity`, for example "M2V". */
+  velocityLabel: string | null;
   velocityZ: number | null;
   excessMoneyGrowth: number | null;
   fiscalTrend: number | null;
@@ -41,9 +47,15 @@ export interface StockInputs {
   debtGdpPct?: number | null;
   bondMarketBn?: number | null;
   bondMarketGdpPct?: number | null;
+  /** Display only. Does not change `bondMarketBn`. */
+  bondMarketUnit?: string | null;
+  bondMarketSource?: string | null;
+  bondMarketAsOf?: string | null;
   /** Decimal real rate. 0.08 is 8 %. */
   realRate?: number | null;
   velocity?: number | null;
+  /** Display only. Does not change `velocity`. */
+  velocityLabel?: string | null;
   /** Own velocity history. Median is V̄. Levels are not mixed into LI. */
   velocityHistory?: number[] | null;
   fiscalRestBn?: number | null;
@@ -149,6 +161,10 @@ function finiteOrNull(value: number | null | undefined): number | null {
   return value != null && Number.isFinite(value) ? value : null;
 }
 
+function textOrNull(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function median(values: number[]): number | null {
   const xs = values.filter(n => Number.isFinite(n)).sort((a, b) => a - b);
   if (!xs.length) return null;
@@ -189,9 +205,13 @@ export function buildRegionalStocks(input: StockInputs = {}): RegionalStocks {
     debtGdpPct: debt,
     bondMarketBn: bondsBn,
     bondMarketGdpPct: bondsGdp,
+    bondMarketUnit: textOrNull(input.bondMarketUnit),
+    bondMarketSource: textOrNull(input.bondMarketSource),
+    bondMarketAsOf: textOrNull(input.bondMarketAsOf),
     realRatePct: realRate == null ? null : Math.round(realRate * 1e6) / 1e4,
     tHalfYears: tHalf,
     velocity,
+    velocityLabel: textOrNull(input.velocityLabel),
     velocityZ: velocity == null ? null : zScore(velocity, history),
     excessMoneyGrowth: m2 != null && gdp != null && cpi != null ? excessMoneyGrowth(m2, gdp, cpi) : null,
     fiscalTrend: finiteOrNull(input.fiscalTrend),
