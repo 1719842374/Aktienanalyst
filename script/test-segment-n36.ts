@@ -343,6 +343,7 @@ async function postGap(port: number, ticker: string, extra?: Record<string, unkn
     cached?: boolean;
     queried?: number | null;
     total?: number | null;
+    internalReason?: string | null;
   };
   return { status: response.status, json };
 }
@@ -2151,8 +2152,9 @@ try {
   const packed = `${JSON.stringify(posted.json)}\n${shown}`;
   gap(
     "tsla-1-software-stays-under-hardware",
-    (posted.json.reason ?? "").includes("n/a — Model S ohne geführtes Eltern: Automotive")
-      && (posted.json.reason ?? "").includes("n/a — Regulatory Credits ohne geführtes Eltern: Automotive")
+    (posted.json.internalReason ?? "").includes("n/a — Model S ohne geführtes Eltern: Automotive")
+      && (posted.json.internalReason ?? "").includes("n/a — Regulatory Credits ohne geführtes Eltern: Automotive")
+      && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && (posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
       && posted.json.promptVersion === "n36-gap-p14"
@@ -2187,6 +2189,21 @@ try {
       && twins.some((item) => item.parent === "Energy Generation & Storage Segment")
       && !twins.some((item) => item.parent === "Services & Other"),
     `twins=${JSON.stringify(twins)}`,
+  );
+  const rowCounts = listed.map((item) => {
+    const row = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+      parent: item.parent,
+      kind: item.kind,
+      items: [item],
+    })).replace(/&amp;/g, "&");
+    return { name: item.name, na: row.match(/n\/a —/g)?.length ?? 0 };
+  });
+  gap(
+    "tsla-1-one-na-sentence-per-item",
+    rowCounts.every((row) => row.na === 1)
+      && !shown.includes("ohne geführtes Eltern")
+      && (posted.json.internalReason ?? "").includes("ohne geführtes Eltern"),
+    `rows=${JSON.stringify(rowCounts)} reason=${posted.json.reason ?? ""} internal=${posted.json.internalReason ?? ""}`,
   );
 } finally {
   tsla1Server.close();

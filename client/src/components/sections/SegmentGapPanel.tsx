@@ -153,7 +153,7 @@ function GapRow({ item }: { item: SegmentGapItem }) {
         {share}
       </span>
       <span className="font-mono" data-testid="segment-gap-growth">{growth}</span>
-      {item.basis ? <span className="min-w-0 break-words text-muted-foreground">{item.basis}</span> : item.shareOfParentPct != null ? <span>n/a — ohne Quelle</span> : null}
+      {item.basis && item.basis !== share ? <span className="min-w-0 break-words text-muted-foreground">{item.basis}</span> : !item.basis && item.shareOfParentPct != null ? <span>n/a — ohne Quelle</span> : null}
       <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200">KI-Schätzung</span>
     </div>
   );

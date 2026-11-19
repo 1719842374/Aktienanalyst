@@ -22,6 +22,11 @@ export interface SegmentGapResult {
   queried?: number | null;
   /** Eltern dieser Anfrage, einschließlich der nicht abgefragten. */
   total?: number | null;
+  /**
+   * parent_not_listed, wenn die Zeile den n/a-Satz schon selbst zeigt.
+   * Das Panel liest dieses Feld nicht.
+   */
+  internalReason?: string | null;
 }
 
 /** Gleicher Schlüssel für „A & B“ und „A and B“. Kein Ticker-Mapping. */

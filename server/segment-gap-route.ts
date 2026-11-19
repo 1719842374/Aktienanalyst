@@ -235,6 +235,34 @@ function fold(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function rowAlreadyShowsNa(items: readonly SegmentGapItem[], name: string): boolean {
+  const key = segmentGapKey(name);
+  return items.some((item) => {
+    if (segmentGapKey(item.name) !== key) return false;
+    return (item.shareNote ?? "").includes("n/a —") || (item.basis ?? "").startsWith("n/a —");
+  });
+}
+
+function splitListedParentNotes(items: readonly SegmentGapItem[], notes: readonly string[]): { visible: string[]; internal: string[] } {
+  const visible: string[] = [];
+  const internal: string[] = [];
+  for (const note of notes) {
+    const keep: string[] = [];
+    const aside: string[] = [];
+    for (const part of note.split(/(?=n\/a —)/)) {
+      const text = part.trim();
+      if (!text) continue;
+      const listed = /^n\/a — (.+?) ohne geführtes Eltern:/.exec(text);
+      const listedName = listed?.[1] ?? "";
+      if (listedName && rowAlreadyShowsNa(items, listedName)) aside.push(text);
+      else keep.push(text);
+    }
+    if (keep.length > 0) visible.push(keep.join(" "));
+    if (aside.length > 0) internal.push(aside.join(" "));
+  }
+  return { visible, internal };
+}
+
 function serviceParentName(name: string): boolean {
   return /service|abo|subscription|software|support/i.test(name);
 }
@@ -785,12 +813,15 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         cached: boolean,
       ) => {
         const coverage = `abgefragt ${queried} von ${total}`;
-        const reason = [...notes, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
+        const split = splitListedParentNotes(merged, notes);
+        const reason = [...split.visible, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
           .filter((note) => note && note.trim())
           .join(" ") || null;
+        const internalReason = split.internal.join(" ").trim() || null;
         const body: SegmentGapResult = {
           items: merged,
           reason,
+          internalReason,
           promptVersion: SEGMENT_GAP_PROMPT_VERSION,
           cached,
           queried,
