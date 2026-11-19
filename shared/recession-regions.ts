@@ -5,6 +5,21 @@
  */
 
 export const REGION_WEIGHT = { US: 0.7, EZ: 0.2, JP: 0.1 } as const;
+/**
+ * Nominal GDP, current US$, World Bank via FRED.
+ * CN is the series the Buffett anchor already uses. JP is the same series for Japan.
+ * The peer weight is the latest print's share. A missing print is n/a, not a stand-in number.
+ */
+export const ASIA_GDP_USD = {
+  JP: "MKTGDPJPA646NWDB",
+  CN: "MKTGDPCNA646NWDB",
+} as const;
+/** s(z) raw is already on the −4…+4 scale. Same max the curve slot uses. */
+export const SERIES_STRESS_MAX = 4;
+/** 20-session realized vol, same window as the ASHR market chart. */
+export const ASHR_REALIZED_SESSIONS = 20;
+export const ASHR_REALIZED_MIN_RETURNS = 15;
+export const ASHR_ANN_SESSIONS = 252;
 /** A monthly print older than this is shown and not scored. */
 export const STALE_MONTHS = 18;
 export const SAHM_ANALOG_THRESHOLD_PP = 0.5;
@@ -34,6 +49,8 @@ export interface RegionCatalog {
   slots: RegionSlot[];
   recessionProbability: number | null;
   correctionProbability: number | null;
+  /** How this region's headline P was built. Absent on US and Europa. */
+  note?: string;
 }
 
 export interface RegionalCatalogs {
@@ -64,6 +81,77 @@ export function bookProbability(net: number, max: number): number | null {
   const raw = 50 + (net / max) * 50;
   const clamped = Math.max(5, Math.min(95, raw));
   return Math.round(clamped / 5) * 5;
+}
+
+export interface AsiaSideWeight {
+  series: string;
+  gdpUsd: number | null;
+  /** null = n/a. A lone survivor is 1 after the missing side is dropped. */
+  weight: number | null;
+  reason: string;
+}
+
+export interface AsiaGdpWeights {
+  jp: AsiaSideWeight;
+  cn: AsiaSideWeight;
+  text: string;
+}
+
+function positiveGdp(value: number | null): number | null {
+  return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function shareText(percent: number): string {
+  return `${(percent * 100).toFixed(1).replace(".", ",")} %`;
+}
+
+/** Sources already start with „n/a —“. The weight sentence must not add it again. */
+function reasonOnce(source: string): string {
+  return source.replace(/^n\/a —\s*/, "");
+}
+
+/**
+ * Japan/China blend weights from the two GDP prints.
+ * Both present: share of the sum. One missing: that side stays n/a and the other is 1.
+ * Both missing: both weights stay n/a. Never a fixed 1/1.
+ */
+export function asiaGdpWeights(input: {
+  jp: { gdpUsd: number | null; source: string };
+  cn: { gdpUsd: number | null; source: string };
+}): AsiaGdpWeights {
+  const jpGdp = positiveGdp(input.jp.gdpUsd);
+  const cnGdp = positiveGdp(input.cn.gdpUsd);
+  const jpReason = input.jp.source;
+  const cnReason = input.cn.source;
+  if (jpGdp != null && cnGdp != null) {
+    const sum = jpGdp + cnGdp;
+    const jp = jpGdp / sum;
+    const cn = cnGdp / sum;
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: jpGdp, weight: jp, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: cnGdp, weight: cn, reason: cnReason },
+      text: `BIP-Anteil US-$: Japan ${shareText(jp)} (${jpReason}), China ${shareText(cn)} (${cnReason}).`,
+    };
+  }
+  if (jpGdp != null) {
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: jpGdp, weight: 1, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
+      text: `Gewicht China n/a — ${reasonOnce(cnReason)}. Japan neu normiert auf 100 %.`,
+    };
+  }
+  if (cnGdp != null) {
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: cnGdp, weight: 1, reason: cnReason },
+      text: `Gewicht Japan n/a — ${reasonOnce(jpReason)}. China neu normiert auf 100 %.`,
+    };
+  }
+  return {
+    jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
+    cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
+    text: `Gewicht Japan n/a — ${reasonOnce(jpReason)}. Gewicht China n/a — ${reasonOnce(cnReason)}.`,
+  };
 }
 
 export function blendWeighted(parts: Array<{ weight: number; probability: number | null }>): number | null {
@@ -229,6 +317,7 @@ export interface RegionGaugeView {
   totalSlots: number;
   sparse: boolean;
   topDrivers: RegionSlot[];
+  note?: string;
 }
 
 /**
@@ -253,5 +342,39 @@ export function regionGaugeView(catalogs: RegionalCatalogs | null | undefined, i
     totalSlots,
     sparse: totalSlots === 0 || (totalSlots - scored.length) / totalSlots > REGION_SPARSE_SHARE,
     topDrivers,
+    note: region.note,
   };
+}
+
+/** Annualized 20-session realized vol in percent. A flat price is 0, which is a print, not a missing value. */
+export function realizedVol20(closes: { date: string; close: number }[]): DatedPoint[] {
+  const sorted = closes
+    .filter(bar => bar.date && Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const out: DatedPoint[] = [];
+  for (let i = ASHR_REALIZED_SESSIONS; i < sorted.length; i++) {
+    const rets: number[] = [];
+    for (let j = i - (ASHR_REALIZED_SESSIONS - 1); j <= i; j++) {
+      const left = sorted[j - 1]?.close;
+      const right = sorted[j]?.close;
+      if (!(left > 0) || !(right > 0)) continue;
+      rets.push(Math.log(right / left));
+    }
+    if (rets.length < ASHR_REALIZED_MIN_RETURNS) continue;
+    const mean = rets.reduce((sum, value) => sum + value, 0) / rets.length;
+    const variance = rets.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (rets.length - 1);
+    const annualized = Math.sqrt(Math.max(0, variance) * ASHR_ANN_SESSIONS) * 100;
+    if (Number.isFinite(annualized)) out.push({ date: sorted[i].date, value: annualized });
+  }
+  return out;
+}
+
+/** Last print of each calendar month, in date order. */
+export function monthEndSeries(points: DatedPoint[]): DatedPoint[] {
+  const byMonth = new Map<string, DatedPoint>();
+  const sorted = [...points]
+    .filter(point => point.date.length >= 7 && Number.isFinite(point.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  for (const point of sorted) byMonth.set(point.date.slice(0, 7), point);
+  return Array.from(byMonth.values());
 }

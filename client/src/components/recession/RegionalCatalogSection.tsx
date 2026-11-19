@@ -38,6 +38,9 @@ function CatalogTile({ region }: { region: RegionCatalog }) {
           ×{region.weight.toFixed(2)}
         </span>
       </div>
+      {region.note && (
+        <p className="text-[10px] text-muted-foreground mb-2" data-testid={`catalog-note-${region.id}`}>{region.note}</p>
+      )}
       <div className="flex gap-3 text-[11px] mb-2">
         <span>
           Katalog Rez.{" "}
@@ -92,7 +95,7 @@ export function RegionalCatalogSection({ catalogs }: { catalogs: RegionalCatalog
           <span className={`font-mono font-semibold ${catalogs.blendedRecession12m == null ? "" : getProbColor(catalogs.blendedRecession12m)}`}>
             {pct(catalogs.blendedRecession12m)}
           </span>
-          <span className="text-muted-foreground"> · US {catalogs.weights.US.toFixed(2)} / EZ {catalogs.weights.EZ.toFixed(2)} / JP {catalogs.weights.JP.toFixed(2)}</span>
+          <span className="text-muted-foreground"> · US {catalogs.weights.US.toFixed(2)} / EZ {catalogs.weights.EZ.toFixed(2)} / Asien {catalogs.weights.JP.toFixed(2)}</span>
         </div>
         <div data-testid="catalog-blend-correction">
           Gewichtete Korrektur 12M:{" "}
