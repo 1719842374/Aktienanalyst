@@ -25,6 +25,7 @@ P = 50\% + \left( \frac{\text{Netto-Score}}{\text{Max-Score}} \right) \times 50\
 - Netto-Score positiv → Wahrscheinlichkeit > 50%
 - Netto-Score negativ → Wahrscheinlichkeit < 50%
 - Ergebnis wird gerundet
+- **Ist-Stand main `73eff97e` (Nachtrag 25.10.2026):** gerundet wird auf **5er-Schritte**, vorher auf **5–95 %** begrenzt – `server/recession.ts:619–622` (`clampAndRound`), angewendet in `:647–649` (`probabilityFromNet`). Bei Max ≤ 0 oder nicht endlichem Netto gilt 50 % (`:642–645`). Beispiel unten: 79,1 % → 80 %.
 
 **Beispiel Korrektur Vollständig (12M):**
 \[
@@ -89,6 +90,8 @@ Der NY-Fed-Wert (RECPROUSM156N) wirkt hier stark dämpfend.
 | Google Trends | >75: +11.9 \| 60-75: +6.8 \| 30-60: 0 \| <30: -6.8 |
 | Konsumklima | CSI <60: +3 |
 | Kreditspreads | 1.0-1.5%: -1 |
+
+> **Ist-Stand main `73eff97e` (Nachtrag 25.10.2026), Google Trends:** Zonen wie oben (Raw 7/4/0/−4 × 1,7, Max 11,9) – `server/recession.ts:1257–1268`. **N/A:** Der Indikator wird geschlossen (`weight 0`, `maxWeighted 0`, `available: false`; `:1256` → `closedIndicator` `:760–774`) und fällt damit aus Netto **und** Max heraus (`scoredTotals` `:677–681`). Er zählt also nicht als 0 bei vollem Max. Ein Cache-Wert bis 48 h wird weiter gewertet (`:503–545`).
 
 ---
 
