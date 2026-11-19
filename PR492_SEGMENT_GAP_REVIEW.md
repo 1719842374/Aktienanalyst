@@ -18,11 +18,11 @@ Read-only. Kein Merge, kein Push nach `main`, keine Score-, Rating-, Entry- oder
 
 ## Verdikt
 
-**GO.**
+**Befund P2.** Die Nachprüfung hebt das erste GO auf.
 
-Keine P1, keine P2. Die Host-Zuordnung liest den Zeilennamen, `bundledWith` und den Host-Namen. `expansion`, `basis` und Hinweistext hängen die Zeile nicht um. Charging und Regulatory Credits bleiben unter dem Service-Eltern, wenn das Modell sie dort ablegt. `SEGMENT_GAP_MAX_CALLS = 4` begrenzt die OpenRouter-HTTP-Versuche. Der Merge auf den aktuellen `main` überschreibt keine seit der merge-base dazugekommene Codeänderung.
+Die Host-Zuordnung liest den Zeilennamen, `bundledWith` und den Host-Namen. `expansion`, `basis` und Hinweistext hängen die Zeile nicht um. Charging und Regulatory Credits bleiben unter dem Service-Eltern, wenn das Modell sie dort ablegt. `SEGMENT_GAP_MAX_CALLS = 4` begrenzt die OpenRouter-HTTP-Versuche. Der Merge auf den aktuellen `main` überschreibt keine seit der merge-base dazugekommene Codeänderung. Score und Entry von MSFT bleiben auf beiden Ständen gleich.
 
-Drei Residuen stehen unten. Sie ändern das Verdikt nicht.
+P2 ist N1: `shared/segment-children.ts:315` lässt eine vorher sichtbare, unkonkrete Quellenzeichenkette aus der Untersegment-Zeile verschwinden. P3 ist N4: eine geänderte Geschwisterliste kann eine gecachte Zeile an ein anderes Eltern hängen und den Anteil dabei auf n/a setzen. N2, N3, N5 und N6 sind keine weiteren Befunde. Einzelheiten im Abschnitt Nachprüfung.
 
 ## Git-Historie (zuerst)
 
@@ -249,12 +249,164 @@ Ergebnis: **147 PASS, 0 FAIL**, letzte Zeile `n36 PASS`. Kein Live-Call an FMP o
 
 `env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npm run check` endet mit Exit 2 und **76** `error TS`. Keine Meldung in den elf PR-Dateien. Die 76 liegen in `analyze-helpers.ts`, `Compare.tsx`, `Section9.tsx`, `analyze-route.ts`, `Section3.tsx`, `researcher.ts`, `bias-fixes.ts`, `buffett-ratio.ts`, `Section8.tsx`. Das ist die bekannte Baseline „tsc 76“ aus dem Spec-Nachtrag vom 10.11.2026, nicht ein Fehler dieses Diffs. `schema.ts` ist unverändert, die PESTEL-Fehler hängen nicht an der einen Zeile in `segment-children.ts`.
 
-## Residuen (kein Befund, Verdikt bleibt GO)
+## Residuen aus dem ersten Durchgang
 
-1. Cache-Schlüssel je Eltern enthält die anderen Segmentnamen nicht (`parentCacheKey`, `920–922`). Bei unverändertem Umsatz dieses Elterns kann eine Antwort bis zu 24 h alt sein, obwohl die Geschwisterliste sich geändert hat. Prompt-Textänderungen invalidieren über `SEGMENT_GAP_PROMPT_VERSION`.
-2. `callLLMJson` mappt `openrouter-budget` auf `null` (`925–928`). Der HTTP-Deckel 4 bleibt wirksam. Der betroffene Eltern kann als „KI nicht erreichbar“ erscheinen; die weiteren Eltern tragen den Call-Limit-Satz.
-3. `reviewKiChildren` hängt eine nicht konkrete Quelle nicht mehr an `basis` (`shared/segment-children.ts:315`). Die Zeile und die bestehende Segmentanzeige bleiben.
+1. Cache-Schlüssel je Eltern enthält die anderen Segmentnamen nicht (`parentCacheKey`, `920–922`). Die Nachprüfung N4 zeigt, dass daraus eine andere Elternzuordnung wird, nicht nur ein alter Text. Schwere P3. Der minimale Diff steht in der Nachprüfung.
+2. `callLLMJson` mappt `openrouter-budget` auf `null` (`925–928`). Der HTTP-Deckel 4 bleibt wirksam. N3: das ersetzt keinen vorher sichtbaren Elternwert.
+3. `reviewKiChildren` hängt eine nicht konkrete Quelle nicht mehr an `basis` (`shared/segment-children.ts:315`). Die Nachprüfung N1 stuft das als P2 ein, weil der Quellentext in der UI wegfällt.
 
 ## Nicht getan
 
 Kein Merge von #492. Kein Push nach `main`. Keine Änderung an Scores, Ratings, Entries oder Peer-Sets. Kein Live-`POST /api/analyze`. Dieser Bericht ist die einzige Datei auf `cursor/pr492-segment-gap-review-670d`.
+
+## Nachprüfung
+
+Gleicher Head `a69872b7ecc9a6512a9b9bde2c30cf13eb695ef9`, gleicher main `7aaa13ce4ceac60e9b54be3f8edf6f4320d70629`, merge-base `c4975703ecfb8166edc57c6d54faed2161b2d093`. Read-only. Kein Live-FMP, kein `POST /api/analyze`. SSR und die Zuordnung liefen lokal mit `env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npx tsx`. `shared/segment-children.ts` ist auf main und auf der merge-base derselbe Blob `65a8ac3ccdf694ef25568762e5b0b626011ee5f1`; der Vergleich „merge-base gegen Head“ ist damit auch „main gegen Head“.
+
+### N1 — Quelle an jeder sichtbaren KI-Zeile — P2
+
+Die Zeichenkette `Quelle unbestimmt` kommt in `*.ts` und `*.tsx` auf dem Head nicht vor. Sichtbar ist `n/a — ohne Quelle` oder der Quellentext in `basis`.
+
+| Fläche | Datei:Zeile | Was die SSR-Zeile zeigt |
+| --- | --- | --- |
+| Lücken-Zeile mit Zahl | `SegmentGapPanel.tsx:140–162` | `FSD 8.0 % n/a Tesla Annual Report 2025 KI-Schätzung` |
+| Lücken-Zeile ohne Zahl | dieselbe Stelle, Badge in `:161` | `Optimus n/a — ohne Quelle nicht separat ausgewiesen KI-Vorschlag` |
+| Outline, wenn keine gemeldeten Segmente da sind | `Section2.tsx:103–108` | `FSD 8.0% n/a KI-Schätzung Tesla Annual Report 2025` |
+| YoY-Badge neben dem Fakt | `Section2.tsx:159–175` | Badge-Text ist `KI-Schätzung`, dahinter `visibleBasis(basis)` oder `n/a — ohne Quelle` |
+| Untersegment aus `reviewKiChildren` | `SegmentChildren.tsx:96–112` | Name, Anteil oder `n/a`, `basis`, ohne URL zusätzlich `n/a — ohne Quelle`, Badge `KI-Schätzung` |
+
+Zeilen mit belegter Zahl tragen `KI-Schätzung` und die Quelle. Die Lücken-Zeile ohne Zahl trägt `KI-Vorschlag`, nicht `KI-Schätzung`. Das ist der von `script/test-segment-n36.ts:718–723` festgeschriebene Stand. Es ist keine gelöschte Quellenangabe aus dem Stand davor.
+
+P2 ist die eine Zeile `shared/segment-children.ts:315`.
+
+Vorher, merge-base `c4975703`, Zeile 315:
+
+```ts
+const shownBasis = citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
+```
+
+Nachher, Head `a69872b7`, Zeile 315:
+
+```ts
+const shownBasis = sourced && citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
+```
+
+`sourced` ist `concreteSource` (`shared/segment-children.ts:307`). Anteil und Wachstum waren auf beiden Ständen schon null, sobald die Quelle unkonkret ist (`310–313`). Die UI `SegmentChildren.tsx` ist nicht im PR-Diff.
+
+SSR, dasselbe Kind `FSD`, `basis` `steckt im Automotive-Segment`, `source` `Tesla shareholder update 2021`, `shareOfParentPct` 8. `concreteSource` ist auf beiden Ständen falsch (Jahr 2021 liegt außerhalb des Drei-Jahres-Fensters).
+
+| Stand | `basis` nach `reviewKiChildren` | Sichtbarer Text |
+| --- | --- | --- |
+| `c4975703` | `steckt im Automotive-Segment · Tesla shareholder update 2021` | `n/a — Schätzung ohne Quelle: FSD FSD n/a steckt im Automotive-Segment · Tesla shareholder update 2021 n/a — ohne Quelle KI-Schätzung` |
+| `a69872b7` | `steckt im Automotive-Segment` | `n/a — Schätzung ohne Quelle: FSD FSD n/a steckt im Automotive-Segment n/a — ohne Quelle KI-Schätzung` |
+
+Die Zeichenkette `Tesla shareholder update 2021` stand auf der merge-base in der Zeile (`SegmentChildren.tsx:96–99`, zusätzlich im `title`). Auf dem Head fehlt sie. Badge `KI-Schätzung` und `n/a — ohne Quelle` bleiben. Das ist eine Regression nach der Regel, eine vorher sichtbare Angabe nicht zu entfernen.
+
+Minimaler Fix, nur diese Bedingung, die Nullung in `310–313` bleibt:
+
+```ts
+const shownBasis = citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
+```
+
+### N2 — Kein Durchgriff auf Bewertung — kein Befund
+
+Die Segment-Lücken-Antwort wird nur von `SegmentGapPanel.tsx`, `Section2.tsx` und `server/segment-gap-route.ts` gelesen. Sie wird nicht in `data.revenueSegments` oder `data.geoSegments` zurückgeschrieben (`shared/schema.ts` unverändert).
+
+| Konsument | Datei:Zeile | Liest KI-Lücken-Zeilen? |
+| --- | --- | --- |
+| DCF-Wachstum über TAM | `server/sector-data.ts:463–466` `generateTAMAnalysis(..., revenueSegments)`; Aufruf `server/analyze-route.ts:1299`; Deckel `dcfGrowthCapFromTam` `:448–456` | Nein. Eingang sind die gemeldeten `revenueSegments` der Analyse. Die Datei ist blobgleich mit der merge-base. |
+| Sum-of-Parts | kein Treffer auf `sumOfParts`, `sum-of-parts`, `sotp` in `*.ts`/`*.tsx` | Kein solcher Pfad. |
+| Peer-Gewichtung | `server/scoring-integration.ts` und `client/src/components/sections/PeerComparison.tsx` ohne `revenueSegments`, `geoSegments`, `segment-gap` | Nein. |
+| Scoring | `server/scoring-integration.ts` blobgleich `06359fbbc9948f3039b603933c5d5fa8d2c05ba4`, kein Segment-Feld | Nein. |
+| Bias | `shared/bias-fixes.ts` blobgleich, kein Segment-Feld. `computeOverallScore` hängt nicht an Lücken-Zeilen | Nein. |
+| Fazit-Entry | `shared/fazit-entry.ts:40–54` blobgleich `d33c818de58165cdb2b6a7945cd7188e94cd66ef` | Nein. Eingang ist `StockAnalysis` (Kurs, DCF, Risiken), nicht die Lücken-Antwort. |
+| PDF | `server/pdf-export.ts` und `client/src/lib/exportPdf.ts` ohne `segment` | Nein. |
+| Chat | `shared/chat-context.ts:286` schreibt `revenueSegments` als `Name Prozent` in Sektion 4. Blobgleich mit der merge-base | Nur die gemeldeten Segmente der Analyse, nicht `POST /api/segment-gaps`. |
+| Management-Score | `client/src/components/sections/ManagementScoreSection.tsx:167–177` sendet `data.revenueSegments` an `/api/management-score`. Server-Kommentar `server/management-score.ts:777–781` | Gemeldete Segmente. Die Lücken-Zeile liegt nicht in diesem Array. |
+| These-Score | `client/src/components/sections/ThesisStrengthPanel.tsx:13` sendet dieselben `revenueSegments`. Ein numerisches `finalScore` kann `onScore` erreichen | Wieder die gemeldeten Segmente, nicht die Lücken-Zeile. |
+| Jahres-Segmente | `client/src/components/sections/FinancialStatements.tsx:194–197` `annualSegments` | Anzeige der gemeldeten Umsätze. |
+| Regionen-TAM | `client/src/components/sections/Section7.tsx:804–806` `tamRegionsFromAnalysis` liest `geoSegments` | FMP-/SEC-Regionen der Analyse. |
+| Researcher-Karte | `server/researcher-geo-map.ts:266–310` | Eigener FMP-Abruf, nicht die Lücken-Route. |
+
+Vorher/Nachher Score und Entry, Ticker MSFT, Fixture `script/fixtures/analysis-MSFT.json` (Blob auf beiden Ständen `cd0a25b23516438688714cd999375cbdcf62475f`). Die KI-Zeilen von MSFT liegen daneben in `script/fixtures/msft-dynamics-children-n25.json` und gehen nicht in `fazitEntryForExport`. Beide Läufe:
+
+| Feld | `c4975703` / main-Baum | `a69872b7` |
+| --- | --- | --- |
+| gespeicherter `scoring.finalScore` | 70 | 70 |
+| `scoring.rawScore` / `qualityScore` | 96.8 / 88 | 96.8 / 88 |
+| Entry `maxEntry` (`fazitEntryForExport`) | 340.7800117606086, Label `$340.78` | 340.7800117606086, Label `$340.78` |
+| `fairValue` | 385.6067352818258 | 385.6067352818258 |
+| `worstCase` | 318.36665 | 318.36665 |
+| `crvBase` | 0.3102863212858768 | 0.3102863212858768 |
+
+Die Zahlen sind identisch.
+
+### N3 — Budget-Ende — kein P2
+
+`withOpenRouterHttpBudget` hat genau einen Aufrufer: `server/segment-gap-route.ts:968`. `takeOpenRouterHttpAttempt` (`server/llm-openrouter.ts:75–77`) tut nichts, wenn kein Budget-Store hängt. Analyze, DCF, Chat und der Management-Score laufen außerhalb dieses Stores.
+
+Der Satz `n/a — KI nicht erreichbar` entsteht in `unreachableNote` (`segment-gap-route.ts:942–944`) und in den Status 503 (`:1076`, `:1167`). Er steht in `reason` der Lücken-Antwort. Die Elternzeile in `Section2.tsx` (Umsatz, Prozent, YoY) schreibt diese Antwort nicht um.
+
+Auf der merge-base gibt es `POST /api/segment-gaps` nicht. Dieselbe Elternzeile zeigte den gemeldeten FMP-/SEC-Wert und zeigt ihn weiter. Es gibt keinen vorher sichtbaren Wert, den der neue Satz ersetzt. `callLLMJson` macht aus `openrouter-budget` ein `null` (`:925–928`); das betrifft nur den Lauf innerhalb des Budgets und löscht keinen Cache-Treffer (`freshParent` vor dem Aufruf, `:1091–1097`).
+
+### N4 — `parentCacheKey` — P3, falsche Zuordnung, nicht nur ein alter Text
+
+`parentCacheKey` (`server/segment-gap-route.ts:920–922`) ist `Version|Ticker|Elternlabel|v:Umsatz`. Die Produkt-Geschwister fehlen. Der Cache speichert die Zeile vor `placeBundledSoftware` (`:1147–1149`). `reply` (`:1015–1016`) hängt beim Lesen mit der aktuellen Produktliste neu um.
+
+Lauf, Mock ohne Netz, Ticker `EXN4`:
+
+1. Produkte `Automotive Sales` 70 und `Services and Other` 10. Das Modell legt `Device Software` unter Services ab, `kind` `device_software`, `bundledWith` `PCs`. `PCs` ist kein Produkt. Ergebnis: Eltern `Services and Other`, Anteil 9, zwei Modellaufrufe.
+2. Dieselben FMP-Umsätze, in der angezeigten Liste neu `PCs` mit Umsatz 40. Der Services-Schlüssel trifft den Cache (ein zusätzlicher Aufruf nur für das neue Eltern `PCs`, Aufrufe 2 dann 3). `placeBundledSoftware` findet `PCs` jetzt in der Liste.
+
+Zweites Ergebnis: Eltern `PCs`, `shareOfParentPct` null, `basis` `n/a — Device Software ist in PCs gebündelt; Firma weist es nicht separat aus`.
+
+Das ist nicht die alte Zeile. Eltern und Anteil wechseln, ohne dass das Modell Services neu gesehen hat. `PCs` war im ersten Prompt kein erlaubtes Eltern. Der alte `bundledWith`-String wird beim Cache-Treffer gegen die neue Liste gehalten.
+
+Minimaler Diff: die sortierten Produktnamen in den Schlüssel. `segmentGapKey` ist in der Datei schon importiert. Beide Aufrufe (`:1036`, `:1090`) geben die Liste mit.
+
+```ts
+function parentCacheKey(ticker: string, task: GapTask, siblings: readonly string[]): string {
+  const basis = task.revenue != null && task.revenue > 0 ? String(task.revenue) : "";
+  const others = siblings.map((name) => segmentGapKey(name)).filter((name) => name.length > 0).sort().join("\n");
+  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${task.label}|v:${basis}|s:${others}`;
+}
+```
+
+Für eine Produkt-Aufgabe sind `siblings` die aktuellen Produktnamen (`products` im Handler). Die Region-Aufgabe trägt die Regionsnamen schon in `task.label`. Der Umhänger liest nur `products` (`:450–459`).
+
+### N5 — `tsc` — kein neuer Fehler
+
+`npm run check` mit denselben `env -u`-Variablen:
+
+| Stand | Exit | `error TS` | Dateien |
+| --- | --- | --- | --- |
+| main `7aaa13ce` | 2 | 76 | dieselben 9 |
+| Head `a69872b7` | 2 | 76 | dieselben 9 |
+
+Die Dateimenge ist gleich: `server/analyze-helpers.ts` 23, `client/src/pages/Compare.tsx` 18, `client/src/components/sections/Section9.tsx` 13, `server/analyze-route.ts` 12, `Section3.tsx` 5, `server/researcher.ts` 2, `Section8.tsx` 1, `server/buffett-ratio.ts` 1, `shared/bias-fixes.ts` 1.
+
+Importe der neuen Module (`segment-gap-route`, `SegmentGapPanel`, `shared/segment-gap`, `withOpenRouterHttpBudget`): `server/routes.ts`, `server/segment-gap-route.ts`, `server/llm-openrouter.ts`, `Section2.tsx`, `SegmentGapPanel.tsx`, `script/test-segment-n36.ts`. Keine dieser Dateien steht in der Fehlerliste, auf keinem der beiden Stände. `Section2.tsx` importiert außerdem `shared/segment-children.ts` und hat 0 `tsc`-Fehler.
+
+### N6 — Stichprobe der Zuordnung — 3 Ticker, 0 Umhängungen
+
+Festgelegt vor dem Lauf, nur Dateien im Baum von `a69872b7`. Keine neuen API-Werte.
+
+| # | Ticker | Sektor aus der Datei | Datei |
+| --- | --- | --- | --- |
+| 1 | HPE | Technology / Computer Hardware | `script/fixtures/hpe-networking-children-n23.json` |
+| 2 | MSFT | Technology / Software - Infrastructure | `script/fixtures/msft-dynamics-children-n25.json` |
+| 3 | TSLA | Consumer Cyclical / Auto Manufacturers | `script/preview-tsla-segment-gaps.json` |
+
+Weitere Analyze-Snapshots ohne Kindzeilen, deshalb nicht auswertbar und nicht aufgefüllt: `SAP.DE` und `VOW3.DE` in `script/fixtures/analyze-tam-no-sector-2026-10-25.json` (`revenueSegments` leer), `VWAGY`/`SAP`/`MSFT`-Rohfelder in `script/fixtures/prod-analyze-dcf-2026-10-25.json` (keine Segmentliste), `SHEL.L`, `analysis-VOW3.DE-negfcf.json` (leere `revenueSegments`), `analysis-SPY.json`, `analysis-MSFT.json` (Score-Fixture ohne Kindliste). Kursdateien (`AAPL`, `BMW.DE`, `ASML.AS`, `MC.PA`, `NESN.SW`, `7203.T`, `VOD.L`) haben keine Segmentkinder. Auswertbar sind 3 Ticker, nicht etwa 20.
+
+Lauf über `reviewSegmentGaps` mit den Kindzeilen und Produktnamen aus diesen Dateien. `placeBundledSoftware` greift nur bei gesetztem `bundledWith` und `kind: device_software`. Keine der drei Dateien trägt diese Felder. Ergebnis: 0 umgehängte Zeilen, davon 0 falsche.
+
+| Ticker | Eingang | Ausgang | Eltern danach |
+| --- | --- | --- | --- |
+| HPE | 3 | 3 | alle bleiben `Networking` (`Arista Networking`, `Networking Switches and Routers`, `Networking Security Solutions`) |
+| MSFT | 2 | 0 | keine Umhängung. `Dynamics products and cloud services` ist nicht in der Segmentliste (`Dynamics` ist ein anderer Name). `reviewSegmentGaps` verwirft die Zeilen als `parent_not_listed` (`:617–619`) |
+| TSLA | 14 | 14 | `Regulatory Credits` bleibt `Automotive`. `Supercharging and Charging Services`, `Maintenance and Repair Services`, `Insurance Services` bleiben `Services and Other`. `Software and Connected Services` und `Software and Digital Services` bleiben `Automotive`. Kein Elternwechsel |
+
+### Nachprüfungs-Verdikt
+
+P2 N1, P3 N4. Kein P1. N2, N3, N5 ohne Befund. N6: drei echte Ticker mit Kindzeilen, null Umhängungen, null falsche Zeilen. Der minimale Fix für N1 ist die eine Bedingung in `shared/segment-children.ts:315`. Der minimale Fix für N4 ist die Geschwisterliste in `parentCacheKey`. Beides ist hier nicht eingebaut.
