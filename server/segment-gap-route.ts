@@ -46,7 +46,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p12";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p13";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -226,8 +226,8 @@ export function segmentGapPrompt(input: {
     "shareOfParentPct ist eine Zahl nur zusammen mit source. source nennt die Firma, den Dokumenttyp und das Jahr. Fehlt eines davon, sind shareOfParentPct und revenue null.",
     "revenue ist der Umsatz des Unterpostens in USD und nur, wenn dieselbe source die Zahl nennt, sonst null. currency ist USD. Nie 0.",
     "basis nennt die Lücke und darf nicht leer sein. Die Quellenangabe steht in source, nicht als Ersatz für basis.",
-    "naReason sagt, was für den Anteil fehlt, ohne ein Dokument zu erfinden. Ein Dokumentname gehört nur in source und nur mit Firma und Jahr.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr","naReason":"was fehlt, ohne Dokumentname"}]}.`,
+    "naReason ist genau einer dieser Codes, sonst leer: not_disclosed_separately, bundled_in_parent, only_qualitative_mention, no_revenue_figure. Kein Freitext.",
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr","naReason":"not_disclosed_separately"}]}.`,
   ].filter((line) => line.length > 0).join("\n");
 }
 
@@ -257,27 +257,28 @@ function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
   merged.push(item);
 }
 
-/** Dieselbe Dokumentprüfung wie eine Quelle. Jahr oder Dokument ohne bestandene Quelle wird nicht angezeigt. */
-const DOC_MENTION = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i;
-const YEAR_MENTION = /\b(?:FY\s*)?(?:19|20)\d{2}\b/i;
+const GAP_REASON_CODE = {
+  not_disclosed_separately: (name: string, _parent: string) => `n/a — Firma weist ${name} nicht separat aus`,
+  bundled_in_parent: (name: string, parent: string) => `n/a — ${name} ist in ${parent} gebündelt; Firma weist es nicht separat aus`,
+  only_qualitative_mention: (name: string, parent: string) => `n/a — ${name} wird bei ${parent} nur qualitativ genannt; Firma weist es nicht separat aus`,
+  no_revenue_figure: (name: string, parent: string) => `n/a — für ${name} unter ${parent} fehlt eine Umsatzzahl`,
+} as const;
 
-function uncheckedCitation(text: string, companyName: string): boolean {
-  if (concreteSource(text, companyName)) return false;
-  return DOC_MENTION.test(text) || YEAR_MENTION.test(text);
-}
-
-function specificGapNote(reason: string, name: string, companyName: string): string | null {
+function specificGapNote(reason: string, name: string, parent: string, companyName: string): string {
   const text = reason.replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  if (uncheckedCitation(text, companyName)) return `n/a — Firma weist ${name} nicht separat aus`;
-  const body = text.replace(/^n\/a\s*—?\s*/i, "").trim();
-  return body ? `n/a — ${body}` : null;
+  if (text in GAP_REASON_CODE) return GAP_REASON_CODE[text as keyof typeof GAP_REASON_CODE](name, parent);
+  if (text && concreteSource(text, companyName)) return `n/a — ${text}`;
+  return `n/a — Firma weist ${name} nicht separat aus`;
 }
 
 function visibleBasis(basis: string, companyName: string): string {
   const text = basis.replace(/\s+/g, " ").trim();
-  if (!text || concreteSource(text, companyName)) return text;
-  return text.split(" · ").map((part) => part.trim()).filter((part) => part && !uncheckedCitation(part, companyName)).join(" · ");
+  if (!text) return "";
+  return text.split(" · ").map((part) => part.trim()).filter((part) => {
+    if (!part) return false;
+    if (part.startsWith("Formel:")) return true;
+    return concreteSource(part, companyName);
+  }).join(" · ");
 }
 
 function sameShownParent(left: string, right: string): boolean {
@@ -567,9 +568,9 @@ function toGapItem(
     share = child.shareOfParentPct;
     shareOrigin = "estimate";
   } else if (!sourced) {
-    shareNote = specificGapNote(naReason, child.name, companyName) ?? "n/a — Schätzung ohne Quelle";
+    shareNote = specificGapNote(naReason, child.name, parent, companyName);
   } else {
-    shareNote = specificGapNote(naReason, child.name, companyName) ?? "n/a — Anteil nicht belegbar";
+    shareNote = specificGapNote(naReason, child.name, parent, companyName);
   }
   return {
     parent,
@@ -738,7 +739,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         if (row.revenue != null) order.set(fold(row.name), row.revenue);
       }
       let tasks = gapTasks(products, regions, usd.revenues, order);
-      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Pflicht je Hardware-Eltern: Software-, Abo- oder Freischalt-Umsatz für ein Gerät dieses Segments, den die Firma dort verbucht, steht unter diesem Eltern. Ein Service-Eltern zieht diesen Umsatz nicht an sich. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. naReason nennt, was fehlt, ohne ein Dokument zu erfinden. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Pflicht je Hardware-Eltern: Software-, Abo- oder Freischalt-Umsatz für ein Gerät dieses Segments, den die Firma dort verbucht, steht unter diesem Eltern. Ein Service-Eltern zieht diesen Umsatz nicht an sich. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. naReason ist genau einer der Codes not_disclosed_separately, bundled_in_parent, only_qualitative_mention, no_revenue_figure, sonst leer. Nie 0. Das Label ist KI-Schätzung, kein Override.";
       const run = deps.llm ?? callLLMJson;
       const reply = (
         merged: SegmentGapItem[],

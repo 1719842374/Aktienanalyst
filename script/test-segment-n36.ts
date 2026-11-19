@@ -531,7 +531,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p12")
+    && keyA.includes("n36-gap-p13")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1436,19 +1436,19 @@ try {
       && servicePrompt.includes("Automotive")
       && fsd?.parent === "Services & Other"
       && fsd.shareOfParentPct == null
-      && fsd.shareNote === "n/a — Schätzung ohne Quelle"
-      && /Schätzung ohne Quelle: Software-Abo/.test(tsla.json.reason ?? "")
+      && fsd.shareNote === "n/a — Firma weist Software-Abo nicht separat aus"
+      && /Firma weist Software-Abo nicht separat aus/.test(tsla.json.reason ?? "")
       && robotaxi?.shareOfParentPct == null
-      && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
+      && /Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p12"
+      && tsla.json.promptVersion === "n36-gap-p13"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p12",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p13",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -1755,8 +1755,8 @@ try {
   gap(
     "sourced-estimate-kept-unsourced-is-na",
     trial?.shareOfParentPct == null
-      && trial?.shareNote === "n/a — Schätzung ohne Quelle"
-      && /Schätzung ohne Quelle: Versuch/.test(shown.json.reason ?? ""),
+      && trial?.shareNote === "n/a — Firma weist Versuch nicht separat aus"
+      && /Firma weist Versuch nicht separat aus/.test(shown.json.reason ?? ""),
     `trial=${JSON.stringify(trial)} reason=${shown.json.reason ?? ""}`,
   );
 } finally {
@@ -1828,7 +1828,7 @@ try {
   gap(
     "na-reason-is-specific-and-document-claim-is-checked",
     line?.shareOfParentPct == null
-      && line?.shareNote === "n/a — die Firma weist die Zeile nicht separat aus"
+      && line?.shareNote === "n/a — Firma weist Zeile nicht separat aus"
       && documentLine?.shareOfParentPct == null
       && documentLine?.shareNote === "n/a — Firma weist Dokumentzeile nicht separat aus"
       && !/10-K/.test(documentLine?.shareNote ?? "")
@@ -1902,11 +1902,65 @@ try {
       && hint?.shareNote === "n/a — Firma weist Hinweis nicht separat aus"
       && !/FY2025|2025/.test(hint?.shareNote ?? "")
       && !/FY2025|2025/.test(hint?.basis ?? "")
-      && open?.shareNote === "n/a — die Firma schlüsselt die Zeile nicht auf",
+      && open?.shareNote === "n/a — Firma weist Offen nicht separat aus"
+      && !/schlüsselt/.test(open?.shareNote ?? "")
+      && !/schlüsselt/.test(open?.basis ?? ""),
     `hint=${JSON.stringify(hint)} open=${JSON.stringify(open)}`,
   );
 } finally {
   twinServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const codeApp = express();
+codeApp.use(express.json());
+registerSegmentGapRoute(codeApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Antrieb: 80 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async () => ({
+    modelUsed: "mock-model",
+    data: {
+      companyEcho: "Nordlichtwerke",
+      industryEcho: "Industrial Machinery",
+      children: [
+        ...["Investor Day", "Earnings Call Q3", "Q3", "3. Quartal 2024", "2024", "Annual Report"].map((naReason) => (
+          citedChild("Antrieb", naReason, "Nordlichtwerke", { source: null, shareOfParentPct: 3, basis: naReason, naReason })
+        )),
+        citedChild("Antrieb", "Bündel", "Nordlichtwerke", { source: null, shareOfParentPct: 3, basis: "Lücke", naReason: "bundled_in_parent" }),
+        citedChild("Antrieb", "Belegt", "Nordlichtwerke", { source: null, shareOfParentPct: null, basis: "Lücke", naReason: "Nordlichtwerke Annual Report 2025" }),
+        citedChild("Antrieb", "Schätzung", "Nordlichtwerke", { source: null, shareOfParentPct: null, basis: "Analystenschätzung 2025" }),
+        citedChild("Antrieb", "SchätzungOhneJahr", "Nordlichtwerke", { source: null, shareOfParentPct: null, basis: "Analystenschätzung" }),
+      ],
+    },
+  }),
+});
+const codeServer = codeApp.listen(0);
+const codePort = (codeServer.address() as AddressInfo).port;
+try {
+  const coded = await postGap(codePort, "EXZ", { products: [{ name: "Antrieb", revenue: 80 }] });
+  const free = ["Investor Day", "Earnings Call Q3", "Q3", "3. Quartal 2024", "2024", "Annual Report"].map((name) => (
+    coded.json.items?.find((item) => item.name === name)
+  ));
+  const bundled = coded.json.items?.find((item) => item.name === "Bündel");
+  const verified = coded.json.items?.find((item) => item.name === "Belegt");
+  const estimate = coded.json.items?.find((item) => item.name === "Schätzung");
+  const estimatePlain = coded.json.items?.find((item) => item.name === "SchätzungOhneJahr");
+  const raw = JSON.stringify(coded.json);
+  gap(
+    "na-reason-code-not-free-text",
+    coded.status === 200
+      && free.every((item) => item?.shareNote === `n/a — Firma weist ${item?.name} nicht separat aus`)
+      && bundled?.shareNote === "n/a — Bündel ist in Antrieb gebündelt; Firma weist es nicht separat aus"
+      && verified?.shareNote === "n/a — Nordlichtwerke Annual Report 2025"
+      && !/Analystenschätzung/.test(estimate?.basis ?? "")
+      && !/Analystenschätzung/.test(estimatePlain?.basis ?? "")
+      && !/Analystenschätzung/.test(raw),
+    `free=${JSON.stringify(free)} bundled=${JSON.stringify(bundled)} verified=${JSON.stringify(verified)} estimate=${JSON.stringify(estimate)} plain=${JSON.stringify(estimatePlain)}`,
+  );
+} finally {
+  codeServer.close();
 }
 
 gap(
