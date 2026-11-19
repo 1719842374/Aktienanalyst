@@ -9,6 +9,7 @@ import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { currencySymbol, formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
+import { medianPeerRevenueYoY, PEER_REVENUE_MEDIAN_LABEL } from "../../../../shared/peer-revenue-median";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
 import PeerComparison, { PeerOverrideResetNotice } from "./PeerComparison";
@@ -37,11 +38,19 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
   // Revenue growth vs sector (TAM-CAGR als Branchenproxy).
-  // tamCAGR == null: Balken n/a mit Grund, kein erfundener 5-%-Wert. 0 bleibt 0.
+  // tamCAGR == null: Median der Peer-revenueGrowth (FMP, Prozent), sonst n/a mit Grund.
+  // Ein vorhandener tamCAGR, auch 0, bleibt. Kein 5-%-Fallback.
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
   const reportedTamCagr = data.tamAnalysis?.tamCAGR;
-  const sectorKnown = reportedTamCagr != null;
-  const sectorGrowth = sectorKnown ? reportedTamCagr : 0;
+  const tamKnown = reportedTamCagr != null;
+  const attachedMedian = data.peerComparison?.revenueGrowthMedian;
+  const peerMedian = tamKnown
+    ? null
+    : attachedMedian && typeof attachedMedian.value === "number" && Number.isFinite(attachedMedian.value) && attachedMedian.n > 0
+      ? { value: attachedMedian.value, n: attachedMedian.n, label: PEER_REVENUE_MEDIAN_LABEL }
+      : medianPeerRevenueYoY(data.ticker, data.peerComparison?.peers);
+  const sectorKnown = tamKnown || peerMedian != null;
+  const sectorGrowth = tamKnown ? reportedTamCagr : (peerMedian ? peerMedian.value : 0);
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
@@ -303,7 +312,12 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
+                    {isGrowthRow && peerMedian ? (
+                      <>
+                        {(peerMedian.value >= 0 ? '+' : '')}{formatNumber(peerMedian.value, 1)}%
+                        <div className="text-[9px] font-sans font-normal leading-tight" data-testid="revenue-growth-peer-median">{PEER_REVENUE_MEDIAN_LABEL} · n={peerMedian.n}</div>
+                      </>
+                    ) : isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid || (isGrowthRow && !sectorKnown) ? 'text-muted-foreground' : premiumColor}`}>
                     {stockInvalid || (isGrowthRow && !sectorKnown) ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
@@ -329,6 +343,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
           <div className="space-y-2">
             <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color={sectorKnown ? (companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500') : (companyGrowth >= 0 ? 'bg-emerald-500' : 'bg-red-500')} suffix="%" />
             <BarRow label="Branche" value={sectorKnown ? sectorGrowth : null} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color="bg-muted-foreground/50" suffix="%" />
+            {peerMedian && <div className="text-[10px] text-muted-foreground/70" data-testid="revenue-growth-peer-median-bar">{PEER_REVENUE_MEDIAN_LABEL} · n={peerMedian.n}</div>}
             {!sectorKnown && <div className="text-[10px] text-muted-foreground/70 italic" data-testid="revenue-growth-sector-na">kein Sektor/keine TAM-Quelle</div>}
           </div>
         </div>

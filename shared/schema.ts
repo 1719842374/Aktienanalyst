@@ -175,6 +175,12 @@ export interface PeerComparison {
   // EPS history for chart
   epsHistory?: EpsDataPoint[]; // Subject's historical + estimated EPS
   peerAvgEpsHistory?: EpsDataPoint[]; // Peer average EPS (where available)
+  /**
+   * Nur Anzeige in Sektion 9, wenn tamAnalysis.tamCAGR null ist.
+   * Median von peers[].revenueGrowth (FMP revenuePerShare YoY, bereits Prozent).
+   * Fehlt bei älteren Antworten. Nicht score-wirksam.
+   */
+  revenueGrowthMedian?: { value: number; n: number; label: string } | null;
 }
 
 export interface NewsItem {

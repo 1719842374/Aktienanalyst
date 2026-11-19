@@ -1,7 +1,7 @@
 /**
- * Section7 Balken „Revenue Growth vs. Branche“: tamCAGR == null zeigt n/a
- * mit Grund, ein vorhandener tamCAGR (auch 0) bleibt byte-gleich zum Stand
- * vor dem Entfernen von `?? 5`.
+ * Section7 Balken „Revenue Growth vs. Branche“: ohne Peer-Wachstum zeigt
+ * tamCAGR == null n/a mit Grund. Ein vorhandener tamCAGR (auch 0) bleibt
+ * byte-gleich, auch wenn die Fixture Peer-revenueGrowth enthält.
  *
  * Run: npx tsx --tsconfig script/tsconfig.jsx.json script/test-section7-sector-bar.ts
  */
@@ -27,10 +27,10 @@ const check = (name: string, ok: boolean, detail = "") => {
   if (!ok) fail++;
 };
 
-function render(tamCAGR: number | null) {
+function render(tamCAGR: number | null, dropPeers = false) {
   const tam = { ...(base.tamAnalysis ?? {}), tamCAGR, companyGrowth: 2, quality: "weak" };
   delete tam.companyDataMissing;
-  const data = { ...base, dataSource: "fmp", tamAnalysis: tam };
+  const data = { ...base, dataSource: "fmp", tamAnalysis: tam, ...(dropPeers ? { peerComparison: undefined } : {}) };
   return renderToStaticMarkup(
     React.createElement(Router, { ssrPath: "/" },
       React.createElement(QueryClientProvider, { client: new QueryClient() },
@@ -49,7 +49,7 @@ function bars(h: string) {
 
 const eight = render(8);
 const zero = render(0);
-const missing = render(null);
+const missing = render(null, true);
 
 check("tamCAGR 8: Zeile byte-gleich", row(eight) === EIGHT_ROW, row(eight));
 check("tamCAGR 8: Balken byte-gleich", bars(eight) === EIGHT_BARS, bars(eight));

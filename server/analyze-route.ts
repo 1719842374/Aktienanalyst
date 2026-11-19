@@ -87,6 +87,7 @@ import {
 } from "../shared/schema";
 import { clampPorterThreat, porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
 import { assessPeerSet } from "../shared/peer-material";
+import { medianPeerRevenueYoY } from "../shared/peer-revenue-median";
 
 import {
   generateCatalystsAndMatchNews,
@@ -1949,6 +1950,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             epsGrowth5Y: sectorDefaults.sectorEPSGrowth,
             sectorName: effectiveSector,
           },
+          // Nur Anzeige Sektion 9. buildScoringForAnalysis (oben) liest weiter
+          // peers[].revenueGrowth, nicht dieses Feld.
+          revenueGrowthMedian: medianPeerRevenueYoY(upperTicker, (peerComparison as any).peers),
         };
       }
 
