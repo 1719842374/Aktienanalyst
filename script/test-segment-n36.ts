@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p15")
+    && keyA.includes("n36-gap-p16")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p15"
+      && tsla.json.promptVersion === "n36-gap-p16"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p15",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p16",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p15"
+      && posted.json.promptVersion === "n36-gap-p16"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2592,7 +2592,14 @@ registerSegmentGapRoute(msftShapeApp, {
     if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
       return {
         modelUsed: "mock-model",
-        data: { ...echo, children: [citedChild("Support", "Cloud Software", "Nordlichtwerke", { shareOfParentPct: 12 })] },
+        data: {
+          ...echo,
+          children: [
+            citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15 }),
+            citedChild("Support", "Windows Embedded", "Nordlichtwerke", { shareOfParentPct: 8 }),
+            citedChild("Support", "Cloud Software", "Nordlichtwerke", { shareOfParentPct: 12 }),
+          ],
+        },
       };
     }
     if (opts.prompt.includes("nur das Elternsegment \"Intelligent Cloud\"")) {
@@ -2616,17 +2623,65 @@ try {
     ],
   });
   const cloud = posted.json.items?.find((item) => item.name === "Cloud Software");
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  const embedded = posted.json.items?.find((item) => item.name === "Windows Embedded");
   const capacity = posted.json.items?.find((item) => item.name === "Capacity");
+  const productivity = "Productivity and Business Processes";
   gap(
     "msft-like-segments-are-not-reparented",
     posted.status === 200
       && cloud?.parent === "Support"
       && capacity?.parent === "Intelligent Cloud"
-      && !(posted.json.internalReason ?? "").includes("→"),
-    `cloud=${JSON.stringify(cloud)} capacity=${JSON.stringify(capacity)} internal=${posted.json.internalReason ?? ""}`,
+      && device?.parent === "More Personal Computing"
+      && embedded?.parent === "More Personal Computing"
+      && device?.parent !== productivity
+      && embedded?.parent !== productivity
+      && !(posted.json.internalReason ?? "").includes(productivity),
+    `cloud=${JSON.stringify(cloud)} device=${JSON.stringify(device)} embedded=${JSON.stringify(embedded)} capacity=${JSON.stringify(capacity)} internal=${posted.json.internalReason ?? ""}`,
   );
 } finally {
   msftShapeServer.close();
+}
+
+resetSegmentGapCacheForTests();
+const noHostApp = express();
+noHostApp.use(express.json());
+registerSegmentGapRoute(noHostApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Services: 40, Support: 10 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 9 })] },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const noHostServer = noHostApp.listen(0);
+const noHostPort = (noHostServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(noHostPort, "EXH", {
+    products: [
+      { name: "Services", revenue: 40 },
+      { name: "Support", revenue: 10 },
+    ],
+  });
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    "no-hardware-host-means-no-move",
+    posted.status === 200
+      && device?.parent === "Support"
+      && device.shareOfParentPct === 9
+      && !(posted.json.internalReason ?? "").includes("→"),
+    JSON.stringify(device ?? null),
+  );
+} finally {
+  noHostServer.close();
 }
 
 gap(
