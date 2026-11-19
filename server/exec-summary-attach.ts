@@ -3,8 +3,10 @@
  * Keeps analyze-route surgical (import + one call before res.json).
  * Spec: WORK_EXEC_SUMMARY.md
  */
+import { buildFazitSignal, prepareFazitMetrics } from "../client/src/lib/fazit-signal";
 import { safeCompanyDcfWaccPct } from "../shared/valuation-signal";
 import { isMinorUnitListingTicker } from "../shared/listing-units";
+import type { StockAnalysis } from "../shared/schema";
 import { buildExecSummary, type ExecSummary, type ExecSummaryInput } from "./exec-summary";
 
 function finite(n: unknown): n is number {
@@ -111,6 +113,8 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
     lastReportedQuarter: a?.lastReportedQuarter ?? null,
     ma50AboveMA200: typeof status.ma50AboveMA200 === "boolean" ? status.ma50AboveMA200 : null,
     priceAboveMA200: typeof status.priceAboveMA200 === "boolean" ? status.priceAboveMA200 : null,
+    macdAboveZero: typeof status.macdAboveZero === "boolean" ? status.macdAboveZero : null,
+    macdRising: typeof status.macdRising === "boolean" ? status.macdRising : null,
     catalysts: Array.isArray(a?.catalysts)
       ? a.catalysts.map((c: any) => ({
           name: String(c?.name ?? "Katalysator"),
@@ -147,9 +151,27 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
   };
 }
 
+/**
+ * Ampel-Wortlaut für den Lage-Satz. Dieselbe Funktion wie S17/S20.
+ * Schlägt die Rechnung fehl, bleibt der bisherige Neutral-Default. Scores werden nicht geschrieben.
+ */
+export function fazitRatingForLage(analysis: unknown): string | null {
+  if (!analysis || typeof analysis !== "object") return null;
+  try {
+    const data = analysis as StockAnalysis;
+    const metrics = prepareFazitMetrics(data);
+    const rating = buildFazitSignal({ data, ...metrics }).rating;
+    return typeof rating === "string" && rating.trim() ? rating.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Mutates analysis with execSummary field; returns same object for res.json. */
 export function attachExecSummary<T extends Record<string, any>>(analysis: T): T & { execSummary: ExecSummary } {
-  const execSummary = buildExecSummary(buildExecSummaryInputFromAnalysis(analysis));
+  const input: ExecSummaryInput = buildExecSummaryInputFromAnalysis(analysis);
+  const fazitRating = fazitRatingForLage(analysis);
+  const execSummary = buildExecSummary(fazitRating ? { ...input, fazitRating } : input);
   (analysis as any).execSummary = execSummary;
   return analysis as T & { execSummary: ExecSummary };
 }

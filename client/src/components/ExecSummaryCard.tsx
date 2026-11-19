@@ -42,8 +42,6 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
   };
 }) {
   const s = data?.execSummary;
-  // Lage-Satz: DCF wie S6 (Fazit-Quelle), Währung DCF=statementCurrency, Kurs=Listing.
-  const lage = useMemo(() => (data ? execLageFromFazit(data) : null), [data]);
 
   const bias = useMemo(() => {
     try { return buildBiasDecision(data); } catch { return null; }
@@ -58,6 +56,12 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
       return null;
     }
   }, [data, sharedMonteCarlo]);
+
+  // Lage-Satz: dieselbe Ampel wie die Karte, DCF-Zahl wie S6, Wortlaut aus valuationBaseLabel.
+  const lage = useMemo(
+    () => (data ? execLageFromFazit(data, fazit?.rating) : null),
+    [data, fazit],
+  );
 
   const downsideRisks = useMemo(() => {
     const risks = Array.isArray(data?.risks) ? [...data.risks] : [];
