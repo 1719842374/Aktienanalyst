@@ -5,7 +5,7 @@ import { calculateFCFFDCF, buildDefaultDCFParams, selectCatalystBase } from "../
 import { buildBiasDecision, isNegativeCatalyst, sumUpsideGb } from "../../../../shared/bias-fixes";
 import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
 import {
   browserReloadSession,
@@ -55,10 +55,6 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-function sameTicker(a: string, b: string): boolean {
-  return a.trim().toUpperCase() === b.trim().toUpperCase();
-}
-
 export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onReloadAnalysis }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -68,18 +64,6 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onRel
   const [llmError, setLlmError] = useState<string | null>(null);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
-  // Dashboard hält die Sektion beim Tickerwechsel gemountet. applyCatalystFollowUp
-  // verwirft nur den Nachzug in setData; die Tabelle liest diesen State zuerst.
-  const tickerNow = useRef(data.ticker);
-  tickerNow.current = data.ticker;
-  useEffect(() => {
-    setLlmEnrichedCatalysts(null);
-    setLlmDone(false);
-    setLlmSkipped(false);
-    setLlmError(null);
-    setReloadNotice(null);
-    setLlmLoading(false);
-  }, [data.ticker]);
   // S17 „Event hinzufügen“
   const [eventOpen, setEventOpen] = useState(false);
   const [eventMode, setEventMode] = useState<"text" | "structured">("text");
@@ -127,7 +111,6 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onRel
 
   async function triggerKI() {
     const ticker = data.ticker;
-    const current = () => sameTicker(tickerNow.current, ticker);
     setLlmLoading(true);
     setLlmError(null);
     setLlmSkipped(false);
@@ -138,7 +121,6 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onRel
         ticker,
         session: browserReloadSession(),
         onNotice: (notice) => {
-          if (!current()) return;
           if (notice.level === "info") setReloadNotice(notice.text);
           else setLlmError(notice.text);
         },
@@ -157,13 +139,12 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent, onRel
           return onReloadAnalysis();
         },
       });
-      if (!current()) return;
       applyEnrichResult(result);
     } catch (err: unknown) {
       console.warn(`[Section15] KI-Analyse fehlgeschlagen: ${err instanceof Error ? err.message : ""}`);
-      if (current()) setLlmError(thrownEnrichMessage(err));
+      setLlmError(thrownEnrichMessage(err));
     } finally {
-      if (current()) setLlmLoading(false);
+      setLlmLoading(false);
     }
   }
 
