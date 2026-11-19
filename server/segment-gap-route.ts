@@ -519,14 +519,18 @@ function specificGapNote(reason: string, name: string, parent: string, companyNa
   return `n/a — Firma weist ${name} nicht separat aus`;
 }
 
-function visibleBasis(basis: string, companyName: string): string {
+function visibleBasis(basis: string, companyName: string, note = "", citation = ""): string {
   const text = basis.replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  return text.split(" · ").map((part) => part.trim()).filter((part) => {
+  const kept = text.split(" · ").map((part) => part.trim()).filter((part) => {
     if (!part) return false;
     if (part.startsWith("Formel:")) return true;
     return concreteSource(part, companyName);
   }).join(" · ");
+  if (kept) return kept;
+  const head = note.replace(/\s+/g, " ").trim();
+  const source = citation.replace(/\s+/g, " ").trim();
+  if (source && !concreteSource(source, companyName) && head && !head.includes(source)) return `${head} · ${source}`;
+  return head;
 }
 
 function sameShownParent(left: string, right: string): boolean {
@@ -656,8 +660,11 @@ export function reviewSegmentGaps(
       if (known.has(segmentGapKey(child.name))) continue;
       const childCurrency = currencyOnRows(bucket.rows, child.name);
       const parentUsd = parentRevenue.get(fold(parent)) ?? null;
-      const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency, naReasonOnRows(bucket.rows, child.name));
       const raw = bucket.rows.find((row) => row && typeof row === "object" && clip((row as { name?: unknown }).name, 80) === child.name);
+      const rawSource = raw && typeof raw === "object" && typeof (raw as { source?: unknown }).source === "string"
+        ? (raw as { source: string }).source
+        : "";
+      const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency, naReasonOnRows(bucket.rows, child.name), rawSource);
       const bundle = bundleFields(raw);
       item.bundledWith = bundle.bundledWith;
       item.bundledKind = bundle.bundledKind;
@@ -801,6 +808,7 @@ function toGapItem(
   companyName: string,
   childCurrency: string,
   naReason: string,
+  citation = "",
 ): SegmentGapItem {
   const basis = child.basis ?? "";
   const sourced = concreteSource(basis, companyName);
@@ -833,8 +841,8 @@ function toGapItem(
   } else {
     shareNote = specificGapNote(naReason, child.name, parent, companyName);
   }
-  const cleaned = visibleBasis(shownBasis, companyName);
   const fallback = shareNote ?? specificGapNote(naReason, child.name, parent, companyName);
+  const cleaned = visibleBasis(shownBasis, companyName, fallback, citation);
   return {
     parent,
     kind,

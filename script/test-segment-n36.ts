@@ -3380,6 +3380,64 @@ try {
   n6Server.close();
 }
 
+resetSegmentGapCacheForTests();
+const vagueSource = "Tesla shareholder update 2021";
+const vagueApp = express();
+vagueApp.use(express.json());
+registerSegmentGapRoute(vagueApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Automotive: 70, "Services and Other": 10 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (!opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
+      return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+    }
+    return {
+      modelUsed: "mock-model",
+      data: {
+        ...echo,
+        children: [citedChild("Services and Other", "FSD", "Nordlichtwerke", {
+          basis: "steckt im Automotive-Segment",
+          source: vagueSource,
+          shareOfParentPct: 8,
+        })],
+      },
+    };
+  },
+});
+const vagueServer = vagueApp.listen(0);
+const vaguePort = (vagueServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(vaguePort, "EXVQ", {
+    products: [
+      { name: "Automotive", revenue: 70 },
+      { name: "Services and Other", revenue: 10 },
+    ],
+  });
+  const row = posted.json.items?.find((item) => item.name === "FSD");
+  const line = `${row?.shareNote ?? ""} ${row?.basis ?? ""}`;
+  const markup = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
+    parent: "Services and Other",
+    kind: "product",
+    items: posted.json.items ?? [],
+  })).replace(/&amp;/g, "&");
+  const noteAt = line.indexOf("n/a —");
+  const sourceAt = line.indexOf(vagueSource);
+  gap(
+    "Lücken-Zeile mit vager Quelle zeigt die Quelle",
+    posted.status === 200
+      && row?.shareOfParentPct == null
+      && noteAt >= 0
+      && sourceAt > noteAt
+      && markup.includes(vagueSource),
+    JSON.stringify(row ?? null),
+  );
+} finally {
+  vagueServer.close();
+}
+
 if (gaps.length > 0) {
   console.error(`n36 FAIL ${gaps.length}`);
   process.exit(1);
