@@ -12,6 +12,8 @@ export interface SegmentGapItem {
   /** Intern. Das Panel liest die Felder nicht. */
   bundledWith?: string | null;
   bundledKind?: "device_software" | "service" | "other" | null;
+  /** Ausgeschriebene Form einer Abkürzung aus der Modellantwort. */
+  expansion?: string | null;
 }
 
 export interface SegmentGapResult {

@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p21";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p22";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -239,7 +239,8 @@ export function segmentGapPrompt(input: {
     "naReason ist genau einer dieser Codes, sonst leer: not_disclosed_separately, bundled_in_parent, only_qualitative_mention, no_revenue_figure. Kein Freitext.",
     "bundledWith ist das berichtete Hardware-Segment, mit dem diese Position verkauft wird, sonst null.",
     "kind ist genau device_software, service oder other.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr","naReason":"not_disclosed_separately","bundledWith":null,"kind":"other"}]}.`,
+    "expansion ist die ausgeschriebene Form einer Abkürzung, sonst null.",
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr","naReason":"not_disclosed_separately","bundledWith":null,"kind":"other","expansion":null}]}.`,
   ].filter((line) => line.length > 0).join("\n");
 }
 
@@ -306,9 +307,17 @@ function softwareLabelBlocked(text: string): boolean {
     || /cloud|saas|plattform|platform|as a service|abo|subscription|abonnement/.test(segmentGapKey(text));
 }
 
-function deviceBoundSoftware(name: string): boolean {
-  if (softwareLabelBlocked(name)) return false;
-  return /software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(name);
+function positiveSoftware(text: string): boolean {
+  const key = segmentGapKey(text);
+  if (!key) return false;
+  if (/software|firmware|embedded|betriebssystem|autonomie|autonomy|fahrassistenz|connectivity|freischalt/.test(key)) return true;
+  if (key.includes("operating system") || key.includes("driver assistance")) return true;
+  return key.split(" ").filter((token) => token.length > 0).includes("os");
+}
+
+function deviceBoundSoftware(name: string, expansion = ""): boolean {
+  if (softwareLabelBlocked(name) || (expansion && softwareLabelBlocked(expansion))) return false;
+  return positiveSoftware(`${name} ${expansion}`.trim());
 }
 
 function reportedSegment(value: string | null | undefined, names: readonly string[]): string | null {
@@ -320,17 +329,20 @@ function reportedSegment(value: string | null | undefined, names: readonly strin
 
 function nameBlocksBundle(name: string): boolean {
   if (softwareLabelBlocked(name)) return true;
+  const skip = new Set(["software", "service", "services"]);
   const tokens = hardwareKey(name).split(" ").filter((token) => token.length > 0);
-  return tokens.some((token) => HARDWARE_BLOCK_TOKENS.has(token));
+  return tokens.some((token) => HARDWARE_BLOCK_TOKENS.has(token) && !skip.has(token));
 }
 
-function bundleFields(row: unknown): { bundledWith: string | null; bundledKind: SegmentGapItem["bundledKind"] } {
-  if (!row || typeof row !== "object") return { bundledWith: null, bundledKind: null };
-  const rec = row as { bundledWith?: unknown; kind?: unknown };
+function bundleFields(row: unknown): { bundledWith: string | null; bundledKind: SegmentGapItem["bundledKind"]; expansion: string | null } {
+  if (!row || typeof row !== "object") return { bundledWith: null, bundledKind: null, expansion: null };
+  const rec = row as { bundledWith?: unknown; kind?: unknown; expansion?: unknown };
   const raw = typeof rec.bundledWith === "string" ? rec.bundledWith.trim() : "";
   const bundledWith = raw && raw.toLowerCase() !== "null" ? raw : null;
   const bundledKind = rec.kind === "device_software" || rec.kind === "service" || rec.kind === "other" ? rec.kind : null;
-  return { bundledWith, bundledKind };
+  const spelled = typeof rec.expansion === "string" ? rec.expansion.trim() : "";
+  const expansion = spelled && spelled.toLowerCase() !== "null" ? spelled : null;
+  return { bundledWith, bundledKind, expansion };
 }
 
 function hardwareKey(name: string): string {
@@ -438,52 +450,38 @@ function hardwareHostName(name: string): boolean {
 function placeBundledSoftware(
   items: SegmentGapItem[],
   products: readonly string[],
-  revenues: ReadonlyMap<string, number>,
+  _revenues: ReadonlyMap<string, number>,
 ): string[] {
-  const hardware = products.filter((name) => hardwareHostName(name));
-  if (hardware.length === 0) return [];
-  let host = hardware[0] ?? "";
-  let best = revenues.get(fold(host)) ?? Number.NEGATIVE_INFINITY;
-  for (const name of hardware) {
-    const value = revenues.get(fold(name));
-    if (value != null && value > best) {
-      best = value;
-      host = name;
-    }
-  }
-  if (!host) return [];
   const notes: string[] = [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item || item.kind !== "product" || !serviceParentName(item.parent)) continue;
     const named = reportedSegment(item.bundledWith, products);
-    const byBundle = item.bundledKind === "device_software"
+    const bound = item.bundledKind === "device_software"
       && named != null
       && hardwareHostName(named)
+      && deviceBoundSoftware(item.name, item.expansion ?? "")
       && !nameBlocksBundle(item.name);
-    const byName = deviceBoundSoftware(item.name);
-    if (!byBundle && !byName) continue;
-    const target = byBundle && named ? named : host;
-    if (segmentGapKey(item.parent) === segmentGapKey(target)) continue;
+    if (!bound || !named) continue;
+    if (segmentGapKey(item.parent) === segmentGapKey(named)) continue;
     const clash = items.some((other) => (
       other !== item
       && other.kind === "product"
-      && segmentGapKey(other.parent) === segmentGapKey(target)
+      && segmentGapKey(other.parent) === segmentGapKey(named)
       && segmentGapKey(other.name) === segmentGapKey(item.name)
     ));
     if (clash) continue;
     const previous = item.parent;
     items[i] = {
       ...item,
-      parent: target,
+      parent: named,
       shareOfParentPct: null,
       growthPct: null,
       shareOrigin: null,
-      shareNote: byBundle
-        ? `n/a — ${item.name} ist in ${target} gebündelt; Firma weist es nicht separat aus`
-        : `n/a — Anteil an ${target} nicht ausgewiesen`,
+      basis: `n/a — ${item.name} ist in ${named} gebündelt; Firma weist es nicht separat aus`,
+      shareNote: `n/a — ${item.name} ist in ${named} gebündelt; Firma weist es nicht separat aus`,
     };
-    notes.push(`${item.name}: ${previous} → ${target}`);
+    notes.push(`${item.name}: ${previous} → ${named}`);
   }
   return notes;
 }
@@ -663,6 +661,7 @@ export function reviewSegmentGaps(
       const bundle = bundleFields(raw);
       item.bundledWith = bundle.bundledWith;
       item.bundledKind = bundle.bundledKind;
+      item.expansion = bundle.expansion;
       if (
         child.revenue != null && child.revenue > 0
         && parentUsd != null
@@ -1003,7 +1002,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         if (row.revenue != null) order.set(fold(row.name), row.revenue);
       }
       let tasks = gapTasks(products, regions, usd.revenues, order);
-      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Pflicht je Hardware-Eltern: Software-, Abo- oder Freischalt-Umsatz für ein Gerät dieses Segments, den die Firma dort verbucht, steht unter diesem Eltern. Ein Service-Eltern zieht diesen Umsatz nicht an sich. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. naReason ist genau einer der Codes not_disclosed_separately, bundled_in_parent, only_qualitative_mention, no_revenue_figure, sonst leer. bundledWith ist das berichtete Hardware-Segment, mit dem die Position verkauft wird, sonst null. kind ist device_software, service oder other. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Pflicht je Hardware-Eltern: Software-, Abo- oder Freischalt-Umsatz für ein Gerät dieses Segments, den die Firma dort verbucht, steht unter diesem Eltern. Ein Service-Eltern zieht diesen Umsatz nicht an sich. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. naReason ist genau einer der Codes not_disclosed_separately, bundled_in_parent, only_qualitative_mention, no_revenue_figure, sonst leer. bundledWith ist das berichtete Hardware-Segment, mit dem die Position verkauft wird, sonst null. kind ist device_software, service oder other. expansion ist die ausgeschriebene Form einer Abkürzung, sonst null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
       const run = deps.llm ?? callLLMJson;
       const reply = (
         merged: SegmentGapItem[],

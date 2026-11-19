@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p21")
+    && keyA.includes("n36-gap-p22")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p21"
+      && tsla.json.promptVersion === "n36-gap-p22"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p21",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p22",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2087,7 +2087,7 @@ function tsla1Model(prompt: string) {
       children: [
         ...tsla1Vehicles.map((name) => tsla1Child("Automotive", name)),
         tsla1Child("Services & Other", "Supercharging"),
-        tsla1Child("Services & Other", "Software & Digital Services"),
+        tsla1Child("Services & Other", "Software & Digital Services", { kind: "device_software", bundledWith: "Automotive" }),
         tsla1Child("Services & Other", "Service & Maintenance"),
         tsla1Child("Services & Other", "Insurance Products"),
       ],
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p21"
+      && posted.json.promptVersion === "n36-gap-p22"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2259,7 +2259,7 @@ registerSegmentGapRoute(conceptApp, {
           ...echo,
           children: [
             citedChild("Services", "Cloud", "Nordlichtwerke"),
-            citedChild("Services", "Software", "Nordlichtwerke"),
+            citedChild("Services", "Software", "Nordlichtwerke", { kind: "device_software", bundledWith: "Geräte" }),
           ],
         },
       };
@@ -2363,7 +2363,9 @@ registerSegmentGapRoute(liveShapeApp, {
         modelUsed: "mock-model",
         data: {
           ...echo,
-          children: ["Supercharging", "Software & Digital Services", "Service & Maintenance", "Insurance Products"].map((name) => row("Services & Other", name)),
+          children: ["Supercharging", "Service & Maintenance", "Insurance Products"].map((name) => row("Services & Other", name)).concat([
+            { ...row("Services & Other", "Software & Digital Services"), kind: "device_software", bundledWith: "Automotive" },
+          ]),
         },
       };
     }
@@ -2471,7 +2473,7 @@ registerSegmentGapRoute(shareMoveApp, {
         modelUsed: "mock-model",
         data: {
           ...echo,
-          children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15, growthPct: 4 })],
+          children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15, growthPct: 4, kind: "device_software", bundledWith: "Antriebe" })],
         },
       };
     }
@@ -2496,7 +2498,7 @@ try {
   });
   const moved = first.json.items?.find((item) => item.name === "Device Software");
   const again = second.json.items?.find((item) => item.name === "Device Software");
-  const sentence = "n/a — Anteil an Antriebe nicht ausgewiesen";
+  const sentence = "n/a — Device Software ist in Antriebe gebündelt; Firma weist es nicht separat aus";
   gap(
     "reparent-clears-old-share-and-keeps-cache",
     first.status === 200
@@ -2595,8 +2597,8 @@ registerSegmentGapRoute(msftShapeApp, {
         data: {
           ...echo,
           children: [
-            citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15 }),
-            citedChild("Support", "Windows Embedded", "Nordlichtwerke", { shareOfParentPct: 8 }),
+            citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 15, kind: "device_software", bundledWith: "More Personal Computing" }),
+            citedChild("Support", "Windows Embedded", "Nordlichtwerke", { shareOfParentPct: 8, kind: "device_software", bundledWith: "More Personal Computing" }),
             citedChild("Support", "Cloud Software", "Nordlichtwerke", { shareOfParentPct: 12 }),
           ],
         },
@@ -2687,10 +2689,12 @@ try {
 async function postSupportSoftware(
   ticker: string,
   parents: { name: string; revenue: number }[],
+  bundledWith?: string,
 ): Promise<{ status: number; json: { items?: { name: string; parent: string; shareOfParentPct: number | null }[]; internalReason?: string | null } }> {
   resetSegmentGapCacheForTests();
   const data: Record<string, number> = {};
   for (const parent of parents) data[parent.name] = parent.revenue;
+  const named = bundledWith ?? [...parents].sort((left, right) => right.revenue - left.revenue).find((parent) => parent.name !== "Support")?.name ?? null;
   const app = express();
   app.use(express.json());
   registerSegmentGapRoute(app, {
@@ -2703,7 +2707,14 @@ async function postSupportSoftware(
       if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
         return {
           modelUsed: "mock-model",
-          data: { ...echo, children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 9 })] },
+          data: {
+            ...echo,
+            children: [citedChild("Support", "Device Software", "Nordlichtwerke", {
+              shareOfParentPct: 9,
+              kind: "device_software",
+              bundledWith: named,
+            })],
+          },
         };
       }
       return { modelUsed: "mock-model", data: { ...echo, children: [] } };
@@ -2738,7 +2749,7 @@ for (let index = 0; index < blockedHosts.length; index += 1) {
   const device = posted.json.items?.find((item) => item.name === "Device Software");
   gap(
     `blocked-name-is-not-hardware-host-${index}`,
-    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    posted.status === 200 && device?.parent === "Support" && device.parent !== host,
     `${host} -> ${JSON.stringify(device ?? null)}`,
   );
 }
@@ -2773,7 +2784,7 @@ const tied = await postSupportSoftware("EXR", [
   { name: "PCs", revenue: 20 },
   { name: "Automotive", revenue: 50 },
   { name: "Support", revenue: 10 },
-]);
+], "Automotive");
 const tiedDevice = tied.json.items?.find((item) => item.name === "Device Software");
 gap(
   "positive-hosts-break-ties-by-revenue",
@@ -2819,7 +2830,7 @@ for (let index = 0; index < blockedBesideDevice.length; index += 1) {
   const device = posted.json.items?.find((item) => item.name === "Device Software");
   gap(
     `blocked-token-vetoes-device-token-${index}`,
-    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    posted.status === 200 && device?.parent === "Support" && device.parent !== host,
     `${host} -> ${JSON.stringify(device ?? null)}`,
   );
 }
@@ -2828,7 +2839,7 @@ const devicesBeatServices = await postSupportSoftware("EXDS", [
   { name: "Hardware Services", revenue: 80 },
   { name: "Devices", revenue: 50 },
   { name: "Support", revenue: 10 },
-]);
+], "Devices");
 const devicesBeat = devicesBeatServices.json.items?.find((item) => item.name === "Device Software");
 gap(
   "devices-beats-hardware-services",
@@ -2867,7 +2878,7 @@ const salesBeforeLease = await postSupportSoftware("EXSL", [
   { name: "Automotive Leasing", revenue: 80 },
   { name: "Automotive Sales", revenue: 40 },
   { name: "Support", revenue: 10 },
-]);
+], "Automotive Sales");
 const salesDevice = salesBeforeLease.json.items?.find((item) => item.name === "Device Software");
 gap(
   "automotive-sales-before-automotive-leasing",
@@ -2890,6 +2901,7 @@ const bundleNames = [
   "Supercharging",
   "Maintenance",
   "Parts",
+  "Used Vehicle Sales",
 ];
 const blockedBundleNames = new Set(["Insurance", "Financing", "Regulatory Credits"]);
 function bundleChild(
@@ -2941,6 +2953,7 @@ registerSegmentGapRoute(bundleApp, {
             source: "Nordlichtwerke Annual Report 2025",
             bundledWith: "Automotive Sales",
             kind: "device_software",
+            expansion: "Autonomie-Software",
           },
           ...bundleNames.map((name) => bundleChild(name, { kind: "service" })),
           ...bundleNames.map((name) => bundleChild(`${name} Marked`, { kind: "device_software" })),
@@ -2996,8 +3009,8 @@ try {
     markedStay.map((item) => `${item?.name}:${item?.parent ?? "fehlt"}`).join(", "),
   );
   gap(
-    "open-name-follows-device-software-kind",
-    posted.status === 200 && markedMove.every((item) => item?.parent === "Automotive Sales"),
+    "open-name-stays-without-software-pattern",
+    posted.status === 200 && markedMove.every((item) => item?.parent === "Services and Other"),
     markedMove.map((item) => `${item?.name}:${item?.parent ?? "fehlt"}`).join(", "),
   );
   const unlisted = posted.json.items?.find((item) => item.name === "Unlisted Bundle");
@@ -3061,7 +3074,7 @@ for (let index = 0; index < headBlocked.length; index += 1) {
   const device = posted.json.items?.find((item) => item.name === "Device Software");
   gap(
     `head-word-is-not-hardware-host-${index}`,
-    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    posted.status === 200 && device?.parent === "Support" && device.parent !== host,
     `${host} -> ${JSON.stringify(device ?? null)}`,
   );
 }
@@ -3070,7 +3083,7 @@ const devicesOverServices = await postSupportSoftware("EXD5", [
   { name: "Hardware Services", revenue: 80 },
   { name: "Devices", revenue: 50 },
   { name: "Support", revenue: 10 },
-]);
+], "Devices");
 const devicesOver = devicesOverServices.json.items?.find((item) => item.name === "Device Software");
 gap(
   "devices-50-beats-hardware-services-80",
@@ -3082,7 +3095,7 @@ const devicesOverConsoles = await postSupportSoftware("EXD3", [
   { name: "Gaming Consoles", revenue: 30 },
   { name: "Devices", revenue: 50 },
   { name: "Support", revenue: 10 },
-]);
+], "Devices");
 const consoleRank = devicesOverConsoles.json.items?.find((item) => item.name === "Device Software");
 gap(
   "devices-50-beats-gaming-consoles-30",
@@ -3094,7 +3107,7 @@ const tiedHeads = await postSupportSoftware("EXD4", [
   { name: "Devices", revenue: 40 },
   { name: "Gaming Consoles", revenue: 40 },
   { name: "Support", revenue: 10 },
-]);
+], "Devices");
 const tiedHead = tiedHeads.json.items?.find((item) => item.name === "Device Software");
 gap(
   "equal-revenue-keeps-first-hardware-host",
@@ -3113,7 +3126,7 @@ for (let index = 0; index < borderlineHosts.length; index += 1) {
   const device = posted.json.items?.find((item) => item.name === "Device Software");
   gap(
     `borderline-name-is-not-hardware-host-${index}`,
-    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    posted.status === 200 && device?.parent === "Support" && device.parent !== host,
     `${host} -> ${JSON.stringify(device ?? null)}`,
   );
 }
