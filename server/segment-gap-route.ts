@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p23";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p24";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -519,7 +519,7 @@ function specificGapNote(reason: string, name: string, parent: string, companyNa
   return `n/a — Firma weist ${name} nicht separat aus`;
 }
 
-function visibleBasis(basis: string, companyName: string, note = "", citation = ""): string {
+function visibleBasis(basis: string, companyName: string, citation = ""): string {
   const text = basis.replace(/\s+/g, " ").trim();
   const kept = text.split(" · ").map((part) => part.trim()).filter((part) => {
     if (!part) return false;
@@ -527,10 +527,9 @@ function visibleBasis(basis: string, companyName: string, note = "", citation = 
     return concreteSource(part, companyName);
   }).join(" · ");
   if (kept) return kept;
-  const head = note.replace(/\s+/g, " ").trim();
   const source = citation.replace(/\s+/g, " ").trim();
-  if (source && !concreteSource(source, companyName) && head && !head.includes(source)) return `${head} · ${source}`;
-  return head;
+  if (source && !concreteSource(source, companyName)) return source;
+  return "";
 }
 
 function sameShownParent(left: string, right: string): boolean {
@@ -842,7 +841,7 @@ function toGapItem(
     shareNote = specificGapNote(naReason, child.name, parent, companyName);
   }
   const fallback = shareNote ?? specificGapNote(naReason, child.name, parent, companyName);
-  const cleaned = visibleBasis(shownBasis, companyName, fallback, citation);
+  const cleaned = visibleBasis(shownBasis, companyName, citation);
   return {
     parent,
     kind,

@@ -533,7 +533,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p23")
+    && keyA.includes("n36-gap-p24")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1448,14 +1448,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p23"
+      && tsla.json.promptVersion === "n36-gap-p24"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p23",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p24",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2161,7 +2161,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p23"
+      && posted.json.promptVersion === "n36-gap-p24"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -3398,11 +3398,20 @@ registerSegmentGapRoute(vagueApp, {
       modelUsed: "mock-model",
       data: {
         ...echo,
-        children: [citedChild("Services and Other", "FSD", "Nordlichtwerke", {
-          basis: "steckt im Automotive-Segment",
-          source: vagueSource,
-          shareOfParentPct: 8,
-        })],
+        children: [
+          citedChild("Services and Other", "FSD", "Nordlichtwerke", {
+            basis: "steckt im Automotive-Segment",
+            source: vagueSource,
+            shareOfParentPct: 8,
+            growthPct: 3,
+          }),
+          citedChild("Services and Other", "Charging", "Nordlichtwerke", {
+            basis: "liegt beim Service",
+            source: vagueSource,
+            shareOfParentPct: 5,
+            growthPct: 2,
+          }),
+        ],
       },
     };
   },
@@ -3417,22 +3426,32 @@ try {
     ],
   });
   const row = posted.json.items?.find((item) => item.name === "FSD");
-  const line = `${row?.shareNote ?? ""} ${row?.basis ?? ""}`;
+  const charging = posted.json.items?.find((item) => item.name === "Charging");
+  const naCount = (text: string) => text.split("n/a —").length - 1;
+  const once = (item: { shareNote?: string | null; basis?: string | null; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null } | undefined) => {
+    const shareNote = item?.shareNote ?? "";
+    const basis = item?.basis ?? "";
+    return item != null
+      && item.shareOfParentPct == null
+      && item.growthPct == null
+      && item.shareOrigin == null
+      && basis === vagueSource
+      && !basis.includes("n/a —")
+      && naCount(`${shareNote}\n${basis}`) === 1;
+  };
   const markup = renderToStaticMarkup(createElement(SegmentGapUnderParent, {
     parent: "Services and Other",
     kind: "product",
     items: posted.json.items ?? [],
   })).replace(/&amp;/g, "&");
-  const noteAt = line.indexOf("n/a —");
-  const sourceAt = line.indexOf(vagueSource);
   gap(
     "Lücken-Zeile mit vager Quelle zeigt die Quelle",
     posted.status === 200
-      && row?.shareOfParentPct == null
-      && noteAt >= 0
-      && sourceAt > noteAt
+      && once(row)
+      && once(charging)
+      && naCount(markup) === 2
       && markup.includes(vagueSource),
-    JSON.stringify(row ?? null),
+    `fsd=${JSON.stringify(row ?? null)} charging=${JSON.stringify(charging ?? null)} markupNa=${naCount(markup)}`,
   );
 } finally {
   vagueServer.close();
