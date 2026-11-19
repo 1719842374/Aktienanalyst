@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p18")
+    && keyA.includes("n36-gap-p19")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p18"
+      && tsla.json.promptVersion === "n36-gap-p19"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p18",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p19",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p18"
+      && posted.json.promptVersion === "n36-gap-p19"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2781,7 +2781,7 @@ gap(
   JSON.stringify(tiedDevice ?? null),
 );
 
-const deviceTokenHosts = ["Financial Devices", "Planar Display Devices", "Smartphone Plans & Devices"];
+const deviceTokenHosts = ["Financial Devices", "Planar Display Devices"];
 for (let index = 0; index < deviceTokenHosts.length; index += 1) {
   const host = deviceTokenHosts[index] ?? "";
   const posted = await postSupportSoftware(`EXD${index}`, [
@@ -2794,6 +2794,58 @@ for (let index = 0; index < deviceTokenHosts.length; index += 1) {
     `device-token-keeps-hardware-host-${index}`,
     posted.status === 200 && device?.parent === host,
     `${host} -> ${JSON.stringify(device ?? null)}`,
+  );
+}
+
+const blockedBesideDevice = [
+  "Hardware Services",
+  "Hardware Support",
+  "Devices Leasing",
+  "Hardware Leasing",
+  "Hardware Rental",
+  "Devices Rental",
+  "Gerate Miete",
+  "Geräte Dienste",
+  "Hardware-Wartung",
+  "Smartphone Plans & Devices",
+];
+for (let index = 0; index < blockedBesideDevice.length; index += 1) {
+  const host = blockedBesideDevice[index] ?? "";
+  const posted = await postSupportSoftware(`EXK${index}`, [
+    { name: host, revenue: 80 },
+    { name: "PCs", revenue: 20 },
+    { name: "Support", revenue: 10 },
+  ]);
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    `blocked-token-vetoes-device-token-${index}`,
+    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    `${host} -> ${JSON.stringify(device ?? null)}`,
+  );
+}
+
+const devicesBeatServices = await postSupportSoftware("EXDS", [
+  { name: "Hardware Services", revenue: 80 },
+  { name: "Devices", revenue: 50 },
+  { name: "Support", revenue: 10 },
+]);
+const devicesBeat = devicesBeatServices.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "devices-beats-hardware-services",
+  devicesBeatServices.status === 200 && devicesBeat?.parent === "Devices",
+  JSON.stringify(devicesBeat ?? null),
+);
+
+for (const spelling of ["Pcs", "pcs"] as const) {
+  const posted = await postSupportSoftware(`EX${spelling}`, [
+    { name: spelling, revenue: 20 },
+    { name: "Support", revenue: 10 },
+  ]);
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    `pc-plural-${spelling}-is-hardware-host`,
+    posted.status === 200 && device?.parent === spelling,
+    JSON.stringify(device ?? null),
   );
 }
 
@@ -2823,7 +2875,7 @@ gap(
   JSON.stringify(salesDevice ?? null),
 );
 
-const borderlineHosts = ["Gerätevermietung", "Plant Equipment", "Planetary Drives", "Credit Card Terminals", "Mietgeräte", "Rental Equipment"];
+const borderlineHosts = ["Gerätevermietung", "Plant Equipment", "Planetary Drives", "Credit Card Terminals", "Mietgeräte", "Rental Equipment", "Airplanes", "Laboratory Equipment", "Aircraft & Airplane Components"];
 for (let index = 0; index < borderlineHosts.length; index += 1) {
   const host = borderlineHosts[index] ?? "";
   const posted = await postSupportSoftware(`EXB${index}`, [

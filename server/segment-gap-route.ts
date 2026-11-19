@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p18";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p19";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -317,28 +317,46 @@ function hardwareKey(name: string): string {
     .trim();
 }
 
-const HARDWARE_BLOCK_STEMS = [
-  "cloud", "saas", "plattform", "platform", "service", "support", "abo", "subscription", "software",
-  "dienst", "plan", "tarif", "leasing", "lease", "finanz", "financ", "credit", "miet", "rental", "versicher", "insurance",
-];
-const HARDWARE_BLOCK_SUFFIX = new Set(["", "s", "es", "e", "en", "er", "n", "ung", "ing", "ierung", "ungen"]);
+const HARDWARE_BLOCK_TOKENS = new Set([
+  "abo",
+  "cloud",
+  "credit",
+  "credits",
+  "dienst",
+  "dienste",
+  "finance",
+  "financing",
+  "insurance",
+  "lease",
+  "leases",
+  "leasing",
+  "miete",
+  "plan",
+  "plans",
+  "platform",
+  "platforms",
+  "plattform",
+  "rental",
+  "rentals",
+  "saas",
+  "service",
+  "services",
+  "software",
+  "subscription",
+  "subscriptions",
+  "support",
+  "tarif",
+  "tarife",
+]);
+const HARDWARE_COMPOUND_ENDINGS = ["dienste", "dienst", "finanzierung", "vermietung", "versicherung", "wartung", "miete"];
 
 function hardwareRawTokens(name: string): string[] {
   return name.replace(/&/g, " and ").split(/[^A-Za-z0-9ÄÖÜäöüß]+/).filter((token) => token.length > 0);
 }
 
-function tokenCarriesBlock(token: string): boolean {
-  for (const block of HARDWARE_BLOCK_STEMS) {
-    let from = 0;
-    while (from < token.length) {
-      const at = token.indexOf(block, from);
-      if (at < 0) break;
-      const rest = token.slice(at + block.length);
-      if (at > 0 || HARDWARE_BLOCK_SUFFIX.has(rest)) return true;
-      from = at + block.length;
-    }
-  }
-  return false;
+function tokenBlocked(token: string): boolean {
+  if (HARDWARE_BLOCK_TOKENS.has(token)) return true;
+  return HARDWARE_COMPOUND_ENDINGS.some((ending) => token.endsWith(ending));
 }
 
 function isPcPluralToken(raw: string): boolean {
@@ -349,13 +367,10 @@ function hardwareHostName(name: string): boolean {
   if (!name) return false;
   const key = hardwareKey(name);
   const tokens = key.split(" ").filter((token) => token.length > 0);
-  const blocked = tokens.some((token) => tokenCarriesBlock(token));
-  const standaloneDevice = tokens.some((token) => token === "devices" || token === "hardware" || token === "gerate");
-  if (blocked && !standaloneDevice) return false;
+  if (tokens.some((token) => tokenBlocked(token))) return false;
   if (tokens.includes("pc") || hardwareRawTokens(name).some((token) => isPcPluralToken(token))) return true;
-  if (standaloneDevice) return true;
   const stems = ["device", "gerat", "hardware", "computing", "automotive", "vehicle", "fahrzeug", "console", "konsole", "phone", "smartphone", "antrieb"];
-  if (stems.some((stem) => tokens.some((token) => !tokenCarriesBlock(token) && (token === stem || token.startsWith(stem))))) return true;
+  if (stems.some((stem) => tokens.some((token) => token === stem || token.startsWith(stem)))) return true;
   return key.includes("personal computing") || key.includes("server hardware");
 }
 
