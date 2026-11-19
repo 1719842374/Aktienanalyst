@@ -14,6 +14,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   DIVIDEND_YIELD_DISPLAY_PARAMS,
+  dividendAdaptiveThreshold,
+  dividendCurrencyCheck,
   dividendNotableHint,
   dividendYieldSpan,
   dividendYieldSpanFromValues,
@@ -69,6 +71,47 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
   check("Spanne: Perzentil, Median, Min, Max; auffällig nur über den Perzentil-Parameter", true);
 }
 
+// --- adaptive Schwelle: eigene Perzentil-Rendite und Peer-Median, benannte Gewichte, nie 0 ---
+{
+  assert.equal(params.historyWeight, 1);
+  assert.equal(params.peerWeight, 1);
+  const span = dividendYieldSpanFromValues([1, 2, 3, 4, 10]);
+  assert.equal(span.available, true);
+  if (span.available) {
+    const peer = peerDividendMedian([2, 4], true);
+    const threshold = dividendAdaptiveThreshold(span, peer);
+    assert.equal(threshold.available, true);
+    if (threshold.available && peer.available) {
+      const expectHigh = (params.historyWeight * span.tailHighPct + params.peerWeight * peer.medianPct) / (params.historyWeight + params.peerWeight);
+      const expectLow = (params.historyWeight * span.tailLowPct + params.peerWeight * peer.medianPct) / (params.historyWeight + params.peerWeight);
+      assert.ok(Math.abs(threshold.highPct - expectHigh) < 1e-9);
+      assert.ok(Math.abs(threshold.lowPct - expectLow) < 1e-9);
+      assert.equal(threshold.historyWeight, params.historyWeight);
+      assert.equal(threshold.peerWeight, params.peerWeight);
+      assert.equal(threshold.notableSide, span.currentPct >= threshold.highPct ? "high" : span.currentPct <= threshold.lowPct ? "low" : null);
+    }
+    const heavierPeer = dividendAdaptiveThreshold(span, peer, { ...params, historyWeight: 0, peerWeight: 1 });
+    assert.equal(heavierPeer.available && heavierPeer.highPct, peer.available && peer.medianPct, "Gewicht 0 ist der Parameter, nicht ein fehlender Median");
+    const missing = dividendAdaptiveThreshold(span, peerDividendMedian(null, false));
+    assert.equal(missing.available, false);
+    if (!missing.available) {
+      assert.match(missing.reason, /kein Peer-Set/);
+      assert.ok(!/^0(\.0+)?$/.test(missing.reason));
+    }
+    const hintPeer = dividendNotableHint(span, peer);
+    assert.ok(hintPeer && hintPeer.includes("adaptiven Schwelle") && hintPeer.includes("kein Score"), hintPeer ?? "");
+    assert.ok(hintPeer && !/≥\s*4\s*%/.test(hintPeer), hintPeer ?? "");
+    const hintMissing = dividendNotableHint(span, { available: false, reason: "Peer-Set ohne Dividendenrendite (Feld fehlt, nicht als 0 gesetzt)" });
+    assert.ok(hintMissing && hintMissing.includes("n/a —"), hintMissing ?? "");
+    assert.ok(hintMissing && !/Peer-Median 0\.00/.test(hintMissing), hintMissing ?? "");
+    // 4 % in der Mitte der Historie bleibt unter der Schwelle, auch wenn der Peer-Median 4 ist.
+    const four = dividendYieldSpanFromValues([3, 5, 4]);
+    const aroundFour = dividendAdaptiveThreshold(four, peerDividendMedian([4, 4], true));
+    assert.equal(aroundFour.available && aroundFour.notable, false, "kein festes 4-%-Kriterium in der Schwelle");
+  }
+  check("Adaptive Schwelle aus Perzentil-Rendite und Peer-Median; fehlender Peer ist n/a, nie 0", true);
+}
+
 // --- /api/dividends + Kurse, Währung, leere Historie ---
 {
   const history: DividendHistoryResponse = {
@@ -102,6 +145,17 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
   const mismatch = dividendYieldSpan(history, bars, "EUR");
   assert.equal(mismatch.available, false);
   if (!mismatch.available) assert.match(mismatch.reason, /USD/);
+  assert.equal(dividendCurrencyCheck("GBp", "GBP"), "mismatch", "Pence sind nicht Pfund");
+  assert.equal(dividendCurrencyCheck("GBP", "GBP"), "ok");
+  const pence = dividendYieldSpan({ ...history, currency: "GBp" }, bars, "GBP");
+  assert.equal(pence.available, false);
+  if (!pence.available) {
+    assert.match(pence.reason, /GBp/);
+    assert.match(pence.reason, /GBP/);
+    assert.ok(!pence.reason.includes("0.00"));
+  }
+  const reversed = dividendYieldSpan(history, [...bars].reverse(), "USD");
+  assert.equal(reversed.available && reversed.currentPct, span.available && span.currentPct, "aktuell ist der letzte Kurs, nicht das Array-Ende");
   const empty = dividendYieldSpan({ ...history, source: "none", events: [], note: "FMP ohne Dividenden, Yahoo ohne Dividenden" }, bars, "USD");
   assert.equal(empty.available, false);
   if (!empty.available) {
@@ -159,6 +213,7 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
   assert.equal(peerDividendYieldPct({ dividendYield: 0, dividendPerShare: 0 }, 100), 0, "explizite 0 = keine Dividende");
   assert.equal(peerDividendYieldPct({}, 100), null, "Feld fehlt → null, nicht 0");
   assert.equal(peerDividendYieldPct(undefined, 100), null);
+  assert.equal(peerDividendYieldPct({ dividendPerShare: 3 }, undefined), null, "DPS ohne Kurs → null, nicht 0");
   const cmp = await fetchPeerComparisonFromTickers("KO", ["PEP"], 22, 2, 1e10, 2e11, 5, 6, { pb: 10, epsGrowth1Y: 4 });
   assert.ok(cmp);
   assert.equal(cmp!.peers[0].dividendYield, 3);
@@ -228,8 +283,12 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
   assert.match(html, /Sektor: n\/a — Sektorprofil ohne Dividendenrendite/);
   const hintHtml = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc }, React.createElement(DividendNotableHint, { data })));
   const spanNow = dividendYieldSpan(history, bars, "USD");
-  if (spanNow.available && spanNow.notable) assert.match(hintHtml, /data-testid="dividend-notable-hint"/);
+  const peerNow = peerDividendMedian([2.8, 3.2, null], true);
+  const hintNow = dividendNotableHint(spanNow, peerNow);
+  if (hintNow) assert.match(hintHtml, /data-testid="dividend-notable-hint"/);
   else assert.equal(hintHtml, "", "kein Hinweis, wenn nicht auffällig");
+  assert.match(html, /data-testid="dividend-span-threshold"/);
+  assert.match(html, /Schwelle:/);
 
   const emptyQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const pending = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: emptyQc }, React.createElement(DividendYieldSpanPanel, { data: { ...data, peerComparison: undefined } })));
@@ -291,18 +350,47 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
     check("Chrome für 375/1440", false, "Browser fehlt");
   } else {
     const fx = JSON.parse(readFileSync("script/fixtures/dividend-kpi-live.json", "utf8"));
+    const lse = JSON.parse(readFileSync("script/fixtures/lse-dividends-live.json", "utf8"));
+    const msft = JSON.parse(readFileSync("script/fixtures/analysis-MSFT.json", "utf8"));
+    const shel = JSON.parse(readFileSync("script/fixtures/analysis-SHEL.L.json", "utf8"));
     const { DividendYieldSpanPanel, DividendNotableHint } = await import("../client/src/components/sections/DividendYieldContext");
+    const cases: Array<{ ticker: string; currency: string | null; bars: { date: string; close: number }[]; dividends: DividendHistoryResponse; peers?: Array<{ dividendYield?: number | null }> }> = [
+      {
+        ticker: "MSFT",
+        currency: msft.currency ?? "USD",
+        bars: msft.historicalPrices,
+        dividends: { ticker: "MSFT", source: "none", events: [], note: "FMP ohne Dividenden, Yahoo ohne Dividenden", currency: "USD" },
+      },
+      {
+        ticker: "NVO",
+        currency: fx.NVO.currency,
+        bars: fx.NVO.bars,
+        dividends: fx.NVO.dividends,
+      },
+      {
+        ticker: "SHEL.L",
+        currency: shel.currency,
+        bars: shel.historicalPrices,
+        dividends: lse["SHEL.L"].dividends,
+        peers: (shel.peerComparison?.peers ?? []).map((p: { dividendYield?: number | null }) => ({ dividendYield: p.dividendYield ?? null })),
+      },
+    ];
     const blocks: string[] = [];
-    for (const t of ["KO", "NVO", "AMZN"] as const) {
-      const f = fx[t];
+    for (const f of cases) {
       const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      qc.setQueryData(["dividends", "v2", t], f.dividends);
-      const data = { ticker: t, currency: f.currency, ohlcvData: f.bars, historicalPrices: f.bars };
+      qc.setQueryData(["dividends", "v2", f.ticker], f.dividends);
+      const data = {
+        ticker: f.ticker,
+        currency: f.currency,
+        ohlcvData: f.bars,
+        historicalPrices: f.bars,
+        peerComparison: f.peers ? { peers: f.peers, sectorMedian: {} } : undefined,
+      };
       const spanHtml = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc }, React.createElement(DividendYieldSpanPanel, { data })));
       const hintHtml = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc }, React.createElement(DividendNotableHint, { data })));
       const span = dividendYieldSpan(f.dividends, f.bars, f.currency);
-      console.log(`  ${t}: ${span.available ? `aktuell ${span.currentPct.toFixed(2)} % P${span.percentile.toFixed(0)} Median ${span.median.toFixed(2)} Min ${span.min.toFixed(2)} Max ${span.max.toFixed(2)} n=${span.n} auffällig=${span.notableSide ?? "nein"}` : `n/a — ${span.reason}`}`);
-      blocks.push(`<section style="margin-bottom:16px"><h2 style="font-size:13px;margin:0 0 6px">${t}</h2>${spanHtml}${hintHtml}</section>`);
+      console.log(`  ${f.ticker}: ${span.available ? `aktuell ${span.currentPct.toFixed(2)} % P${span.percentile.toFixed(0)} Median ${span.median.toFixed(2)} Min ${span.min.toFixed(2)} Max ${span.max.toFixed(2)} n=${span.n} auffällig=${span.notableSide ?? "nein"}` : `n/a — ${span.reason}`}`);
+      blocks.push(`<section data-ticker="${f.ticker}" style="margin-bottom:16px"><h2 style="font-size:13px;margin:0 0 6px">${f.ticker}</h2>${spanHtml}${hintHtml}</section>`);
     }
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       * { box-sizing: border-box; }
@@ -313,6 +401,7 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
       .gap-2 { gap: 0.5rem; }
       .break-words { overflow-wrap: anywhere; }
       .min-w-0 { min-width: 0; }
+      .max-w-full { max-width: 100%; }
       .space-y-2 > * + * { margin-top: 0.5rem; }
       .rounded, .rounded-md { border-radius: 6px; }
       .border, .border-border\\/50, .border-amber-500\\/30 { border: 1px solid #243050; }
@@ -345,8 +434,8 @@ const params = DIVIDEND_YIELD_DISPLAY_PARAMS;
       });
       const ok = overflow.spans.length === 3 && overflow.spans.every((s) => s.sw <= s.cw + 1) && overflow.rootSw <= width + 1;
       check(`Layout ${width}px: kein horizontaler Überlauf`, ok, JSON.stringify({ rootSw: overflow.rootSw, spans: overflow.spans }));
-      assert.ok(overflow.text.includes("n/a —"), overflow.text.slice(0, 400));
-      assert.ok(overflow.text.includes("KO"));
+      assert.ok(overflow.text.includes("n/a —"), overflow.text.slice(0, 500));
+      assert.ok(overflow.text.includes("NVO") && overflow.text.includes("SHEL.L") && overflow.text.includes("MSFT"), overflow.text.slice(0, 300));
       await page.screenshot({ path: `/opt/cursor/artifacts/dividend_span_${width}.png`, fullPage: true });
       await page.close();
     }

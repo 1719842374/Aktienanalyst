@@ -531,7 +531,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           {/* Gates */}
           <div className="space-y-1">
             {data.scoring.gates.map(g => (
-              <div key={g.id} className={`flex items-start gap-2 text-[11px] rounded px-2 py-1 ${
+              <div key={g.id} className={`flex items-start gap-2 text-[11px] rounded px-2 py-1 min-w-0 ${
                 g.active ? "bg-red-500/10 border border-red-500/20" : "bg-muted/30"
               }`}>
                 <span className={`font-mono font-semibold shrink-0 ${g.active ? "text-red-400" : "text-muted-foreground/60"}`}>
@@ -540,7 +540,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
                 <span className={`font-mono shrink-0 ${g.active ? "text-red-400" : "text-muted-foreground/50"}`}>
                   Cap {g.cap}
                 </span>
-                <span className={g.active ? "text-foreground/80" : "text-muted-foreground/50"}>
+                <span className={`min-w-0 break-words ${g.active ? "text-foreground/80" : "text-muted-foreground/50"}`}>
                   {g.rationale}
                 </span>
               </div>
