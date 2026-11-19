@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p22")
+    && keyA.includes("n36-gap-p23")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p22"
+      && tsla.json.promptVersion === "n36-gap-p23"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p22",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p23",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p22"
+      && posted.json.promptVersion === "n36-gap-p23"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2945,6 +2945,30 @@ registerSegmentGapRoute(bundleApp, {
         children: [
           {
             parent: "Services and Other",
+            name: "FSD Software",
+            owner: "Nordlichtwerke",
+            shareOfParentPct: 14,
+            growthPct: null,
+            basis: "nicht separat ausgewiesen",
+            source: "Nordlichtwerke Annual Report 2025",
+            bundledWith: "Automotive Sales",
+            kind: "device_software",
+            expansion: null,
+          },
+          {
+            parent: "Services and Other",
+            name: "Full Self-Driving",
+            owner: "Nordlichtwerke",
+            shareOfParentPct: 11,
+            growthPct: null,
+            basis: "nicht separat ausgewiesen",
+            source: "Nordlichtwerke Annual Report 2025",
+            bundledWith: "Automotive Sales",
+            kind: "device_software",
+            expansion: null,
+          },
+          {
+            parent: "Services and Other",
             name: "FSD",
             owner: "Nordlichtwerke",
             shareOfParentPct: 14,
@@ -2984,15 +3008,33 @@ try {
       { name: "Services and Other", revenue: 10 },
     ],
   });
-  const fsd = posted.json.items?.find((item) => item.name === "FSD");
-  const sentence = "n/a — FSD ist in Automotive Sales gebündelt; Firma weist es nicht separat aus";
+  const namedSoftware = posted.json.items?.find((item) => item.name === "FSD Software");
+  const namedSentence = "n/a — FSD Software ist in Automotive Sales gebündelt; Firma weist es nicht separat aus";
   gap(
     "device-software-follows-exact-bundled-with",
     posted.status === 200
-      && fsd?.parent === "Automotive Sales"
-      && fsd.shareOfParentPct == null
-      && fsd.shareNote === sentence,
-    JSON.stringify(fsd ?? null),
+      && namedSoftware?.parent === "Automotive Sales"
+      && namedSoftware.shareOfParentPct == null
+      && namedSoftware.shareNote === namedSentence,
+    JSON.stringify(namedSoftware ?? null),
+  );
+  const selfDriving = posted.json.items?.find((item) => item.name === "Full Self-Driving");
+  const drivingSentence = "n/a — Full Self-Driving ist in Automotive Sales gebündelt; Firma weist es nicht separat aus";
+  gap(
+    "self-driving-name-follows-exact-bundled-with",
+    posted.status === 200
+      && selfDriving?.parent === "Automotive Sales"
+      && selfDriving.shareOfParentPct == null
+      && selfDriving.shareNote === drivingSentence,
+    JSON.stringify(selfDriving ?? null),
+  );
+  const expansionOnly = posted.json.items?.find((item) => item.name === "FSD");
+  gap(
+    "expansion-only-software-word-stays",
+    posted.status === 200
+      && expansionOnly?.parent === "Services and Other"
+      && expansionOnly.shareOfParentPct === 14,
+    JSON.stringify(expansionOnly ?? null),
   );
   const hinted = bundleNames.map((name) => posted.json.items?.find((item) => item.name === name));
   gap(
@@ -3028,6 +3070,87 @@ try {
   );
 } finally {
   bundleServer.close();
+}
+
+resetSegmentGapCacheForTests();
+function expansionSoftwareChild(name: string) {
+  return {
+    parent: "Services and Other",
+    name,
+    owner: "Nordlichtwerke",
+    shareOfParentPct: 9,
+    growthPct: null,
+    basis: "nicht separat ausgewiesen",
+    source: "Nordlichtwerke Annual Report 2025",
+    bundledWith: "Automotive Sales",
+    kind: "device_software",
+    expansion: "device software",
+  };
+}
+const expansionApp = express();
+expansionApp.use(express.json());
+registerSegmentGapRoute(expansionApp, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: { "Automotive Sales": 70, "Services and Other": 10 },
+  }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (!opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
+      return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+    }
+    const pair = opts.prompt.includes("Ticker EXPAIR");
+    return {
+      modelUsed: "mock-model",
+      data: {
+        ...echo,
+        children: pair
+          ? [expansionSoftwareChild("Charging"), expansionSoftwareChild("Regulatory Credits")]
+          : [expansionSoftwareChild("Charging")],
+      },
+    };
+  },
+});
+const expansionServer = expansionApp.listen(0);
+const expansionPort = (expansionServer.address() as AddressInfo).port;
+try {
+  const alone = await postGap(expansionPort, "EXONE", {
+    products: [
+      { name: "Automotive Sales", revenue: 70 },
+      { name: "Services and Other", revenue: 10 },
+    ],
+  });
+  const chargingAlone = alone.json.items?.find((item) => item.name === "Charging");
+  gap(
+    "charging-expansion-device-software-stays",
+    alone.status === 200
+      && chargingAlone?.parent === "Services and Other"
+      && chargingAlone.shareOfParentPct === 9,
+    JSON.stringify(chargingAlone ?? null),
+  );
+  const pair = await postGap(expansionPort, "EXPAIR", {
+    products: [
+      { name: "Automotive Sales", revenue: 70 },
+      { name: "Services and Other", revenue: 10 },
+    ],
+  });
+  const chargingPair = pair.json.items?.find((item) => item.name === "Charging");
+  const creditsPair = pair.json.items?.find((item) => item.name === "Regulatory Credits");
+  gap(
+    "charging-and-credits-expansion-device-software-stay",
+    pair.status === 200
+      && chargingPair?.parent === "Services and Other"
+      && chargingPair.shareOfParentPct === 9
+      && creditsPair?.parent === "Services and Other"
+      && creditsPair.shareOfParentPct === 9,
+    `charging=${JSON.stringify(chargingPair ?? null)} credits=${JSON.stringify(creditsPair ?? null)}`,
+  );
+} finally {
+  expansionServer.close();
 }
 
 const headHosts = ["Hardware Sales", "Device Revenues", "Device Products", "Gaming Consoles", "PCs & Tablets"];

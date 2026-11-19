@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p22";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p23";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -311,13 +311,13 @@ function positiveSoftware(text: string): boolean {
   const key = segmentGapKey(text);
   if (!key) return false;
   if (/software|firmware|embedded|betriebssystem|autonomie|autonomy|fahrassistenz|connectivity|freischalt/.test(key)) return true;
-  if (key.includes("operating system") || key.includes("driver assistance")) return true;
+  if (key.includes("operating system") || key.includes("driver assistance") || key.includes("self driving")) return true;
   return key.split(" ").filter((token) => token.length > 0).includes("os");
 }
 
-function deviceBoundSoftware(name: string, expansion = ""): boolean {
-  if (softwareLabelBlocked(name) || (expansion && softwareLabelBlocked(expansion))) return false;
-  return positiveSoftware(`${name} ${expansion}`.trim());
+function deviceBoundSoftware(name: string): boolean {
+  if (softwareLabelBlocked(name)) return false;
+  return positiveSoftware(name);
 }
 
 function reportedSegment(value: string | null | undefined, names: readonly string[]): string | null {
@@ -460,7 +460,7 @@ function placeBundledSoftware(
     const bound = item.bundledKind === "device_software"
       && named != null
       && hardwareHostName(named)
-      && deviceBoundSoftware(item.name, item.expansion ?? "")
+      && deviceBoundSoftware(item.name)
       && !nameBlocksBundle(item.name);
     if (!bound || !named) continue;
     if (segmentGapKey(item.parent) === segmentGapKey(named)) continue;
