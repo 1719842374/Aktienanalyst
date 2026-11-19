@@ -531,7 +531,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p11")
+    && keyA.includes("n36-gap-p12")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1432,7 +1432,8 @@ try {
     "tsla-fsd-under-shown-services",
     tsla.status === 200
       && parentCalls
-      && servicePrompt.includes("Software, Services und Abos")
+      && servicePrompt.includes("gehört nicht hierher")
+      && servicePrompt.includes("Automotive")
       && fsd?.parent === "Services & Other"
       && fsd.shareOfParentPct == null
       && fsd.shareNote === "n/a — Schätzung ohne Quelle"
@@ -1440,14 +1441,14 @@ try {
       && robotaxi?.shareOfParentPct == null
       && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p11"
+      && tsla.json.promptVersion === "n36-gap-p12"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p11",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p12",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -1746,8 +1747,8 @@ try {
       && software.shareOfParentPct === 6
       && software.shareOrigin === "estimate"
       && (software.basis ?? "").includes("Annual Report 2025")
-      && hardwarePrompt.includes("Lizenzumsatz")
-      && hardwarePrompt.includes("separat bezahlt")
+      && hardwarePrompt.includes("Pflichtprüfung")
+      && hardwarePrompt.includes("Freischalt-Umsatz")
       && !hardwarePrompt.includes("FSD"),
     `software=${JSON.stringify(software)} prompt=${hardwarePrompt.slice(0, 280)}`,
   );
@@ -1761,6 +1762,90 @@ try {
 } finally {
   hardwareServer.close();
 }
+
+resetSegmentGapCacheForTests();
+const pairPrompts: string[] = [];
+const pairFirm = {
+  companyName: "Nordlichtwerke",
+  exchange: "NYSE",
+  country: "US",
+  sector: "Industrials",
+  industry: "Industrial Machinery",
+  description: "Nordlichtwerke baut Geräte.",
+  fiscalYear: "2025",
+  currency: "USD",
+};
+const firmApp = express();
+firmApp.use(express.json());
+registerSegmentGapRoute(firmApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { "Geräte": 100, Services: 40 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    pairPrompts.push(opts.prompt);
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Nordlichtwerke",
+        industryEcho: "Industrial Machinery",
+        children: [
+          citedChild("Geräte", "Freischalt-Abo", "Nordlichtwerke", { shareOfParentPct: 6 }),
+          citedChild("Services", "Freischalt-Abo", "Nordlichtwerke", { shareOfParentPct: 6 }),
+          citedChild("Geräte", "Zeile", "Nordlichtwerke", { source: null, shareOfParentPct: 3, basis: "nicht ausgewiesen", naReason: "die Firma weist die Zeile nicht separat aus" }),
+          citedChild("Geräte", "Dokumentzeile", "Nordlichtwerke", { source: null, shareOfParentPct: 2, basis: "nicht öffentlich", naReason: "steht nicht im 10-K" }),
+          citedChild("Geräte", "Paket", "Nordlichtwerke", { shareOfParentPct: 8, revenue: 500, currency: "USD", source: "Nordlichtwerke Annual Report 2025" }),
+        ],
+      },
+    };
+  },
+});
+const pairFirmServer = firmApp.listen(0);
+const pairFirmPort = (pairFirmServer.address() as AddressInfo).port;
+try {
+  const row = await postGap(pairFirmPort, "EXW", {
+    products: [
+      { name: "Geräte", revenue: 100 },
+      { name: "Services", revenue: 40 },
+    ],
+  });
+  const unlocks = (row.json.items ?? []).filter((item) => item.name === "Freischalt-Abo");
+  const line = row.json.items?.find((item) => item.name === "Zeile");
+  const documentLine = row.json.items?.find((item) => item.name === "Dokumentzeile");
+  const pack = row.json.items?.find((item) => item.name === "Paket");
+  const devicePrompt = pairPrompts.find((prompt) => prompt.includes('nur das Elternsegment "Geräte"')) ?? "";
+  const servicePrompt = pairPrompts.find((prompt) => prompt.includes('nur das Elternsegment "Services"')) ?? "";
+  gap(
+    "device-software-stays-on-hardware-parent",
+    row.status === 200
+      && unlocks.length === 1
+      && unlocks[0]?.parent === "Geräte"
+      && devicePrompt.includes("Pflichtprüfung")
+      && servicePrompt.includes("gehört nicht hierher")
+      && servicePrompt.includes("Geräte"),
+    `unlocks=${JSON.stringify(unlocks)} service=${servicePrompt.slice(0, 240)}`,
+  );
+  gap(
+    "na-reason-is-specific-and-document-claim-is-checked",
+    line?.shareOfParentPct == null
+      && line?.shareNote === "n/a — die Firma weist die Zeile nicht separat aus"
+      && documentLine?.shareOfParentPct == null
+      && documentLine?.shareNote === "n/a — Firma weist Dokumentzeile nicht separat aus"
+      && !/10-K/.test(documentLine?.shareNote ?? "")
+      && pack?.shareOfParentPct === 8
+      && pack.shareOrigin === "estimate"
+      && (pack.basis ?? "").includes("Annual Report 2025"),
+    `line=${JSON.stringify(line)} document=${JSON.stringify(documentLine)} pack=${JSON.stringify(pack)}`,
+  );
+} finally {
+  pairFirmServer.close();
+}
+
+gap(
+  "segment-gap-does-not-add-online-call",
+  !/online:\s*true/.test(routeSource),
+  "Segment-Lücken rufen die Web-Variante nicht zusätzlich auf",
+);
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");
 gap(

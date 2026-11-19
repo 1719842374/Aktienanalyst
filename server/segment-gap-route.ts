@@ -46,7 +46,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p11";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p12";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -194,12 +194,13 @@ export function segmentGapPrompt(input: {
     )).join(" | ")
     : "n/a";
   const focusNames = input.only ? [input.only] : input.products;
+  const hardwareNames = input.products.filter((name) => !serviceParentName(name));
   const eachParent = focusNames.map((name) => {
-    const reportedAsService = /service|abo|subscription|software|support/i.test(name);
-    const task = reportedAsService
-      ? "fehlende Produktlinien nur dieses Elterns. Software, Services und Abos, die hier berichtet werden und nicht separat ausgewiesen sind, gehören unter genau diese Zeichenfolge"
-      : "fehlende Produktlinien nur dieses Elterns. Software-, Abo- oder Lizenzumsatz, der in diesem Segment steckt und separat bezahlt wird, gehört unter genau diese Zeichenfolge";
-    return `- ${name}: ${task}.`;
+    if (serviceParentName(name)) {
+      const booked = hardwareNames.length > 0 ? hardwareNames.join(", ") : "keinem anderen Produkt-Eltern";
+      return `- ${name}: fehlende Produktlinien nur dieses Elterns, die hier berichtet werden. Software-, Abo- oder Freischalt-Umsatz, der mit einem Gerät verkauft und in einem anderen Produkt-Eltern verbucht wird, gehört nicht hierher. Diese Produkt-Eltern sind: ${booked}.`;
+    }
+    return `- ${name}: Pflichtprüfung. Fehlende Produktlinien nur dieses Elterns. Software-, Abo- oder Freischalt-Umsatz, der für ein Gerät dieses Segments verkauft wird und den die Firma in diesem Segment verbucht, muss unter genau dieser Zeichenfolge stehen.`;
   }).join("\n");
   const focusLine = input.only
     ? `Dieser Aufruf füllt nur das Elternsegment "${input.only}". Kinder eines anderen Elterns gehören nicht in diese Antwort.`
@@ -225,12 +226,46 @@ export function segmentGapPrompt(input: {
     "shareOfParentPct ist eine Zahl nur zusammen mit source. source nennt die Firma, den Dokumenttyp und das Jahr. Fehlt eines davon, sind shareOfParentPct und revenue null.",
     "revenue ist der Umsatz des Unterpostens in USD und nur, wenn dieselbe source die Zahl nennt, sonst null. currency ist USD. Nie 0.",
     "basis nennt die Lücke und darf nicht leer sein. Die Quellenangabe steht in source, nicht als Ersatz für basis.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr"}]}.`,
+    "naReason sagt, was für den Anteil fehlt, ohne ein Dokument zu erfinden. Ein Dokumentname gehört nur in source und nur mit Firma und Jahr.",
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr","naReason":"was fehlt, ohne Dokumentname"}]}.`,
   ].filter((line) => line.length > 0).join("\n");
 }
 
 function fold(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function serviceParentName(name: string): boolean {
+  return /service|abo|subscription|software|support/i.test(name);
+}
+
+function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
+  if (item.kind !== "product") {
+    const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
+    if (merged.some((row) => `${row.kind}:${segmentGapKey(row.parent)}:${segmentGapKey(row.name)}` === id)) return;
+    merged.push(item);
+    return;
+  }
+  const index = merged.findIndex((row) => row.kind === "product" && segmentGapKey(row.name) === segmentGapKey(item.name));
+  if (index < 0) {
+    merged.push(item);
+    return;
+  }
+  const current = merged[index];
+  if (current && serviceParentName(current.parent) && !serviceParentName(item.parent)) merged[index] = item;
+}
+
+/** Dieselbe Dokumentprüfung wie eine Quelle. Ein Dokumentname ohne Firma und Jahr wird nicht angezeigt. */
+const DOC_MENTION = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i;
+
+function specificGapNote(reason: string, name: string, companyName: string): string | null {
+  const text = reason.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  if (DOC_MENTION.test(text) && !concreteSource(text, companyName)) {
+    return `n/a — Firma weist ${name} nicht separat aus`;
+  }
+  const body = text.replace(/^n\/a\s*—?\s*/i, "").trim();
+  return body ? `n/a — ${body}` : null;
 }
 
 function sameShownParent(left: string, right: string): boolean {
@@ -349,7 +384,7 @@ export function reviewSegmentGaps(
       if (known.has(segmentGapKey(child.name))) continue;
       const childCurrency = currencyOnRows(bucket.rows, child.name);
       const parentUsd = parentRevenue.get(fold(parent)) ?? null;
-      const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency);
+      const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency, naReasonOnRows(bucket.rows, child.name));
       if (
         child.revenue != null && child.revenue > 0
         && parentUsd != null
@@ -473,6 +508,17 @@ function currencyOnRows(rows: readonly unknown[], name: string): string {
   return "";
 }
 
+function naReasonOnRows(rows: readonly unknown[], name: string): string {
+  for (let i = 0; i < rows.length; i++) {
+    const item = rows[i];
+    if (!item || typeof item !== "object") continue;
+    const row = item as { name?: unknown; naReason?: unknown };
+    if (clip(row.name, 80) !== name) continue;
+    return clip(typeof row.naReason === "string" ? row.naReason : "", 180);
+  }
+  return "";
+}
+
 function toGapItem(
   parent: string,
   kind: "product" | "geographic",
@@ -480,6 +526,7 @@ function toGapItem(
   parentRevenue: number | null,
   companyName: string,
   childCurrency: string,
+  naReason: string,
 ): SegmentGapItem {
   const basis = child.basis ?? "";
   const sourced = concreteSource(basis, companyName);
@@ -496,6 +543,9 @@ function toGapItem(
       shareOrigin = "fact";
       const formula = `Formel: ${revenue} / ${parentUsd}`;
       if (!shownBasis.includes(formula)) shownBasis = `${shownBasis} · ${formula}`;
+    } else if (child.shareOfParentPct != null && child.shareOfParentPct > 0 && child.shareOfParentPct <= 100) {
+      share = child.shareOfParentPct;
+      shareOrigin = "estimate";
     } else {
       shareNote = "n/a — Anteil nicht belegbar";
     }
@@ -505,9 +555,9 @@ function toGapItem(
     share = child.shareOfParentPct;
     shareOrigin = "estimate";
   } else if (!sourced) {
-    shareNote = "n/a — Schätzung ohne Quelle";
+    shareNote = specificGapNote(naReason, child.name, companyName) ?? "n/a — Schätzung ohne Quelle";
   } else {
-    shareNote = "n/a — Anteil nicht belegbar";
+    shareNote = specificGapNote(naReason, child.name, companyName) ?? "n/a — Anteil nicht belegbar";
   }
   return {
     parent,
@@ -676,7 +726,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         if (row.revenue != null) order.set(fold(row.name), row.revenue);
       }
       let tasks = gapTasks(products, regions, usd.revenues, order);
-      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software-, Abo- oder Lizenzumsatz, der in einem Hardware-Segment steckt und separat bezahlt wird, gehört unter dieses Hardware-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Pflicht je Hardware-Eltern: Software-, Abo- oder Freischalt-Umsatz für ein Gerät dieses Segments, den die Firma dort verbucht, steht unter diesem Eltern. Ein Service-Eltern zieht diesen Umsatz nicht an sich. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. naReason nennt, was fehlt, ohne ein Dokument zu erfinden. Nie 0. Das Label ist KI-Schätzung, kein Override.";
       const run = deps.llm ?? callLLMJson;
       const reply = (
         merged: SegmentGapItem[],
@@ -705,16 +755,10 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         const hits = queriedTasks.map((task) => freshParent(parentCacheKey(ticker, task), now));
         if (hits.some((hit) => hit == null)) return null;
         const merged: SegmentGapItem[] = [];
-        const seen = new Set<string>();
         const notes: string[] = [];
         for (const hit of hits) {
           if (hit?.reason) notes.push(hit.reason);
-          for (const item of hit?.items ?? []) {
-            const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
-            if (seen.has(id)) continue;
-            seen.add(id);
-            merged.push(item);
-          }
+          for (const item of hit?.items ?? []) absorbGapItem(merged, item);
         }
         for (const task of skipped) notes.push(`n/a — nicht abgefragt (Call-Limit): ${task.label}`);
         return reply(merged, notes, queriedTasks.length, list.length, skipped.length === 0);
@@ -756,7 +800,6 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       const queriedTasks = tasks.slice(0, SEGMENT_GAP_MAX_CALLS);
       const skipped = tasks.slice(SEGMENT_GAP_MAX_CALLS);
       const merged: SegmentGapItem[] = [];
-      const seen = new Set<string>();
       const notes: string[] = [];
       let transportFails = 0;
       let successes = 0;
@@ -769,12 +812,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
           successes += 1;
           fromCacheCount += 1;
           if (stored.reason) notes.push(stored.reason);
-          for (const item of stored.items) {
-            const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
-            if (seen.has(id)) continue;
-            seen.add(id);
-            merged.push(item);
-          }
+          for (const item of stored.items) absorbGapItem(merged, item);
           continue;
         }
         if (openRouterHttpBudgetRemaining() === 0) {
@@ -840,12 +878,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         successes += 1;
         if (attempt.fromCache) fromCacheCount += 1;
         if (attempt.reason) notes.push(attempt.reason);
-        for (const item of attempt.items) {
-          const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
-          if (seen.has(id)) continue;
-          seen.add(id);
-          merged.push(item);
-        }
+        for (const item of attempt.items) absorbGapItem(merged, item);
       }
       for (const task of skipped) notes.push(`n/a — nicht abgefragt (Call-Limit): ${task.label}`);
       if (successes === 0 && transportFails === queriedTasks.length) {
