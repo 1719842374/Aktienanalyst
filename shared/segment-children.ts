@@ -312,7 +312,7 @@ export function reviewKiChildren(
       shareKept = null;
       growthKept = null;
     }
-    const shownBasis = sourced && citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
+    const shownBasis = citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
     kept.push({
       parent,
       name,

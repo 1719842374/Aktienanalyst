@@ -10,10 +10,11 @@ import type { AddressInfo } from "node:net";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SegmentGapList, SegmentGapPanel, SegmentGapUnderParent, type GapRequest } from "../client/src/components/sections/SegmentGapPanel";
+import { SegmentChildrenList } from "../client/src/components/sections/SegmentChildren";
 import { SegmentEstimateBlock } from "../client/src/components/sections/Section2";
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
-import { outlineEchoMatches } from "../shared/segment-children";
+import { outlineEchoMatches, reviewKiChildren } from "../shared/segment-children";
 import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, reviewSegmentGaps, segmentGapCacheBodiesForTests, segmentGapInflightForTests } from "../server/segment-gap-route";
 import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
@@ -3271,6 +3272,113 @@ gap(
   routeSource.includes("convertSegmentRowsToUsd"),
   "Elternumsatz läuft über die #505-Umrechnung",
 );
+
+const staleCitation = "Tesla shareholder update 2021";
+const staleReview = reviewKiChildren("Automotive", {
+  children: [{
+    name: "FSD",
+    owner: "Tesla, Inc.",
+    basis: "steckt im Automotive-Segment",
+    source: staleCitation,
+    shareOfParentPct: 8,
+  }],
+}, null, { kind: "product", companyName: "Tesla, Inc.", ticker: "TSLA", description: "Tesla baut Fahrzeuge" });
+const staleChild = staleReview.children[0];
+const staleMarkup = renderToStaticMarkup(createElement(SegmentChildrenList, { data: staleReview })).replace(/&amp;/g, "&");
+gap(
+  "uncorroborated-citation-stays-visible",
+  staleChild != null
+    && staleChild.shareOfParentPct == null
+    && (staleChild.basis ?? "").includes(staleCitation)
+    && staleMarkup.includes(staleCitation),
+  `basis=${staleChild?.basis ?? ""} markup=${staleMarkup.slice(0, 360)}`,
+);
+
+resetSegmentGapCacheForTests();
+let servicesPromptsWithPcs = 0;
+const n6App = express();
+n6App.use(express.json());
+registerSegmentGapRoute(n6App, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: { "Automotive Sales": 70, "Energy Storage": 30, "Services and Other": 10 },
+  }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    const allowedHasPcs = /Erlaubte Produkt-Eltern[^\n]*\bPCs\b/.test(opts.prompt);
+    if (opts.prompt.includes("nur das Elternsegment \"Automotive Sales\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Automotive Sales", "Vehicle Control Software", "Nordlichtwerke", { shareOfParentPct: 6 })] },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Energy Storage\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: { ...echo, children: [citedChild("Energy Storage", "Control Software Vehicle", "Nordlichtwerke", { shareOfParentPct: 5 })] },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
+      if (allowedHasPcs) servicesPromptsWithPcs += 1;
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [
+            citedChild("Services and Other", "Panel Software", "Nordlichtwerke", {
+              shareOfParentPct: 4,
+              kind: "device_software",
+              bundledWith: "Automotive Sales",
+            }),
+            citedChild("Services and Other", "Device Software", "Nordlichtwerke", {
+              shareOfParentPct: 9,
+              kind: "device_software",
+              bundledWith: allowedHasPcs ? null : "PCs",
+            }),
+            citedChild("Services and Other", "Vehicle Lease", "Nordlichtwerke", { shareOfParentPct: 3 }),
+          ],
+        },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const n6Server = n6App.listen(0);
+const n6Port = (n6Server.address() as AddressInfo).port;
+try {
+  const shown = [
+    { name: "Automotive Sales", revenue: 70 },
+    { name: "Energy Storage", revenue: 30 },
+    { name: "Services and Other", revenue: 10 },
+  ];
+  const first = await postGap(n6Port, "EXN6", { products: shown });
+  const second = await postGap(n6Port, "EXN6", { products: [...shown, { name: "PCs", revenue: 40 }] });
+  const panel = first.json.items?.find((item) => item.name === "Panel Software");
+  const deviceFirst = first.json.items?.find((item) => item.name === "Device Software");
+  const deviceSecond = second.json.items?.find((item) => item.name === "Device Software");
+  const control = first.json.items?.find((item) => item.name === "Vehicle Control Software");
+  const controlTwin = first.json.items?.find((item) => item.name === "Control Software Vehicle");
+  const lease = first.json.items?.find((item) => item.name === "Vehicle Lease");
+  const wrong: string[] = [];
+  if (panel?.parent !== "Automotive Sales") wrong.push(`bundled:${panel?.parent ?? "fehlt"}`);
+  if (deviceFirst?.parent !== "Services and Other" || deviceFirst.shareOfParentPct !== 9) wrong.push(`before:${deviceFirst?.parent ?? "fehlt"}`);
+  if (deviceSecond?.parent !== "Services and Other" || deviceSecond.shareOfParentPct !== 9) wrong.push(`cache:${deviceSecond?.parent ?? "fehlt"}:${deviceSecond?.shareOfParentPct ?? "null"}`);
+  if (servicesPromptsWithPcs !== 1) wrong.push(`services-prompts:${servicesPromptsWithPcs}`);
+  if (control?.parent !== "Automotive Sales" || controlTwin?.parent !== "Energy Storage" || lease?.parent !== "Services and Other") {
+    wrong.push(`concept:${control?.parent ?? "fehlt"}/${controlTwin?.parent ?? "fehlt"}/${lease?.parent ?? "fehlt"}`);
+  }
+  gap(
+    "n6-synthetic-zero-wrong-assignments",
+    first.status === 200 && second.status === 200 && wrong.length === 0 && routeSource.includes("|s:"),
+    wrong.join(", ") || "0",
+  );
+} finally {
+  n6Server.close();
+}
 
 if (gaps.length > 0) {
   console.error(`n36 FAIL ${gaps.length}`);

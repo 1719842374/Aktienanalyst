@@ -917,9 +917,10 @@ function gapTasks(
   return tasks;
 }
 
-function parentCacheKey(ticker: string, task: GapTask): string {
+function parentCacheKey(ticker: string, task: GapTask, siblings: readonly string[]): string {
   const basis = task.revenue != null && task.revenue > 0 ? String(task.revenue) : "";
-  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${task.label}|v:${basis}`;
+  const others = siblings.map((name) => segmentGapKey(name)).filter((name) => name.length > 0).sort().join("\n");
+  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${task.label}|v:${basis}|s:${others}`;
 }
 
 function freshParent(key: string, now: number): { items: SegmentGapItem[]; reason: string | null } | null {
@@ -1033,7 +1034,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       const fromCache = (list: GapTask[]) => {
         const queriedTasks = list.slice(0, SEGMENT_GAP_MAX_CALLS);
         const skipped = list.slice(SEGMENT_GAP_MAX_CALLS);
-        const hits = queriedTasks.map((task) => freshParent(parentCacheKey(ticker, task), now));
+        const hits = queriedTasks.map((task) => freshParent(parentCacheKey(ticker, task, products), now));
         if (hits.some((hit) => hit == null)) return null;
         const merged: SegmentGapItem[] = [];
         const notes: string[] = [];
@@ -1087,7 +1088,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
       let fromCacheCount = 0;
       let budgetSkips = 0;
       for (const task of queriedTasks) {
-        const key = parentCacheKey(ticker, task);
+        const key = parentCacheKey(ticker, task, products);
         const stored = freshParent(key, now);
         if (stored) {
           successes += 1;
