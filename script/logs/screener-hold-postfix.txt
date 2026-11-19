@@ -1,0 +1,5 @@
+CASE1 {"forwardPe":-5,"visible":["NEG"],"skipped":[],"wrongNa":false}
+CASE2 crossed {"criteria":{"marketCapMin":null,"marketCapMax":null,"industryIncludes":null,"countryIncludes":null,"roicMin":null,"forwardPeMax":null},"notes":["MCap min liegt über MCap max. Beide Grenzen bleiben unangewendet."],"visible":["A","B"]}
+CASE2 negative {"criteria":{"marketCapMin":null,"marketCapMax":null,"industryIncludes":null,"countryIncludes":null,"roicMin":null,"forwardPeMax":null},"notes":["Negative MCap-Grenze bleibt unangewendet."],"visible":["A"]}
+CASE3 {"minFinite":false,"min":null,"notes":["MCap ist nach der Einheitenumrechnung nicht endlich und bleibt unangewendet."],"visible":["A","B"]}
+EXIT:0

@@ -1,0 +1,11 @@
+Same command: npx tsc --noEmit --pretty false --incremental false
+Node v22.23.4
+TypeScript 5.6.3
+node_modules of the branch checkout, symlinked into the main worktree
+main source SHA 01bf608981b842f5457695c92b5800a59cfec94f
+both exits: 2
+both error TS counts: 101
+tsc-error-set-diff.txt differs only by the absolute path inside two BTCDashboard diagnostics
+(/tmp/aa-main-01bf608 versus /agent/repos/Aktienanalyst).
+tsc-error-set-diff-normalized.txt is empty after that path is rewritten.
+No error is in shared/custom-screen.ts, ScreenerDashboard.tsx, ScreenerPanel.tsx, or CustomCriteriaFields.tsx.

@@ -1,0 +1,29 @@
+  ✅ CRV-Formel: Upside = (130-100)/100 = 30%
+  ✅ CRV-Formel: Downside = (100-80)/100 = 20%
+  ✅ CRV-Formel: CRV = 30/20 = 1.5
+  ✅ CRV Edge-Case: downside <= 0 liefert neutrales CRV statt Infinity/NaN
+  ✅ Dedup: gemeinsamer Ticker erscheint genau einmal
+  ✅ Dedup: investorCount für AAPL ist 2
+  ✅ Dedup: investors[] enthält beide Fonds
+  ✅ Dedup: Positionswerte werden aggregiert
+  ✅ FMP-Anreicherung erfolgt einmal je dedupliziertem Ticker
+  ✅ Graceful degradation: fehlender SEC-Filer vermindert nur totalInvestors
+
+=== parseYearRange: FMP-Format "low-high" ===
+  ✅ AMZN-Beispiel '196-287.2' -> {196, 287.2}
+  ✅ Dreistellige Range '1000-1250.5' -> {1000, 1250.5}
+  ✅ Leerer String -> {0, 0} (kein Crash)
+  ✅ Nur eine Zahl -> {0, 0} (kein Rateergebnis)
+  ✅ null/undefined -> {0, 0} (kein Crash)
+
+=== Performance: Ticker-Aufloesung skaliert nicht mit holdings×liste ===
+  ✅ 500 Auflösungen gegen 20k-Zeilen-Liste unter 1000ms (kein O(holdings×liste)-Rescan)
+  ✅ Alle 500 Auflösungen liefern korrekten Ticker
+
+=== Ticker-Auflösung: Korrektheit exakter vs. fuzzy Treffer ===
+  ✅ Exakter Treffer 'Apple Inc' -> AAPL
+  ✅ Fuzzy Treffer 'Berkshire Hathaway' -> BRKB
+  ✅ Kein Treffer für unbekannten Issuer -> null
+
+✅ Alle Screener-Star-Investor-Tests bestanden
+STAR:0
