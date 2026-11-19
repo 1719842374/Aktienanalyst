@@ -271,4 +271,14 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;             /* Chrome, Safari, Opera */
   }
+
+  /* Farben kommen als Variablen aus EARNINGS_AMPEL_THRESHOLDS, nicht aus einer zweiten Palette. */
+  .earnings-ampel-value {
+    color: var(--ampel-ink);
+    background-color: var(--ampel-wash);
+  }
+  .dark .earnings-ampel-value {
+    color: var(--ampel-ink-dark);
+    background-color: var(--ampel-wash-dark);
+  }
 }
