@@ -97,7 +97,7 @@ Diff `177c8ac5` gegen main: 6 Dateien, +9/−431. Dieselben sechs Pfade wie `291
 
 Blob-Hashes (`git rev-parse <sha>:<pfad>`):
 
-| Pfad | `177c8ac5` | `6d9f08f3` = `2911cfcf^` | main `7aaa13ce` = `2911cfcf` |
+| Pfad | Blob `177c8ac5` | Blob `6d9f08f3` (= `2911cfcf^`) | Blob main `7aaa13ce` (für diese Pfade gleich `2911cfcf`) |
 | --- | --- | --- | --- |
 | `client/src/components/sections/Section7.tsx` | `1475280595e9af357fbec509441411065860f406` | gleich | `850e4f222134c4359b3dc8ee826ac962542fa670` |
 | `server/sector-data.ts` | `a7c57cd8a389d854f9f220785f2314dbb5cdeaf5` | gleich | `d6b9d5dcb132804d456e7cbf0f3e6db9849b7150` |
