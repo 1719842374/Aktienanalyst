@@ -499,16 +499,16 @@ function toGapItem(
     } else {
       shareNote = "n/a — Anteil nicht belegbar";
     }
-    } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
-      shareNote = "n/a — Währung passt nicht zur Elternzeile";
-    } else if (sourced && child.shareOfParentPct != null && child.shareOfParentPct > 0 && child.shareOfParentPct <= 100) {
-      share = child.shareOfParentPct;
-      shareOrigin = "estimate";
-    } else if (!sourced) {
-      shareNote = "n/a — Schätzung ohne Quelle";
-    } else {
-      shareNote = "n/a — Anteil nicht belegbar";
-    }
+  } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
+    shareNote = "n/a — Währung passt nicht zur Elternzeile";
+  } else if (sourced && child.shareOfParentPct != null && child.shareOfParentPct > 0 && child.shareOfParentPct <= 100) {
+    share = child.shareOfParentPct;
+    shareOrigin = "estimate";
+  } else if (!sourced) {
+    shareNote = "n/a — Schätzung ohne Quelle";
+  } else {
+    shareNote = "n/a — Anteil nicht belegbar";
+  }
   return {
     parent,
     kind,
