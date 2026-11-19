@@ -299,10 +299,45 @@ function sameGapConcept(left: string, right: string): boolean {
   return a.size === b.size && shared === a.size;
 }
 
-function deviceBoundSoftware(name: string): boolean {
-  if (/cloud|saas|plattform|platform|as-a-service|as a service|abo|subscription|abonnement/i.test(name)) return false;
-  if (/cloud|saas|plattform|platform|as a service|abo|subscription|abonnement/.test(segmentGapKey(name))) return false;
-  return /software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(name);
+function softwareLabelBlocked(text: string): boolean {
+  return /cloud|saas|plattform|platform|as-a-service|as a service|abo|subscription|abonnement/i.test(text)
+    || /cloud|saas|plattform|platform|as a service|abo|subscription|abonnement/.test(segmentGapKey(text));
+}
+
+function deviceBoundSoftware(name: string, note = "", hosts: readonly string[] = []): boolean {
+  if (softwareLabelBlocked(name)) return false;
+  if (/software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(name)) return true;
+  const text = note.trim();
+  if (!text || softwareLabelBlocked(text)) return false;
+  if (/software|connectivity|autonomie|autonomy|firmware|freischalt|embedded/i.test(text)) return true;
+  const folded = segmentGapKey(text);
+  return hosts.some((host) => {
+    const key = segmentGapKey(host);
+    return key.length >= 3 && folded.includes(key);
+  });
+}
+
+function citedHardwareHost(note: string, hosts: readonly string[]): string | null {
+  const folded = segmentGapKey(note);
+  let found: string | null = null;
+  let best = 0;
+  for (const host of hosts) {
+    const key = segmentGapKey(host);
+    if (key.length >= 3 && folded.includes(key) && key.length > best) {
+      found = host;
+      best = key.length;
+    }
+  }
+  return found;
+}
+
+function placementHint(row: unknown): string {
+  if (!row || typeof row !== "object") return "";
+  const rec = row as { hint?: unknown; description?: unknown };
+  return [rec.hint, rec.description]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map((part) => part.trim())
+    .join(" ");
 }
 
 function hardwareKey(name: string): string {
@@ -427,25 +462,28 @@ function placeBundledSoftware(
   const notes: string[] = [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    if (!item || item.kind !== "product" || !serviceParentName(item.parent) || !deviceBoundSoftware(item.name)) continue;
-    if (segmentGapKey(item.parent) === segmentGapKey(host)) continue;
+    if (!item || item.kind !== "product" || !serviceParentName(item.parent)) continue;
+    const hint = `${item.basis ?? ""} ${item.hostHint ?? ""}`.trim();
+    if (!deviceBoundSoftware(item.name, hint, hardware)) continue;
+    const target = citedHardwareHost(hint, hardware) ?? host;
+    if (segmentGapKey(item.parent) === segmentGapKey(target)) continue;
     const clash = items.some((other) => (
       other !== item
       && other.kind === "product"
-      && segmentGapKey(other.parent) === segmentGapKey(host)
+      && segmentGapKey(other.parent) === segmentGapKey(target)
       && segmentGapKey(other.name) === segmentGapKey(item.name)
     ));
     if (clash) continue;
     const previous = item.parent;
     items[i] = {
       ...item,
-      parent: host,
+      parent: target,
       shareOfParentPct: null,
       growthPct: null,
       shareOrigin: null,
-      shareNote: `n/a — Anteil an ${host} nicht ausgewiesen`,
+      shareNote: `n/a — Anteil an ${target} nicht ausgewiesen`,
     };
-    notes.push(`${item.name}: ${previous} → ${host}`);
+    notes.push(`${item.name}: ${previous} → ${target}`);
   }
   return notes;
 }
@@ -621,6 +659,9 @@ export function reviewSegmentGaps(
       const childCurrency = currencyOnRows(bucket.rows, child.name);
       const parentUsd = parentRevenue.get(fold(parent)) ?? null;
       const item = toGapItem(parent, bucket.kind, child, parentUsd, companyName, childCurrency, naReasonOnRows(bucket.rows, child.name));
+      const raw = bucket.rows.find((row) => row && typeof row === "object" && clip((row as { name?: unknown }).name, 80) === child.name);
+      const hint = placementHint(raw);
+      if (hint) item.hostHint = hint;
       if (
         child.revenue != null && child.revenue > 0
         && parentUsd != null
@@ -973,6 +1014,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         const coverage = `abgefragt ${queried} von ${total}`;
         const placed = merged.map((item) => ({ ...item }));
         const moveNotes = placeBundledSoftware(placed, products, usd.revenues);
+        for (const item of placed) delete item.hostHint;
         const split = splitListedParentNotes(placed, notes);
         const reason = [...split.visible, usd.fxNote && !notes.some((note) => note.includes(usd.fxNote ?? "")) ? usd.fxNote : "", coverage]
           .filter((note) => note && note.trim())

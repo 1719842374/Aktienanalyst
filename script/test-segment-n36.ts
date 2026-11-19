@@ -2875,6 +2875,98 @@ gap(
   JSON.stringify(salesDevice ?? null),
 );
 
+resetSegmentGapCacheForTests();
+const citedHostApp = express();
+citedHostApp.use(express.json());
+registerSegmentGapRoute(citedHostApp, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: { "Automotive Sales": 70, "Services and Other": 10 },
+  }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [
+            {
+              parent: "Services and Other",
+              name: "FSD",
+              owner: "Nordlichtwerke",
+              shareOfParentPct: 14,
+              growthPct: null,
+              basis: "nicht separat ausgewiesen",
+              source: "Nordlichtwerke Annual Report 2025",
+              hint: "Automotive Sales",
+              description: "im Segment Automotive Sales verbucht",
+            },
+            {
+              parent: "Services and Other",
+              name: "Cloud Software",
+              owner: "Nordlichtwerke",
+              shareOfParentPct: 12,
+              growthPct: null,
+              basis: "Cloud-Abo, nicht separat ausgewiesen",
+              source: "Nordlichtwerke Annual Report 2025",
+              hint: "Automotive Sales",
+              description: "im Segment Automotive Sales genannt",
+            },
+            {
+              parent: "Services and Other",
+              name: "Subscription Software",
+              owner: "Nordlichtwerke",
+              shareOfParentPct: 8,
+              growthPct: null,
+              basis: "Abo, nicht separat ausgewiesen",
+              source: "Nordlichtwerke Annual Report 2025",
+              description: "Subscription im Segment Automotive Sales",
+            },
+          ],
+        },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const citedHostServer = citedHostApp.listen(0);
+const citedHostPort = (citedHostServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(citedHostPort, "EXFSD", {
+    products: [
+      { name: "Automotive Sales", revenue: 70 },
+      { name: "Services and Other", revenue: 10 },
+    ],
+  });
+  const cited = posted.json.items?.find((item) => item.name === "FSD");
+  const cloud = posted.json.items?.find((item) => item.name === "Cloud Software");
+  const subscription = posted.json.items?.find((item) => item.name === "Subscription Software");
+  gap(
+    "service-row-follows-named-hardware-host",
+    posted.status === 200
+      && cited?.parent === "Automotive Sales"
+      && cited.shareOfParentPct == null
+      && cited.shareNote === "n/a — Anteil an Automotive Sales nicht ausgewiesen",
+    JSON.stringify(cited ?? null),
+  );
+  gap(
+    "cloud-and-subscription-stay-under-services",
+    posted.status === 200
+      && cloud?.parent === "Services and Other"
+      && cloud.shareOfParentPct === 12
+      && subscription?.parent === "Services and Other"
+      && subscription.shareOfParentPct === 8,
+    `cloud=${JSON.stringify(cloud)} subscription=${JSON.stringify(subscription)}`,
+  );
+} finally {
+  citedHostServer.close();
+}
+
 const headHosts = ["Hardware Sales", "Device Revenues", "Device Products", "Gaming Consoles", "PCs & Tablets"];
 for (let index = 0; index < headHosts.length; index += 1) {
   const host = headHosts[index] ?? "";

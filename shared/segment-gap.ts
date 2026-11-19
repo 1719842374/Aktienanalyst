@@ -9,6 +9,8 @@ export interface SegmentGapItem {
   shareOrigin?: "fact" | "estimate" | null;
   /** Sichtbarer Grund, wenn shareOfParentPct null ist. */
   shareNote?: string | null;
+  /** Interner Hinweis aus der Modellantwort. Das Panel liest das Feld nicht. */
+  hostHint?: string | null;
 }
 
 export interface SegmentGapResult {
