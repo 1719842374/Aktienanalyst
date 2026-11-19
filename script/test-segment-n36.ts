@@ -1841,6 +1841,74 @@ try {
   pairFirmServer.close();
 }
 
+resetSegmentGapCacheForTests();
+const twinApp = express();
+twinApp.use(express.json());
+registerSegmentGapRoute(twinApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Antrieb: 50, Kabine: 40, Services: 10 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async () => ({
+    modelUsed: "mock-model",
+    data: {
+      companyEcho: "Nordlichtwerke",
+      industryEcho: "Industrial Machinery",
+      children: [
+        citedChild("Antrieb", "Modul", "Nordlichtwerke", { shareOfParentPct: 4 }),
+        citedChild("Kabine", "Modul", "Nordlichtwerke", { shareOfParentPct: 4 }),
+        citedChild("Services", "Modul", "Nordlichtwerke", { shareOfParentPct: 4 }),
+        citedChild("Antrieb", "Hinweis", "Nordlichtwerke", {
+          source: null,
+          shareOfParentPct: 3,
+          basis: "nicht separat im FY2025 ausgewiesen",
+          naReason: "nicht separat im FY2025 ausgewiesen",
+        }),
+        citedChild("Antrieb", "Offen", "Nordlichtwerke", {
+          source: null,
+          shareOfParentPct: 2,
+          basis: "die Firma schlüsselt die Zeile nicht auf",
+          naReason: "die Firma schlüsselt die Zeile nicht auf",
+        }),
+      ],
+    },
+  }),
+});
+const twinServer = twinApp.listen(0);
+const twinPort = (twinServer.address() as AddressInfo).port;
+try {
+  const twin = await postGap(twinPort, "EXY", {
+    products: [
+      { name: "Antrieb", revenue: 50 },
+      { name: "Kabine", revenue: 40 },
+      { name: "Services", revenue: 10 },
+    ],
+  });
+  const modules = (twin.json.items ?? []).filter((item) => item.name === "Modul");
+  const hint = twin.json.items?.find((item) => item.name === "Hinweis");
+  const open = twin.json.items?.find((item) => item.name === "Offen");
+  gap(
+    "same-name-survives-on-two-hardware-parents",
+    twin.status === 200
+      && modules.length === 2
+      && modules.some((item) => item.parent === "Antrieb")
+      && modules.some((item) => item.parent === "Kabine")
+      && !modules.some((item) => item.parent === "Services"),
+    `modules=${JSON.stringify(modules)}`,
+  );
+  gap(
+    "year-without-source-is-generic-plain-reason-stays",
+    hint?.shareOfParentPct == null
+      && hint?.shareNote === "n/a — Firma weist Hinweis nicht separat aus"
+      && !/FY2025|2025/.test(hint?.shareNote ?? "")
+      && !/FY2025|2025/.test(hint?.basis ?? "")
+      && open?.shareNote === "n/a — die Firma schlüsselt die Zeile nicht auf",
+    `hint=${JSON.stringify(hint)} open=${JSON.stringify(open)}`,
+  );
+} finally {
+  twinServer.close();
+}
+
 gap(
   "segment-gap-does-not-add-online-call",
   !/online:\s*true/.test(routeSource),

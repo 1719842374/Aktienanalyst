@@ -240,32 +240,44 @@ function serviceParentName(name: string): boolean {
 }
 
 function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
-  if (item.kind !== "product") {
-    const id = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
-    if (merged.some((row) => `${row.kind}:${segmentGapKey(row.parent)}:${segmentGapKey(row.name)}` === id)) return;
-    merged.push(item);
-    return;
+  const slot = `${item.kind}:${segmentGapKey(item.parent)}:${segmentGapKey(item.name)}`;
+  if (merged.some((row) => `${row.kind}:${segmentGapKey(row.parent)}:${segmentGapKey(row.name)}` === slot)) return;
+  if (item.kind === "product") {
+    const cross = merged.findIndex((row) => (
+      row.kind === "product"
+      && segmentGapKey(row.name) === segmentGapKey(item.name)
+      && serviceParentName(row.parent) !== serviceParentName(item.parent)
+    ));
+    if (cross >= 0) {
+      const current = merged[cross];
+      if (current && serviceParentName(current.parent) && !serviceParentName(item.parent)) merged[cross] = item;
+      return;
+    }
   }
-  const index = merged.findIndex((row) => row.kind === "product" && segmentGapKey(row.name) === segmentGapKey(item.name));
-  if (index < 0) {
-    merged.push(item);
-    return;
-  }
-  const current = merged[index];
-  if (current && serviceParentName(current.parent) && !serviceParentName(item.parent)) merged[index] = item;
+  merged.push(item);
 }
 
-/** Dieselbe Dokumentprüfung wie eine Quelle. Ein Dokumentname ohne Firma und Jahr wird nicht angezeigt. */
+/** Dieselbe Dokumentprüfung wie eine Quelle. Jahr oder Dokument ohne bestandene Quelle wird nicht angezeigt. */
 const DOC_MENTION = /(geschäftsbericht|jahresbericht|annual report|investor-präsentation|investorenpräsentation|investor presentation|10-k|20-f|10-q|8-k|halbjahresbericht|quartalsbericht)/i;
+const YEAR_MENTION = /\b(?:FY\s*)?(?:19|20)\d{2}\b/i;
+
+function uncheckedCitation(text: string, companyName: string): boolean {
+  if (concreteSource(text, companyName)) return false;
+  return DOC_MENTION.test(text) || YEAR_MENTION.test(text);
+}
 
 function specificGapNote(reason: string, name: string, companyName: string): string | null {
   const text = reason.replace(/\s+/g, " ").trim();
   if (!text) return null;
-  if (DOC_MENTION.test(text) && !concreteSource(text, companyName)) {
-    return `n/a — Firma weist ${name} nicht separat aus`;
-  }
+  if (uncheckedCitation(text, companyName)) return `n/a — Firma weist ${name} nicht separat aus`;
   const body = text.replace(/^n\/a\s*—?\s*/i, "").trim();
   return body ? `n/a — ${body}` : null;
+}
+
+function visibleBasis(basis: string, companyName: string): string {
+  const text = basis.replace(/\s+/g, " ").trim();
+  if (!text || concreteSource(text, companyName)) return text;
+  return text.split(" · ").map((part) => part.trim()).filter((part) => part && !uncheckedCitation(part, companyName)).join(" · ");
 }
 
 function sameShownParent(left: string, right: string): boolean {
@@ -565,7 +577,7 @@ function toGapItem(
     name: child.name,
     shareOfParentPct: share,
     growthPct: child.growthPct ?? null,
-    basis: shownBasis,
+    basis: visibleBasis(shownBasis, companyName),
     shareOrigin,
     shareNote,
   };
