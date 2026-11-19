@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p19";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p20";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -363,15 +363,48 @@ function isPcPluralToken(raw: string): boolean {
   return /^pcs$/i.test(raw) && raw !== raw.toUpperCase();
 }
 
+const HARDWARE_STEMS = ["device", "gerat", "hardware", "computing", "automotive", "vehicle", "fahrzeug", "console", "konsole", "phone", "smartphone", "antrieb"];
+const REVENUE_HEADS = new Set(["sales", "products", "revenue", "revenues"]);
+
+function hardwareClauses(name: string): string[][] {
+  const marked = name.replace(/&/g, " and ").replace(/,/g, "\n");
+  return marked.split(/\n|\band\b|\bund\b/i)
+    .map((part) => hardwareKey(part).split(" ").filter((token) => token.length > 0))
+    .filter((tokens) => tokens.length > 0);
+}
+
+function chosenHead(tokens: readonly string[]): string | null {
+  const last = tokens[tokens.length - 1];
+  if (!last) return null;
+  if (!REVENUE_HEADS.has(last)) return last;
+  const previous = tokens[tokens.length - 2];
+  if (!previous || REVENUE_HEADS.has(previous)) return null;
+  return previous;
+}
+
+function isStemOrPlural(token: string): boolean {
+  return HARDWARE_STEMS.some((stem) => token === stem || token === `${stem}s` || token === `${stem}e` || token === `${stem}n`);
+}
+
+function pcHeadIsHost(name: string, token: string): boolean {
+  if (token === "pc") return true;
+  if (token !== "pcs") return false;
+  return hardwareRawTokens(name).some((raw) => isPcPluralToken(raw));
+}
+
 function hardwareHostName(name: string): boolean {
   if (!name) return false;
-  const key = hardwareKey(name);
-  const tokens = key.split(" ").filter((token) => token.length > 0);
-  if (tokens.some((token) => tokenBlocked(token))) return false;
-  if (tokens.includes("pc") || hardwareRawTokens(name).some((token) => isPcPluralToken(token))) return true;
-  const stems = ["device", "gerat", "hardware", "computing", "automotive", "vehicle", "fahrzeug", "console", "konsole", "phone", "smartphone", "antrieb"];
-  if (stems.some((stem) => tokens.some((token) => token === stem || token.startsWith(stem)))) return true;
-  return key.includes("personal computing") || key.includes("server hardware");
+  const clauses = hardwareClauses(name);
+  if (clauses.length === 0) return false;
+  let deviceHead = false;
+  for (const tokens of clauses) {
+    if (tokens.some((token) => HARDWARE_BLOCK_TOKENS.has(token))) return false;
+    const head = chosenHead(tokens);
+    if (!head) continue;
+    if (tokenBlocked(head)) return false;
+    if (isStemOrPlural(head) || pcHeadIsHost(name, head)) deviceHead = true;
+  }
+  return deviceHead;
 }
 
 function placeBundledSoftware(

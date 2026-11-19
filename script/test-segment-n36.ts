@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p19")
+    && keyA.includes("n36-gap-p20")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p19"
+      && tsla.json.promptVersion === "n36-gap-p20"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p19",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p20",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p19"
+      && posted.json.promptVersion === "n36-gap-p20"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2875,7 +2875,92 @@ gap(
   JSON.stringify(salesDevice ?? null),
 );
 
-const borderlineHosts = ["Gerätevermietung", "Plant Equipment", "Planetary Drives", "Credit Card Terminals", "Mietgeräte", "Rental Equipment", "Airplanes", "Laboratory Equipment", "Aircraft & Airplane Components"];
+const headHosts = ["Hardware Sales", "Device Revenues", "Device Products", "Gaming Consoles", "PCs & Tablets"];
+for (let index = 0; index < headHosts.length; index += 1) {
+  const host = headHosts[index] ?? "";
+  const posted = await postSupportSoftware(`EXG${index}`, [
+    { name: host, revenue: 80 },
+    { name: "Support", revenue: 10 },
+  ]);
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    `head-word-is-hardware-host-${index}`,
+    posted.status === 200 && device?.parent === host,
+    `${host} -> ${JSON.stringify(device ?? null)}`,
+  );
+}
+
+const headBlocked = [
+  "Sales",
+  "Products & Revenue",
+  "Automotive Leasing",
+  "Leasing Revenue",
+  "Services Revenue",
+  "Hardware Services Sales",
+  "Hardware Servicing",
+  "Hardware Maintenance",
+  "Device Repair",
+  "Hardware Warranty",
+  "Devicesupport",
+  "Hardwareservice",
+  "Devicesupport Sales",
+  "Hardwareservice Revenue",
+  "Devices & Services",
+  "Hardwaremiete",
+  "Hardware-Abo",
+];
+for (let index = 0; index < headBlocked.length; index += 1) {
+  const host = headBlocked[index] ?? "";
+  const posted = await postSupportSoftware(`EXJ${index}`, [
+    { name: host, revenue: 80 },
+    { name: "PCs", revenue: 20 },
+    { name: "Support", revenue: 10 },
+  ]);
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    `head-word-is-not-hardware-host-${index}`,
+    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    `${host} -> ${JSON.stringify(device ?? null)}`,
+  );
+}
+
+const devicesOverServices = await postSupportSoftware("EXD5", [
+  { name: "Hardware Services", revenue: 80 },
+  { name: "Devices", revenue: 50 },
+  { name: "Support", revenue: 10 },
+]);
+const devicesOver = devicesOverServices.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "devices-50-beats-hardware-services-80",
+  devicesOverServices.status === 200 && devicesOver?.parent === "Devices",
+  JSON.stringify(devicesOver ?? null),
+);
+
+const devicesOverConsoles = await postSupportSoftware("EXD3", [
+  { name: "Gaming Consoles", revenue: 30 },
+  { name: "Devices", revenue: 50 },
+  { name: "Support", revenue: 10 },
+]);
+const consoleRank = devicesOverConsoles.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "devices-50-beats-gaming-consoles-30",
+  devicesOverConsoles.status === 200 && consoleRank?.parent === "Devices",
+  JSON.stringify(consoleRank ?? null),
+);
+
+const tiedHeads = await postSupportSoftware("EXD4", [
+  { name: "Devices", revenue: 40 },
+  { name: "Gaming Consoles", revenue: 40 },
+  { name: "Support", revenue: 10 },
+]);
+const tiedHead = tiedHeads.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "equal-revenue-keeps-first-hardware-host",
+  tiedHeads.status === 200 && tiedHead?.parent === "Devices",
+  JSON.stringify(tiedHead ?? null),
+);
+
+const borderlineHosts = ["Gerätevermietung", "Plant Equipment", "Planetary Drives", "Credit Card Terminals", "Mietgeräte", "Rental Equipment", "Airplanes", "Laboratory Equipment", "Aircraft & Airplane Components", "Smartphone Plans & Devices"];
 for (let index = 0; index < borderlineHosts.length; index += 1) {
   const host = borderlineHosts[index] ?? "";
   const posted = await postSupportSoftware(`EXB${index}`, [
