@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p16")
+    && keyA.includes("n36-gap-p17")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p16"
+      && tsla.json.promptVersion === "n36-gap-p17"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p16",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p17",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p16"
+      && posted.json.promptVersion === "n36-gap-p17"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2648,7 +2648,7 @@ const noHostApp = express();
 noHostApp.use(express.json());
 registerSegmentGapRoute(noHostApp, {
   available: () => true,
-  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Services: 40, Support: 10 } }],
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { "Industrial Operations": 40, Support: 10 } }],
   regionRows: async () => [],
   identity: async () => pairFirm,
   llm: async (opts) => {
@@ -2667,7 +2667,7 @@ const noHostPort = (noHostServer.address() as AddressInfo).port;
 try {
   const posted = await postGap(noHostPort, "EXH", {
     products: [
-      { name: "Services", revenue: 40 },
+      { name: "Industrial Operations", revenue: 40 },
       { name: "Support", revenue: 10 },
     ],
   });
@@ -2683,6 +2683,103 @@ try {
 } finally {
   noHostServer.close();
 }
+
+async function postSupportSoftware(
+  ticker: string,
+  parents: { name: string; revenue: number }[],
+): Promise<{ status: number; json: { items?: { name: string; parent: string; shareOfParentPct: number | null }[]; internalReason?: string | null } }> {
+  resetSegmentGapCacheForTests();
+  const data: Record<string, number> = {};
+  for (const parent of parents) data[parent.name] = parent.revenue;
+  const app = express();
+  app.use(express.json());
+  registerSegmentGapRoute(app, {
+    available: () => true,
+    productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data }],
+    regionRows: async () => [],
+    identity: async () => pairFirm,
+    llm: async (opts) => {
+      const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+      if (opts.prompt.includes("nur das Elternsegment \"Support\"")) {
+        return {
+          modelUsed: "mock-model",
+          data: { ...echo, children: [citedChild("Support", "Device Software", "Nordlichtwerke", { shareOfParentPct: 9 })] },
+        };
+      }
+      return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+    },
+  });
+  const server = app.listen(0);
+  const port = (server.address() as AddressInfo).port;
+  try {
+    return await postGap(port, ticker, { products: parents });
+  } finally {
+    server.close();
+  }
+}
+
+const blockedHosts = [
+  "Gerätedienste",
+  "Mobile Phone Plans",
+  "Vehicle Leasing",
+  "Fahrzeugfinanzierung",
+  "Gerätemiete",
+  "Fahrzeugvermietung",
+  "Vehicle Insurance",
+  "Device Rental",
+];
+for (let index = 0; index < blockedHosts.length; index += 1) {
+  const host = blockedHosts[index] ?? "";
+  const posted = await postSupportSoftware(`EXN${index}`, [
+    { name: host, revenue: 80 },
+    { name: "PCs", revenue: 20 },
+    { name: "Support", revenue: 10 },
+  ]);
+  const device = posted.json.items?.find((item) => item.name === "Device Software");
+  gap(
+    `blocked-name-is-not-hardware-host-${index}`,
+    posted.status === 200 && device?.parent === "PCs" && device.parent !== host,
+    `${host} -> ${JSON.stringify(device ?? null)}`,
+  );
+}
+
+const pcsOnly = await postSupportSoftware("EXP", [
+  { name: "PCs", revenue: 20 },
+  { name: "Support", revenue: 10 },
+]);
+const pcsDevice = pcsOnly.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "pcs-plural-is-hardware-host",
+  pcsOnly.status === 200
+    && pcsDevice?.parent === "PCs"
+    && pcsDevice.shareOfParentPct == null
+    && (pcsOnly.json.internalReason ?? "").includes("Support → PCs"),
+  JSON.stringify(pcsDevice ?? null),
+);
+
+const cloudHost = await postSupportSoftware("EXQ", [
+  { name: "Cloud Computing", revenue: 90 },
+  { name: "PCs", revenue: 20 },
+  { name: "Support", revenue: 10 },
+]);
+const cloudDevice = cloudHost.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "cloud-computing-is-not-a-hardware-host",
+  cloudHost.status === 200 && cloudDevice?.parent !== "Cloud Computing",
+  JSON.stringify(cloudDevice ?? null),
+);
+
+const tied = await postSupportSoftware("EXR", [
+  { name: "PCs", revenue: 20 },
+  { name: "Automotive", revenue: 50 },
+  { name: "Support", revenue: 10 },
+]);
+const tiedDevice = tied.json.items?.find((item) => item.name === "Device Software");
+gap(
+  "positive-hosts-break-ties-by-revenue",
+  tied.status === 200 && tiedDevice?.parent === "Automotive",
+  JSON.stringify(tiedDevice ?? null),
+);
 
 gap(
   "segment-gap-does-not-add-online-call",

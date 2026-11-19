@@ -47,7 +47,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p16";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p17";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -320,11 +320,11 @@ function hardwareKey(name: string): string {
 function hardwareHostName(name: string): boolean {
   if (!name) return false;
   const key = hardwareKey(name);
-  const blocked = /cloud|saas|plattform|platform|as-a-service|as a service|service|support|abo|subscription|software/;
+  const blocked = /cloud|saas|plattform|platform|as-a-service|as a service|service|support|abo|subscription|software|dienst|plan|tarif|leasing|lease|finanz|financ|credit|miet|rental|versicher|insurance/;
   if (blocked.test(key)) return false;
   const tokens = key.split(" ").filter((token) => token.length > 0);
   const stems = ["device", "gerat", "hardware", "computing", "automotive", "vehicle", "fahrzeug", "console", "konsole", "phone", "smartphone", "antrieb"];
-  if (tokens.includes("pc")) return true;
+  if (tokens.includes("pc") || tokens.includes("pcs")) return true;
   if (stems.some((stem) => tokens.some((token) => token === stem || token.startsWith(stem)))) return true;
   return key.includes("personal computing") || key.includes("server hardware");
 }
