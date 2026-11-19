@@ -276,7 +276,7 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ticker: "TSLA" }),
   });
-  const json = await second.json() as { items?: { parent: string; name: string; shareOfParentPct: number | null; growthPct: number | null }[]; reason?: string; error?: string };
+  const json = await second.json() as { items?: { parent: string; name: string; shareOfParentPct: number | null; growthPct: number | null; shareOrigin?: string | null; basis?: string }[]; reason?: string; error?: string };
   const prompt = prompts[1] ?? prompts[0] ?? "";
   gap("prompt-has-known-facts", prompt.includes("Automotive") && prompt.includes("United States") && prompt.includes("Tesla baut Fahrzeuge") && !prompt.includes("FSD"), prompt.slice(0, 360));
 gap(
@@ -285,7 +285,8 @@ gap(
   prompt.slice(0, 420),
 );
   const names = (json.items ?? []).map((item) => `${item.parent}/${item.name}`);
-  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && json.items?.find((item) => item.name === "FSD")?.shareOfParentPct == null && /Schätzung ohne Quelle: FSD/.test(json.reason ?? "") && json.items?.find((item) => item.name === "FSD")?.growthPct == null, JSON.stringify(json));
+  const keptFsd = json.items?.find((item) => item.name === "FSD");
+  gap("keeps-fsd-under-automotive", names.includes("Automotive/FSD") && keptFsd?.shareOfParentPct === 8 && keptFsd.shareOrigin === "estimate" && (keptFsd.basis ?? "").includes("Annual Report 2025") && keptFsd.growthPct == null, JSON.stringify(json));
   gap("drops-echo-and-unknown-parent", !names.includes("Automotive/Automotive") && !names.includes("Automotive/United States") && !names.some((name) => name.startsWith("Software/")), names.join(",") || json.reason || "");
   gap(
     "partial-cache-retries-only-failed-parent",
@@ -530,7 +531,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p10")
+    && keyA.includes("n36-gap-p11")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1019,8 +1020,9 @@ try {
     "tsla-product-child-not-country",
     tsla.status === 200
       && tslaNames.includes("product:Automotive/FSD")
-      && fsd?.shareOfParentPct == null
-      && /Schätzung ohne Quelle: FSD/.test(tsla.json.reason ?? "")
+      && fsd?.shareOfParentPct === 8
+      && fsd.shareOrigin === "estimate"
+      && (fsd.basis ?? "").includes("Annual Report 2025")
       && !tslaNames.some((name) => name.endsWith("/Mexico") || name.endsWith("/Germany") || name.endsWith("/India"))
       && /nicht als Produkt-Unterposten: Mexico/.test(tsla.json.reason ?? "")
       && /nicht als Produkt-Unterposten: Germany/.test(tsla.json.reason ?? "")
@@ -1055,8 +1057,9 @@ try {
       && /passt nicht unter UNITED STATES: Asia Pacific/.test(msft.json.reason ?? "")
       && germany?.parent === "EMEA"
       && germany.kind === "geographic"
-      && germany.shareOfParentPct == null
-      && /Schätzung ohne Quelle: Germany/.test(msft.json.reason ?? "")
+      && germany.shareOfParentPct === 12
+      && germany.shareOrigin === "estimate"
+      && (germany.basis ?? "").includes("Annual Report 2025")
       && azure?.parent === "Intelligent Cloud"
       && azure.kind === "product",
     `names=${msftNames.join(",")} reason=${msft.json.reason ?? ""}`,
@@ -1070,8 +1073,9 @@ try {
     sap.status === 200
       && sapNames.length === 1
       && platform?.parent === "Cloud"
-      && platform.shareOfParentPct == null
-      && /Schätzung ohne Quelle: Business Technology Platform/.test(sap.json.reason ?? "")
+      && platform.shareOfParentPct === 12
+      && platform.shareOrigin === "estimate"
+      && (platform.basis ?? "").includes("Annual Report 2025")
       && /Elternsegment nicht in der Liste: RISE/.test(sap.json.reason ?? "")
       && /Elternsegment nicht in der Liste: Employee Central/.test(sap.json.reason ?? "")
       && sapPrompt.includes("Cloud")
@@ -1436,14 +1440,14 @@ try {
       && robotaxi?.shareOfParentPct == null
       && /ohne Quelle: Robotaxi/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p10"
+      && tsla.json.promptVersion === "n36-gap-p11"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p10",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p11",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -1693,6 +1697,69 @@ try {
   else process.env.OPENROUTER_API_KEY = previousKey;
   if (previousModel == null) delete process.env.OPENROUTER_MODEL;
   else process.env.OPENROUTER_MODEL = previousModel;
+}
+
+resetSegmentGapCacheForTests();
+const hardwarePrompts: string[] = [];
+const hardwareApp = express();
+hardwareApp.use(express.json());
+registerSegmentGapRoute(hardwareApp, {
+  available: () => true,
+  productRows: async () => [{
+    fiscalYear: "2025",
+    reportedCurrency: "USD",
+    data: { Automotive: 700, "Services and Other": 100 },
+  }],
+  regionRows: async () => [],
+  identity: async () => fixtureIdentity,
+  llm: async (opts) => {
+    hardwarePrompts.push(opts.prompt);
+    return {
+      modelUsed: "mock-model",
+      data: {
+        companyEcho: "Tesla, Inc.",
+        industryEcho: "Auto Manufacturers",
+        children: [
+          citedChild("Automotive", "Abo-Software", "Tesla, Inc.", { shareOfParentPct: 6 }),
+          citedChild("Automotive", "Versuch", "Tesla, Inc.", { source: null, shareOfParentPct: 4, basis: "ohne Beleg" }),
+        ],
+      },
+    };
+  },
+});
+const hardwareServer = hardwareApp.listen(0);
+const hardwarePort = (hardwareServer.address() as AddressInfo).port;
+try {
+  const shown = await postGap(hardwarePort, "EXQ", {
+    products: [
+      { name: "Automotive", revenue: 700 },
+      { name: "Services & Other", revenue: 100 },
+    ],
+  });
+  const software = shown.json.items?.find((item) => item.name === "Abo-Software");
+  const trial = shown.json.items?.find((item) => item.name === "Versuch");
+  const hardwarePrompt = hardwarePrompts.find((prompt) => prompt.includes('nur das Elternsegment "Automotive"')) ?? "";
+  gap(
+    "hardware-parent-keeps-embedded-software",
+    shown.status === 200
+      && software?.parent === "Automotive"
+      && software.shareOfParentPct === 6
+      && software.shareOrigin === "estimate"
+      && (software.basis ?? "").includes("Annual Report 2025")
+      && hardwarePrompt.includes("Lizenzumsatz")
+      && hardwarePrompt.includes("separat bezahlt")
+      && !hardwarePrompt.includes("FSD"),
+    `software=${JSON.stringify(software)} prompt=${hardwarePrompt.slice(0, 280)}`,
+  );
+  gap(
+    "sourced-estimate-kept-unsourced-is-na",
+    trial?.shareOfParentPct == null
+      && trial?.shareNote === "n/a — Schätzung ohne Quelle"
+      && /Schätzung ohne Quelle: Versuch/.test(shown.json.reason ?? ""),
+    `trial=${JSON.stringify(trial)} reason=${shown.json.reason ?? ""}`,
+  );
+} finally {
+  hardwareServer.close();
 }
 
 const gapModule = readFileSync(new URL("../shared/segment-gap.ts", import.meta.url), "utf8");

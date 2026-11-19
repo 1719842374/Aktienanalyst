@@ -46,7 +46,7 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/i;
 /** Prompt-Version im Cache-Schlüssel, damit alte Antworten nach einer Prompt-Änderung nicht liegen bleiben. */
-export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p10";
+export const SEGMENT_GAP_PROMPT_VERSION = "n36-gap-p11";
 /**
  * Obergrenze der OpenRouter-HTTP-Requests pro Anfrage.
  * Modell-Fallback und die SEC-Extraktion zählen mit. Keine Wert-Schwelle.
@@ -195,10 +195,10 @@ export function segmentGapPrompt(input: {
     : "n/a";
   const focusNames = input.only ? [input.only] : input.products;
   const eachParent = focusNames.map((name) => {
-    const services = /service|abo|subscription|software|support/i.test(name);
-    const task = services
-      ? "fehlende Produktlinien nur dieses Elterns. Software, Services und Abos, die nicht separat ausgewiesen sind, gehören unter genau diese Zeichenfolge"
-      : "fehlende Produktlinien nur dieses Elterns";
+    const reportedAsService = /service|abo|subscription|software|support/i.test(name);
+    const task = reportedAsService
+      ? "fehlende Produktlinien nur dieses Elterns. Software, Services und Abos, die hier berichtet werden und nicht separat ausgewiesen sind, gehören unter genau diese Zeichenfolge"
+      : "fehlende Produktlinien nur dieses Elterns. Software-, Abo- oder Lizenzumsatz, der in diesem Segment steckt und separat bezahlt wird, gehört unter genau diese Zeichenfolge";
     return `- ${name}: ${task}.`;
   }).join("\n");
   const focusLine = input.only
@@ -222,10 +222,10 @@ export function segmentGapPrompt(input: {
     "Währung der Elternumsätze: USD.",
     `Elternumsätze in USD: ${parentLine}.`,
     input.fxNote ? input.fxNote : "",
-    "shareOfParentPct bleibt null. Der Anteil wird nur aus revenue und dem Elternumsatz derselben Währung gerechnet.",
-    "revenue ist der Umsatz des Unterpostens in USD und nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. currency ist USD. Nie 0.",
-    "basis nennt die Lücke und darf nicht leer sein.",
-    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
+    "shareOfParentPct ist eine Zahl nur zusammen mit source. source nennt die Firma, den Dokumenttyp und das Jahr. Fehlt eines davon, sind shareOfParentPct und revenue null.",
+    "revenue ist der Umsatz des Unterpostens in USD und nur, wenn dieselbe source die Zahl nennt, sonst null. currency ist USD. Nie 0.",
+    "basis nennt die Lücke und darf nicht leer sein. Die Quellenangabe steht in source, nicht als Ersatz für basis.",
+    `Antwortform: {"companyEcho":"${input.companyName}","industryEcho":"${industryEcho}","children":[{"parent":"","name":"","owner":"${input.companyName}","currency":"USD","revenue":null,"shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":"Firma, Dokumenttyp, Jahr"}]}.`,
   ].filter((line) => line.length > 0).join("\n");
 }
 
@@ -499,11 +499,16 @@ function toGapItem(
     } else {
       shareNote = "n/a — Anteil nicht belegbar";
     }
-  } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
-    shareNote = "n/a — Währung passt nicht zur Elternzeile";
-  } else {
-    shareNote = "n/a — Schätzung ohne Quelle";
-  }
+    } else if (revenue != null && parentUsd != null && childCurrency !== "" && childCurrency !== "USD") {
+      shareNote = "n/a — Währung passt nicht zur Elternzeile";
+    } else if (sourced && child.shareOfParentPct != null && child.shareOfParentPct > 0 && child.shareOfParentPct <= 100) {
+      share = child.shareOfParentPct;
+      shareOrigin = "estimate";
+    } else if (!sourced) {
+      shareNote = "n/a — Schätzung ohne Quelle";
+    } else {
+      shareNote = "n/a — Anteil nicht belegbar";
+    }
   return {
     parent,
     kind,
@@ -671,7 +676,7 @@ export function registerSegmentGapRoute(app: Express, deps: SegmentGapDeps = {})
         if (row.revenue != null) order.set(fold(row.name), row.revenue);
       }
       let tasks = gapTasks(products, regions, usd.revenues, order);
-      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software, Services und Abos unter dem Service-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit Quelle, sonst null. shareOfParentPct null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
+      const systemPrompt = "Antworte nur mit JSON. Schätze nur fehlende Produktlinien und Regionen der genannten Firma. companyEcho muss den Firmennamen enthalten, industryEcho die genannte Branche. parent ist genau die Zeichenfolge dieses Aufrufs. Ein Land ist kein Produkt-Unterposten. Eine Region nur unter dem passenden Regionen-Eltern. Software-, Abo- oder Lizenzumsatz, der in einem Hardware-Segment steckt und separat bezahlt wird, gehört unter dieses Hardware-Eltern. Bekannte Namen nicht wiederholen. revenue nur in USD und nur mit source, sonst null. shareOfParentPct nur mit source, die Firma, Dokumenttyp und Jahr nennt, sonst null. Nie 0. Das Label ist KI-Schätzung, kein Override.";
       const run = deps.llm ?? callLLMJson;
       const reply = (
         merged: SegmentGapItem[],
