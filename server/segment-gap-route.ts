@@ -266,7 +266,7 @@ const GAP_REASON_CODE = {
 
 function specificGapNote(reason: string, name: string, parent: string, companyName: string): string {
   const text = reason.replace(/\s+/g, " ").trim();
-  if (text in GAP_REASON_CODE) return GAP_REASON_CODE[text as keyof typeof GAP_REASON_CODE](name, parent);
+  if (Object.hasOwn(GAP_REASON_CODE, text)) return GAP_REASON_CODE[text as keyof typeof GAP_REASON_CODE](name, parent);
   if (text && concreteSource(text, companyName)) return `n/a — ${text}`;
   return `n/a — Firma weist ${name} nicht separat aus`;
 }
@@ -572,13 +572,15 @@ function toGapItem(
   } else {
     shareNote = specificGapNote(naReason, child.name, parent, companyName);
   }
+  const cleaned = visibleBasis(shownBasis, companyName);
+  const fallback = shareNote ?? specificGapNote(naReason, child.name, parent, companyName);
   return {
     parent,
     kind,
     name: child.name,
     shareOfParentPct: share,
     growthPct: child.growthPct ?? null,
-    basis: visibleBasis(shownBasis, companyName),
+    basis: cleaned || fallback,
     shareOrigin,
     shareNote,
   };

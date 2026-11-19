@@ -14,7 +14,7 @@ import { SegmentEstimateBlock } from "../client/src/components/sections/Section2
 import type { SegmentGapResult } from "../shared/segment-gap";
 import { installFakeDom, findByTestId, reactPropsOf } from "./lib/fake-dom";
 import { outlineEchoMatches } from "../shared/segment-children";
-import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, segmentGapInflightForTests } from "../server/segment-gap-route";
+import { SEGMENT_GAP_MAX_CALLS, registerSegmentGapRoute, resetSegmentGapCacheForTests, reviewSegmentGaps, segmentGapInflightForTests } from "../server/segment-gap-route";
 import { applySegmentFx, convertSegmentRowsToUsd } from "../server/fmp";
 
 delete process.env.OPENROUTER_API_KEY;
@@ -1961,6 +1961,75 @@ try {
   );
 } finally {
   codeServer.close();
+}
+
+const protoNames = ["toString", "__proto__", "constructor"] as const;
+for (const naReason of protoNames) {
+  const direct = reviewSegmentGaps({
+    children: [
+      { parent: "Antrieb", name: naReason, owner: "Nordlichtwerke", basis: "Lücke", naReason, shareOfParentPct: 4 },
+      { parent: "Antrieb", name: "Nachbar", owner: "Nordlichtwerke", basis: "im Elternsegment", source: "Nordlichtwerke Annual Report 2025", shareOfParentPct: 6 },
+    ],
+  }, ["Antrieb"], [], "Nordlichtwerke", "EXZ", "Nordlichtwerke baut Geräte.");
+  const bad = direct.items.find((item) => item.name === naReason);
+  const neighbor = direct.items.find((item) => item.name === "Nachbar");
+  gap(
+    `prototype-key-${naReason}-review`,
+    bad?.shareOfParentPct == null
+      && bad?.shareNote === `n/a — Firma weist ${naReason} nicht separat aus`
+      && neighbor?.shareOfParentPct === 6
+      && (neighbor?.basis ?? "").includes("Annual Report 2025"),
+    `bad=${JSON.stringify(bad)} neighbor=${JSON.stringify(neighbor)}`,
+  );
+}
+
+resetSegmentGapCacheForTests();
+const protoApp = express();
+protoApp.use(express.json());
+registerSegmentGapRoute(protoApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Antrieb: 80 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async () => ({
+    modelUsed: "mock-model",
+    data: {
+      companyEcho: "Nordlichtwerke",
+      industryEcho: "Industrial Machinery",
+      children: [
+        ...protoNames.map((naReason) => citedChild("Antrieb", naReason, "Nordlichtwerke", { source: null, shareOfParentPct: 4, basis: "Lücke", naReason })),
+        citedChild("Antrieb", "Nachbar", "Nordlichtwerke", { shareOfParentPct: 6, source: "Nordlichtwerke Annual Report 2025" }),
+        citedChild("Antrieb", "NurLuecke", "Nordlichtwerke", { source: null, shareOfParentPct: null, basis: "Lücke" }),
+        citedChild("Antrieb", "LueckeSchaetzung", "Nordlichtwerke", { source: null, shareOfParentPct: null, basis: "Lücke · Analystenschätzung 2025" }),
+      ],
+    },
+  }),
+});
+const protoServer = protoApp.listen(0);
+const protoPort = (protoServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(protoPort, "EXU", { products: [{ name: "Antrieb", revenue: 80 }] });
+  const neighbor = posted.json.items?.find((item) => item.name === "Nachbar");
+  const onlyGap = posted.json.items?.find((item) => item.name === "NurLuecke");
+  const mixed = posted.json.items?.find((item) => item.name === "LueckeSchaetzung");
+  gap(
+    "prototype-keys-post-keeps-neighbor",
+    posted.status === 200
+      && protoNames.every((name) => {
+        const item = posted.json.items?.find((row) => row.name === name);
+        return item?.shareOfParentPct == null && item?.shareNote === `n/a — Firma weist ${name} nicht separat aus`;
+      })
+      && neighbor?.shareOfParentPct === 6
+      && (neighbor?.basis ?? "").includes("Annual Report 2025")
+      && onlyGap?.basis === "n/a — Firma weist NurLuecke nicht separat aus"
+      && mixed?.basis === "n/a — Firma weist LueckeSchaetzung nicht separat aus"
+      && !/Analystenschätzung/.test(mixed?.basis ?? "")
+      && !/Lücke/.test(onlyGap?.basis ?? "")
+      && !/Lücke/.test(mixed?.basis ?? ""),
+    `status=${posted.status} neighbor=${JSON.stringify(neighbor)} only=${JSON.stringify(onlyGap)} mixed=${JSON.stringify(mixed)}`,
+  );
+} finally {
+  protoServer.close();
 }
 
 gap(
