@@ -532,7 +532,7 @@ const keyRevenueNext = segmentGapCacheKey ? segmentGapCacheKey("exa", ["Alpha"],
 gap(
   "cache-key-version-and-name-hash",
   typeof segmentGapCacheKey === "function"
-    && keyA.includes("n36-gap-p20")
+    && keyA.includes("n36-gap-p21")
     && keyA.includes("EXA")
     && keyA === keyAgain
     && keyA !== keyB
@@ -1447,14 +1447,14 @@ try {
       && robotaxi.shareNote === "n/a — Firma weist Robotaxi nicht separat aus"
       && !/Firma weist Robotaxi nicht separat aus/.test(tsla.json.reason ?? "")
       && !servicePrompt.includes("FSD")
-      && tsla.json.promptVersion === "n36-gap-p20"
+      && tsla.json.promptVersion === "n36-gap-p21"
       && tsla.json.cached === false,
     `fsd=${JSON.stringify(fsd)} robotaxi=${JSON.stringify(robotaxi)} reason=${tsla.json.reason ?? ""} prompt=${servicePrompt.slice(0, 500)}`,
   );
   const again = await postGap(shownPort, "TSLA", { products: uiProducts.TSLA, regions: [] });
   gap(
     "gap-response-marks-cache",
-    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p20",
+    again.status === 200 && again.json.cached === true && again.json.promptVersion === "n36-gap-p21",
     `cached=${String(again.json.cached)} version=${String(again.json.promptVersion)}`,
   );
   const msft = await postGap(shownPort, "MSFT", { products: uiProducts.MSFT, regions: [] });
@@ -2160,7 +2160,7 @@ try {
       && !(posted.json.reason ?? "").includes("ohne geführtes Eltern")
       && !(posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
-      && posted.json.promptVersion === "n36-gap-p20"
+      && posted.json.promptVersion === "n36-gap-p21"
       && posted.json.cached === false
       && posted.json.queried === 4
       && posted.json.total === 4
@@ -2876,9 +2876,43 @@ gap(
 );
 
 resetSegmentGapCacheForTests();
-const citedHostApp = express();
-citedHostApp.use(express.json());
-registerSegmentGapRoute(citedHostApp, {
+const bundleNames = [
+  "Insurance",
+  "Charging",
+  "Financing",
+  "Repair",
+  "Extended Warranty",
+  "Regulatory Credits",
+  "Search Advertising",
+  "LinkedIn",
+  "Advertising",
+  "Warranty",
+  "Supercharging",
+  "Maintenance",
+  "Parts",
+];
+const blockedBundleNames = new Set(["Insurance", "Financing", "Regulatory Credits"]);
+function bundleChild(
+  name: string,
+  extra: Record<string, unknown>,
+) {
+  return {
+    parent: "Services and Other",
+    name,
+    owner: "Nordlichtwerke",
+    shareOfParentPct: null,
+    growthPct: null,
+    basis: `bundled with Automotive Sales: ${name}`,
+    source: "Nordlichtwerke Annual Report 2025",
+    hint: "Automotive Sales",
+    description: "sold with the reported hardware segment",
+    bundledWith: "Automotive Sales",
+    ...extra,
+  };
+}
+const bundleApp = express();
+bundleApp.use(express.json());
+registerSegmentGapRoute(bundleApp, {
   available: () => true,
   productRows: async () => [{
     fiscalYear: "2025",
@@ -2889,82 +2923,98 @@ registerSegmentGapRoute(citedHostApp, {
   identity: async () => pairFirm,
   llm: async (opts) => {
     const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
-    if (opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
-      return {
-        modelUsed: "mock-model",
-        data: {
-          ...echo,
-          children: [
-            {
-              parent: "Services and Other",
-              name: "FSD",
-              owner: "Nordlichtwerke",
-              shareOfParentPct: 14,
-              growthPct: null,
-              basis: "nicht separat ausgewiesen",
-              source: "Nordlichtwerke Annual Report 2025",
-              hint: "Automotive Sales",
-              description: "im Segment Automotive Sales verbucht",
-            },
-            {
-              parent: "Services and Other",
-              name: "Cloud Software",
-              owner: "Nordlichtwerke",
-              shareOfParentPct: 12,
-              growthPct: null,
-              basis: "Cloud-Abo, nicht separat ausgewiesen",
-              source: "Nordlichtwerke Annual Report 2025",
-              hint: "Automotive Sales",
-              description: "im Segment Automotive Sales genannt",
-            },
-            {
-              parent: "Services and Other",
-              name: "Subscription Software",
-              owner: "Nordlichtwerke",
-              shareOfParentPct: 8,
-              growthPct: null,
-              basis: "Abo, nicht separat ausgewiesen",
-              source: "Nordlichtwerke Annual Report 2025",
-              description: "Subscription im Segment Automotive Sales",
-            },
-          ],
-        },
-      };
+    if (!opts.prompt.includes("nur das Elternsegment \"Services and Other\"")) {
+      return { modelUsed: "mock-model", data: { ...echo, children: [] } };
     }
-    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+    return {
+      modelUsed: "mock-model",
+      data: {
+        ...echo,
+        children: [
+          {
+            parent: "Services and Other",
+            name: "FSD",
+            owner: "Nordlichtwerke",
+            shareOfParentPct: 14,
+            growthPct: null,
+            basis: "nicht separat ausgewiesen",
+            source: "Nordlichtwerke Annual Report 2025",
+            bundledWith: "Automotive Sales",
+            kind: "device_software",
+          },
+          ...bundleNames.map((name) => bundleChild(name, { kind: "service" })),
+          ...bundleNames.map((name) => bundleChild(`${name} Marked`, { kind: "device_software" })),
+          {
+            parent: "Services and Other",
+            name: "Unlisted Bundle",
+            owner: "Nordlichtwerke",
+            shareOfParentPct: null,
+            growthPct: null,
+            basis: "nicht separat ausgewiesen",
+            source: "Nordlichtwerke Annual Report 2025",
+            bundledWith: "Unreported Segment",
+            kind: "device_software",
+          },
+          bundleChild("Cloud Software", { kind: "device_software", shareOfParentPct: 12 }),
+          bundleChild("Subscription Software", { kind: "device_software", shareOfParentPct: 8 }),
+        ],
+      },
+    };
   },
 });
-const citedHostServer = citedHostApp.listen(0);
-const citedHostPort = (citedHostServer.address() as AddressInfo).port;
+const bundleServer = bundleApp.listen(0);
+const bundlePort = (bundleServer.address() as AddressInfo).port;
 try {
-  const posted = await postGap(citedHostPort, "EXFSD", {
+  const posted = await postGap(bundlePort, "EXBND", {
     products: [
       { name: "Automotive Sales", revenue: 70 },
       { name: "Services and Other", revenue: 10 },
     ],
   });
-  const cited = posted.json.items?.find((item) => item.name === "FSD");
+  const fsd = posted.json.items?.find((item) => item.name === "FSD");
+  const sentence = "n/a — FSD ist in Automotive Sales gebündelt; Firma weist es nicht separat aus";
+  gap(
+    "device-software-follows-exact-bundled-with",
+    posted.status === 200
+      && fsd?.parent === "Automotive Sales"
+      && fsd.shareOfParentPct == null
+      && fsd.shareNote === sentence,
+    JSON.stringify(fsd ?? null),
+  );
+  const hinted = bundleNames.map((name) => posted.json.items?.find((item) => item.name === name));
+  gap(
+    "hint-or-basis-does-not-reparent",
+    posted.status === 200 && hinted.every((item) => item?.parent === "Services and Other"),
+    hinted.map((item) => `${item?.name}:${item?.parent ?? "fehlt"}`).join(", "),
+  );
+  const marked = bundleNames.map((name) => posted.json.items?.find((item) => item.name === `${name} Marked`));
+  const markedStay = marked.filter((item) => blockedBundleNames.has(item?.name?.replace(/ Marked$/, "") ?? ""));
+  const markedMove = marked.filter((item) => !blockedBundleNames.has(item?.name?.replace(/ Marked$/, "") ?? ""));
+  gap(
+    "blocked-name-stays-despite-device-software-kind",
+    posted.status === 200 && markedStay.every((item) => item?.parent === "Services and Other"),
+    markedStay.map((item) => `${item?.name}:${item?.parent ?? "fehlt"}`).join(", "),
+  );
+  gap(
+    "open-name-follows-device-software-kind",
+    posted.status === 200 && markedMove.every((item) => item?.parent === "Automotive Sales"),
+    markedMove.map((item) => `${item?.name}:${item?.parent ?? "fehlt"}`).join(", "),
+  );
+  const unlisted = posted.json.items?.find((item) => item.name === "Unlisted Bundle");
   const cloud = posted.json.items?.find((item) => item.name === "Cloud Software");
   const subscription = posted.json.items?.find((item) => item.name === "Subscription Software");
   gap(
-    "service-row-follows-named-hardware-host",
+    "unlisted-bundle-and-cloud-abo-stay",
     posted.status === 200
-      && cited?.parent === "Automotive Sales"
-      && cited.shareOfParentPct == null
-      && cited.shareNote === "n/a — Anteil an Automotive Sales nicht ausgewiesen",
-    JSON.stringify(cited ?? null),
-  );
-  gap(
-    "cloud-and-subscription-stay-under-services",
-    posted.status === 200
+      && unlisted?.parent === "Services and Other"
       && cloud?.parent === "Services and Other"
       && cloud.shareOfParentPct === 12
       && subscription?.parent === "Services and Other"
       && subscription.shareOfParentPct === 8,
-    `cloud=${JSON.stringify(cloud)} subscription=${JSON.stringify(subscription)}`,
+    `unlisted=${JSON.stringify(unlisted)} cloud=${JSON.stringify(cloud)} subscription=${JSON.stringify(subscription)}`,
   );
 } finally {
-  citedHostServer.close();
+  bundleServer.close();
 }
 
 const headHosts = ["Hardware Sales", "Device Revenues", "Device Products", "Gaming Consoles", "PCs & Tablets"];
