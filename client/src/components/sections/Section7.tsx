@@ -36,12 +36,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
-  // Revenue growth vs sector (TAM-CAGR als Branchenproxy).
-  // tamCAGR == null: Balken n/a mit Grund, kein erfundener 5-%-Wert. 0 bleibt 0.
+  // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
-  const reportedTamCagr = data.tamAnalysis?.tamCAGR;
-  const sectorKnown = reportedTamCagr != null;
-  const sectorGrowth = sectorKnown ? reportedTamCagr : 0;
+  const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
@@ -303,10 +300,10 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
+                    {isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
                   </td>
-                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid || (isGrowthRow && !sectorKnown) ? 'text-muted-foreground' : premiumColor}`}>
-                    {stockInvalid || (isGrowthRow && !sectorKnown) ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
+                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid ? 'text-muted-foreground' : premiumColor}`}>
+                    {stockInvalid ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
                   </td>
                 </tr>
               );
@@ -327,9 +324,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color={sectorKnown ? (companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500') : (companyGrowth >= 0 ? 'bg-emerald-500' : 'bg-red-500')} suffix="%" />
-            <BarRow label="Branche" value={sectorKnown ? sectorGrowth : null} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color="bg-muted-foreground/50" suffix="%" />
-            {!sectorKnown && <div className="text-[10px] text-muted-foreground/70 italic" data-testid="revenue-growth-sector-na">kein Sektor/keine TAM-Quelle</div>}
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
           </div>
         </div>
       </div>
