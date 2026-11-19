@@ -545,64 +545,27 @@ export function BriefingModal({ loading, data, error, onClose, onRetry, onForceR
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
       <div className="w-full max-w-5xl bg-card border border-border/50 rounded-lg shadow-2xl">
-        <div data-testid="briefing-modal-header" className="border-b border-border/40 bg-background/80">
-          <div className="flex flex-wrap items-center gap-2 px-3 sm:px-4 py-2 sm:py-3">
-            <a
-              href="#/researcher"
-              data-testid="briefing-nav-macro"
-              aria-current="page"
-              onClick={(event) => {
-                event.preventDefault();
-                const button = document.querySelector('[data-testid="button-tab-macro"]');
-                if (button instanceof HTMLButtonElement) button.click();
-                onClose();
-              }}
-              className="flex items-center gap-1.5 text-foreground"
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 bg-gradient-to-r from-amber-500/10 to-orange-500/5">
+          <Flame className="w-4 h-4 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
+          {isCached && data && !loading ? (
+            <span className="text-[10px] text-emerald-400/80 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-400/20">
+              ✓ {cacheAge != null ? `vor ${cacheAge < 60 ? cacheAge + 'min' : Math.round(cacheAge / 60) + 'h'}` : 'gecacht'}
+            </span>
+          ) : (
+            <span className="text-[10px] text-foreground/50">Macro-Lage US + EU + ASIA</span>
+          )}
+          {data && !loading && (
+            <button
+              onClick={onForceRefresh}
+              className="text-[10px] text-foreground/50 hover:text-foreground px-1.5 py-0.5 rounded border border-border/40 hover:border-border/60 flex items-center gap-1"
+              title="Briefing neu generieren"
             >
-              <Globe2 className="w-4 h-4 text-violet-400 shrink-0" />
-              <h2 className="text-sm font-semibold tracking-tight">Country Macro Pulse</h2>
-            </a>
-            {isCached && data && !loading ? (
-              <span className="text-[10px] text-emerald-400/80 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-400/20 shrink-0">
-                ✓ {cacheAge != null ? `vor ${cacheAge < 60 ? cacheAge + 'min' : Math.round(cacheAge / 60) + 'h'}` : 'gecacht'}
-              </span>
-            ) : (
-              <span className="text-[10px] text-foreground/50">Macro-Lage US + EU + ASIA</span>
-            )}
-            {data && !loading && (
-              <button
-                onClick={onForceRefresh}
-                className="text-[10px] text-foreground/50 hover:text-foreground px-1.5 py-0.5 rounded border border-border/40 hover:border-border/60 flex items-center gap-1 shrink-0"
-                title="Briefing neu generieren"
-              >
-                <RefreshCw className="w-2.5 h-2.5" />
-                Refresh
-              </button>
-            )}
-            <button onClick={onClose} className="ml-auto text-foreground/40 hover:text-foreground/80 text-lg leading-none shrink-0" aria-label="Schließen">×</button>
-          </div>
-          <nav data-testid="briefing-modal-nav" aria-label="Country Macro Pulse" className="px-3 sm:px-4 flex flex-wrap items-center gap-1">
-            {TABS.filter(tab => tab.id !== "macro").map(tab => {
-              const Icon = tab.icon;
-              return (
-                <a
-                  key={tab.id}
-                  href="#/researcher"
-                  data-testid={`briefing-nav-${tab.id}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    const button = document.querySelector(`[data-testid="button-tab-${tab.id}"]`);
-                    if (button instanceof HTMLButtonElement) button.click();
-                    onClose();
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium border-b-2 border-transparent text-foreground/50 hover:text-foreground/80 transition-colors whitespace-nowrap"
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {tab.label}
-                </a>
-              );
-            })}
-          </nav>
+              <RefreshCw className="w-2.5 h-2.5" />
+              Refresh
+            </button>
+          )}
+          <button onClick={onClose} className="ml-auto text-foreground/40 hover:text-foreground/80 text-lg leading-none">×</button>
         </div>
 
         <div className="p-4 space-y-4">
