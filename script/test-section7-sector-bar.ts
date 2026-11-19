@@ -11,16 +11,24 @@ import { readFileSync } from "fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Router } from "wouter";
 import { Section7 } from "../client/src/components/sections/Section7";
+import { resolveIndustryGrowth } from "../shared/industry-growth";
 
 (globalThis as any).React = React;
 
-const REASON = "kein Sektor/keine TAM-Quelle";
 const EIGHT_ROW = '<tr class=""><td class="py-2 px-2"><span class="font-medium">Revenue Growth</span><span class="text-[9px] text-muted-foreground ml-1">(YoY vs. Branche)</span></td><td class="py-2 px-2 text-right font-mono tabular-nums font-semibold">+2.0%</td><td class="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">+8.0%</td><td class="py-2 px-2 text-right font-mono tabular-nums font-medium text-red-500">-6.0 Pkt.</td></tr>';
 const ZERO_ROW = '<tr class=""><td class="py-2 px-2"><span class="font-medium">Revenue Growth</span><span class="text-[9px] text-muted-foreground ml-1">(YoY vs. Branche)</span></td><td class="py-2 px-2 text-right font-mono tabular-nums font-semibold">+2.0%</td><td class="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">+0.0%</td><td class="py-2 px-2 text-right font-mono tabular-nums font-medium text-emerald-500">+2.0 Pkt.</td></tr>';
 const EIGHT_BARS = '<div class="space-y-2"><div class="flex items-center gap-3"><span class="text-xs text-muted-foreground w-20 flex-shrink-0">MSFT</span><div class="flex-1 h-5 bg-muted/30 rounded overflow-hidden"><div class="h-full bg-red-500 rounded transition-all" style="width:16.666666666666664%"></div></div><span class="text-xs font-mono tabular-nums font-semibold w-14 text-right">+2.0%</span></div><div class="flex items-center gap-3"><span class="text-xs text-muted-foreground w-20 flex-shrink-0">Branche</span><div class="flex-1 h-5 bg-muted/30 rounded overflow-hidden"><div class="h-full bg-muted-foreground/50 rounded transition-all" style="width:66.66666666666666%"></div></div><span class="text-xs font-mono tabular-nums font-semibold w-14 text-right">+8.0%</span></div>';
 const ZERO_BARS = '<div class="space-y-2"><div class="flex items-center gap-3"><span class="text-xs text-muted-foreground w-20 flex-shrink-0">MSFT</span><div class="flex-1 h-5 bg-muted/30 rounded overflow-hidden"><div class="h-full bg-emerald-500 rounded transition-all" style="width:66.66666666666666%"></div></div><span class="text-xs font-mono tabular-nums font-semibold w-14 text-right">+2.0%</span></div><div class="flex items-center gap-3"><span class="text-xs text-muted-foreground w-20 flex-shrink-0">Branche</span><div class="flex-1 h-5 bg-muted/30 rounded overflow-hidden"><div class="h-full bg-muted-foreground/50 rounded transition-all" style="width:0%"></div></div><span class="text-xs font-mono tabular-nums font-semibold w-14 text-right">+0.0%</span></div>';
 
 const base = JSON.parse(readFileSync(new URL("./fixtures/analysis-MSFT.json", import.meta.url), "utf8"));
+const missingResolved = resolveIndustryGrowth({
+  quality: "weak",
+  tamCAGR: null,
+  tamSource: base.tamAnalysis?.tamSource ?? null,
+  tamLabel: base.tamAnalysis?.tamLabel ?? null,
+  peerRevenueGrowths: (base.peerComparison?.peers ?? []).map((peer: { revenueGrowth?: number | null }) => peer.revenueGrowth),
+});
+const REASON = missingResolved.kind === "na" ? missingResolved.reason : "";
 let fail = 0;
 const check = (name: string, ok: boolean, detail = "") => {
   console.log(`${ok ? "✅" : "❌"} ${name}${detail ? " — " + detail : ""}`);

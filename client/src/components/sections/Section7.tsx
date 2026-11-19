@@ -6,6 +6,7 @@ import { growthFactsFromSupplement, type SupplementGrowthField } from "../../../
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaReason, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
+import { industryGrowthSourceText, parseIndustryGrowthEstimate, resolveIndustryGrowth, type IndustryGrowthAiEstimate } from "../../../../shared/industry-growth";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { currencySymbol, formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
@@ -36,12 +37,23 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
-  // Revenue growth vs sector (TAM-CAGR als Branchenproxy).
-  // tamCAGR == null: Balken n/a mit Grund, kein erfundener 5-%-Wert. 0 bleibt 0.
+  // Branchen-Wachstum, nur Anzeige. Score und dcfGrowthCap lesen das nicht.
+  // tamCAGR nur wenn das Qualitätstor ihn lässt. 0 bleibt 0. Kein unbeschrifteter Fünf-Prozent-Fallback.
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
-  const reportedTamCagr = data.tamAnalysis?.tamCAGR;
-  const sectorKnown = reportedTamCagr != null;
-  const sectorGrowth = sectorKnown ? reportedTamCagr : 0;
+  const [industryAi, setIndustryAi] = useState<IndustryGrowthAiEstimate | null>(null);
+  const [industryAiLoading, setIndustryAiLoading] = useState(false);
+  const [industryAiNote, setIndustryAiNote] = useState<string | null>(null);
+  const industryAiRequest = useRef(0);
+  const industryGrowth = resolveIndustryGrowth({
+    quality: data.tamAnalysis?.quality ?? null,
+    tamCAGR: data.tamAnalysis?.tamCAGR ?? null,
+    tamSource: data.tamAnalysis?.tamSource ?? null,
+    tamLabel: data.tamAnalysis?.tamLabel ?? null,
+    peerRevenueGrowths: (data.peerComparison?.peers ?? []).map((peer) => peer.revenueGrowth),
+    aiEstimate: industryAi,
+  });
+  const sectorKnown = industryGrowth.kind === "tam" || industryGrowth.kind === "peer-median" || industryGrowth.kind === "ai";
+  const sectorGrowth = sectorKnown ? industryGrowth.value : 0;
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
@@ -100,6 +112,13 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     setPeerKiError(null);
     setPeerKiLoading(false);
   }, [data.ticker, factPeerCount]);
+
+  useEffect(() => {
+    industryAiRequest.current += 1;
+    setIndustryAi(null);
+    setIndustryAiNote(null);
+    setIndustryAiLoading(false);
+  }, [data.ticker]);
 
   const visibleTamSegments = useMemo(
     () => (tam?.segments ?? []).filter((s) => hasPositiveSegmentRevenue(s.segmentRevenue)),
@@ -273,6 +292,34 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     return Math.round((rows.reduce((sum, row) => sum + row.growth * row.share, 0) / weight) * 10) / 10;
   }, [visibleTamSegments, segmentGrowth.data]);
 
+  async function requestIndustryGrowthEstimate() {
+    if (industryAiLoading || industryAi) return;
+    const requestId = ++industryAiRequest.current;
+    setIndustryAiLoading(true);
+    setIndustryAiNote(null);
+    try {
+      const res = await apiRequest("POST", "/api/industry-growth-estimate", {
+        sector: data.sector,
+        industry: data.industry,
+        description: data.description,
+      });
+      let json: { value?: unknown; growthPct?: unknown; source?: unknown; rationale?: unknown; reason?: string; error?: string } | null = null;
+      try { json = await res.json(); } catch { json = null; }
+      if (requestId !== industryAiRequest.current) return;
+      const parsed = parseIndustryGrowthEstimate(json);
+      if (!res.ok || !parsed.ok) {
+        setIndustryAiNote(!parsed.ok ? parsed.reason : (json?.error || json?.reason || "KI-Schätzung fehlgeschlagen"));
+        return;
+      }
+      setIndustryAi({ value: parsed.value, source: parsed.source, rationale: parsed.rationale });
+    } catch (err: unknown) {
+      if (requestId !== industryAiRequest.current) return;
+      setIndustryAiNote(err instanceof Error ? err.message : "KI-Schätzung fehlgeschlagen");
+    } finally {
+      if (requestId === industryAiRequest.current) setIndustryAiLoading(false);
+    }
+  }
+
   return (
     <SectionCard number={9} title="RELATIVE BEWERTUNG">
       <div className="overflow-x-auto">
@@ -298,12 +345,17 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                   <td className="py-2 px-2">
                     <span className="font-medium">{m.label}</span>
                     {m.desc && <span className="text-[9px] text-muted-foreground ml-1">({m.desc})</span>}
+                    {isGrowthRow && industryGrowth.kind !== "tam" && (
+                      <span className="text-[9px] text-muted-foreground ml-1" data-testid="revenue-growth-sector-source">({industryGrowthSourceText(industryGrowth)})</span>
+                    )}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold">
                     {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
+                    {isGrowthRow && industryGrowth.kind === "peer-span"
+                      ? <span data-testid="revenue-growth-sector-span">{signedGrowthPct(industryGrowth.min)}…{signedGrowthPct(industryGrowth.max)}</span>
+                      : isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid || (isGrowthRow && !sectorKnown) ? 'text-muted-foreground' : premiumColor}`}>
                     {stockInvalid || (isGrowthRow && !sectorKnown) ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
@@ -329,7 +381,24 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
           <div className="space-y-2">
             <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color={sectorKnown ? (companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500') : (companyGrowth >= 0 ? 'bg-emerald-500' : 'bg-red-500')} suffix="%" />
             <BarRow label="Branche" value={sectorKnown ? sectorGrowth : null} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color="bg-muted-foreground/50" suffix="%" />
-            {!sectorKnown && <div className="text-[10px] text-muted-foreground/70 italic" data-testid="revenue-growth-sector-na">kein Sektor/keine TAM-Quelle</div>}
+            {industryGrowth.kind !== "tam" && (
+              <div className="text-[10px] text-muted-foreground/70 italic" data-testid={industryGrowth.kind === "na" ? "revenue-growth-sector-na" : "revenue-growth-sector-source-bar"}>
+                {industryGrowthSourceText(industryGrowth)}
+              </div>
+            )}
+            {industryGrowth.kind === "na" && (
+              <button
+                type="button"
+                onClick={() => { if (!industryAiLoading) void requestIndustryGrowthEstimate(); }}
+                disabled={industryAiLoading}
+                className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 hover:bg-violet-500/20 disabled:opacity-50 dark:text-violet-300"
+                data-testid="button-industry-growth-estimate"
+              >
+                {industryAiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                KI-Schätzung
+              </button>
+            )}
+            {industryAiNote && <div className="text-[10px] text-red-500" data-testid="industry-growth-estimate-note">{industryAiNote}</div>}
           </div>
         </div>
       </div>
@@ -360,7 +429,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a'}</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{industryGrowth.kind === "tam" && tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a'}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -544,7 +613,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               </div>
               {/* Weighted verdict — nur wenn das Qualitaetstor eine belastbare
                   Gewichtung zugelassen hat (tamCAGR/outperforming nicht null). */}
-              {tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
+              {industryGrowth.kind === "tam" && tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
                 <div className={`flex items-center gap-1.5 text-[10px] ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
                   {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                   <span className="font-medium">
@@ -592,7 +661,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                Yahoo-only: kein Umsatz → kein Wachstumsvergleich (n/a statt „Wächst X Pkt. langsamer“). */
             companyNa ? (
               <div className="text-[10px] text-muted-foreground/70 italic" data-testid="s9-growth-vs-sector-na">Wachstum Unternehmen vs. Branche: n/a ({yahooTamNa ? 'Yahoo-Daten' : 'kein Umsatz'})</div>
-            ) : tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
+            ) : industryGrowth.kind === "tam" && tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
             <div className="space-y-1.5">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
               <div className="flex items-center gap-2">
@@ -902,6 +971,10 @@ function KiBadge({ testId, title = "Schätzung" }: { testId?: string; title?: st
       KI
     </span>
   );
+}
+
+function signedGrowthPct(value: number): string {
+  return `${value >= 0 ? "+" : ""}${formatNumber(value, 1)}%`;
 }
 
 function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number | null; max: number; color: string; suffix?: string }) {
