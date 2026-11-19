@@ -1076,8 +1076,9 @@ try {
       && platform.shareOfParentPct === 12
       && platform.shareOrigin === "estimate"
       && (platform.basis ?? "").includes("Annual Report 2025")
-      && /Firma weist RISE nicht separat aus/.test(sap.json.reason ?? "")
-      && /Firma weist Employee Central nicht separat aus/.test(sap.json.reason ?? "")
+      && /RISE ohne geführtes Eltern: S\/4HANA/.test(sap.json.reason ?? "")
+      && /Employee Central ohne geführtes Eltern: SuccessFactors/.test(sap.json.reason ?? "")
+      && !/Firma weist RISE nicht separat aus/.test(sap.json.reason ?? "")
       && !/Elternsegment nicht in der Liste/.test(sap.json.reason ?? "")
       && sapPrompt.includes("Cloud")
       && sapPrompt.includes("Software support")
@@ -1464,7 +1465,8 @@ try {
       && azure.shareOrigin === "fact"
       && (azure.basis ?? "").includes("Formel: 27 / 90")
       && legacy == null
-      && /Firma weist Azure Legacy nicht separat aus/.test(msft.json.reason ?? "")
+      && /Azure Legacy ohne geführtes Eltern: Intelligent Cloud/.test(msft.json.reason ?? "")
+      && !/Firma weist Azure Legacy nicht separat aus/.test(msft.json.reason ?? "")
       && !/Elternsegment nicht in der Liste/.test(msft.json.reason ?? "")
       && msftPrompt.includes("Server")
       && msftPrompt.includes("Microsoft 365 Commercial")
@@ -2149,8 +2151,9 @@ try {
   const packed = `${JSON.stringify(posted.json)}\n${shown}`;
   gap(
     "tsla-1-software-stays-under-hardware",
-    tsla1Measured.includes("KI-Schätzung ohne Beleg: Software & Connectivity Services")
-      && tsla1Measured.includes("Elternsegment nicht in der Liste: Model S")
+    (posted.json.reason ?? "").includes("n/a — Model S ohne geführtes Eltern: Automotive")
+      && (posted.json.reason ?? "").includes("n/a — Regulatory Credits ohne geführtes Eltern: Automotive")
+      && (posted.json.reason ?? "").includes("n/a — Firma weist Model S nicht separat aus")
       && posted.status === 200
       && posted.json.promptVersion === "n36-gap-p14"
       && posted.json.cached === false
@@ -2162,7 +2165,8 @@ try {
       && software.shareOrigin == null
       && software.basis === sentence
       && software.shareNote === sentence
-      && digital == null
+      && digital?.parent === "Services & Other"
+      && digital.shareOfParentPct == null
       && shown.includes("Software & Connectivity Services")
       && shown.includes("pl-4")
       && shown.includes(sentence),
@@ -2186,6 +2190,88 @@ try {
   );
 } finally {
   tsla1Server.close();
+}
+
+resetSegmentGapCacheForTests();
+const conceptApp = express();
+conceptApp.use(express.json());
+registerSegmentGapRoute(conceptApp, {
+  available: () => true,
+  productRows: async () => [{ fiscalYear: "2025", reportedCurrency: "USD", data: { Geräte: 80, Services: 20 } }],
+  regionRows: async () => [],
+  identity: async () => pairFirm,
+  llm: async (opts) => {
+    const echo = { companyEcho: "Nordlichtwerke", industryEcho: "Industrial Machinery" };
+    if (opts.prompt.includes("nur das Elternsegment \"Geräte\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [
+            citedChild("Geräte", "Cloud Gaming Hardware", "Nordlichtwerke"),
+            citedChild("Geräte", "Software & Connectivity Services", "Nordlichtwerke"),
+            citedChild("Geräte", "Modul", "Nordlichtwerke"),
+          ],
+        },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Kabine\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [
+            citedChild("Kabine", "Modul", "Nordlichtwerke"),
+          ],
+        },
+      };
+    }
+    if (opts.prompt.includes("nur das Elternsegment \"Services\"")) {
+      return {
+        modelUsed: "mock-model",
+        data: {
+          ...echo,
+          children: [
+            citedChild("Services", "Cloud", "Nordlichtwerke"),
+            citedChild("Services", "Software", "Nordlichtwerke"),
+          ],
+        },
+      };
+    }
+    return { modelUsed: "mock-model", data: { ...echo, children: [] } };
+  },
+});
+const conceptServer = conceptApp.listen(0);
+const conceptPort = (conceptServer.address() as AddressInfo).port;
+try {
+  const posted = await postGap(conceptPort, "EXV", {
+    products: [
+      { name: "Geräte", revenue: 80 },
+      { name: "Kabine", revenue: 40 },
+      { name: "Services", revenue: 20 },
+    ],
+  });
+  const items = posted.json.items ?? [];
+  const cloud = items.find((item) => item.name === "Cloud");
+  const cloudHardware = items.find((item) => item.name === "Cloud Gaming Hardware");
+  const software = items.find((item) => item.name === "Software");
+  const connectivity = items.find((item) => item.name === "Software & Connectivity Services");
+  const modules = items.filter((item) => item.name === "Modul");
+  gap(
+    "one-token-does-not-merge-cloud-or-software",
+    posted.status === 200
+      && cloud?.parent === "Services"
+      && cloudHardware?.parent === "Geräte"
+      && software?.parent === "Services"
+      && connectivity?.parent === "Geräte"
+      && modules.length === 2
+      && modules.some((item) => item.parent === "Geräte")
+      && modules.some((item) => item.parent === "Kabine")
+      && !modules.some((item) => item.parent === "Services"),
+    `cloud=${JSON.stringify(cloud)} hardware=${JSON.stringify(cloudHardware)} software=${JSON.stringify(software)} connectivity=${JSON.stringify(connectivity)} modules=${JSON.stringify(modules)}`,
+  );
+} finally {
+  conceptServer.close();
 }
 
 gap(

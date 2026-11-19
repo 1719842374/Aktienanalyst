@@ -250,11 +250,15 @@ function conceptTokens(name: string): string[] {
 
 function sameGapConcept(left: string, right: string): boolean {
   if (segmentGapKey(left) === segmentGapKey(right)) return true;
-  const a = conceptTokens(left);
-  const b = conceptTokens(right);
-  if (a.length === 0 || b.length === 0) return false;
-  const covered = (part: string[], whole: string[]) => part.every((token) => whole.includes(token));
-  return covered(a, b) || covered(b, a);
+  const a = new Set(conceptTokens(left));
+  const b = new Set(conceptTokens(right));
+  if (a.size === 0 || b.size === 0) return false;
+  let shared = 0;
+  a.forEach((token) => {
+    if (b.has(token)) shared += 1;
+  });
+  if (shared >= 2) return true;
+  return a.size === b.size && shared === a.size;
 }
 
 function absorbGapItem(merged: SegmentGapItem[], item: SegmentGapItem): void {
@@ -280,7 +284,7 @@ const GAP_REASON_CODE = {
   bundled_in_parent: (name: string, parent: string) => `n/a — ${name} ist in ${parent} gebündelt; Firma weist es nicht separat aus`,
   only_qualitative_mention: (name: string, parent: string) => `n/a — ${name} wird bei ${parent} nur qualitativ genannt; Firma weist es nicht separat aus`,
   no_revenue_figure: (name: string, parent: string) => `n/a — für ${name} unter ${parent} fehlt eine Umsatzzahl`,
-  parent_not_listed: (name: string, _parent: string) => `n/a — Firma weist ${name} nicht separat aus`,
+  parent_not_listed: (name: string, parent: string) => `n/a — ${name} ohne geführtes Eltern: ${parent.trim() || "ohne Namen"}`,
 } as const;
 
 function specificGapNote(reason: string, name: string, parent: string, companyName: string): string {
