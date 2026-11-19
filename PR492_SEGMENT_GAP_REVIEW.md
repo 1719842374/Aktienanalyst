@@ -410,3 +410,102 @@ Lauf über `reviewSegmentGaps` mit den Kindzeilen und Produktnamen aus diesen Da
 ### Nachprüfungs-Verdikt
 
 P2 N1, P3 N4. Kein P1. N2, N3, N5 ohne Befund. N6: drei echte Ticker mit Kindzeilen, null Umhängungen, null falsche Zeilen. Der minimale Fix für N1 ist die eine Bedingung in `shared/segment-children.ts:315`. Der minimale Fix für N4 ist die Geschwisterliste in `parentCacheKey`. Beides ist hier nicht eingebaut.
+
+## Recheck fcbc69a1
+
+Read-only auf Head `fcbc69a1981d657b2024be210780b3433d6713b1`. Parent `a69872b7ecc9a6512a9b9bde2c30cf13eb695ef9`. `git fetch origin main cursor/missing-segments-1bac`: Branch-Head ist genau `fcbc69a1` (2026-11-19 11:34:54 +0000). Aktuelle main-SHA bleibt `7aaa13ce4ceac60e9b54be3f8edf6f4320d70629`. Kein Push nach `main`, kein Merge. Das Schätzdatum ist nicht Teil dieses Laufs und wird nicht bewertet.
+
+### Git-Historie `a69872b7..fcbc69a1`
+
+Ein Commit, keine Deletes, keine Renames.
+
+| SHA | Datum | Betreff | Dateien | +/− |
+| --- | --- | --- | --- | --- |
+| `fcbc69a1981d657b2024be210780b3433d6713b1` | 2026-11-19 11:34:54 +0000 | Fix: Quelle bleibt sichtbar und der Cache kennt die Geschwister | `shared/segment-children.ts` M, `server/segment-gap-route.ts` M, `script/test-segment-n36.ts` M | +115 / −6 |
+
+Numstat: `segment-children.ts` +1/−1, `segment-gap-route.ts` +5/−4, `test-segment-n36.ts` +109/−1. Summe 3 Dateien, +115/−6.
+
+### Verdikt dieses Laufs
+
+**Befund P3.** Kein P1, kein P2. N1 an `shared/segment-children.ts:315` ist auf den Blob von `c4975703` zurückgesetzt. N4 hängt die Geschwister an beiden Aufrufen an. n36 ist 149/0. Der verbleibende P3 ist die Lücken-Zeile: `visibleBasis` in `server/segment-gap-route.ts:522–529` wirft die vage Quelle weg, bevor `SegmentGapPanel` sie zeigt.
+
+### Soll-Ist
+
+| Soll | Ist auf `fcbc69a1` |
+| --- | --- |
+| Quelle in der Untersegment-Zeile wie auf `c4975703` | Blob `shared/segment-children.ts` = `65a8ac3ccdf694ef25568762e5b0b626011ee5f1`, identisch mit `c4975703`. Zeile 315 ist wieder `citation && !basis.includes(citation)`. Test `uncorroborated-citation-stays-visible` PASS. |
+| Ursache `b85f97d9` | Belegt. `b85f97d90f36f145e3cfa76470d5a75d04536a54` setzt genau dort `sourced &&`. `a69872b7` trägt Blob `bd6724f6`. `fcbc69a1` nimmt das wieder weg. |
+| Kein anderer Pfad verwirft die Quelle | Untersegmente und Outline (`shared/segment-children.ts:914`) hängen die Zeichenkette an. Die Lücken-Route nicht. P3, siehe unten. |
+| `parentCacheKey` mit sortierten Geschwistern `\|s:` an beiden Aufrufen | `server/segment-gap-route.ts:920–923`, Aufrufe `:1037` und `:1091`. Kein dritter Aufrufer. |
+| Professor-Set im Fixture-Test mit festem Eltern | Ein Test `n6-synthetic-zero-wrong-assignments`, PASS. Abdeckung unten. |
+| Umhängepfad im PR-Body als „nicht empirisch geprüft“ | Diese Wortfolge steht nicht im Body von #492. Die 20-Ticker-Stichprobe ist als „nicht Teil dieses Laufs“ markiert. Der synthetische Umhängepfad ist als PASS beschrieben. |
+| tsc und Merge gegen main `7aaa13ce` | tsc 76/76, dieselben 9 Dateien. `git merge-tree --write-tree origin/main fcbc69a1` → `6de3704981d4ee5320b6fe5b4396cb0fcc04cddb`, Exit 0. Einziger Unterschied zum Head: `WORK_IMPLEMENTIERUNG_OFFEN.md` aus main. |
+| Score, Entry, DCF, PDF unverändert | `scoring-integration.ts`, `bias-fixes.ts`, `fazit-entry.ts`, `pdf-export.ts`, `exportPdf.ts`, `sector-data.ts`, `schema.ts` blobgleich mit main. Der Drei-Datei-Diff fasst sie nicht an. |
+| Schätzdatum | Nicht Teil dieses PRs. Nicht als Mangel gewertet. |
+
+### N1 — Quelle
+
+`git diff c4975703 fcbc69a1 -- shared/segment-children.ts` ist leer. Die Zeile 315 lautet auf beiden Ständen:
+
+```ts
+const shownBasis = citation && !basis.includes(citation) ? boundBasis(`${basis} · ${citation}`) : basis;
+```
+
+Auf `a69872b7` stand davor `sourced &&`. Anteil und Wachstum bleiben ohne `concreteSource` null (`:310–313`). Das ist der Stand von `c4975703`, nicht eine neue Regel.
+
+n36 auf diesem Head, Keys aus der Umgebung: `uncorroborated-citation-stays-visible` PASS. `basis` ist `steckt im Automotive-Segment · Tesla shareholder update 2021`, der SSR-Text der Untersegment-Zeile enthält dieselbe Zeichenkette, `shareOfParentPct` ist null.
+
+Andere Pfade:
+
+- Outline `shared/segment-children.ts:914` hängt `citation` ohne `sourced &&` an. Verwirft die Zeichenkette nicht.
+- Client `SegmentChildren.tsx:69–75` kürzt nur auf 80 Zeichen. Der Testsatz ist kürzer und bleibt stehen.
+- Lücken-Route `toGapItem` (`server/segment-gap-route.ts:836`) schickt `basis` durch `visibleBasis` (`:522–529`). Ein Teil bleibt nur, wenn er mit `Formel:` beginnt oder `concreteSource` besteht. Danach ersetzt ein leeres Ergebnis der Satz `n/a — Firma weist FSD nicht separat aus` (`:844`, `specificGapNote` `:515–519`).
+
+Probe ohne Netz, `POST /api/segment-gaps`, Kind `FSD`, Quelle `Tesla shareholder update 2021`: die Antwortzeile hat `basis` und `shareNote` `n/a — Firma weist FSD nicht separat aus`. Die Zeichenkette `shareholder update 2021` fehlt. Das ist der P3. Die Untersegment-Zeile ist repariert. Die Lücken-Zeile, die `SegmentGapPanel` zeichnet, filtert die vage Quelle weiter.
+
+Vorschlag, nur `visibleBasis`: unkonkrete Teile nicht verwerfen, sondern hinter dem n/a-Satz stehen lassen. `shareOfParentPct` bleibt null. Diesen Fix baut dieser Recheck nicht ein.
+
+### N4 — Cache-Schlüssel
+
+```ts
+function parentCacheKey(ticker: string, task: GapTask, siblings: readonly string[]): string {
+  const basis = task.revenue != null && task.revenue > 0 ? String(task.revenue) : "";
+  const others = siblings.map((name) => segmentGapKey(name)).filter((name) => name.length > 0).sort().join("\n");
+  return `${SEGMENT_GAP_PROMPT_VERSION}|${ticker.toUpperCase()}|${task.label}|v:${basis}|s:${others}`;
+}
+```
+
+`segmentGapKey` (`shared/segment-gap.ts:38–39`) setzt Kleinbuchstaben und wirft Satzzeichen weg, bevor sortiert wird. `Array.prototype.sort` ohne Vergleichsfunktion ist für diese ASCII-Schlüssel stabil und nicht von der Locale abhängig. Dieselbe Menge in anderer Reihenfolge ergibt denselben Schlüssel.
+
+Aufrufer im ganzen Baum: nur `:1037` (Cache-Frühweg) und `:1091` (Live-Schleife). `:1091` speist `freshParent`, `shareParentAttempt` und `rememberGap` (`:1105`, `:1150`). Ein dritter Aufruf existiert nicht. Beide bekommen `products`.
+
+`SEGMENT_GAP_PROMPT_VERSION` bleibt `n36-gap-p23` (`:50`). Alte Schlüssel enden ohne `|s:`. Ein Lookup mit dem neuen Schlüssel trifft sie nicht. `pruneGapCache` löscht sie erst nach Ablauf der TTL (`:926–931`). Bis dahin liegen sie ungelesen im Speicher. Für die Antwort sind sie ungültig. Ein explizites Löschen beim Start gibt es nicht. Das ist für den Leser eine saubere Invalidierung, kein Treffer auf den alten EXN4-Stand.
+
+### N6 — Professor-Set
+
+Der neue Test `n6-synthetic-zero-wrong-assignments` (`script/test-segment-n36.ts`, Block nach `uses-convert-segment-rows-to-usd`) schreibt die erwarteten Eltern fest. Lauf: PASS, Detail `0`.
+
+| # | Fall | Erwartetes Eltern | Im Test |
+| --- | --- | --- | --- |
+| 1 | `bundledWith` | `Panel Software` → `Automotive Sales` | ja, `bundled:` |
+| 2 | Gleicher Begriff auf zwei Segmenten | `Vehicle Control Software` bleibt `Automotive Sales`, `Control Software Vehicle` bleibt `Energy Storage` | ja, `concept:` |
+| 3 | Tokengleichheit gegen Teiltreffer | Die beiden Control-Zeilen teilen alle Tokens und bleiben getrennt, weil beide Hardware-Eltern sind. `Vehicle Lease` teilt nur `vehicle` und bleibt `Services and Other` | ja, derselbe Assert |
+| 4 | Fehlender Host-Name | `Device Software` mit `bundledWith` `PCs`, `PCs` nicht in der Liste → `Services and Other`, Anteil 9 | ja, `before:` |
+| 5 | EXN4, neues Geschwister `PCs` | Zweiter Request, Anteil bleibt 9, Eltern bleibt `Services and Other`, Services-Prompt läuft erneut (`servicesPromptsWithPcs === 1`) | ja, `cache:` und `services-prompts:` |
+| + | Mehrdeutiger Begriff | `Vehicle Control Software` / `Control Software Vehicle` | ja, Fall 2 |
+
+n36 gesamt auf `fcbc69a1`: **149 PASS, 0 FAIL**, letzte Zeile `n36 PASS`, Exit 0. Auf `a69872b7` waren es 147/0. Die zwei neuen Asserts sind beide grün.
+
+PR-Body von #492, gelesen am 19.11.2026: die Wortfolge „nicht empirisch geprüft“ kommt nicht vor. Satz im Abschnitt Run 28: „Offen, nicht Teil dieses Laufs: die echte Stichprobe mit 20 Tickern.“ Der synthetische Umhängepfad steht dort als PASS, nicht als ungeprüft.
+
+### Regression
+
+`npm run check` mit denselben `env -u`-Variablen: Head Exit 2, 76 `error TS`, main `7aaa13ce` ebenfalls 76. Dateimenge gleich (`analyze-helpers.ts` 23, `Compare.tsx` 18, `Section9.tsx` 13, `analyze-route.ts` 12, `Section3.tsx` 5, `researcher.ts` 2, `Section8.tsx` 1, `buffett-ratio.ts` 1, `bias-fixes.ts` 1). Keine neue Datei.
+
+Merge-Simulation Exit 0, Tree `6de37049`. Kein Konflikt. `server/llm-openrouter.ts` bleibt Blob `ff390ba1`.
+
+Der Diff löscht keine Datei und setzt keine bestehende Segment-, Score- oder Entry-Anzeige auf n/a. Die eine geänderte Zeile in `segment-children.ts` stellt Text wieder her. Score, Entry, DCF und PDF importieren die drei geänderten Pfade nicht. Datenkette der Quelle: UI `SegmentChildrenList` → kein neuer Hook → bestehende GET-Route der Untersegmente → `reviewKiChildren` → Typ bleibt in `shared/segment-children.ts`, `shared/schema.ts` unverändert. Die Lücken-Zeile bleibt UI `SegmentGapPanel` → `apiRequest` → `POST /api/segment-gaps` → `segment-gap-route.ts`. Der Cache-Schlüssel ändert nur den Server-Map-Key, nicht das JSON-Schema.
+
+### Recheck-Verdikt
+
+P3, kein P1, kein P2. N1-Zeile und N4 sind auf `fcbc69a1` umgesetzt und getestet. Offen bleibt nur, dass die Lücken-Zeile eine vage Quelle in `visibleBasis` verwirft. Vorschlag steht bei N1. Nicht eingebaut. Nicht gemergt.
