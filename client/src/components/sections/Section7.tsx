@@ -44,6 +44,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const sectorDisplay = resolveSectorGrowthDisplay({
     tamCAGR: data.tamAnalysis?.tamCAGR,
     tamSource: data.tamAnalysis?.tamSource,
+    tamLabel: data.tamAnalysis?.tamLabel,
+    quality: data.tamAnalysis?.quality,
     peerRevenueGrowths: (data.peerComparison?.peers ?? []).map((peer) => peer.revenueGrowth),
     ai: industryAi,
   });
@@ -257,6 +259,10 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         sector: data.sector,
         industry: data.industry,
         description: data.description,
+        quality: data.tamAnalysis?.quality ?? null,
+        tamLabel: data.tamAnalysis?.tamLabel ?? null,
+        tamSource: data.tamAnalysis?.tamSource ?? null,
+        tamCAGR: data.tamAnalysis?.tamCAGR ?? null,
       });
       let json: { value?: unknown; source?: unknown; rationale?: unknown; reason?: string; error?: string } | null = null;
       try { json = await res.json(); } catch { json = null; }
@@ -905,13 +911,34 @@ function finitePeerRates(values: readonly (number | null | undefined)[] | null |
   return values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 }
 
+const IMF_FIVE_SOURCE = "IMF / World Bank GDP Growth Estimate";
+
+/** Abgelehnte Katalogwerte. Kein Ersatz durch eine andere feste Zahl. */
+export function sectorGrowthRejection(input: {
+  quality?: string | null;
+  tamLabel?: string | null;
+  tamSource?: string | null;
+  tamCAGR?: number | null;
+}): string | null {
+  if ((input.quality ?? "").trim() === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
+  const label = (input.tamLabel ?? "").trim();
+  const source = (input.tamSource ?? "").trim();
+  if (label === "Global Market" || source === "Global Market") return "Global Market ist keine Branchenquelle";
+  if (source === IMF_FIVE_SOURCE && input.tamCAGR === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
+  return null;
+}
+
 /** Anzeige-Kette für Sektion 9. Kein Score. Fehlende Peer-Raten zählen nicht als 0. */
 export function resolveSectorGrowthDisplay(input: {
   tamCAGR?: number | null;
   tamSource?: string | null;
+  tamLabel?: string | null;
+  quality?: string | null;
   peerRevenueGrowths?: readonly (number | null | undefined)[] | null;
   ai?: IndustryGrowthAi | null;
 }): SectorGrowthDisplay {
+  const rejected = sectorGrowthRejection(input);
+  if (rejected) return { kind: "na", reason: rejected };
   if (typeof input.tamCAGR === "number" && Number.isFinite(input.tamCAGR)) {
     const source = (input.tamSource ?? "").trim() || "tamCAGR";
     return { kind: "tam", value: input.tamCAGR, source };
@@ -928,12 +955,19 @@ export function resolveSectorGrowthDisplay(input: {
     return { kind: "peer-span", min: Math.min(...rates), max: Math.max(...rates), source: `Peer-Spanne (n=${n})`, n };
   }
   const ai = input.ai;
-  if (ai && Number.isFinite(ai.value) && ai.source.trim() && ai.rationale.trim()) {
+  const aiRejected = ai != null && sectorGrowthRejection({
+    quality: input.quality,
+    tamLabel: ai.source,
+    tamSource: ai.source,
+    tamCAGR: ai.value,
+  }) != null;
+  if (!aiRejected && ai && Number.isFinite(ai.value) && ai.source.trim() && ai.rationale.trim()) {
     return { kind: "ai", value: ai.value, source: ai.source.trim(), rationale: ai.rationale.trim() };
   }
+  const tamReason = rejected ?? "tamCAGR fehlt";
   const peerReason = n === 0 ? "keine Peer-Umsatzwachstumsraten" : `Peer-Umsatzwachstum n=${n} (unter 3)`;
-  const aiReason = input.ai ? "KI-Schätzung ohne Quelle oder Begründung verworfen" : "keine KI-Schätzung";
-  return { kind: "na", reason: `tamCAGR fehlt; ${peerReason}; ${aiReason}` };
+  const aiReason = aiRejected ? "KI-Schätzung abgelehnt" : input.ai ? "KI-Schätzung ohne Quelle oder Begründung verworfen" : "keine KI-Schätzung";
+  return { kind: "na", reason: `${tamReason}; ${peerReason}; ${aiReason}` };
 }
 
 export function sectorGrowthSourceText(resolved: SectorGrowthDisplay): string {

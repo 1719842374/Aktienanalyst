@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Router } from "wouter";
 import { Section7, resolveSectorGrowthDisplay } from "../client/src/components/sections/Section7";
+import { industryGrowthRejection } from "../server/industry-growth-estimate";
 
 (globalThis as any).React = React;
 
@@ -54,6 +55,43 @@ check("KI mit Quelle nur wenn tamCAGR und Peers fehlen", (() => {
   const hidden = resolveSectorGrowthDisplay({ tamCAGR: 8, tamSource: "Katalog", peerRevenueGrowths: [], ai: { value: 6.5, source: "IEA", rationale: "Outlook" } });
   return shown.kind === "ai" && shown.value === 6.5 && hidden.kind === "tam" && hidden.value === 8;
 })());
+check("Global Market wird keine Zahl", (() => {
+  const result = resolveSectorGrowthDisplay({
+    tamCAGR: 5, tamLabel: "Global Market", tamSource: "IMF / World Bank GDP Growth Estimate", quality: "weak", peerRevenueGrowths: [],
+  });
+  return result.kind === "na" && !("value" in result) && result.reason.includes("Global Market");
+})());
+check("IMF 5 % wird keine Zahl", (() => {
+  const result = resolveSectorGrowthDisplay({
+    tamCAGR: 5, tamLabel: "Andere Branche", tamSource: "IMF / World Bank GDP Growth Estimate", quality: "weak", peerRevenueGrowths: [],
+  });
+  return result.kind === "na" && !("value" in result) && result.reason.includes("IMF");
+})());
+check("unreliable wird keine tam-Zahl", (() => {
+  const result = resolveSectorGrowthDisplay({
+    tamCAGR: 16, tamSource: "Gartner", quality: "unreliable", peerRevenueGrowths: [],
+  });
+  return result.kind === "na" && !("value" in result) && result.reason.includes("unzuverlässig");
+})());
+check("echtes 5 % aus einer anderen Quelle bleibt", (() => {
+  const result = resolveSectorGrowthDisplay({
+    tamCAGR: 5, tamLabel: "Global Banking Revenue Pool", tamSource: "McKinsey Global Banking Revenue", quality: "weak", peerRevenueGrowths: [],
+  });
+  return result.kind === "tam" && result.value === 5 && result.source === "McKinsey Global Banking Revenue";
+})());
+check("unreliable bleibt n/a auch mit Peer-Raten", (() => {
+  const result = resolveSectorGrowthDisplay({
+    tamCAGR: 16, tamSource: "Gartner", quality: "unreliable", peerRevenueGrowths: [1, 2, 3, 4, 10],
+  });
+  return result.kind === "na" && !("value" in result) && result.reason.includes("unzuverlässig");
+})());
+check("Server lehnt Global Market, IMF 5 % und unreliable ab", 
+  industryGrowthRejection({ label: "Global Market", value: 8 }) === "Global Market ist keine Branchenquelle"
+  && industryGrowthRejection({ source: "IMF / World Bank GDP Growth Estimate", value: 5 }) === "IMF-Pauschale 5 % ist keine Branchenquelle"
+  && (industryGrowthRejection({ quality: "unreliable", source: "Gartner", value: 16 }) ?? "").includes("unzuverlässig")
+  && industryGrowthRejection({ quality: "weak", label: "Global Banking Revenue Pool", source: "McKinsey Global Banking Revenue", value: 5 }) === null,
+);
+check("KI-Call hat AbortSignal-Timeout", readFileSync(new URL("../server/industry-growth-estimate.ts", import.meta.url), "utf8").includes("AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS)"));
 
 const source = readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8");
 check("Section7 enthält kein tamCAGR ?? 5", !source.includes("?? 5"));

@@ -5,7 +5,24 @@
  */
 import type { Express, Request, Response } from "express";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
-import { takeSegmentChildrenSlot } from "./segment-growth-route";
+import { SEGMENT_CHILDREN_KI_TIMEOUT_MS, takeSegmentChildrenSlot } from "./segment-growth-route";
+
+const IMF_FIVE_SOURCE = "IMF / World Bank GDP Growth Estimate";
+
+/** Dieselben Ablehnungen wie in Section7. Kein Ersatz durch eine Default-Zahl. */
+export function industryGrowthRejection(input: {
+  quality?: string | null;
+  label?: string | null;
+  source?: string | null;
+  value?: number | null;
+}): string | null {
+  if ((input.quality ?? "").trim() === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
+  const label = (input.label ?? "").trim();
+  const source = (input.source ?? "").trim();
+  if (label === "Global Market" || source === "Global Market") return "Global Market ist keine Branchenquelle";
+  if (source === IMF_FIVE_SOURCE && input.value === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
+  return null;
+}
 
 const RATE_MAX = 20;
 const RATE_WINDOW_MS = 60 * 1000;
@@ -31,21 +48,30 @@ export function registerIndustryGrowthEstimateRoute(app: Express, deps?: {
     if (!sector && !industry) {
       return res.status(400).json({ error: "Sektor oder Branche fehlt" });
     }
+    const bodyQuality = typeof req.body?.quality === "string" ? req.body.quality : null;
+    const bodyLabel = typeof req.body?.tamLabel === "string" ? req.body.tamLabel : null;
+    const bodySource = typeof req.body?.tamSource === "string" ? req.body.tamSource : null;
+    const bodyValue = typeof req.body?.tamCAGR === "number" && Number.isFinite(req.body.tamCAGR) ? req.body.tamCAGR : null;
+    const blocked = industryGrowthRejection({ quality: bodyQuality, label: bodyLabel, source: bodySource, value: bodyValue });
+    if (blocked) return res.json({ reason: blocked });
     const available = deps?.available ?? isLLMAvailable;
     if (!deps?.llm && !available()) {
       return res.json({ reason: "OpenRouter nicht konfiguriert" });
     }
     const llm = deps?.llm ?? callLLMJson;
     const result = await llm({
-      systemPrompt: "Antworte nur mit JSON. Schätze das Branchenwachstum in Prozent. Eine fehlende Zahl bleibt null. Ohne Quelle und Begründung keine Zahl.",
+      systemPrompt: "Antworte nur mit JSON. Schätze das Branchenwachstum in Prozent. Eine fehlende Zahl bleibt null. Ohne Quelle und Begründung keine Zahl. Global Market und die IMF-Pauschale sind keine zulässige Quelle.",
       prompt: `Sektor: ${sector || "n/a"}. Branche: ${industry || "n/a"}. Beschreibung: ${description || "n/a"}. JSON: {"growthPct": number|null, "source": string, "rationale": string}`,
       maxTokens: 400,
       temperature: 0.2,
+      signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
     }).catch(() => null);
     const data = result?.data as { growthPct?: unknown; source?: unknown; rationale?: unknown } | undefined;
     const value = typeof data?.growthPct === "number" && Number.isFinite(data.growthPct) ? data.growthPct : null;
     const source = typeof data?.source === "string" ? data.source.trim() : "";
     const rationale = typeof data?.rationale === "string" ? data.rationale.trim() : "";
+    const modelBlocked = industryGrowthRejection({ label: source, source, value });
+    if (modelBlocked) return res.json({ reason: modelBlocked, modelUsed: result?.modelUsed ?? null });
     if (value == null || !source || !rationale) {
       return res.json({ reason: "KI-Schätzung ohne Quelle oder Begründung", modelUsed: result?.modelUsed ?? null });
     }
