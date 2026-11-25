@@ -582,4 +582,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerSegmentGrowthRoute(app);
   const { registerSegmentTamEstimateRoute } = await import("./segment-tam-estimate-route");
   registerSegmentTamEstimateRoute(app);
+
+  // Branchen-Wachstum nur auf Knopf, gleiches Rate-Limit wie die Segment-Schätzung. Kein Score.
+  const { registerIndustryGrowthEstimateRoute } = await import("./industry-growth-estimate");
+  registerIndustryGrowthEstimateRoute(app);
 }
