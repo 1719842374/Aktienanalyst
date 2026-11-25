@@ -10,23 +10,25 @@ const BUTTONS: Array<{ id: RegionId; label: string }> = [
   { id: "JP", label: "Asien (Japan)" },
 ];
 
-function CatalogGauge({ label, value }: { label: string; value: number | null }) {
+function CatalogGauge({ label, value, horizon = "12M", note = null, testId }: { label: string; value: number | null; horizon?: string; note?: string | null; testId?: string }) {
   if (value == null) {
     return (
-      <div className="basis-full sm:basis-[calc(50%-0.375rem)] min-w-0 p-4 rounded-lg border border-border flex flex-col items-center">
-        <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
-        <div className="text-2xl font-bold tabular-nums mt-2 text-muted-foreground">N/A</div>
-        <div className="text-xs text-muted-foreground">kein gewerteter Slot</div>
+      <div data-testid={testId} className="basis-full sm:basis-[calc(50%-0.375rem)] lg:basis-[calc(33.333%-0.5rem)] xl:basis-[calc(20%-0.6rem)] min-w-0 p-4 rounded-lg border border-border flex flex-col items-center">
+        <div className="text-xs font-medium text-muted-foreground mb-1 text-center">{label}</div>
+        <div className="text-[10px] text-muted-foreground/70 mb-2">Horizont: {horizon}</div>
+        <div className="text-2xl font-bold tabular-nums mt-2 text-muted-foreground">n/a</div>
+        <div className="text-[10px] text-muted-foreground text-center">{note ?? "kein gewerteter Slot"}</div>
       </div>
     );
   }
   return (
-    <div className={`basis-full sm:basis-[calc(50%-0.375rem)] min-w-0 p-4 rounded-lg border ${getProbBg(value)} flex flex-col items-center`}>
-      <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
-      <div className="text-[10px] text-muted-foreground/70 mb-2">Horizont: 12M</div>
+    <div data-testid={testId} className={`basis-full sm:basis-[calc(50%-0.375rem)] lg:basis-[calc(33.333%-0.5rem)] xl:basis-[calc(20%-0.6rem)] min-w-0 p-4 rounded-lg border ${getProbBg(value)} flex flex-col items-center`}>
+      <div className="text-xs font-medium text-muted-foreground mb-1 text-center">{label}</div>
+      <div className="text-[10px] text-muted-foreground/70 mb-2">Horizont: {horizon}</div>
       <GaugeMini value={value} />
       <div className={`text-2xl font-bold tabular-nums mt-2 ${getProbColor(value)}`}>{value}%</div>
       <div className={`text-xs font-medium ${getProbColor(value)}`}>{getProbLabel(value)}</div>
+      {note && <div className="text-[10px] text-muted-foreground text-center mt-1">{note}</div>}
     </div>
   );
 }
@@ -59,8 +61,16 @@ export function RegionGaugeSwitch({ data, regions }: { data: RecessionAnalysis; 
       ) : (
         <div className="space-y-3" data-testid={`region-view-${view.id}`}>
           <div className="flex flex-wrap justify-center gap-3">
-            <CatalogGauge label={`${view.label} · Katalog Rezession`} value={view.recessionProbability} />
-            <CatalogGauge label={`${view.label} · Katalog Korrektur`} value={view.correctionProbability} />
+            {view.subgroups.map(group => (
+              <CatalogGauge
+                key={group.key}
+                testId={`region-subgroup-${group.key}`}
+                label={`${view.label} · ${group.label}`}
+                horizon={group.horizon}
+                value={group.probability}
+                note={group.note}
+              />
+            ))}
           </div>
           <div className="text-[11px] text-muted-foreground" data-testid="region-view-coverage">
             {view.scoredSlots} von {view.totalSlots} Slots gewertet.
