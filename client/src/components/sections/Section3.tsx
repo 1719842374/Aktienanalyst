@@ -1,12 +1,16 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateRSL } from "../../lib/calculations";
+import { useMarketTreasury10Y } from "../../lib/useMarketTreasury10Y";
+import { latestTreasury, refinancingRows } from "../../../../shared/refinancing-cycle";
 
 interface Props { data: StockAnalysis }
 
 export function Section3({ data }: Props) {
   const sp = data.sectorProfile;
   const macro = sp.macroSensitivity;
+  const treasuryQuery = useMarketTreasury10Y(true);
+  const refinancing = refinancingRows(data, latestTreasury(treasuryQuery.data?.points));
 
   const macroSensitivities = [
     {
@@ -132,6 +136,21 @@ export function Section3({ data }: Props) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* F1-26: Verschuldung / Refinanzierung — nur Anzeige, kein Score */}
+      <div data-testid="refinancing-cycle">
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Verschuldung / Refinanzierung</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {refinancing.map(row => (
+            <div key={row.key} data-testid={`refinancing-${row.key}`} className="rounded-md border border-border/50 p-2.5">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{row.label}</div>
+              <div className={`text-sm font-semibold tabular-nums ${row.available ? "" : "text-muted-foreground"}`}>{row.value}</div>
+              <div className="text-[10px] text-muted-foreground leading-snug">{row.note}</div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-1.5">Nur Anzeige. Fließt nicht in Score, Rating oder CRV ein.</p>
       </div>
 
       {/* Regulatory Notes */}
