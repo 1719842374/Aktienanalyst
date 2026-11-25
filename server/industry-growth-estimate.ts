@@ -16,11 +16,12 @@ export function industryGrowthRejection(input: {
   source?: string | null;
   value?: number | null;
 }): string | null {
-  if ((input.quality ?? "").trim() === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
-  const label = (input.label ?? "").trim();
-  const source = (input.source ?? "").trim();
-  if (label === "Global Market" || source === "Global Market") return "Global Market ist keine Branchenquelle";
-  if (source === IMF_FIVE_SOURCE && input.value === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
+  const quality = (input.quality ?? "").trim().toLowerCase();
+  const label = (input.label ?? "").trim().toLowerCase();
+  const source = (input.source ?? "").trim().toLowerCase();
+  if (quality === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
+  if (label === "global market" || source === "global market") return "Global Market ist keine Branchenquelle";
+  if (source === IMF_FIVE_SOURCE.toLowerCase() && input.value === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
   return null;
 }
 
@@ -48,12 +49,6 @@ export function registerIndustryGrowthEstimateRoute(app: Express, deps?: {
     if (!sector && !industry) {
       return res.status(400).json({ error: "Sektor oder Branche fehlt" });
     }
-    const bodyQuality = typeof req.body?.quality === "string" ? req.body.quality : null;
-    const bodyLabel = typeof req.body?.tamLabel === "string" ? req.body.tamLabel : null;
-    const bodySource = typeof req.body?.tamSource === "string" ? req.body.tamSource : null;
-    const bodyValue = typeof req.body?.tamCAGR === "number" && Number.isFinite(req.body.tamCAGR) ? req.body.tamCAGR : null;
-    const blocked = industryGrowthRejection({ quality: bodyQuality, label: bodyLabel, source: bodySource, value: bodyValue });
-    if (blocked) return res.json({ reason: blocked });
     const available = deps?.available ?? isLLMAvailable;
     if (!deps?.llm && !available()) {
       return res.json({ reason: "OpenRouter nicht konfiguriert" });

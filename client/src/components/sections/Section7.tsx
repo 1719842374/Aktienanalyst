@@ -387,7 +387,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a'}</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5" data-testid="tam-card-cagr">{sectorGrowthRejection({ quality: tam.quality, tamLabel: tam.tamLabel, tamSource: tam.tamSource, tamCAGR: tam.tamCAGR }) ?? (tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a')}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -920,11 +920,12 @@ export function sectorGrowthRejection(input: {
   tamSource?: string | null;
   tamCAGR?: number | null;
 }): string | null {
-  if ((input.quality ?? "").trim() === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
-  const label = (input.tamLabel ?? "").trim();
-  const source = (input.tamSource ?? "").trim();
-  if (label === "Global Market" || source === "Global Market") return "Global Market ist keine Branchenquelle";
-  if (source === IMF_FIVE_SOURCE && input.tamCAGR === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
+  const quality = (input.quality ?? "").trim().toLowerCase();
+  const label = (input.tamLabel ?? "").trim().toLowerCase();
+  const source = (input.tamSource ?? "").trim().toLowerCase();
+  if (quality === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
+  if (label === "global market" || source === "global market") return "Global Market ist keine Branchenquelle";
+  if (source === IMF_FIVE_SOURCE.toLowerCase() && input.tamCAGR === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
   return null;
 }
 
@@ -938,8 +939,7 @@ export function resolveSectorGrowthDisplay(input: {
   ai?: IndustryGrowthAi | null;
 }): SectorGrowthDisplay {
   const rejected = sectorGrowthRejection(input);
-  if (rejected) return { kind: "na", reason: rejected };
-  if (typeof input.tamCAGR === "number" && Number.isFinite(input.tamCAGR)) {
+  if (!rejected && typeof input.tamCAGR === "number" && Number.isFinite(input.tamCAGR)) {
     const source = (input.tamSource ?? "").trim() || "tamCAGR";
     return { kind: "tam", value: input.tamCAGR, source };
   }
@@ -956,7 +956,6 @@ export function resolveSectorGrowthDisplay(input: {
   }
   const ai = input.ai;
   const aiRejected = ai != null && sectorGrowthRejection({
-    quality: input.quality,
     tamLabel: ai.source,
     tamSource: ai.source,
     tamCAGR: ai.value,

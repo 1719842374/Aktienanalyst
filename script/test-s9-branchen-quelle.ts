@@ -79,12 +79,58 @@ check("echtes 5 % aus einer anderen Quelle bleibt", (() => {
   });
   return result.kind === "tam" && result.value === 5 && result.source === "McKinsey Global Banking Revenue";
 })());
-check("unreliable bleibt n/a auch mit Peer-Raten", (() => {
-  const result = resolveSectorGrowthDisplay({
-    tamCAGR: 16, tamSource: "Gartner", quality: "unreliable", peerRevenueGrowths: [1, 2, 3, 4, 10],
-  });
-  return result.kind === "na" && !("value" in result) && result.reason.includes("unzuverlässig");
+const rejectedCases = [
+  { name: "Global Market Label", tam: { tamCAGR: 5, tamLabel: "Global Market", tamSource: "Gartner", quality: "weak" }, prefix: "Global Market ist keine Branchenquelle", banned: "+5.0%" },
+  { name: "Global Market Source", tam: { tamCAGR: 8, tamLabel: "Andere", tamSource: "Global Market", quality: "weak" }, prefix: "Global Market ist keine Branchenquelle", banned: "+8.0%" },
+  { name: "IMF 5 %", tam: { tamCAGR: 5, tamLabel: "Andere Branche", tamSource: "IMF / World Bank GDP Growth Estimate", quality: "weak" }, prefix: "IMF-Pauschale 5 % ist keine Branchenquelle", banned: "+5.0%" },
+  { name: "unreliable", tam: { tamCAGR: 16, tamLabel: "Cloud", tamSource: "Gartner", quality: "unreliable" }, prefix: "tamCAGR verworfen: Segment-TAM unzuverlässig", banned: "+16.0%" },
+] as const;
+const validAi = { value: 6.5, source: "IEA", rationale: "Outlook" };
+for (const item of rejectedCases) {
+  check(`${item.name}: n=5 Peer-Median, nicht der abgelehnte Wert`, (() => {
+    const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: [10, 1, 4, 8, 2] });
+    return result.kind === "peer-median" && result.n === 5 && result.value === 4 && result.value !== item.tam.tamCAGR;
+  })());
+  check(`${item.name}: n=6 Peer-Median ohne Rundung`, (() => {
+    const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: [1, 2, 3, 4, 5, 6] });
+    return result.kind === "peer-median" && result.n === 6 && result.value === 3.5;
+  })());
+  check(`${item.name}: n=4 Peer-Spanne`, (() => {
+    const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: [9, 1, 4, 8] });
+    return result.kind === "peer-span" && result.n === 4 && result.min === 1 && result.max === 9 && !("value" in result);
+  })());
+  check(`${item.name}: n=3 Peer-Spanne`, (() => {
+    const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: [3, -2, 7] });
+    return result.kind === "peer-span" && result.n === 3 && result.min === -2 && result.max === 7;
+  })());
+  for (const rates of [[], [4], [13.7, 7.7]] as const) {
+    check(`${item.name}: n=${rates.length} plus KI`, (() => {
+      const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: rates, ai: validAi });
+      return result.kind === "ai" && result.value === 6.5 && result.source === "IEA";
+    })());
+    check(`${item.name}: n=${rates.length} ohne KI ist n/a`, (() => {
+      const result = resolveSectorGrowthDisplay({ ...item.tam, peerRevenueGrowths: rates });
+      const peerBit = rates.length === 0 ? "keine Peer-Umsatzwachstumsraten" : `Peer-Umsatzwachstum n=${rates.length} (unter 3)`;
+      return result.kind === "na" && !("value" in result) && result.reason.startsWith(item.prefix) && result.reason.includes(peerBit);
+    })());
+  }
+}
+check("Schreibweise: global market und Unreliable mit Peer-Fallback", (() => {
+  const spaced = resolveSectorGrowthDisplay({ tamCAGR: 5, tamLabel: " global market ", quality: "weak", peerRevenueGrowths: [10, 1, 4, 8, 2] });
+  const upper = resolveSectorGrowthDisplay({ tamCAGR: 5, tamSource: "GLOBAL MARKET", quality: "weak", peerRevenueGrowths: [3, -2, 7] });
+  const unreliable = resolveSectorGrowthDisplay({ tamCAGR: 16, quality: "Unreliable", tamSource: "Gartner", peerRevenueGrowths: [10, 1, 4, 8, 2] });
+  const padded = resolveSectorGrowthDisplay({ tamCAGR: 16, quality: " UNRELIABLE ", tamSource: "Gartner", peerRevenueGrowths: [13.7, 7.7] });
+  return spaced.kind === "peer-median" && spaced.value === 4
+    && upper.kind === "peer-span" && upper.min === -2 && upper.max === 7
+    && unreliable.kind === "peer-median" && unreliable.value === 4
+    && padded.kind === "na" && padded.reason.startsWith("tamCAGR verworfen: Segment-TAM unzuverlässig") && padded.reason.includes("n=2");
 })());
+check("Server: Schreibweise global market und Unreliable", 
+  industryGrowthRejection({ label: " global market ", value: 5 }) === "Global Market ist keine Branchenquelle"
+  && industryGrowthRejection({ source: "GLOBAL MARKET", value: 8 }) === "Global Market ist keine Branchenquelle"
+  && (industryGrowthRejection({ quality: "Unreliable", value: 16 }) ?? "").includes("unzuverlässig")
+  && (industryGrowthRejection({ quality: " UNRELIABLE ", value: 16 }) ?? "").includes("unzuverlässig"),
+);
 check("Server lehnt Global Market, IMF 5 % und unreliable ab", 
   industryGrowthRejection({ label: "Global Market", value: 8 }) === "Global Market ist keine Branchenquelle"
   && industryGrowthRejection({ source: "IMF / World Bank GDP Growth Estimate", value: 5 }) === "IMF-Pauschale 5 % ist keine Branchenquelle"
@@ -96,6 +142,14 @@ check("KI-Call hat AbortSignal-Timeout", readFileSync(new URL("../server/industr
 const source = readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8");
 check("Section7 enthält kein tamCAGR ?? 5", !source.includes("?? 5"));
 check("KI-Route steht nicht in einem useEffect", !/useEffect\(\(\) => \{[^}]*industry-growth-estimate/s.test(source));
+check("KI-POST nur aus dem Klick-Handler", (() => {
+  const posts = source.split('"/api/industry-growth-estimate"').length - 1;
+  const calls = source.split("requestIndustryGrowthEstimate").length - 1;
+  return posts === 1
+    && calls === 2
+    && source.includes("onClick={() => { if (!industryAiLoading) void requestIndustryGrowthEstimate(); }}")
+    && !/useEffect\(\(\) => \{[^}]*requestIndustryGrowthEstimate/.test(source);
+})());
 
 function render(data: Record<string, unknown>) {
   return renderToStaticMarkup(
@@ -107,6 +161,39 @@ function render(data: Record<string, unknown>) {
 
 const msft = JSON.parse(readFileSync(new URL("./fixtures/analysis-MSFT.json", import.meta.url), "utf8"));
 const shel = JSON.parse(readFileSync(new URL("./fixtures/analysis-SHEL.L.json", import.meta.url), "utf8"));
+
+check("TAM-Kachel Global Market ohne 5-%-Wert, mit Ablehnungsgrund", (() => {
+  const html = render(withPeers(msft, [], {
+    tamCAGR: 5, tamLabel: "Global Market", tamSource: "IMF / World Bank GDP Growth Estimate", quality: "weak", tamTotal: 5000, companyGrowth: 2,
+  }));
+  const tile = (html.match(/data-testid="tam-card-cagr">([^<]*)</) ?? [])[1] ?? "";
+  return tile === "Global Market ist keine Branchenquelle" && !tile.includes("5%");
+})());
+for (const item of rejectedCases) {
+  check(`${item.name}: Markup ohne den abgelehnten Wert`, (() => {
+    const html = render(withPeers(msft, [10, 1, 4, 8, 2], { ...item.tam, companyGrowth: 2 }));
+    return html.includes("Peer-Median (n=5)") && html.includes("+4.0%") && !html.includes(item.banned);
+  })());
+  check(`${item.name}: n=2 ohne Klick ist n/a, Knopf sichtbar, kein Request`, (() => {
+    const calls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    let html = "";
+    try {
+      html = render(withPeers(msft, [13.7, 7.7], { ...item.tam, companyGrowth: 2 }));
+    } finally {
+      globalThis.fetch = orig;
+    }
+    return html.includes('data-testid="button-industry-growth-estimate"')
+      && html.includes(item.prefix)
+      && html.includes("Peer-Umsatzwachstum n=2 (unter 3)")
+      && !html.includes(item.banned)
+      && !calls.some((url) => url.includes("industry-growth-estimate"));
+  })());
+}
 
 function withPeers(base: any, rates: Array<number | null>, tam: Record<string, unknown>) {
   return {
