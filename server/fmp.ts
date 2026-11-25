@@ -266,14 +266,8 @@ export interface FmpSegmentRow {
    *  dieser Wert komplett, obwohl prevRevenue pro Segment schon vorlag.
    *  undefined, wenn keine Vorperiode gefunden wurde (kein Fake-0). */
   prevPercentage?: number;
-  /** Berichtswährung der neuesten Segmentzeile, nur wenn das Feld dort steht. Nach gelungener Umrechnung USD. */
+  /** Berichtswährung der neuesten Segmentzeile, nur wenn das Feld dort steht. */
   reportedCurrency?: string;
-  /** Berichtswährung vor der USD-Umrechnung. */
-  fxFrom?: string;
-  /** Kurs Berichtswährung → USD. Nicht gesetzt, wenn der Kurs fehlt. */
-  fxRate?: number;
-  /** Gesetz, wenn die Berichtswährung nicht USD ist und kein Kurs > 0 und ≠ 1 da ist. Dann keine Multiplikation. */
-  fxNaReason?: string;
 }
 
 /** Vorjahresumsatz auch bei anderer Großschreibung, sonst bleibt das Fakt-YoY leer. */
@@ -642,7 +636,7 @@ export async function fmpSegments(symbol: string): Promise<FmpSegmentRow[]> {
     // YoY-Wachstumsrate pro Segment. Vorher wurde nur die neueste Periode
     // gelesen und kein Wachstum geliefert → Segment-TAM-Analyse zeigte 0.0 %.
     const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
-    return await convertSegmentRowsToUsd(normaliseSegmentRows(rows));
+    return normaliseSegmentRows(rows);
   } catch {
     return [];
   }
@@ -663,8 +657,7 @@ export async function fmpGeoSegments(symbol: string): Promise<FmpSegmentRow[]> {
     const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
     // Gleiche Normalisierung wie bei den Produkt-Segmenten — auch rein
     // geografisch berichtende Unternehmen bekommen damit echte YoY-Raten.
-    // Danach derselbe USD-Kurs wie bei den Abschlüssen (Prod: Geo blieb DKK/TWD/EUR).
-    return await convertSegmentRowsToUsd(normaliseSegmentRows(rows));
+    return normaliseSegmentRows(rows);
   } catch {
     return [];
   }
@@ -952,32 +945,20 @@ export const FX_CONVERTIBLE_FIELDS = new Set([
   "freeCashFlow", "operatingCashFlow", "capitalExpenditure", "cashAndCashEquivalents",
   "dividendsPaid", "depreciationAndAmortization", "stockBasedCompensation", "netCashProvidedByOperatingActivities",
   "shortTermDebt", "longTermDebt", "totalDebt", "totalStockholdersEquity", "totalEquity", "totalAssets",
-  // Prod 18.11.2026: diese Beträge blieben in der Berichtswährung, während revenue/totalDebt schon USD waren
-  // (NVO totalLiabilities 348.9 Mrd DKK neben Assets 79.6 Mrd USD; TSM/ASML dieselbe Lücke).
-  "totalLiabilities", "totalCurrentAssets", "totalCurrentLiabilities",
-  "totalRevenue", "capitalExpenditures", "cashAndShortTermInvestments",
   "enterpriseValue", "freeCashFlowPerShare", "revenuePerShare", "netIncomePerShare", "workingCapital",
   "investedCapital", "freeCashFlowToFirm", "freeCashFlowToEquity", "grahamNumber", "grahamNetNet",
 ]);
-
-/** Reine Multiplikation. rate === 1 lässt die Zeile stehen (kein stiller Faktor 1 für eine Fremdwährung). */
-export function convertMoneyFields<T extends Record<string, any>>(row: T, rate: number): T {
-  if (!row || typeof row !== "object") return row;
-  if (!(rate > 0) || rate === 1) return row;
-  const converted: any = { ...row };
-  for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
-    if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
-  }
-  return converted;
-}
 
 export async function convertFmpRowToUsd<T extends Record<string, any>>(row: T): Promise<T> {
   const currency = row?.reportedCurrency;
   if (!currency || currency === "USD") return row;
   const rate = await getFxRateToUsd(currency);
   if (rate === 1) return row; // fetch failed — leave as-is rather than guess
-  const converted = convertMoneyFields(row, rate);
-  (converted as any)._fxConverted = { from: currency, rate };
+  const converted: any = { ...row };
+  for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+    if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+  }
+  converted._fxConverted = { from: currency, rate };
   return converted;
 }
 
@@ -990,63 +971,13 @@ export async function convertFmpRowsToUsd<T extends Record<string, any>>(rows: T
   const rate = await getFxRateToUsd(currency);
   if (rate === 1) return rows;
   return rows.map((row) => {
-    const converted: any = convertMoneyFields(row, rate);
+    const converted: any = { ...row };
+    for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+      if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+    }
     converted._fxConverted = { from: currency, rate };
     return converted;
   });
-}
-
-/**
- * Segment-Umsätze (und Vorjahr) mit demselben Kurs wie die Abschlüsse.
- * Anteile und Wachstum bleiben: beide Seiten mal derselbe Kurs.
- * Fehlender Kurs: Zeile bleibt in der Berichtswährung, fxNaReason gesetzt, nichts mal 1.
- */
-export function applySegmentFx(rows: FmpSegmentRow[], rate: number, currency: string): FmpSegmentRow[] {
-  const code = currency.trim().toUpperCase();
-  if (!code || code === "USD") return rows;
-  if (!(rate > 0) || rate === 1) {
-    const fxNaReason = `n/a — FX ${code}USD fehlt, kein Faktor 1`;
-    return rows.map((row) => ({ ...row, fxNaReason }));
-  }
-  return rows.map((row) => ({
-    ...row,
-    revenue: row.revenue * rate,
-    ...(typeof row.prevRevenue === "number" ? { prevRevenue: row.prevRevenue * rate } : {}),
-    reportedCurrency: "USD",
-    fxFrom: code,
-    fxRate: rate,
-  }));
-}
-
-/** Rohzeilen der Segment-Endpunkte: Zahlen in `data` bzw. flache Beträge, Metadaten bleiben. */
-export function scaleSegmentationRows(rows: unknown[], rate: number): unknown[] {
-  if (!Array.isArray(rows) || !(rate > 0) || rate === 1) return rows;
-  return rows.map((row) => {
-    if (!row || typeof row !== "object") return row;
-    const rec = row as Record<string, unknown>;
-    const next: Record<string, unknown> = { ...rec };
-    if (next.data && typeof next.data === "object" && !Array.isArray(next.data)) {
-      const data: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(next.data as Record<string, unknown>)) {
-        data[key] = typeof value === "number" && Number.isFinite(value) ? value * rate : value;
-      }
-      next.data = data;
-      return next;
-    }
-    for (const [key, value] of Object.entries(next)) {
-      if (SEGMENT_SKIP_KEYS.has(key)) continue;
-      if (typeof value === "number" && Number.isFinite(value)) next[key] = value * rate;
-    }
-    return next;
-  });
-}
-
-export async function convertSegmentRowsToUsd(rows: FmpSegmentRow[]): Promise<FmpSegmentRow[]> {
-  if (!Array.isArray(rows) || rows.length === 0) return rows;
-  const currency = rows.find((row) => typeof row.reportedCurrency === "string" && row.reportedCurrency.trim())?.reportedCurrency;
-  if (!currency || currency.toUpperCase() === "USD") return rows;
-  const rate = await getFxRateToUsd(currency).catch(() => 1);
-  return applySegmentFx(rows, rate, currency);
 }
 
 // === EPS Growth Calculations (formula-based, no external source needed) ===

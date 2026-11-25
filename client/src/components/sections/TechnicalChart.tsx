@@ -11,14 +11,6 @@ import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, maCrossMarkers, sliceBars,
   type WindowPoint, type WindowSeries,
 } from "@/lib/taWindowSeries";
-import {
-  confirmCrossEvents,
-  crossDelayTooltip,
-  crossTone,
-  maCrossReasonTone,
-  type CrossEvent,
-} from "@/lib/taCrossConfirmation";
-import { CrossStatusBanner } from "./CrossStatusBanner";
 import { TIME_RANGE_CUTOFF, slicePresetWindow, type TimeRange } from "@/lib/taRangeCutoff";
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
@@ -42,7 +34,7 @@ import {
 } from "@/lib/scenarioCone";
 import { useEarningsYield, usePeerPriceBars, useRoicSeries } from "@/lib/useFundamentalSeries";
 import { FUNDAMENTAL_PEER_ROW_CLASS } from "@/lib/fundamentalOverlayLayout";
-import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, priceFxForOverlay, type FundJoinPoint } from "@shared/earnings-yield-roic";
+import { EARNINGS_YIELD_FORMULA, ROIC_FORMULA, estimateBadge, joinFundamentalsOntoPrices, latestFinite, percentAxisDomain, type FundJoinPoint } from "@shared/earnings-yield-roic";
 import {
   paintPhaseRows, TA_PHASE_BADGE, TA_PHASE_STROKE,
   type TaPhase,
@@ -425,14 +417,6 @@ export function TechnicalChart({
   const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
   // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
-  const crossView = useMemo(() => confirmCrossEvents(fullSeries.points.map(point => ({
-    date: point.date,
-    close: point.close,
-    ma50: point.ma50,
-    ma200: point.ma200,
-    histogram: point.histogram,
-    volume: point.volume,
-  }))), [fullSeries]);
   const ampelFactors = useMemo(() => ampelFactorsFromAnalysis(data), [data]);
   const symmetric = useMemo(
     () => symmetricAmpelSeries(fullSeries.points.map(p => ({
@@ -617,29 +601,20 @@ export function TechnicalChart({
     if (!fundActive) return null;
     const eyLoaded = !!eyQuery.data;
     const eyEmpty = eyLoaded && eyQuery.data!.quarters.length === 0 && eyQuery.data!.ttmPrints.length === 0 && eyQuery.data!.annualEps.length === 0;
-    const statementCurrency = eyQuery.data?.quarters.find(row => row.currency)?.currency
-      ?? eyQuery.data?.ttmPrints.find(row => row.currency)?.currency
-      ?? eyQuery.data?.annualEps.find(row => row.currency)?.currency
-      ?? null;
     const joined = joinFundamentalsOntoPrices(aBuilt.points.map(p => p.date), {
       earningsYield: null,
       epsQuarters: fundActive ? (eyQuery.data?.quarters ?? []) : null,
       ttmPrints: fundActive ? (eyQuery.data?.ttmPrints ?? []) : null,
       annualEps: fundActive ? (eyQuery.data?.annualEps ?? []) : null,
       priceCurrency: data.currency ?? null,
-      priceFx: priceFxForOverlay({
-        priceCurrency: data.currency ?? null,
-        statementCurrency,
-        fxHistory: eyQuery.data?.fxHistory,
-        listing: data.currencyInfo
-          ? {
-              converted: data.currencyInfo.converted,
-              reportedCurrency: data.currencyInfo.reportedCurrency,
-              tradingCurrency: data.currencyInfo.tradingCurrency,
-              fxRate: data.currencyInfo.fxRate,
-            }
-          : null,
-      }),
+      priceFx: data.currencyInfo?.converted && eyQuery.data?.fxHistory && eyQuery.data.fxHistory.length > 0
+        ? {
+            from: data.currencyInfo.reportedCurrency,
+            to: data.currencyInfo.tradingCurrency,
+            rate: data.currencyInfo.fxRate,
+            history: eyQuery.data.fxHistory,
+          }
+        : null,
       roic: fundActive ? (roicQuery.data?.points ?? null) : null,
       roicSeriesNote: !fundActive
         ? null
@@ -1006,14 +981,6 @@ export function TechnicalChart({
               Messen
             </button>
             {extraChips}
-            {showCone ? (
-              <div
-                className="ml-auto shrink-0 flex items-center basis-full sm:basis-auto justify-end"
-                data-testid="ta-ampel-toolbar-slot"
-              >
-                <ChartAmpelBadge snap={symmetric.last} lineEndPhase={lineEndPhase} buyScore={buyScore} placement="toolbar" />
-              </div>
-            ) : null}
           </div>
           {showPeerFund && (
             <div className={FUNDAMENTAL_PEER_ROW_CLASS} data-testid="row-fund-peer">
@@ -1119,20 +1086,61 @@ export function TechnicalChart({
         </div>
       )}
 
-      {/* Golden / Death Cross banner — Events aus crossView, keine zweite Schleife. */}
-      <CrossStatusBanner
-        view={crossView}
-        emptyNote={!hasEnoughForMA200
-          ? `Historie zu kurz für MA200 / Golden-Death-Cross (${ti.maData.length} von 200 benötigten Handelstagen verfügbar).`
-          : null}
-      />
+      {/* Golden / Death Cross banner */}
+      {(() => {
+        const maData = aBuilt.points;
+        let lastCrossType: 'golden'|'death'|null = null, lastCrossDate = '';
+        for (let i = maData.length - 1; i >= 1; i--) {
+          const cur = maData[i], prev = maData[i-1];
+          if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
+            if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) { lastCrossType='golden'; lastCrossDate=cur.date; break; }
+            if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) { lastCrossType='death';  lastCrossDate=cur.date; break; }
+          }
+        }
+        if (!lastCrossType) {
+          // WORK_DATA_PROVIDERS.md §4: explizite Meldung statt stillem Wegfall,
+          // wenn der Grund fuer den fehlenden Banner zu wenig Historie ist
+          // (< 200 Handelstage fuer MA200) — unterscheidet sich von "es gab
+          // in der sichtbaren Historie einfach keinen Cross".
+          if (!hasEnoughForMA200) {
+            return (
+              <div className="rounded-lg p-3 mb-3 border bg-muted/30 border-border text-xs text-muted-foreground">
+                Historie zu kurz für MA200 / Golden-Death-Cross ({ti.maData.length} von 200 benötigten Handelstagen verfügbar).
+              </div>
+            );
+          }
+          return null;
+        }
+        const isGolden = lastCrossType === 'golden';
+        const crossDate = new Date(lastCrossDate + 'T00:00:00');
+        const dateStr = crossDate.toLocaleDateString('de-DE',{day:'2-digit',month:'short',year:'numeric'});
+        const daysAgo = Math.round((Date.now() - crossDate.getTime()) / 86400000);
+        return (
+          <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${
+            isGolden ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"
+          }`}>
+            <div className={`text-2xl font-bold ${isGolden?"text-emerald-500":"text-red-500"}`}>{isGolden?"✦":"✕"}</div>
+            <div>
+              <div className={`text-sm font-bold ${isGolden?"text-emerald-500":"text-red-500"}`}>
+                {isGolden?"GOLDEN CROSS":"DEATH CROSS"}
+                <span className="text-xs font-normal text-muted-foreground ml-1.5">({dateStr} — vor {daysAgo} Tagen)</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {isGolden
+                  ? `MA50 kreuzte MA200 von unten nach oben — bullisches Trendsignal. Aktiv seit ${daysAgo} Tagen.`
+                  : `MA50 kreuzte MA200 von oben nach unten — bärisches Trendsignal. Struktureller Abwärtstrend seit ${daysAgo} Tagen.`}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {visibleKursCount === 0 ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-kurs-off">Kein Kurs eingeblendet</div>
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={showCone ? undefined : ampelBadge}>
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={CONE_VIEWPORT_SCALE} scrollToEnd={showCone} overlay={ampelBadge}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -1165,7 +1173,6 @@ export function TechnicalChart({
                 phases={phaseByDateMap}
                 earnings={earningsMarkers}
                 earningsBadge={earningsBadge}
-                crossEvents={crossView.events}
               />
             </div>
             {narrow && showVolume && (
@@ -1227,8 +1234,7 @@ export function TechnicalChart({
               measurement={measurement}
               phases={phaseByDateMap}
               showAmpel={showAmpel}
-              overlay={showCone ? undefined : ampelBadge}
-              crossEvents={crossView.events}
+              overlay={ampelBadge}
             />
           )}
           {showKursB && (
@@ -1253,7 +1259,6 @@ export function TechnicalChart({
               testId="chart-band-b"
               macdTestId="chart-macd-b"
               rsiTestId="chart-rsi-b"
-              crossEvents={crossView.events}
             />
           )}
           {showKursC && (
@@ -1278,7 +1283,6 @@ export function TechnicalChart({
               testId="chart-band-c"
               macdTestId="chart-macd-c"
               rsiTestId="chart-rsi-c"
-              crossEvents={crossView.events}
             />
           )}
         </div>
@@ -1430,38 +1434,26 @@ export function TechnicalChart({
                 </tr>
               </thead>
               <tbody>
-                {pagedSignals.map((s, i) => {
-                  const tone = maCrossReasonTone(s.reason, s.date, crossView.events);
-                  const typeClass = tone === "neutral"
-                    ? "text-muted-foreground"
-                    : tone === "positive"
-                      ? "text-green-500"
-                      : tone === "negative"
-                        ? "text-red-500"
-                        : (s.type === "buy" ? "text-green-500" : "text-red-500");
-                  const reasonClass = tone === "neutral"
-                    ? "text-muted-foreground"
-                    : tone === "positive"
-                      ? "font-bold text-emerald-500"
-                      : tone === "negative"
-                        ? "font-bold text-red-500"
-                        : (s.reason.includes("Death") ? "font-bold text-red-500"
-                          : s.reason.includes("Bearish") ? "text-red-500"
-                          : s.reason.includes("Bullish") ? "text-emerald-500" : "");
-                  return (
+                {pagedSignals.map((s, i) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-1 pr-2 font-mono tabular-nums">{s.date}</td>
                     <td className="py-1 pr-2">
-                      <span className={`inline-flex items-center gap-0.5 font-semibold ${typeClass}`}>
+                      <span className={`inline-flex items-center gap-0.5 font-semibold ${
+                        s.type==="buy"?"text-green-500":"text-red-500"
+                      }`}>
                         {s.type==="buy"?<TrendingUp className="w-3 h-3"/>:<TrendingDown className="w-3 h-3"/>}
                         {s.type==="buy"?"BUY":"SELL"}
                       </span>
                     </td>
-                    <td className={`py-1 pr-2 ${reasonClass}`}>{s.reason}</td>
+                    <td className={`py-1 pr-2 ${
+                      s.reason.includes('Death')        ? 'font-bold text-red-500'
+                      : s.reason.includes('Golden Cross') ? 'font-bold text-emerald-500'
+                      : s.reason.includes('Bearish')      ? 'text-red-500'
+                      : s.reason.includes('Bullish')      ? 'text-emerald-500' : ''
+                    }`}>{s.reason}</td>
                     <td className="py-1 text-right font-mono tabular-nums">{px(s.price)}</td>
                   </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
           </div>
@@ -1864,7 +1856,6 @@ function PricePane({
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
   priceFactor = 1, cone = null, fund = null, phases = null, earnings = null, earningsBadge = null,
-  crossEvents = [],
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1907,8 +1898,6 @@ function PricePane({
   earnings?: EarningsMarker[] | null;
   /** Beat-Rate oben rechts. null = kein Badge. */
   earningsBadge?: string | null;
-  /** Hysterese-Events aus confirmCrossEvents. Dieselbe Liste wie das Banner. */
-  crossEvents?: readonly CrossEvent[];
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -2179,55 +2168,18 @@ function PricePane({
         ))}
         {visibleMAs.has("ma50") && visibleMAs.has("ma200") && maCrossMarkers(points).map(cross => (
           <ReferenceDot
-            key={`raw-${cross.type}-${cross.date}`}
+            key={`${cross.type}-${cross.date}`}
             yAxisId="price"
             x={cross.date}
             y={(cross.ma50 + cross.ma200) / 2}
-            r={2.5}
+            r={4}
             fill={cross.type === "golden" ? "#10b981" : "#ef4444"}
-            fillOpacity={0.45}
-            stroke="none"
+            stroke="var(--card)"
+            strokeWidth={1}
             ifOverflow="discard"
-            shape={(dot: { cx?: number; cy?: number }) => {
-              if (dot.cx == null || dot.cy == null) return <g />;
-              const fill = cross.type === "golden" ? "#10b981" : "#ef4444";
-              return (
-                <g>
-                  <title>{`Roher Einzelkerzen-Kreuzpunkt ${cross.date}. ${crossDelayTooltip()}`}</title>
-                  <circle cx={dot.cx} cy={dot.cy} r={2.5} fill={fill} fillOpacity={0.45} stroke="none" />
-                </g>
-              );
-            }}
+            label={{ value: cross.type === "golden" ? "GC" : "DC", position: "top", fontSize: 8, fill: cross.type === "golden" ? "#10b981" : "#ef4444", fontWeight: 700 }}
           />
         ))}
-        {visibleMAs.has("ma50") && visibleMAs.has("ma200") && crossEvents.map(event => {
-          const point = points.find(row => row.date === event.date);
-          if (!point || point.ma50 == null || point.ma200 == null) return null;
-          const tone = crossTone(event);
-          const fill = tone === "positive" ? "#10b981" : tone === "negative" ? "#ef4444" : "#94a3b8";
-          return (
-            <ReferenceDot
-              key={`evt-${event.type}-${event.date}`}
-              yAxisId="price"
-              x={event.date}
-              y={(point.ma50 + point.ma200) / 2}
-              r={4}
-              fill={fill}
-              stroke="var(--card)"
-              strokeWidth={1}
-              ifOverflow="discard"
-              shape={(dot: { cx?: number; cy?: number }) => {
-                if (dot.cx == null || dot.cy == null) return <g />;
-                return (
-                  <g>
-                    <title>{`${event.type === "golden" ? "Golden" : "Death"} ${event.date}, ${event.state}. ${crossDelayTooltip()}`}</title>
-                    <circle cx={dot.cx} cy={dot.cy} r={4} fill={fill} stroke="var(--card)" strokeWidth={1} />
-                  </g>
-                );
-              }}
-            />
-          );
-        })}
         {showBollinger && (
           <>
             <Area yAxisId="price" type="monotone" dataKey="bbUpper" name="BB Upper" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
@@ -2490,7 +2442,6 @@ function BandStack({
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
   priceFactor = 1, cone = null, earnings = null, earningsBadge = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
-  crossEvents = [],
 }: {
   label: string;
   labelClassName: string;
@@ -2533,7 +2484,6 @@ function BandStack({
   alignedPoints?: WindowPoint[];
   phases?: Map<string, TaPhase | null> | null;
   overlay?: ReactNode;
-  crossEvents?: readonly CrossEvent[];
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
@@ -2580,7 +2530,6 @@ function BandStack({
               earningsBadge={earningsBadge}
               phases={phases}
               showAmpel={showAmpel}
-              crossEvents={crossEvents}
             />
           )}
         </div>
@@ -2605,33 +2554,19 @@ const PHASE_MEANING: Record<TaPhase, string> = {
   VORSICHTIG: "Unattraktiv",
 };
 
-function ChartAmpelBadge({ snap, lineEndPhase, buyScore, placement = "overlay" }: {
+function ChartAmpelBadge({ snap, lineEndPhase, buyScore }: {
   snap: SymmetricSnapshot | null;
   lineEndPhase: TaPhase | null;
   buyScore: number;
-  placement?: "overlay" | "toolbar";
 }) {
   const phase = snap?.paint ?? null;
   const meaning = snap?.meaning ?? null;
   const lineAgrees = phase == null || lineEndPhase == null || phase === lineEndPhase;
-  const tone = phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground";
-  let frame: string;
-  switch (placement) {
-    case "overlay":
-      frame = "pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
-      break;
-    case "toolbar":
-      frame = "pointer-events-none inline-flex h-7 max-h-7 items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight";
-      break;
-    default: {
-      const unreachable: never = placement;
-      frame = unreachable;
-      break;
-    }
-  }
   return (
     <div
-      className={`${frame} ${tone}`}
+      className={`pointer-events-none absolute right-1 top-1 z-10 max-w-[calc(100%-4.5rem)] truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${
+        phase ? TA_PHASE_BADGE[phase] : "border-border bg-background/85 text-muted-foreground"
+      }`}
       data-testid="chart-ampel-label"
       data-phase={snap?.color ?? ""}
       data-meaning={meaning ?? ""}

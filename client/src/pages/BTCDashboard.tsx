@@ -28,8 +28,6 @@ import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
 import { BTC_TA_RANGES, sliceBtcTaWindow, type BtcTaRange } from "@/lib/btcTaWindow";
-import { confirmCrossEvents, maCrossReasonTone } from "@/lib/taCrossConfirmation";
-import { CrossStatusBanner } from "@/components/sections/CrossStatusBanner";
 import {
   M2_IMPLIED_COLOR,
   M2_IMPLIED_DISCLAIMER,
@@ -1381,15 +1379,6 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     return lastCross ? { ...lastCross, lastCross, gapPct: undefined } : null;
   }, [fullChart]);
 
-  const btcCross = useMemo(() => confirmCrossEvents(fullChart.map(point => ({
-    date: point.date,
-    close: point.price,
-    ma50: point.ma50,
-    ma200: point.ma200,
-    histogram: point.histogram,
-    volume: point.volume ?? 0,
-  }))), [fullChart]);
-
   // Mobile: höchstens eine volle rechte Achse. Weitere Makro-Serien behalten
   // ihre Skala (Achse versteckt) und sind über Farbe + Tooltip lesbar.
   type MacroAxisId = "real10y" | "m2yoy" | "m2absolute" | "walcl";
@@ -1523,9 +1512,36 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           );
         }
 
-        return null;
+        const isGolden = crossInfo.type === "golden";
+        const crossDateObj = new Date(crossInfo.date + "T00:00:00");
+        const dateStr = crossDateObj.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+        const daysAgo = Math.round((Date.now() - crossDateObj.getTime()) / (1000 * 60 * 60 * 24));
+        const isRecent = daysAgo <= 60;
+        return (
+          <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${isGolden
+            ? "bg-emerald-500/10 border-emerald-500/30"
+            : "bg-red-500/10 border-red-500/30"
+          }`}>
+            <div className={`text-2xl font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+              {isGolden ? "\u2726" : "\u2715"}
+            </div>
+            <div>
+              <div className={`text-sm font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"}
+                <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                  ({dateStr}{isRecent ? " — kürzlich" : ` — vor ${daysAgo} Tagen`})
+                </span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {isGolden
+                  ? `MA50 kreuzte MA200 von unten nach oben am ${dateStr} — bullisches Trendsignal.${!isRecent ? ` Strukturelles Signal aktiv seit ${daysAgo} Tagen.` : ""}`
+                  : `MA50 kreuzte MA200 von oben nach unten am ${dateStr} — bärisches Trendsignal.${!isRecent ? ` Struktureller Abwärtstrend seit ${daysAgo} Tagen.` : ""}`
+                }
+              </div>
+            </div>
+          </div>
+        );
       })()}
-      <CrossStatusBanner view={btcCross} />
 
       {/* Controls — Mobile: Preset → MAs → Signale/Volumen, Chips umbrechen (min 36px). */}
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
@@ -2314,40 +2330,23 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 </tr>
               </thead>
               <tbody>
-                {visibleSignals.slice(-10).reverse().map((s, i) => {
-                  const tone = maCrossReasonTone(s.reason, s.date, btcCross.events);
-                  const typeClass = tone === "neutral"
-                    ? "text-muted-foreground"
-                    : tone === "positive"
-                      ? "text-green-500"
-                      : tone === "negative"
-                        ? "text-red-500"
-                        : (s.type === "BUY" ? "text-green-500" : "text-red-500");
-                  const reasonClass = tone === "neutral"
-                    ? "text-muted-foreground"
-                    : tone === "positive"
-                      ? "font-bold text-emerald-500"
-                      : tone === "negative"
-                        ? "font-bold text-red-500"
-                        : (s.reason.includes("Death") ? "font-bold text-red-500"
-                          : s.reason.includes("Bearish") ? "text-red-500"
-                          : s.reason.includes("Bullish") ? "text-emerald-500" : "");
-                  return (
+                {visibleSignals.slice(-10).reverse().map((s, i) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-1 pr-2 font-mono tabular-nums">{s.date}</td>
                     <td className="py-1 pr-2">
-                      <span className={`inline-flex items-center gap-0.5 font-semibold ${typeClass}`}>
+                      <span className={`inline-flex items-center gap-0.5 font-semibold ${
+                        s.type === "BUY" ? "text-green-500" : "text-red-500"
+                      }`}>
                         {s.type === "BUY" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                         {s.type}
                       </span>
                     </td>
-                    <td className={`py-1 pr-2 ${reasonClass}`}>
+                    <td className={`py-1 pr-2 ${s.reason.includes("Death") ? "font-bold text-red-500" : s.reason.includes("Golden Cross") ? "font-bold text-emerald-500" : s.reason.includes("Bearish") ? "text-red-500" : s.reason.includes("Bullish") ? "text-emerald-500" : ""}`}>
                       {s.reason}
                     </td>
                     <td className="py-1 text-right font-mono tabular-nums">${s.price.toLocaleString("en-US", { maximumFractionDigits: 0 })}</td>
                   </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
           </div>
