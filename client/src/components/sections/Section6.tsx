@@ -11,6 +11,7 @@ import { formatCurrency, formatNumber, statementCurrency, getCRVColor, getCRVBgC
 import { useMemo } from "react";
 import { usePublishChatSection } from "@/lib/chatSectionData";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
+import { DCF_CALIBRATION, calibrationLineText, calibrationSumText, tvExtrapolationHint } from "../../../../shared/dcf-calibration";
 
 interface Props { data: StockAnalysis }
 
@@ -59,6 +60,8 @@ export function Section6({ data }: Props) {
   // Catalyst-adj target
   const catalysts = data.catalysts;
   const bias = useMemo(() => buildBiasDecision(data), [data]);
+  const calibration = DCF_CALIBRATION.enabled ? bias.calibration ?? null : null;
+  const tvHint = calibration ? tvExtrapolationHint(calibration.tvSharePct) : null;
   const _rawUpsideS6 = bias.positiveGbSum;
   const _decisionS6 = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
   const _baseInfoS6 = selectCatalystBase(_decisionS6, _rawUpsideS6, data.currentPrice, data.analystPT.median);
@@ -254,6 +257,13 @@ export function Section6({ data }: Props) {
             <div className="font-mono font-semibold">{hardenedCRV.structuralFloorPct > 0 ? `${formatNumber(hardenedCRV.structuralFloorPct, 0)}%` : "—"}</div>
           </div>
         </div>
+        {calibration ? (
+          <div className="mt-2 text-[11px] bg-muted/40 rounded-md px-2 py-1.5 border border-border/60" data-testid="dcf-calibration-line">
+            {calibrationLineText(calibration)}
+            <div className="text-[10px] text-muted-foreground mt-0.5">{calibrationSumText(calibration)}</div>
+            {tvHint ? <div className="text-[10px] text-amber-500 mt-0.5" data-testid="dcf-tv-warn">{tvHint}</div> : null}
+          </div>
+        ) : null}
         {bias.switched && (
           <div className="mt-2 text-[10px] text-amber-500 bg-amber-500/10 rounded-md p-2 border border-amber-500/20">
             Entscheidungsrelevante Basis: {bias.valuationBaseLabel} {formatCurrency(bias.decisionPerShare, 2, dcfCcy)} (WACC {formatNumber(bias.decisionWacc, 2)}%, {bias.triggerCount} Trigger). Unadjusted / Extrapolative: {formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}. {bias.modeLabel}.

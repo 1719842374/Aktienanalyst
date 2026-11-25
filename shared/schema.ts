@@ -558,6 +558,21 @@ export interface StockAnalysis {
     healthReasons: string[];
   };
 
+  /**
+   * Optionaler Ausweis der Bilanz-Kalibrierung. Alte Cache-Einträge ohne das Feld
+   * bleiben gültig. Die Anzeige rechnet Stufe, WACC, g1 und Terminal aus
+   * financialStatements.health neu und liest hier keinen gespeicherten Zielwert.
+   */
+  calibration?: {
+    lage: number;
+    waccAddPp: number;
+    g1Before: number;
+    g1After: number;
+    terminalBefore: number;
+    terminalAfter: number;
+    tvSharePct: number | null;
+  };
+
   // TAM Analysis
   tamAnalysis?: TAMAnalysis;
 

@@ -38,6 +38,16 @@
 import type { StockAnalysis } from "./schema";
 import { LYNCH_DCF_DEFAULTS, resolveLynchDcfOverrides, type LynchDcfOverrides } from "./lynch-dcf-defaults";
 import type { LynchClass } from "../server/catalyst-engine";
+import {
+  DCF_CALIBRATION,
+  calibrateDcfTerms,
+  healthLevelOrNull,
+  impliedGStarPct,
+  resolveGrowthAnchor,
+  resolveGStarPrice,
+  waccAddPpForLevel,
+  type DcfCalibrationView,
+} from "./dcf-calibration";
 
 // === DCF Model (FCF-Growth based — legacy, still used by sensitivity matrix) ===
 export interface DCFParams {
@@ -319,7 +329,7 @@ export function waccSuffix(w: number | null | undefined, digits = 1): string {
   return finiteNum(w) ? ` (WACC ${w.toFixed(digits)}%)` : "";
 }
 
-export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
+function buildRawDefaultDcfParams(data: StockAnalysis): FCFFDCFParams {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
   const rf = DCF_DEFAULT_RF;
@@ -419,6 +429,98 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
   };
 }
 
+function applyHealthCalibration(data: StockAnalysis, raw: FCFFDCFParams): { params: FCFFDCFParams; view: DcfCalibrationView } {
+  const waccRohPct = capmWaccPct(raw).wacc;
+  const health = data.financialStatements?.health ?? null;
+  const level = healthLevelOrNull(health);
+  const istRaw = data.financialStatements?.incomeStatement?.revenueGrowth;
+  const sectorRaw = data.sectorProfile?.growthAssumptions?.g1;
+  const istYoY = typeof istRaw === "number" && Number.isFinite(istRaw) ? istRaw : null;
+  const sectorG1 = typeof sectorRaw === "number" && Number.isFinite(sectorRaw) ? sectorRaw : null;
+  const anchor = resolveGrowthAnchor({
+    istYoY,
+    sectorG1,
+    annualRevenues: (data as { annualRevenues?: number[] | null }).annualRevenues ?? null,
+    lynchClass: data.lynchClass ?? null,
+    consensus: null,
+  });
+  if (isBankProxySector(data.sector, data.industry) || level === 0) {
+    const view = calibrateDcfTerms({
+      health,
+      level,
+      model: DCF_CALIBRATION.stageModel,
+      g1Model: raw.revenueGrowthP1,
+      terminalModel: raw.terminalG,
+      waccRohPct,
+      anchor,
+      istYoY,
+      gStarPct: null,
+      priceInfo: { price: data.currentPrice, source: "tageskurs", points: 0, from: null, to: null, reason: level === 0 ? "Stufe 0, unverändert." : "Bank oder Versicherung, Kalibrierung ausgenommen." },
+    });
+    return {
+      params: raw,
+      view: {
+        ...view,
+        applied: false,
+        waccAddPp: 0,
+        waccPct: waccRohPct,
+        g1After: raw.revenueGrowthP1,
+        terminalAfter: raw.terminalG,
+        skipReason: isBankProxySector(data.sector, data.industry)
+          ? "Bank, Versicherung oder Capital Markets: Kalibrierung ausgenommen (isBankProxySector)."
+          : "Stufe 0: Parameter unverändert.",
+      },
+    };
+  }
+  const priceInfo = resolveGStarPrice({ spot: data.currentPrice, historicalPrices: data.historicalPrices });
+  const waccForGStar = waccRohPct + (level == null ? 0 : waccAddPpForLevel(level, DCF_CALIBRATION.stageModel));
+  const gStarPct = impliedGStarPct({
+    price: priceInfo.price,
+    fcf: data.fcfTTM,
+    waccPct: waccForGStar,
+    shares: data.sharesOutstanding,
+    netDebt: data.totalDebt - data.cashEquivalents,
+    fcfHaircutPct: data.fcfHaircut ?? 0,
+  });
+  const view = calibrateDcfTerms({
+    health,
+    level,
+    model: DCF_CALIBRATION.stageModel,
+    g1Model: raw.revenueGrowthP1,
+    terminalModel: raw.terminalG,
+    waccRohPct,
+    anchor,
+    istYoY,
+    gStarPct,
+    priceInfo,
+  });
+  if (!view.applied) return { params: raw, view };
+  const params: FCFFDCFParams = {
+    ...raw,
+    revenueGrowthP1: view.g1After,
+    terminalG: view.terminalAfter,
+  };
+  if (view.waccAddPp !== 0) params.waccHealthAddPp = view.waccAddPp;
+  return { params, view };
+}
+
+/** Defaults wie bisher. Bei DCF_CALIBRATION.enabled die Health-Kalibrierung genau einmal. */
+export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
+  const raw = buildRawDefaultDcfParams(data);
+  if (!DCF_CALIBRATION.enabled) return raw;
+  return applyHealthCalibration(data, raw).params;
+}
+
+/**
+ * Ausweis für UI und PDF. null bei Flag aus.
+ * Rechnet aus der Analyse neu und liest kein gespeichertes calibration-Feld.
+ */
+export function dcfCalibrationPreview(data: StockAnalysis): DcfCalibrationView | null {
+  if (!DCF_CALIBRATION.enabled) return null;
+  if (!data?.sectorProfile?.growthAssumptions || !Array.isArray(data.historicalPrices)) return null;
+  return applyHealthCalibration(data, buildRawDefaultDcfParams(data)).view;
+}
+
 // === FCFF-based DCF Model (full fundamental) ===
 // FCFF = EBIT × (1 - Tax) + D&A - Capex - ΔWC
 // Simplified: FCFF = Revenue × EBIT-Margin × (1 - Tax) - Capex + Revenue × ΔWC-adj
@@ -466,6 +568,11 @@ export interface FCFFDCFParams {
   // Lynch-Klassen-WACC-Floor-Addon (%-Punkte), wird auf den bestehenden WACC_FLOOR
   // addiert (siehe calculateFCFFDCF). 0/undefined = bisheriges Verhalten.
   waccFloorAddon?: number;
+  /**
+   * Bilanz-Kalibrierung: Pp auf den CAPM-WACC, nur ohne manuellen Override.
+   * Fehlt das Feld, bleibt calculateFCFFDCF bitgleich.
+   */
+  waccHealthAddPp?: number;
 }
 
 // RSL < 105 → reduce DCF growth rates by this relative percentage (UI: "-5% to -10%").
@@ -505,7 +612,7 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   // 1. Compute WACC via CAPM, or use manual override
   // Sprint D1 §1.3: Lynch-Klassen-WACC-Floor-Addon wirkt nur ohne manuellen waccOverride (capmWaccPct).
   const Rd = params.costOfDebt;
-  const { wacc, rawRe, rawWacc, dv, ev, waccWasCapped, floor: effectiveWaccFloor, useOverride } = capmWaccPct(params);
+  let { wacc, rawRe, rawWacc, dv, ev, waccWasCapped, floor: effectiveWaccFloor, useOverride } = capmWaccPct(params);
 
   steps.push(`=== WACC-Berechnung ===`);
   if (useOverride) {
@@ -524,6 +631,12 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     }
   }
   steps.push(`WACC (final) = ${wacc.toFixed(2)}%`);
+  const healthAdd = params.waccHealthAddPp;
+  if (!useOverride && typeof healthAdd === "number" && healthAdd !== 0) {
+    const before = wacc;
+    wacc += healthAdd;
+    steps.push(`Bilanz-Kalibrierung: WACC ${before.toFixed(2)}% + ${healthAdd.toFixed(2)} Pp = ${wacc.toFixed(2)}% (ersetzt den Trigger-WACC-Sprung, bias-fixes.ts:372–407).`);
+  }
 
   // RSL-Momentum-Malus (Section 9): RSL < 105 → Wachstumsraten automatisch reduzieren.
   // Macht die in Section 9 behauptete "Automatische Anpassung" tatsächlich wirksam,
@@ -1093,7 +1206,7 @@ export interface DcfApplicableParams {
   industry: string | undefined | null;
 }
 
-function isBankProxySector(sector: string | undefined | null, industry: string | undefined | null): boolean {
+export function isBankProxySector(sector: string | undefined | null, industry: string | undefined | null): boolean {
   const hay = `${sector ?? ""} ${industry ?? ""}`.toLowerCase();
   return (
     hay.includes("bank") ||

@@ -14,7 +14,8 @@
  *   PESTEL linear innerhalb der Spec-Bänder
  */
 import type { Catalyst, StockAnalysis } from "./schema";
-import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF } from "./valuation-signal";
+import { DCF_CALIBRATION, withBiasOverlay, type DcfCalibrationView } from "./dcf-calibration";
+import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF, dcfCalibrationPreview } from "./valuation-signal";
 
 export const WACC_UPLIFT_PP_2 = 0.625;
 export const WACC_UPLIFT_PP_3 = 1.05;
@@ -95,6 +96,9 @@ export interface RuleMoat {
   score: number;
   rating: "Wide" | "Narrow" | "None";
   notes: string[];
+  /** Nur bei DCF_CALIBRATION.enabled: Roh-Delta vor moatFaktor. */
+  kiDeltaRoh?: number;
+  moatFaktor?: number;
 }
 
 export interface BiasFixPayload {
@@ -135,6 +139,8 @@ export interface BiasFixPayload {
   redFlags: string[];
   narrative: string[];
   politicalGovMention: boolean;
+  /** Nur bei DCF_CALIBRATION.enabled. Anzeige rechnet neu, liest kein Cache-Feld. */
+  calibration?: DcfCalibrationView;
 }
 
 /**
@@ -369,7 +375,7 @@ export function waccFloorPct(facts: Pick<BiasFacts, "sector" | "industry" | "gov
   return Math.max(...floors);
 }
 
-export function applyBiasAdjustment(facts: BiasFacts): BiasAdjustment {
+export function applyBiasAdjustment(facts: BiasFacts, opts?: { replaceTriggerWaccJump?: boolean }): BiasAdjustment {
   const triggers = evaluateBiasTriggers(facts);
   const triggerCount = triggers.filter(t => t.active).length;
   const switched = triggerCount >= 2;
@@ -388,7 +394,9 @@ export function applyBiasAdjustment(facts: BiasFacts): BiasAdjustment {
       terminalCapPct: null,
     };
   }
-  const uplift = waccUpliftPp(triggerCount);
+  // ERSETZT bias-fixes.ts:372–407 für die Finanzlage: der Trigger-Zähl-Sprung wird nicht addiert.
+  // Schaden/Moat/Pricing bleiben im growthFactor darunter (ergänzt, genau einmal).
+  const uplift = opts?.replaceTriggerWaccJump ? 0 : waccUpliftPp(triggerCount);
   const floor = waccFloorPct(facts);
   const decisionWaccPct = Math.max(facts.baseWaccPct + uplift, floor ?? 0);
   const growthFactor = growthHaircutFactor(facts);
@@ -503,9 +511,22 @@ export function computeRuleBasedMoat(input: {
     kiDelta = clamp((rank[existing] - rank[ruleRating]) * 0.5, -KI_MOAT_DELTA_CAP, KI_MOAT_DELTA_CAP);
     if (kiDelta !== 0) notes.push(`KI-Beitrag ${kiDelta > 0 ? "+" : ""}${kiDelta.toFixed(1)} (Deckel ±${KI_MOAT_DELTA_CAP})`);
   }
+  let kiDeltaRoh: number | undefined;
+  let moatFaktor: number | undefined;
+  if (DCF_CALIBRATION.enabled) {
+    // ERGÄNZT bias-fixes.ts:499–505: moatFaktor=1 lässt den Nachlauf voll wirksam und weist ihn aus.
+    kiDeltaRoh = kiDelta;
+    moatFaktor = DCF_CALIBRATION.moatFaktor;
+    kiDelta = kiDeltaRoh * moatFaktor;
+  }
   const score = base + kiDelta;
   const rating: RuleMoat["rating"] = score >= 3 ? "Wide" : score >= 1 ? "Narrow" : "None";
-  return { baseScore: base, kiDelta, score, rating, notes };
+  const result: RuleMoat = { baseScore: base, kiDelta, score, rating, notes };
+  if (DCF_CALIBRATION.enabled) {
+    result.kiDeltaRoh = kiDeltaRoh;
+    result.moatFaktor = moatFaktor;
+  }
+  return result;
 }
 
 const MOAT_RANK: Record<Exclude<MoatBucket, "unknown">, number> = { none: 0, narrow: 1, moderate: 2, wide: 3 };
@@ -749,6 +770,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     }
   }
 
+  const calibrationPreview = dcfCalibrationPreview(data);
   const facts: BiasFacts = {
     totalExpectedDamagePct: totalEd,
     moatRating: moat.rating,
@@ -784,6 +806,18 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
       })
     : unadjusted;
   const decisionUpside = price > 0 ? (decision.perShare / price - 1) * 100 : 0;
+  const calibration = calibrationPreview
+    ? withBiasOverlay(calibrationPreview, {
+        biasUpliftAppliedPp: adj.waccUpliftPp,
+        biasUpliftReplacedPp: 0,
+        growthFactor: adj.growthFactor,
+        g1AfterBias: adj.switched ? adj.revenueGrowthP1 : calibrationPreview.g1After,
+        tvSharePct: decision.enterpriseValue > 0 ? (decision.pvTerminal / decision.enterpriseValue) * 100 : null,
+        moatKiDeltaRoh: moat.kiDeltaRoh ?? null,
+        moatFaktor: moat.moatFaktor ?? null,
+        moatKiApplied: DCF_CALIBRATION.enabled ? moat.kiDelta : null,
+      })
+    : undefined;
   const pestelFactor = pestelDampeningFactor(pestelScore);
   const mult = moatMultiplier(moat.rating);
   const quant = clamp(5 + decisionUpside / 20, 0, 10);
@@ -869,6 +903,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     redFlags,
     narrative: narrative.slice(0, 5),
     politicalGovMention,
+    ...(calibration ? { calibration } : {}),
   };
 }
 
