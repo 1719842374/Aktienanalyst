@@ -9,6 +9,7 @@ import {
   type RecessionAnalysis, type IndicatorResult, type SubgroupResult, type FazitSection,
   getProbColor, getProbBg, getScoreColor, getScoreBg, getGaugeColor,
 } from "./recessionDashboardShared";
+import { formulaWithoutLabel } from "../../lib/formulaLabel";
 
 // Section 5: Indicator Table (full 17 indicators)
 // ============================================================
@@ -212,7 +213,7 @@ export function ProbabilityEstimates({ subgroups }: { subgroups: SubgroupResult[
             </div>
             <div>
               <span className="text-muted-foreground">Formel: </span>
-              <span>{sg.formula}</span>
+              <span data-testid={`formula-${sg.name}`}>{formulaWithoutLabel(sg.formula)}</span>
             </div>
             <div>
               <span className="text-muted-foreground">Gerundet: → </span>
