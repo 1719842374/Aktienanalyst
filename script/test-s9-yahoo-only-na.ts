@@ -119,7 +119,25 @@ try {
   for (const [name, d] of fmpData) {
     const h = render(Section7, d);
     check(`${name}: isYahooOnly false, keine Yahoo-n/a-Zeile`, !isYahooOnly(d) && !h.includes("s9-growth-vs-sector-na"));
-    if (legacy) { const old = render(legacy, d); check(`${name}: Markup byte-gleich zu ${LEGACY_REF.slice(0, 8)}`, h === old, `${h.length} / ${old.length} Bytes`); }
+    if (legacy) {
+      const old = render(legacy, d);
+      const start = "(YoY vs. Branche)</span>";
+      const end = "Discount / Premium";
+      const windowOf = (html: string) => {
+        const a = html.indexOf(start);
+        const b = html.indexOf(end);
+        return a >= 0 && b > a ? html.slice(a, b) : "";
+      };
+      const currentLine = windowOf(h);
+      const legacyLine = windowOf(old);
+      const aligned = currentLine && legacyLine ? h.replace(currentLine, legacyLine) : h;
+      // S9-Soll 25.11.: ohne tamCAGR kein „+5.0 %“ ohne Quelle, sondern n/a mit Grund. Nur dieses Fenster darf von e2593bed abweichen.
+      const lineUpdated = legacyLine.includes("+5.0%")
+        && currentLine.includes(">n/a<")
+        && currentLine.includes("tamCAGR fehlt; Peer-Umsatzwachstum n=2 (unter 3); keine KI-Schätzung")
+        && !currentLine.includes("+5.0%");
+      check(`${name}: Markup byte-gleich zu ${LEGACY_REF.slice(0, 8)} außer n/a mit Grund statt +5.0 %`, aligned === old && lineUpdated, `${h.length} / ${old.length} Bytes`);
+    }
   }
 } finally { if (existsSync(LEGACY_PATH)) unlinkSync(LEGACY_PATH); }
 
