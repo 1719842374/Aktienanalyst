@@ -56,15 +56,14 @@ Stand: 2026-11-07
 
 ---
 
-## Ampel / Soll-Ist (Nachzug main `4220d4e9`, 18.11.2026; Vorgänger `01bf6089`, 09.11.2026 Europe/Madrid)
+## Ampel / Soll-Ist (Nachzug main `01bf6089`, 09.11.2026 Europe/Madrid)
 
 | | |
 |---|---|
 | Spec-SHA (Blob) | `f1eb82241516debec795d8ea77e317d9ce6929e0` (Commit `01bf6089`, +55) |
-| Ampel | 🟡 teilweise |
+| Ampel | 🔴 offen |
 | Soll | Pre-Market Briefing im Researcher Tab optisch/strukturell 1:1 Country-Macro-Pulse (Bild 1): Event-Karten 2-Spalten-Grid, Kategorie-Badge, Impact INFLATION/ZINSEN/AKTIEN, Sektor-Tags, Hero+Tag |
-| Ist UI Briefing | main `4220d4e9e46cecf19364d56630044b46f320d966`. Route `#/researcher` (`client/src/App.tsx:65`, Hash `useHashLocation` `App.tsx:3`, Router `App.tsx:105`). `BriefingModal`: Hero `client/src/pages/Researcher.tsx:589–596` (`data-testid="briefing-hero"`), KeyEventCard-Aufruf `:607` (Grid `:604–611`, Abschnitt `:597–613`). Zitierte Spanne `:589–607` beginnt am Hero und endet auf dem Aufruf; der Block schließt `:613`. Tabs `:34–38` vorhanden (Country Macro Pulse, Sector Opportunity, Undervalued Screener, Capex & Fiscal), gerendert `:353–373`. POST `:139` vorhanden (`runBriefing` `:133`, Retry `:146`). #180 gemergt, Squash `1a8791bb1173e1ab1272e76671169514b433c932` (2026-11-09 14:38 -0800) ist Vorfahr von main. Draft-SHA `dc486855` liegt nicht auf main. |
-| Ist UI Macro (Referenz Soll-Design) | `client/src/components/researcher/MacroPanel.tsx`: `ImpactBadge` `:162–185`, Impact-Zeile Inflation/Zinsen/Aktien `:203–207`, Sektor-Tags `affectedSectors` `:211–217`, `KeyEventCard` `:187–220`. Zitierte Spanne `:162–217` ist vorhanden. |
-| Ist Kette Briefing (Daten) | UI `runBriefing` `Researcher.tsx:133–139` → `apiRequest` `client/src/lib/queryClient.ts:51` `POST /api/researcher/daily-briefing` → `server/index.ts:110` `registerRoutes` → `server/routes-register.ts:8` → `server/routes.ts:294` `registerResearcherRoutes(app)` → `server/researcher.ts:1520` `app.post("/api/researcher/daily-briefing")`. Kartenfelder `briefingCardForChange` `server/researcher.ts:1238` (`shared/briefing-key-event.ts:79–103`). Mapping `toBriefingKeyEvent` `:105–128` (Return `:113–127`; zitiert `:105–127`, Funktion schließt `:128`). Schema `BriefingKeyEventCard` `:7–18`. Client mappt `Researcher.tsx:542–544`. |
-| Tests | `script/test-briefing-modal-render.ts` und `script/test-briefing-source-index.ts` liegen auf main. `npx tsx` am 18.11.2026 gegen `4220d4e9`: modal render passed (Exit 0), source index passed (Exit 0). |
-| Was fehlt | Country-Macro-Pulse-Header/Nav im Briefing ist erledigt durch PR #503 (https://github.com/1719842374/Aktienanalyst/pull/503), Squash main `852cb4931049dd499ee6d83dee9e6c2ef142aaa3`: Modal-Kopf „Country Macro Pulse“ `client/src/pages/Researcher.tsx:563`, `data-testid="briefing-nav-macro"` `:552–558` (Klick → Researcher-Tab macro), Nav `data-testid="briefing-modal-nav"` `:584` Sector Opportunity / Undervalued Screener / Capex & Fiscal (`briefing-nav-${tab.id}` `:591`). Prod-Smoke #503 PASS 20:26 Europe/Madrid auf Prod-Bundle `index-C6VZWeZv.js` (1440 dark / 375 light, drei Nav-Ziele mit Tabwechsel, Titelklick → Macro, POST `/api/researcher/daily-briefing` `{"force":false}` 200). DC Post-Merge #503 KLAR (Researcher.tsx-Blob `668c0199`, Pins Δ0, tsc 76, Build rc0). Folgekandidaten offen (kein FAIL): Escape schließt Modal nicht; Light-Nav-Kontrast 3,36:1; aria-selected fehlt. Kein fertig_-Rename. |
+| Ist UI Briefing | `client/src/pages/Researcher.tsx` `BriefingModal` + Button „Briefing“ → dichter Textblock / Cross / 3 Spalten US\|EU\|ASIA / Top Changes (= Bild 2, Spec selbst als Ist) |
+| Ist UI Macro (Referenz Soll-Design) | Tab „Country Macro Pulse“ → `MacroPanel.tsx` `KeyEventCard` + `ImpactBadge` (Inflation/Zinsen/Aktien) + Kategorie-Badge + `affectedSectors`-Tags |
+| Ist Kette Briefing (Daten) | UI `runBriefing` → `apiRequest` `POST /api/researcher/daily-briefing` (`client/src/lib/queryClient.ts`) → `server/researcher.ts` (daily-briefing) |
+| Was fehlt | BriefingModal rendert **nicht** KeyEventCard-/Impact-/Sektor-Layout. Draft #180 `dc486855` „restore Pre-Market Briefing as Key-Event cards“ offen/Draft/nicht gemergt (HOLD). Kein fertig_-Rename. |

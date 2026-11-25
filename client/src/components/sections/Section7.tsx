@@ -2,12 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { annotationByName, type SegmentGrowthAnnotation } from "../../../../shared/segment-growth-calc";
-import { growthFactsFromSupplement, type SupplementGrowthField } from "../../../../shared/segment-supplement";
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaReason, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { useSegmentGrowth } from "../../hooks/useSegmentGrowth";
 import { calculatedGrowth, growthTitle } from "./SegmentGrowthReadout";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
-import { currencySymbol, formatNumber } from "../../lib/formatters";
+import { formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
@@ -36,12 +35,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
-  // Revenue growth vs sector (TAM-CAGR als Branchenproxy).
-  // tamCAGR == null: Balken n/a mit Grund, kein erfundener 5-%-Wert. 0 bleibt 0.
+  // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
-  const reportedTamCagr = data.tamAnalysis?.tamCAGR;
-  const sectorKnown = reportedTamCagr != null;
-  const sectorGrowth = sectorKnown ? reportedTamCagr : 0;
+  const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
@@ -129,46 +125,10 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   );
 
   async function fillTamNa() {
-    if (!tam?.segments || tamAiLoading || tamAiFills) return;
-    const idle = tamNaHint(scopeNaCount);
-    if (idle) {
-      setTamAiError(idle);
-      return;
-    }
+    if (!tam?.segments || tamAiLoading || scopeNaCount === 0 || tamAiFills) return;
     const requestId = ++tamAiRequest.current;
     setTamAiLoading(true);
     setTamAiError(null);
-    let supplementGrowth: {
-      name: string;
-      nextYearGrowthPct: number;
-      reportedGrowthPct: number | null;
-      field: SupplementGrowthField;
-      observations: number;
-      source: string | null;
-    }[] = [];
-    try {
-      const supRes = await apiRequest("POST", "/api/segment-supplement", {
-        ticker: data.ticker,
-        segments: visibleTamSegments.map((s) => ({
-          name: s.segmentName,
-          percentage: typeof s.segmentShare === "number" ? s.segmentShare : null,
-          reportedGrowthPct: typeof s.segmentGrowth === "number" ? s.segmentGrowth : null,
-        })),
-      });
-      if (supRes.ok) {
-        const sup = await supRes.json();
-        supplementGrowth = growthFactsFromSupplement(sup).map((row) => ({
-          name: row.name,
-          nextYearGrowthPct: row.pct,
-          reportedGrowthPct: row.field === "reportedGrowthPct" ? row.pct : null,
-          field: row.field,
-          observations: row.observations,
-          source: row.source,
-        }));
-      }
-    } catch {
-      supplementGrowth = [];
-    }
     try {
       const res = await apiRequest("POST", "/api/segment-tam-estimate", {
         ticker: data.ticker,
@@ -177,11 +137,6 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         industry: data.industry,
         description: data.description,
         coveragePct: typeof tam.coveragePct === "number" ? tam.coveragePct : null,
-        currency: data.currency,
-        fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear ?? null,
-        totalRevenue: typeof tam.companyRevenue === "number" ? tam.companyRevenue : null,
-        supplementGrowth,
-        regions: tamRegionsFromAnalysis(data),
         segments: visibleTamSegments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
@@ -303,10 +258,10 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow && !sectorKnown ? 'n/a' : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
+                    {isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
                   </td>
-                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid || (isGrowthRow && !sectorKnown) ? 'text-muted-foreground' : premiumColor}`}>
-                    {stockInvalid || (isGrowthRow && !sectorKnown) ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
+                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid ? 'text-muted-foreground' : premiumColor}`}>
+                    {stockInvalid ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
                   </td>
                 </tr>
               );
@@ -327,9 +282,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color={sectorKnown ? (companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500') : (companyGrowth >= 0 ? 'bg-emerald-500' : 'bg-red-500')} suffix="%" />
-            <BarRow label="Branche" value={sectorKnown ? sectorGrowth : null} max={(sectorKnown ? Math.max(Math.abs(companyGrowth), sectorGrowth, 1) : Math.max(Math.abs(companyGrowth), 1)) * 1.5} color="bg-muted-foreground/50" suffix="%" />
-            {!sectorKnown && <div className="text-[10px] text-muted-foreground/70 italic" data-testid="revenue-growth-sector-na">kein Sektor/keine TAM-Quelle</div>}
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
           </div>
         </div>
       </div>
@@ -394,10 +348,12 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                 <button
                   type="button"
                   onClick={() => { if (!tamAiLoading) void fillTamNa(); }}
-                  disabled={tamAiLoading || !!tamAiFills}
+                  disabled={tamAiLoading || scopeNaCount === 0 || !!tamAiFills}
                   title={tamAiFills
                     ? "KI ✓"
-                    : tamNaHint(scopeNaCount) ?? "N/A mit KI schätzen. Catalog-Coverage bleibt unverändert."}
+                    : scopeNaCount === 0
+                      ? "Keine N/A-Zellen"
+                      : "N/A mit KI schätzen. Catalog-Coverage bleibt unverändert."}
                   className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal transition-colors disabled:opacity-50 ${
                     tamAiFills
                       ? "border-violet-400/40 bg-violet-500/20 text-violet-700 hover:bg-violet-500/30 dark:text-violet-200"
@@ -435,10 +391,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                   {kiFillMetaLine(kiCellCount, tam.coveragePct)}
                 </div>
               )}
-              {tamNaHint(scopeNaCount) && (
-                <p className="text-[10px] text-muted-foreground" data-testid="tam-na-none">{tamNaHint(scopeNaCount)}</p>
-              )}
-              {tamAiError && tamAiError !== tamNaHint(scopeNaCount) && (
+              {tamAiError && (
                 <div className="text-[10px] text-red-500" data-testid="text-tam-na-fill-error">
                   {tamAiError}
                 </div>
@@ -475,7 +428,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                             <span title="Marktanteil > 25% des KI-TAM — mit Vorsicht interpretieren" className="text-amber-500 ml-1">⚠</span>
                           )}
                         </td>
-                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{currencySymbol(data.currency)}{formatNumber(seg.segmentRevenue, 1)}B</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
                         {row.growth === null ? (
                           <td
@@ -797,26 +750,6 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   );
 }
 
-export function tamNaHint(scopeNaCount: number): string | null {
-  return scopeNaCount === 0 ? "Keine N/A-Zellen" : null;
-}
-
-/** Regionen der Analyse. geoSegments kommen aus fmpGeoSegments, deshalb Quelle FMP, außer die Zeile nennt sec oder curated. */
-export function tamRegionsFromAnalysis(data: Pick<StockAnalysis, "geoSegments">): { name: string; revenue: number | null; yoy: number | null; source: string }[] {
-  return (data.geoSegments ?? []).flatMap((seg) => {
-    const name = typeof seg.name === "string" ? seg.name.trim() : "";
-    if (!name) return [];
-    const revenue = typeof seg.revenue === "number" && Number.isFinite(seg.revenue) && seg.revenue > 0 ? seg.revenue : null;
-    const yoy = typeof seg.growth === "number" && Number.isFinite(seg.growth)
-      ? seg.growth
-      : typeof seg.yoyChangePercent === "number" && Number.isFinite(seg.yoyChangePercent)
-        ? seg.yoyChangePercent
-        : null;
-    const source = seg.source === "sec" ? "SEC" : seg.source === "curated" ? "curated" : "FMP";
-    return [{ name, revenue, yoy, source }];
-  });
-}
-
 function toTamNaRef(s: {
   segmentName?: string;
   segmentRevenue?: number;
@@ -866,10 +799,10 @@ function tamRowView(seg: {
   const growth = factGrowth ?? calculated?.growth ?? kiGrowth;
   const factTam = ref ? factTamSize(ref) : null;
   const factCagr = ref ? factTamCagr(ref) : null;
-  const kiTam = factTam == null && fill && typeof fill.tamSize === "number" && Number.isFinite(fill.tamSize) && fill.tamSize > 0
+  const kiTam = unmatched && fill && typeof fill.tamSize === "number" && Number.isFinite(fill.tamSize) && fill.tamSize > 0
     ? fill.tamSize
     : null;
-  const kiCagr = factCagr == null && fill && typeof fill.tamCAGR === "number" && Number.isFinite(fill.tamCAGR) ? fill.tamCAGR : null;
+  const kiCagr = unmatched && fill && typeof fill.tamCAGR === "number" && Number.isFinite(fill.tamCAGR) ? fill.tamCAGR : null;
   const tamSize = factTam ?? kiTam;
   const tamCagr = factCagr ?? kiCagr;
   const marketShare = kiTam != null ? deriveTamShare(seg.segmentRevenue, kiTam) : seg.marketShare;

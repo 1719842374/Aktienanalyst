@@ -8,8 +8,6 @@ export interface SegmentGrowthResponse {
   geographic: SegmentGrowthAnnotation[];
   source: string;
   currency?: string | null;
-  /** Kurs-Hinweis oder n/a-Grund. Fehlt bei USD-Berichtern. */
-  currencyNote?: string | null;
   error?: string;
 }
 

@@ -100,8 +100,6 @@ import {
   generatePorterFiveForces,
   generatePESTELAnalysis as generateLLMPESTEL,
   isLLMAvailable,
-  catalystEnrichSkipBody,
-  type LlmSkipSink,
 } from "./llm-openrouter";
 import { requestTamNaFills } from "./tam-na-fill";
 import { requestPeerNaFills } from "./peer-na-fill";
@@ -1008,7 +1006,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       };
       let revenueSegments: RevenueSegment[] = Array.isArray(segments)
         ? segments
-            .filter((s: any) => s && typeof s === "object" && typeof s.name === "string" && Number(s.revenue) > 0 && !s.fxNaReason)
+            .filter((s: any) => s && typeof s === "object" && typeof s.name === "string" && Number(s.revenue) > 0)
             .map((s: any) => ({
               name: _prettifyProduct(String(s.name)),
               revenue: Number(s.revenue),
@@ -1033,9 +1031,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               ...(typeof s.date === "string" && /^\d{4}/.test(s.date)
                 ? { fiscalYear: s.date.slice(0, 4) }
                 : {}),
-              ...(typeof s.reportedCurrency === "string" ? { reportedCurrency: s.reportedCurrency } : {}),
-              ...(typeof s.fxFrom === "string" ? { fxFrom: s.fxFrom } : {}),
-              ...(typeof s.fxRate === "number" ? { fxRate: s.fxRate } : {}),
             }))
             .slice(0, 8)
         : [];
@@ -1955,7 +1950,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Geographic duplicates are removed before the response:
       // name + revenue (±1%), NON_GEO_PATTERN, then alias keys at the same
       // revenue band (AWS / Amazon Web Services, Azure, GCP).
-      const rawGeo = (Array.isArray(geoSegments) ? geoSegments : []).filter((s: any) => !s?.fxNaReason);
+      const rawGeo = Array.isArray(geoSegments) ? geoSegments : [];
       const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
       // Name + revenue (±1%) and NON_GEO_PATTERN run before the UI.
       // Alias pairs (AWS / Amazon Web Services, Azure, GCP) still drop, but
@@ -2486,7 +2481,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
       }
 
-      const llmSkip: LlmSkipSink = { llmSkipReason: null };
       const llmResult = await generateCatalystsAndMatchNews({
         ticker: a.ticker,
         companyName: a.companyName,
@@ -2510,10 +2504,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           sentimentScore: n.sentimentScore, matchedCatalyst: n.matchedCatalyst,
           matchedCatalystIdx: n.matchedCatalystIdx,
         })),
-      }, llmSkip);
+      });
 
       if (!llmResult) {
-        return res.json(catalystEnrichSkipBody(a.catalysts, llmSkip.llmSkipReason));
+        return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
       }
 
       // FactPack: LLM-Zahlen gegen FMP-Kontext aus Cache (Estimates ggf. leer)
