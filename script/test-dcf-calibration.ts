@@ -3,12 +3,12 @@
  * Ausführen: env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npx tsx --tsconfig script/tsconfig.jsx.json script/test-dcf-calibration.ts
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DCF_CALIBRATION, calibrateDcfTerms, calibrationLineText, healthLevelOrNull, impliedGStarPct, resolveGrowthAnchor, resolveGStarPrice, tvShareWarns, waccAddPpForLevel } from "../shared/dcf-calibration";
+import { DCF_CALIBRATION, calibrateDcfTerms, calibrationLineText, calibrationPriceUsd, healthLevelOrNull, impliedGStarPct, resolveGrowthAnchor, resolveGStarPrice, tvShareWarns, waccAddPpForLevel } from "../shared/dcf-calibration";
 import { buildBiasDecision, computeRuleBasedMoat, sumUpsideGb } from "../shared/bias-fixes";
-import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF } from "../shared/valuation-signal";
+import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF, isBankProxySector } from "../shared/valuation-signal";
 import { computeFazitEntry, fazitEntryForExport } from "../shared/fazit-entry";
 import { selectCatalystBase } from "../shared/catalyst-base";
 import { pdfCalibrationRows, pdfCatalystTarget } from "../server/pdf-export";
@@ -104,12 +104,22 @@ try {
     sectorG1: msft.sectorProfile.growthAssumptions.g1,
     consensus: { years2to3: 1, medianYears3to5: 2, guidanceMid: 3 },
   });
-  assert.equal(anchor.source, "ist-yoy");
-  assert.equal(anchor.gAnker, msft.financialStatements!.incomeStatement.revenueGrowth);
-  assert.match(anchor.detail, /nicht gelesen/);
+  assert.equal(anchor.source, "fehlt");
+  assert.equal(anchor.gAnker, null);
+  assert.match(anchor.detail, /nicht verwendet/);
+  const yearly = resolveGrowthAnchor({
+    istYoY: -4.16,
+    annualRevenues: [100, 110, 121, 133.1, 146.41],
+    lynchClass: "stalwart",
+    sectorG1: 5,
+    consensus: null,
+  });
+  assert.equal(yearly.source, "mehrjahres-median");
+  assert.ok(yearly.gAnker != null && yearly.gAnker > 0);
+  assert.notEqual(yearly.gAnker, -4.16);
   const sectorOnly = resolveGrowthAnchor({ istYoY: null, sectorG1: 5, consensus: null });
-  assert.equal(sectorOnly.source, "sektor-g1");
-  assert.equal(sectorOnly.gAnker, 5);
+  assert.equal(sectorOnly.source, "fehlt");
+  assert.equal(sectorOnly.gAnker, null);
   const missing = resolveGrowthAnchor({ istYoY: Number.NaN, sectorG1: null, consensus: null });
   assert.equal(missing.source, "fehlt");
   assert.equal(missing.gAnker, null);
@@ -139,7 +149,7 @@ try {
     gStarPct: 8,
     priceInfo: resolveGStarPrice({ spot: 1, historicalPrices: msft.historicalPrices }),
   });
-  assert.equal(cap.terminalAfter, 2.5);
+  assert.equal(cap.terminalAfter, 3);
   const tight = calibrateDcfTerms({
     health: "Moderate",
     level: 2,
@@ -147,7 +157,7 @@ try {
     g1Model: 4,
     terminalModel: 3,
     waccRohPct: 5,
-    anchor: { gAnker: 4, source: "ist-yoy", detail: "synthetisch" },
+    anchor: { gAnker: 4, source: "mehrjahres-median", detail: "synthetisch" },
     istYoY: 4,
     gStarPct: 1,
     priceInfo: { price: 1, source: "tageskurs", points: 0, from: null, to: null, reason: "synthetisch" },
@@ -191,8 +201,8 @@ try {
       const sample = clone(msft);
       sample.financialStatements!.health = health;
       const bias = buildBiasDecision(sample);
-      values.push(bias.decisionPerShare);
-      adds.push(bias.calibration?.waccAddPp ?? Number.NaN);
+      values.push(calculateFCFFDCF(buildDefaultDCFParams(sample)).perShare);
+      adds.push(bias.calibration?.waccAddPp ?? 0);
     }
     assert.equal(adds[0], waccAddPpForLevel(0, model === "stetig" ? "stetig" : "dreiStufen"));
     for (let i = 1; i < values.length; i++) {
@@ -220,7 +230,7 @@ try {
       console.log(`vorher ${data.ticker}: DCF ${n(prev.dcf)} decision ${n(prev.bias.decisionPerShare, 4)} Entry ${n(prev.entry.dcfBeiCRV3)} CRV ${n(prev.entry.crvConservative)} Score ${n(prev.bias.overallScore, 4)} Ziel ${n(prev.uiTarget)}`);
       console.log(`${model} ${data.ticker}: DCF ${n(next.dcf)} decision ${n(next.bias.decisionPerShare, 4)} Entry ${n(next.entry.dcfBeiCRV3)} CRV ${n(next.entry.crvConservative)} Score ${n(next.bias.overallScore, 4)} ZielUI ${n(next.uiTarget)} ZielPDF ${n(next.pdfTarget)}`);
       console.log(`  ${calibrationLineText(cal)}`);
-      console.log(`  Summe WACC ${n(cal.waccSumPp)} Pp (Health ${n(cal.waccAddPp)} + Bias an ${n(cal.biasUpliftAppliedPp)}; ersetzt nicht addiert ${n(cal.biasUpliftReplacedPp)}) + g-Abschlag ${n(cal.gDropPp)} Pp | g* ${cal.gStarPct == null ? "n/a" : n(cal.gStarPct, 4)} ${cal.gStarPriceSource} | Anker ${cal.anchorSource} ${cal.gAnker} | ${cal.gStarCapNote}`);
+      console.log(`  Summe WACC ${n(cal.waccSumPp)} Pp (Health ${n(cal.waccAddPp)} + Bias-Sprung addiert ${n(cal.biasUpliftAppliedPp)}) + g-Abschlag ${n(cal.gDropPp)} Pp | g* ${cal.gStarPct == null ? "n/a" : n(cal.gStarPct, 4)} ${cal.gStarPriceSource} | Anker ${cal.anchorSource} ${cal.gAnker} | ${cal.gStarCapNote}`);
       for (const rule of cal.rules) console.log(`  Regel ${rule.relation} ${rule.ref} ${rule.id}: ${rule.detail}`);
     }
   }
@@ -321,9 +331,73 @@ try {
   console.log("Cache ohne calibration-Feld: Section5/Section6 und PDF-Zeile ohne Wurf. Gespeichertes calibration.lage=9 wird nicht angezeigt.");
 
   DCF_CALIBRATION.enabled = false;
+  const fairOff = calculateFCFFDCF(buildDefaultDCFParams(msft)).perShare;
+  const entryOff = computeFazitEntry(msft);
+  DCF_CALIBRATION.enabled = true;
+  DCF_CALIBRATION.stageModel = "stetig";
+  const fairOn = calculateFCFFDCF(buildDefaultDCFParams(msft)).perShare;
+  const entryOn = computeFazitEntry(msft);
+  const scoreOn = buildBiasDecision(msft).overallScore;
+  assert.equal(fairOn, fairOff);
+  assert.equal(entryOn.decisionPerShare, entryOff.decisionPerShare);
+  assert.equal(entryOn.dcfBeiCRV3, entryOff.dcfBeiCRV3);
+  assert.equal(entryOn.crvConservative, entryOff.crvConservative);
+  assert.equal(scoreOn, msftOff.overallScore);
+  console.log("Stufe 0 MSFT: Flag an ist zahlgleich mit Flag aus (Fair Value, Entry, CRV, Score).");
+
+  DCF_CALIBRATION.enabled = true;
+  const shelG1 = buildDefaultDCFParams(shel).revenueGrowthP1;
+  assert.notEqual(shelG1, shel.financialStatements!.incomeStatement.revenueGrowth);
+  assert.ok(shelG1 > 0, `SHEL g1 ${shelG1}`);
+  console.log(`SHEL.L Anker ohne Jahresreihe: g1 ${shelG1}, Einzel-YoY ${shel.financialStatements!.incomeStatement.revenueGrowth} nicht verwendet.`);
+
+  const noRate = calibrationPriceUsd({ ticker: "SHEL.L", currency: "GBP", currentPrice: 39.38, currencyInfo: null });
+  assert.equal(noRate.priceUsd, null);
+  assert.match(noRate.reason, /fxRate/);
+  const pence = calibrationPriceUsd({ ticker: "SHEL.L", currency: "GBp", currentPrice: 3938, currencyInfo: null });
+  assert.equal(pence.priceUsd, null);
+  assert.match(pence.reason, /FX/);
+  const withRate = calibrationPriceUsd({ ticker: "SHEL.L", currency: "GBP", currentPrice: 39.38, currencyInfo: { fxRate: 1.25 } });
+  assert.equal(withRate.priceUsd, 39.38 * 1.25);
+  assert.equal(withRate.unit, "USD");
+  console.log("SHEL.L USD: ohne currencyInfo.fxRate n/a; mit belegtem Kurs 39.38 × 1.25.");
+
+  const bank = clone(msft);
+  bank.sector = "Financial Services";
+  bank.industry = "Banks - Diversified";
+  const insurer = clone(msft);
+  insurer.sector = "Financial Services";
+  insurer.industry = "Insurance - Life";
+  assert.equal(isBankProxySector(bank.sector, bank.industry), true);
+  assert.equal(isBankProxySector(insurer.sector, insurer.industry), true);
+  DCF_CALIBRATION.enabled = false;
+  const bankOff = buildBiasDecision(bank);
+  const insOff = buildBiasDecision(insurer);
+  const bankEntryOff = computeFazitEntry(bank);
+  const insEntryOff = computeFazitEntry(insurer);
+  DCF_CALIBRATION.enabled = true;
+  assert.equal(buildBiasDecision(bank).overallScore, bankOff.overallScore);
+  assert.equal(buildBiasDecision(bank).decisionPerShare, bankOff.decisionPerShare);
+  assert.equal(buildBiasDecision(insurer).overallScore, insOff.overallScore);
+  assert.equal(computeFazitEntry(insurer).crvConservative, insEntryOff.crvConservative);
+  assert.equal(computeFazitEntry(bank).dcfBeiCRV3, bankEntryOff.dcfBeiCRV3);
+  console.log("Bank und Versicherung: ΔScore 0 bei Flag an.");
+
+  for (const ticker of ["AAPL", "NVO", "TSLA"]) {
+    assert.equal(existsSync(`script/fixtures/analysis-${ticker}.json`), false);
+    console.log(`${ticker}: n/a — kein Offline-Fixture analysis-${ticker}.json auf main oder diesem Branch, kein Prod-Call.`);
+  }
+  const pins = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8"));
+  assert.equal(pins.expectProd.MSFT.overallScore, 5.206325319552613);
+  assert.equal(pins.expectProd.VWAGY.overallScore - pins.expectOldHead.VWAGY.overallScore, 0);
+  assert.equal(pins.expectProd.SAP.overallScore - pins.expectOldHead.SAP.overallScore, 0);
+
+  DCF_CALIBRATION.enabled = false;
   assert.equal(buildBiasDecision(msft).overallScore, 5.638130012567666);
+  assert.equal(buildBiasDecision(msft).decisionPerShare, msftOff.decisionPerShare);
+  assert.equal(buildBiasDecision(shel).decisionPerShare, shelOff.decisionPerShare);
   assert.equal(pinFile.MSFT.overallScore, 4.058137820476081);
-  console.log("PIN nach den Läufen unverändert: MSFT 4.058137820476081, Buffett 5.638130012567666");
+  console.log("PIN nach den Läufen unverändert: MSFT 4.058137820476081, expectProd 5.206325319552613, Buffett 5.638130012567666");
   console.log("dcf-calibration: ok");
 } finally {
   restore();

@@ -53,7 +53,7 @@ function runCli(): void {
   }
   const schema = APPROVED["shared/schema.ts"] ?? [];
   const bias = APPROVED["shared/bias-fixes.ts"] ?? [];
-  if (schema.length !== 15 || bias.length !== 45) {
+  if (schema.length !== 15 || bias.length !== 43) {
     console.error(`Whitelist schema ${schema.length} bias ${bias.length}`);
     process.exit(1);
   }

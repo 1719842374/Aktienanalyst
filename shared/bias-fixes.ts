@@ -795,7 +795,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     revenueGrowthP2: baseParams.revenueGrowthP2,
     terminalG: baseParams.terminalG,
   };
-  const adj = applyBiasAdjustment(facts, DCF_CALIBRATION.enabled ? { replaceTriggerWaccJump: true } : undefined);
+  const adj = applyBiasAdjustment(facts);
   const decision = adj.switched
     ? calculateFCFFDCF({
         ...baseParams,
@@ -809,7 +809,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
   const calibration = calibrationPreview
     ? withBiasOverlay(calibrationPreview, {
         biasUpliftAppliedPp: adj.waccUpliftPp,
-        biasUpliftReplacedPp: DCF_CALIBRATION.enabled && adj.switched ? waccUpliftPp(adj.triggerCount) : 0,
+        biasUpliftReplacedPp: 0,
         growthFactor: adj.growthFactor,
         g1AfterBias: adj.switched ? adj.revenueGrowthP1 : calibrationPreview.g1After,
         tvSharePct: decision.enterpriseValue > 0 ? (decision.pvTerminal / decision.enterpriseValue) * 100 : null,

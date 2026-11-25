@@ -5,12 +5,18 @@
  * Vorher/Nachher-Tabelle freigibt. Bei false darf kein Aufrufer die
  * bestehenden DCF-, Score- oder Moat-Zahlen ändern.
  *
- * Draft-1-Grenzen (Scope-Klärung 23:08):
- * - g1-Anker nur letztes Ist-YoY, sonst Sektor-g1. Konsens/Median nicht lesen.
+ * Nach Philips Einverständnis 25.11.2026:
+ * - WACC-Aufschlag wird addiert und ersetzt den Trigger-Sprung nicht.
+ * - Stufe 0 ändert die Parameter nicht.
+ * - g1-Anker ist Mehrjahres-Median oder 3–5-Jahres-CAGR, nicht ein einzelnes YoY.
  * - Stufe nur aus der absoluten Note financialStatements.health.
  * - g* auf dem 3-Monats-Schnitt von historicalPrices, wenn das Fenster dort liegt.
  * - Soll 2 ist keine Abnahme und kein Fit-Ziel.
  */
+import { statementCurrency } from "./currency-format";
+import { applyCyclicalMidCycleG1 } from "./lynch-dcf-defaults";
+import { listingFxWarning, minorUnitInfo } from "./listing-units";
+
 export const DCF_CALIBRATION = {
   enabled: false,
   /** Aktiver Pfad ist stetig. dreiStufen ist derselbe Rechenweg für die Vergleichstabelle. */
@@ -43,9 +49,12 @@ export interface CalibrationRule {
 }
 
 export interface GrowthAnchorInput {
-  /** financialStatements.incomeStatement.revenueGrowth, Prozent. */
+  /** Einzelnes Ist-YoY. Wird nicht als Anker verwendet. */
   istYoY: number | null;
-  /** sectorProfile.growthAssumptions.g1, Prozent. */
+  /** Jahresumsätze, alt nach neu. Mindestens vier Punkte für eine 3-Jahres-Spanne. */
+  annualRevenues?: number[] | null;
+  lynchClass?: string | null;
+  /** sectorProfile.growthAssumptions.g1, nur Dokumentation, kein stiller Ersatzanker. */
   sectorG1: number | null;
   /**
    * Reserviert für den Folgeschritt. Draft 1 liest die Felder nicht
@@ -60,7 +69,7 @@ export interface GrowthAnchorInput {
 
 export interface GrowthAnchor {
   gAnker: number | null;
-  source: "ist-yoy" | "sektor-g1" | "fehlt";
+  source: "mehrjahres-median" | "cagr-3-5" | "fehlt";
   detail: string;
 }
 
@@ -162,30 +171,123 @@ export function waccAddPpForLevel(level: number, model: StageModel): number {
   }
 }
 
-/** Einziger Anker-Zugriff. Später kann der Körper Konsens vor Ist setzen, ohne die Aufrufer umzubauen. */
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function yoyRates(revenues: number[]): number[] {
+  const rates: number[] = [];
+  for (let i = 1; i < revenues.length; i++) {
+    const prev = revenues[i - 1];
+    const next = revenues[i];
+    if (finite(prev) && prev > 0 && finite(next)) rates.push((next / prev - 1) * 100);
+  }
+  return rates;
+}
+
+function cagrPct(start: number, end: number, years: number): number | null {
+  if (!(start > 0) || !finite(end) || end <= 0 || years < 3 || years > 5) return null;
+  const rate = (Math.pow(end / start, 1 / years) - 1) * 100;
+  return Number.isFinite(rate) ? rate : null;
+}
+
+function normalizeCyclical(rate: number, lynchClass: string | null | undefined): { rate: number; note: string } {
+  if (lynchClass !== "cyclical" || !(rate > 0)) return { rate, note: "" };
+  const normalized = applyCyclicalMidCycleG1(rate);
+  return { rate: normalized, note: ` Zykliker normalisiert über applyCyclicalMidCycleG1 (${rate} → ${normalized}).` };
+}
+
+/** Einziger Anker-Zugriff. Ein einzelnes Ist-YoY ist kein Anker. */
 export function resolveGrowthAnchor(input: GrowthAnchorInput): GrowthAnchor {
-  const consensusIgnored = input.consensus != null
-    ? " Übergebene Konsensfelder werden in Draft 1 nicht gelesen."
+  const ignored = finite(input.istYoY)
+    ? ` Einzelnes Ist-YoY ${input.istYoY} wird nicht verwendet.`
     : "";
-  if (finite(input.istYoY)) {
+  const revenues = (input.annualRevenues ?? []).filter(finite);
+  const yoy = yoyRates(revenues);
+  const window = yoy.slice(-5);
+  const spanYears = window.length;
+  if (spanYears >= 3) {
+    const mid = median(window);
+    if (mid == null) {
+      return { gAnker: null, source: "fehlt", detail: "Median nicht berechenbar." + ignored };
+    }
+    const norm = normalizeCyclical(mid, input.lynchClass);
     return {
-      gAnker: input.istYoY,
-      source: "ist-yoy",
-      detail: "Letztes Ist-YoY aus financialStatements.incomeStatement.revenueGrowth." + consensusIgnored,
+      gAnker: norm.rate,
+      source: "mehrjahres-median",
+      detail: `Median der letzten ${spanYears} Jahres-YoY aus annualRevenues.${norm.note}${ignored}`,
     };
   }
-  if (finite(input.sectorG1)) {
-    return {
-      gAnker: input.sectorG1,
-      source: "sektor-g1",
-      detail: "Ist-YoY fehlt. Ersatz sectorProfile.growthAssumptions.g1, nicht geschätzt." + consensusIgnored,
-    };
+  if (revenues.length >= 4 && revenues.length <= 6) {
+    const years = revenues.length - 1;
+    const cagr = cagrPct(revenues[0], revenues[revenues.length - 1], years);
+    if (cagr != null) {
+      const norm = normalizeCyclical(cagr, input.lynchClass);
+      return {
+        gAnker: norm.rate,
+        source: "cagr-3-5",
+        detail: `${years}-Jahres-CAGR aus annualRevenues.${norm.note}${ignored}`,
+      };
+    }
   }
   return {
     gAnker: null,
     source: "fehlt",
-    detail: "Ist-YoY und Sektor-g1 fehlen. Kein Anker geschätzt. Konsens/Median sind nicht persistiert." + consensusIgnored,
+    detail: "Keine 3–5-Jahresreihe in annualRevenues. Kein Anker geschätzt, kein Einzel-YoY als Ersatz." + ignored,
   };
+}
+
+export interface CalibrationUsdPrice {
+  priceUsd: number | null;
+  unit: string;
+  reason: string;
+}
+
+/**
+ * Preis für die Kalibrierung in USD, nur wenn die Umrechnung belegt ist.
+ * Belege: shared/currency-format.ts statementCurrency, shared/listing-units.ts listingFxWarning
+ * und Minor-Unit-Faktor, server/fmp.ts convertFmpRowsToUsd, server/analyze-route.ts FX-Block.
+ * Ohne currencyInfo.fxRate kein geschätzter Kurs.
+ */
+export function calibrationPriceUsd(input: {
+  ticker?: string | null;
+  currency?: string | null;
+  currentPrice?: number | null;
+  currencyInfo?: { fxRate?: number | null } | null;
+}): CalibrationUsdPrice {
+  const price = input.currentPrice;
+  if (!finite(price) || price <= 0) {
+    return { priceUsd: null, unit: "n/a", reason: "Kein Kurs auf dem Analyseobjekt." };
+  }
+  const unit = statementCurrency(input);
+  const minor = minorUnitInfo(input.currency);
+  const fx = input.currencyInfo?.fxRate;
+  const hasFx = finite(fx) && fx > 0;
+  if (minor) {
+    const warning = listingFxWarning(input.currency);
+    if (!hasFx) {
+      return { priceUsd: null, unit: minor.minor, reason: warning ?? `FX ${minor.major}USD fehlt. Kurs nicht in USD geschätzt.` };
+    }
+    return {
+      priceUsd: (price / minor.factor) * fx,
+      unit: "USD",
+      reason: `Minor Unit ${minor.minor} ÷ ${minor.factor} × currencyInfo.fxRate ${fx} → USD.`,
+    };
+  }
+  if (unit === "USD") {
+    return { priceUsd: price, unit: "USD", reason: "Statement- und Kurswährung USD, Faktor 1." };
+  }
+  if (!hasFx) {
+    return {
+      priceUsd: null,
+      unit,
+      reason: `Kein currencyInfo.fxRate. Rechnung bleibt in ${unit}, nicht in USD geschätzt.`,
+    };
+  }
+  return { priceUsd: price * fx, unit: "USD", reason: `${unit} × currencyInfo.fxRate ${fx} → USD.` };
 }
 
 function shiftMonths(iso: string, months: number): string {
@@ -273,12 +375,12 @@ export function impliedGStarPct(input: {
 
 export function calibrationRules(model: StageModel): CalibrationRule[] {
   const waccDetail = model === "stetig"
-    ? "WACC-Sprung +0,625/+1,05/+1,6 Pp nach Triggerzahl wird nicht addiert. Stattdessen WACC += 0,40 Pp × Stufe."
-    : "Dieselbe Ersetzung mit 3 Stufen auf der absoluten Note: Excellent/Good +0, Moderate +1, Weak/Critical +2 Pp.";
+    ? "WACC += 0,40 Pp × Stufe und wird zum bestehenden Trigger-WACC addiert. Der Trigger-Sprung bleibt."
+    : "Dieselbe Addition mit 3 Stufen auf der absoluten Note: Excellent/Good +0, Moderate +1, Weak/Critical +2 Pp. Der Trigger-Sprung bleibt.";
   return [
     {
       id: "wacc-stufe",
-      relation: "ersetzt",
+      relation: "ergaenzt",
       ref: "shared/bias-fixes.ts:372-407",
       detail: waccDetail,
     },
@@ -383,6 +485,21 @@ export function calibrateDcfTerms(input: {
     };
   }
   const level = input.level;
+  if (level === 0) {
+    return {
+      ...common,
+      ...emptySums,
+      applied: false,
+      skipReason: "Stufe 0: Kalibrierung ändert WACC, g1 und Terminal nicht.",
+      lage: 0,
+      waccAddPp: 0,
+      waccPct: input.waccRohPct,
+      g1After: input.g1Model,
+      terminalAfter: input.terminalModel,
+      gStarCapApplied: false,
+      gStarCapNote: "Stufe 0, kein Deckel.",
+    };
+  }
   const waccAddPp = waccAddPpForLevel(level, input.model);
   const waccPct = input.waccRohPct + waccAddPp;
   const haircut = level === 0 ? 1 : 1 - DCF_CALIBRATION.g1HaircutPerLevel * level;
@@ -391,18 +508,12 @@ export function calibrateDcfTerms(input: {
   let gStarCapApplied = false;
   let gStarCapNote = "g*-Deckel nicht aktiv (Stufe unter gStarCapFromLevel).";
   if (level >= DCF_CALIBRATION.gStarCapFromLevel) {
-    if (input.istYoY != null && input.gStarPct != null) {
-      g1 = Math.min(g1, Math.max(input.istYoY, input.gStarPct));
+    if (input.anchor.gAnker != null && input.gStarPct != null) {
+      g1 = Math.min(g1, Math.max(input.anchor.gAnker, input.gStarPct));
       gStarCapApplied = true;
-      gStarCapNote = "g1 ≤ max(Ist-YoY, g*).";
-    } else if (input.istYoY == null && input.gStarPct != null) {
-      g1 = Math.min(g1, input.gStarPct);
-      gStarCapApplied = true;
-      gStarCapNote = "Ist-YoY fehlt, nicht geschätzt. Deckel nur gegen g*.";
-    } else if (input.istYoY != null && input.gStarPct == null) {
-      gStarCapNote = "g* fehlt, nicht geschätzt. g*-Deckel ausgelassen.";
+      gStarCapNote = "g1 ≤ max(Mehrjahresanker, g*). Einzelnes Ist-YoY ist nicht im Deckel.";
     } else {
-      gStarCapNote = "Ist-YoY und g* fehlen, nicht geschätzt. g*-Deckel ausgelassen.";
+      gStarCapNote = "Mehrjahresanker oder g* fehlt. Deckel ausgelassen, nichts geschätzt.";
     }
   }
   const terminalAfter = Math.min(
@@ -452,7 +563,7 @@ export function calibrationLineText(view: Pick<DcfCalibrationView, "lage" | "wac
 }
 
 export function calibrationSumText(view: Pick<DcfCalibrationView, "waccSumPp" | "waccAddPp" | "biasUpliftAppliedPp" | "biasUpliftReplacedPp" | "gDropPp">): string {
-  return `Summe WACC-Aufschlag ${view.waccSumPp.toFixed(2)} Pp (Health ${view.waccAddPp.toFixed(2)} + Bias angewendet ${view.biasUpliftAppliedPp.toFixed(2)}; Trigger-Sprung ersetzt, nicht addiert ${view.biasUpliftReplacedPp.toFixed(2)}) + g-Abschlag ${view.gDropPp.toFixed(2)} Pp`;
+  return `Summe WACC-Aufschlag ${view.waccSumPp.toFixed(2)} Pp (Health ${view.waccAddPp.toFixed(2)} + Bias-Sprung addiert ${view.biasUpliftAppliedPp.toFixed(2)}) + g-Abschlag ${view.gDropPp.toFixed(2)} Pp`;
 }
 
 export function tvShareWarns(tvSharePct: number): boolean {

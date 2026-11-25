@@ -437,7 +437,41 @@ function applyHealthCalibration(data: StockAnalysis, raw: FCFFDCFParams): { para
   const sectorRaw = data.sectorProfile?.growthAssumptions?.g1;
   const istYoY = typeof istRaw === "number" && Number.isFinite(istRaw) ? istRaw : null;
   const sectorG1 = typeof sectorRaw === "number" && Number.isFinite(sectorRaw) ? sectorRaw : null;
-  const anchor = resolveGrowthAnchor({ istYoY, sectorG1, consensus: null });
+  const anchor = resolveGrowthAnchor({
+    istYoY,
+    sectorG1,
+    annualRevenues: (data as { annualRevenues?: number[] | null }).annualRevenues ?? null,
+    lynchClass: data.lynchClass ?? null,
+    consensus: null,
+  });
+  if (isBankProxySector(data.sector, data.industry) || level === 0) {
+    const view = calibrateDcfTerms({
+      health,
+      level,
+      model: DCF_CALIBRATION.stageModel,
+      g1Model: raw.revenueGrowthP1,
+      terminalModel: raw.terminalG,
+      waccRohPct,
+      anchor,
+      istYoY,
+      gStarPct: null,
+      priceInfo: { price: data.currentPrice, source: "tageskurs", points: 0, from: null, to: null, reason: level === 0 ? "Stufe 0, unverändert." : "Bank oder Versicherung, Kalibrierung ausgenommen." },
+    });
+    return {
+      params: raw,
+      view: {
+        ...view,
+        applied: false,
+        waccAddPp: 0,
+        waccPct: waccRohPct,
+        g1After: raw.revenueGrowthP1,
+        terminalAfter: raw.terminalG,
+        skipReason: isBankProxySector(data.sector, data.industry)
+          ? "Bank, Versicherung oder Capital Markets: Kalibrierung ausgenommen (isBankProxySector)."
+          : "Stufe 0: Parameter unverändert.",
+      },
+    };
+  }
   const priceInfo = resolveGStarPrice({ spot: data.currentPrice, historicalPrices: data.historicalPrices });
   const waccForGStar = waccRohPct + (level == null ? 0 : waccAddPpForLevel(level, DCF_CALIBRATION.stageModel));
   const gStarPct = impliedGStarPct({
@@ -1172,7 +1206,7 @@ export interface DcfApplicableParams {
   industry: string | undefined | null;
 }
 
-function isBankProxySector(sector: string | undefined | null, industry: string | undefined | null): boolean {
+export function isBankProxySector(sector: string | undefined | null, industry: string | undefined | null): boolean {
   const hay = `${sector ?? ""} ${industry ?? ""}`.toLowerCase();
   return (
     hay.includes("bank") ||
