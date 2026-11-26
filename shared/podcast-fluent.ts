@@ -725,7 +725,7 @@ function entityMentioned(entity: string, text: string): boolean {
   const needle = tokenCore(entity);
   if (needle.length < 2) return false;
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const boundary = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
+  const boundary = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?:s|['’]s)?(?![\\p{L}\\p{N}])`, "iu");
   return boundary.test(text);
 }
 
@@ -742,7 +742,7 @@ function allowedPackToken(clean: string, sheet: SpeechSheet): boolean {
 function allowedListedName(entity: string, sheet: SpeechSheet): boolean {
   const bits = placeBits(entity);
   if (!bits.length) return false;
-  if (bits.length === 1 && bits[0] && allowedPackToken(bits[0], sheet)) return true;
+  if (bits.every(bit => allowedPackToken(bit, sheet))) return true;
   return (sheet.placeNames ?? []).some(place => {
     const parts = placeBits(place);
     return parts.length === bits.length && parts.every((part, index) => part === bits[index]);

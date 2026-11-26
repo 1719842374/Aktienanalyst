@@ -704,6 +704,14 @@ async function main() {
   assert.ok(possessiveEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), possessiveEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const tickerListed = verifyChapter("einstieg", "Der Kürzel NVDA bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["NVDA"]);
   assert.equal(tickerListed.ok, true, tickerListed.notes.join("|"));
+  const toyotaGen = verifyChapter("einstieg", "Der Konkurrent Toyotas bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["Toyota"]);
+  assert.equal(toyotaGen.ok, false, toyotaGen.notes.join("|"));
+  assert.ok(toyotaGen.reasons.includes("name"), toyotaGen.notes.join("|"));
+  const pfizerGen = verifyChapter("einstieg", "Pfizers neues Mittel bleibt der Vergleich für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["Pfizer"]);
+  assert.equal(pfizerGen.ok, false, pfizerGen.notes.join("|"));
+  assert.ok(pfizerGen.reasons.includes("name"), pfizerGen.notes.join("|"));
+  const nvidiaGen = verifyChapter("einstieg", "NVIDIAs Kurs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["NVIDIA"]);
+  assert.equal(nvidiaGen.ok, true, nvidiaGen.notes.join("|"));
   const noName = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
   const bareEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "zusammenfassung", paragraph: noName, entities: [] }] }, new Map([["zusammenfassung", []]]));
   assert.equal(bareEmpty.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), false, bareEmpty.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
@@ -1007,6 +1015,8 @@ async function main() {
   assert.equal(kingdom.ok, true, kingdom.notes.join("|"));
   const states = verifyChapter("einstieg", "Vereinigte Staaten bleiben der größte Markt der Firma im neuen Jahr. Der Kurs stützt die Bewertung.", bareDe, []);
   assert.equal(states.ok, true, states.notes.join("|"));
+  const nordiskGen = verifyChapter("einstieg", "Novo Nordisks Kurs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung und der Markt bleibt offen.", bareDe, ["Novo Nordisk"]);
+  assert.equal(nordiskGen.ok, true, nordiskGen.notes.join("|"));
   const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));
   assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));
