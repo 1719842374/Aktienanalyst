@@ -640,7 +640,7 @@ async function main() {
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
   assert.equal(foreignNegatives.length, 25);
-  assert.ok(rejected >= 22, `Negativ ${rejected}/25`);
+  assert.equal(rejected, 25, `Negativ ${rejected}/25`);
   const deNames: Array<[string, string]> = [
     ["Toyota liefert den Impuls für die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "Toyota"],
     ["Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.", "Apple"],
@@ -809,7 +809,7 @@ async function main() {
     const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw }] }, new Map());
     return drafts.some(draft => draft.id === id && draft.reasons.includes("entities"));
   }).length;
-  assert.ok(missingId >= 24, `fehlende ID ${missingId}/25`);
+  assert.equal(missingId, 25, `fehlende ID ${missingId}/25`);
   const baseFacts = {
     currency: "USD",
     currentPrice: 100,
@@ -825,15 +825,17 @@ async function main() {
     nextEarningsDate: "2027-02-24",
     _podcastInternals: { revenueY1: 1, fiscalYear: "2026", fxRateToUsd: 1, reportedCurrency: "USD" },
   };
-  const prosePacks: Array<{ ticker: string; analysis: Record<string, unknown>; de: string[]; en: string[] }> = [
+  const prosePacks: Array<{ ticker: string; analysis: Record<string, unknown>; regulatory?: unknown; de: string[]; en: string[] }> = [
     {
       ticker: "NVO",
+      regulatory: { exposures: [{ country: "United States", title: "Preisregulierung", description: "Die Wirkung bleibt im Rahmen." }] },
       analysis: {
         ...baseFacts,
         ticker: "NVO",
         companyName: "Novo Nordisk",
         podcastCompanySource: "yahoo-chart",
         revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+        geoSegments: [{ name: "United States", percentage: 55 }, { name: "Europe", percentage: 30 }],
         catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 8 }, { name: "Wettbewerb im Markt", nettoUpside: 3 }],
         risks: [{ name: "Preisregulierung" }, { name: "Marktstart" }],
         newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
@@ -846,6 +848,11 @@ async function main() {
         "Der Marktstart folgt der Zulassung und die Firma hält den Wettbewerb im Blick. Diabetes bleibt der größte Block.",
         "Die Preisregulierung trifft den Markt und die Zulassung bleibt der Maßstab der Firma. Die Phase bleibt der belegte Stand.",
         "Wettbewerb und Zulassung bleiben die Lage und die Firma trägt den Marktstart weiter. Die Phase stützt die Einordnung.",
+        "Die Phasen der Zulassung bleiben offen und die Firma trägt den Wettbewerb weiter. Die Preisregulierung bleibt der Rahmen.",
+        "Die Zulassungen stützen den Markt und Diabetes bleibt der größte Block der Firma. Der Marktstart bleibt genannt.",
+        "Die Märkte bleiben offen und die Preisregulierung stützt die Firma im neuen Jahr. Die Zulassung bleibt der Maßstab.",
+        "Die Diabetes-Patienten stützen die Nachfrage und der Wettbewerb bleibt der Rahmen der Firma. Die Phase bleibt offen.",
+        "Der Marktstart bleibt der nächste Punkt und die Zulassung stützt die Firma im neuen Jahr. Diabetes bleibt der Block.",
       ],
       en: [
         "Approval stays the verified view and the phase remains open for the firm this year. Competition holds the market.",
@@ -854,6 +861,9 @@ async function main() {
         "The launch follows approval and the firm holds competition in view this year. Diabetes remains the split.",
         "Price regulation meets the market and approval stays the verified view for the firm. The phase remains open.",
         "Competition and approval remain the view and the firm holds the launch this year. The phase stays verified.",
+        "The firm sells in the United States and demand remains the verified view this year. Competition holds the market.",
+        "Demand in Europe stays verified and the United States remains the open question for the firm. The phase stays the view.",
+        "Approval in the United States stays the verified question and the firm holds the launch this year. Diabetes remains the split.",
       ],
     },
     {
@@ -919,8 +929,10 @@ async function main() {
   let proseN = 0;
   const proseFail: string[] = [];
   for (const row of prosePacks) {
-    const deSheet = buildSpeechSheet(buildPodcastFacts(pack(row.ticker, row.analysis), NOON), "de");
-    const enSheet = buildSpeechSheet(buildPodcastFacts(pack(row.ticker, row.analysis), NOON), "en");
+    const body = pack(row.ticker, row.analysis);
+    if (row.regulatory) body.regulatory = row.regulatory;
+    const deSheet = buildSpeechSheet(buildPodcastFacts(body, NOON), "de");
+    const enSheet = buildSpeechSheet(buildPodcastFacts(body, NOON), "en");
     for (const text of row.de) {
       proseN += 1;
       const verdict = verifyChapter("einstieg", text, deSheet, []);
@@ -935,6 +947,36 @@ async function main() {
     }
   }
   assert.ok(proseOk / proseN >= 0.9, `${proseOk}/${proseN} ${proseFail.join(" || ")}`);
+  const nvo = prosePacks[0];
+  assert.equal(nvo?.de.length, 11);
+  assert.equal(nvo?.en.length, 9);
+  const nvoBody = pack("NVO", nvo?.analysis ?? {});
+  nvoBody.regulatory = nvo?.regulatory;
+  const nvoDe = buildSpeechSheet(buildPodcastFacts(nvoBody, NOON), "de");
+  const nvoEn = buildSpeechSheet(buildPodcastFacts(nvoBody, NOON), "en");
+  const nvoDeOk = (nvo?.de ?? []).filter(text => verifyChapter("einstieg", text, nvoDe, []).ok).length;
+  const nvoEnOk = (nvo?.en ?? []).filter(text => verifyChapter("einstieg", text, nvoEn, []).ok).length;
+  assert.equal(nvoDeOk, 11, proseFail.filter(line => line.startsWith("NVO")).join(" || "));
+  assert.equal(nvoEnOk, 9, proseFail.filter(line => line.startsWith("NVO")).join(" || "));
+  const bend = buildSpeechSheet(buildPodcastFacts(pack("NVO", {
+    ...baseFacts,
+    ticker: "NVO",
+    companyName: "Novo Nordisk",
+    podcastCompanySource: "yahoo-chart",
+    revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+    catalysts: [{ name: "Wettbewerb im Markt", nettoUpside: 4 }],
+    risks: [{ name: "Phase" }, { name: "Zulassung" }, { name: "Markt" }],
+    newsItems: [{ title: "Lilly und Diabetes", pubDate: "2026-11-25T08:00:00.000Z" }],
+    growthThesis: "Die Nachfrage trägt die Geschichte der Firma.",
+  }), NOON), "de");
+  const lilyBare = verifyChapter("einstieg", "Die Firma sieht Lily und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", bend, []);
+  assert.equal(lilyBare.ok, false, lilyBare.notes.join("|"));
+  const lillyExact = verifyChapter("einstieg", "Die Firma sieht Lilly und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", bend, []);
+  assert.equal(lillyExact.ok, true, lillyExact.notes.join("|"));
+  const bent = verifyChapter("einstieg", "Die Phasen bleiben offen und die Zulassungen stützen die Firma im neuen Jahr. Die Märkte tragen die Nachfrage.", bend, []);
+  assert.equal(bent.ok, true, bent.notes.join("|"));
+  const patients = verifyChapter("einstieg", "Die Diabetes-Patienten stützen die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie trägt die Nachfrage.", bend, []);
+  assert.equal(patients.ok, true, patients.notes.join("|"));
   const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
     .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
   const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"]).ok).length;

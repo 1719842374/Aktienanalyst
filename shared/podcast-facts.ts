@@ -102,6 +102,8 @@ export interface PodcastFacts {
   upsideNames: string[];
   /** Firmennamen der Peer-Vergleichsgruppe. */
   peerNames: string[];
+  /** Länder und Regionen aus Regulierung und Geo-Segmenten, wörtlich aus dem Pack. */
+  placeNames: string[];
   /** Numerischer Börsenkürzel, der nie gesprochen wird. */
   silentTicker: string | null;
   /** Fiskalquartal oder der Hinweis, dass nur das zuletzt gemeldete Quartal vorliegt. */
@@ -406,6 +408,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     peerNames: (Array.isArray(analysis.peerComparison?.peers) ? analysis.peerComparison.peers : [])
       .map((peer: any) => text(peer?.name) ?? text(peer?.companyName))
       .filter((name: string | null): name is string => !!name),
+    placeNames: collectPlaceNames(pack),
     silentTicker,
     reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,
@@ -529,6 +532,30 @@ function regulatoryContext(value: unknown): string[] {
 function speakRoundedCrv(n: number): string {
   const spoken = speakPriceUsd(n, 3)?.replace(/ Dollar$/, "");
   return spoken ?? "";
+}
+
+function collectPlaceNames(pack: FullAiPack): string[] {
+  const analysis = pack.analysis ?? {};
+  const names: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed.length < 2 || names.includes(trimmed)) return;
+    names.push(trimmed);
+  };
+  const regulatory = pack.regulatory as { exposures?: unknown } | null;
+  const exposures = regulatory && Array.isArray(regulatory.exposures) ? regulatory.exposures : [];
+  for (const row of exposures) {
+    if (row && typeof row === "object") push((row as { country?: unknown }).country);
+  }
+  const geos = Array.isArray(analysis.geoSegments) ? analysis.geoSegments : [];
+  for (const row of geos) {
+    if (!row || typeof row !== "object") continue;
+    push((row as { name?: unknown }).name);
+    push((row as { countryOrRegion?: unknown }).countryOrRegion);
+    push((row as { region?: unknown }).region);
+  }
+  return names;
 }
 
 function buildContext(

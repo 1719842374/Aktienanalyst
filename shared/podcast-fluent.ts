@@ -33,6 +33,10 @@ export interface SpeechSheet {
   packNames: string[];
   /** Nur Firma, Peers und geschützte Namen. Nur diese haben eine Ein-Zeichen-Distanz. */
   realNames: string[];
+  /** Großwörter aus Risiko- und News-Titeln. Nur innere Ein-Zeichen-Distanz, kein Exakt-Treffer. */
+  nearTitleNames: string[];
+  /** Länder und Regionen aus dem Pack, als ganze Wendung erlaubt. */
+  placeNames: string[];
 }
 
 export interface CodeLine {
@@ -299,6 +303,7 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     pendingTitles,
     codeLines,
     ...collectPackNames(facts),
+    placeNames: facts.placeNames ?? [],
   };
 }
 
@@ -317,7 +322,22 @@ function titleNameTokens(title: string): string[] {
   return out;
 }
 
-function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[] } {
+function capitalizedTitleWords(title: string): string[] {
+  return title.split(/[^A-Za-zÄÖÜäöüß]+/)
+    .filter(word => word.length >= 4 && /^[A-ZÄÖÜ]/.test(word))
+    .map(word => word.toLowerCase());
+}
+
+function newsTitlesOf(facts: PodcastFacts): string[] {
+  const risks = facts.riskNames.length;
+  const catalysts = facts.measures?.catalystNames.length ?? 0;
+  const segment = facts.measures?.segmentName ? 1 : 0;
+  const end = facts.payloadTitles.length - catalysts - segment;
+  if (end < risks) return [];
+  return facts.payloadTitles.slice(risks, end);
+}
+
+function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[]; nearTitleNames: string[] } {
   const realNames: string[] = [];
   const pushReal = (item: string | null | undefined) => {
     if (!item) return;
@@ -345,7 +365,13 @@ function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames
       if (!packNames.includes(lower)) packNames.push(lower);
     }
   }
-  return { packNames, realNames };
+  const nearTitleNames: string[] = [];
+  for (const title of [...facts.riskNames, ...newsTitlesOf(facts)]) {
+    for (const lower of capitalizedTitleWords(title)) {
+      if (!nearTitleNames.includes(lower)) nearTitleNames.push(lower);
+    }
+  }
+  return { packNames, realNames, nearTitleNames };
 }
 
 /** Nackte Altersphrase. Die Präposition setzt der Satz, nicht der Token. */
@@ -599,6 +625,50 @@ function nearKnownName(lower: string, names: string[]): boolean {
   return names.some(name => name.length >= 4 && !inflectionOnly(lower, name) && withinOneEdit(lower, name));
 }
 
+/** Ein Zeichen im Wortinneren. Ein Suffix am Ende zählt nicht, ein gleicher String auch nicht. */
+function internalOneEdit(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  const left = a.length >= b.length ? a : b;
+  const right = a.length >= b.length ? b : a;
+  if (left.length === right.length) {
+    let index = -1;
+    for (let i = 0; i < left.length; i++) {
+      if (left[i] === right[i]) continue;
+      if (index >= 0) return false;
+      index = i;
+    }
+    return index > 0 && index < left.length - 1;
+  }
+  let i = 0;
+  let j = 0;
+  let extra = -1;
+  while (i < left.length && j < right.length) {
+    if (left[i] === right[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if (extra >= 0) return false;
+    extra = i;
+    i += 1;
+  }
+  if (extra < 0) extra = left.length - 1;
+  return extra > 0 && extra < left.length - 1;
+}
+
+function placeCovers(words: string[], index: number, places: string[]): boolean {
+  const cores = words.map(word => tokenCore(word));
+  for (const place of places) {
+    const parts = place.split(/[^A-Za-zÄÖÜäöüß]+/).filter(Boolean);
+    if (!parts.length) continue;
+    for (let start = 0; start + parts.length <= cores.length; start++) {
+      const match = parts.every((part, offset) => cores[start + offset]?.toLowerCase() === part.toLowerCase());
+      if (match && index >= start && index < start + parts.length) return true;
+    }
+  }
+  return false;
+}
+
 function packNameLeak(text: string, sheet: SpeechSheet): string | null {
   const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
   const exact = sheet.packNames ?? [];
@@ -608,7 +678,8 @@ function packNameLeak(text: string, sheet: SpeechSheet): string | null {
       const clean = tokenCore(word);
       const lower = clean.toLowerCase();
       if (lower.length < 4 || lexicon.has(lower)) continue;
-      if (!exact.includes(lower) && !nearKnownName(lower, sheet.realNames ?? [])) continue;
+      const nearTitle = (sheet.nearTitleNames ?? []).some(name => internalOneEdit(lower, name));
+      if (!exact.includes(lower) && !nearKnownName(lower, sheet.realNames ?? []) && !nearTitle) continue;
       if (entityMentioned(clean, spoken)) continue;
       return clean;
     }
@@ -625,6 +696,7 @@ function structuralName(text: string, sheet: SpeechSheet): string | null {
     for (let i = 0; i < words.length; i++) {
       const clean = tokenCore(words[i] ?? "");
       if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
+      if (placeCovers(words, i, sheet.placeNames ?? [])) continue;
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
       const allCaps = /^[A-ZÄÖÜ]{2,5}$/.test(clean);
@@ -751,7 +823,7 @@ export function quantityWord(text: string, sheet: SpeechSheet): string | null {
 }
 
 export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
-  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [], realNames: [] }) != null;
+  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [], realNames: [], nearTitleNames: [], placeNames: [] }) != null;
 }
 
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {
