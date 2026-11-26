@@ -3,8 +3,8 @@
  * Ein Modelltext wird vor dem Einsetzen geprüft. Ziffern und Zahlwörter
  * mit Einheit fallen weg. Werte kommen nur aus den Fakten.
  */
-import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
-import { PODCAST_DISCLAIMER } from "./podcast-types";
+import type { PodcastDropCounts, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
+import { emptyDropCounts, PODCAST_DISCLAIMER } from "./podcast-types";
 import { PLACEHOLDER_KIND, PODCAST_PLACEHOLDERS, placeholderForbiddenInModel, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
 import { guardSpan, keepCompleteSentences, NAME_GUARD, speakNormalize, spokenStillRaw, stripAllowedNumberTokens, unguard } from "./podcast-speak";
 
@@ -171,16 +171,27 @@ function copiesPayloadTitle(sentence: string, titles: readonly string[]): boolea
   return false;
 }
 
-const GERMAN_MARKER = new Set(["der", "die", "das", "ist", "sind", "liegt", "stammt", "und", "für", "fuer", "mit", "vom", "ein", "eine", "im", "am", "auf", "nicht", "bei", "den", "dem", "des", "wird", "wurde", "bleibt", "nennt", "nur", "wir", "schauen", "zum", "zur", "nach", "aus", "durch", "oder", "aber", "dass", "seit"]);
+const ENGLISH_STOP = new Set(["the", "and", "of", "for", "across", "with", "from", "into", "over", "under", "after", "before", "between", "without", "within", "through", "during", "while", "where", "when", "which", "that", "this", "these", "those", "their", "its", "are", "was", "were", "been", "being", "have", "has", "had", "will", "would", "can", "could", "should", "may", "might", "not", "but", "or", "if", "than", "then", "also", "more", "most", "other", "such", "only", "just", "about", "per", "via", "versus", "vs", "to", "in", "on", "at", "by", "as", "an", "be", "is", "it", "we", "our", "you", "your"]);
 
 const ENGLISH_LABEL_WORD = new Set(["demand", "expansion", "enterprise", "monetization", "recovery", "stalls", "permanently", "hydrogen", "fuel", "cell", "margin", "business", "core", "market", "growth", "revenue", "guidance", "omniverse"]);
 
-/** Englischer Payload-Titel ohne deutschen Satz. Der Code-Satz „Risiko:“ ist davon ausgenommen. */
+function contentWords(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z]+/).filter(word => word.length > 2);
+}
+
+function englishHitCount(words: readonly string[]): number {
+  return words.filter(word => ENGLISH_STOP.has(word) || ENGLISH_LABEL_WORD.has(word)).length;
+}
+
+/** Englisch nur über Stopp- und Fachwörter, nie über das Fehlen deutscher Marker. */
 function looksLikeEnglishTitle(sentence: string): boolean {
   const spoken = speakNormalize(sentence) ?? sentence;
-  const parts = spoken.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 1);
-  if (parts.some(word => GERMAN_MARKER.has(word) || /[äöüß]/.test(word))) return false;
-  return parts.filter(word => word.length > 2).length >= 2;
+  const words = contentWords(spoken);
+  if (words.length < 2) return false;
+  const hits = englishHitCount(words);
+  if (hits === 0) return false;
+  if (words.length <= 3) return true;
+  return hits >= 2 && hits * 2 >= words.length;
 }
 
 const PROTECTED_PLACEHOLDERS = new Set(["ticker", "company", "top_segment"]);
@@ -336,7 +347,10 @@ function stripGluedGenitive(text: string, names: readonly string[]): string {
   for (const name of sorted) {
     if (/[A-Za-zÄÖÜäöüß]$/.test(name) && !/[sS]$/.test(name)) continue;
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`(?<![A-Za-z0-9ÄÖÜäöüß])(${escaped})s(?![A-Za-zÄÖÜäöüß])`, "g"), "$1");
+    out = out.replace(
+      new RegExp(`(?<![A-Za-z0-9ÄÖÜäöüß])(${escaped})s\\s+([A-Za-zÄÖÜäöüß]+)`, "g"),
+      "Das $2 von $1",
+    );
   }
   return out;
 }
@@ -372,35 +386,34 @@ function speakKnownTerms(text: string): string {
     .replace(/\bPhase[-\s]([1-4])\b/gi, (_match, n: string) => `Phase ${phase[Number(n)] ?? n}`);
 }
 
-function labelWords(text: string): string[] {
-  return text.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 2);
-}
-
 function predominantlyEnglish(sentence: string): boolean {
-  const words = labelWords(sentence);
-  if (words.length < 4) return false;
-  return words.every(word => !GERMAN_MARKER.has(word) && !/[äöüß]/.test(word));
+  return looksLikeEnglishTitle(sentence);
 }
 
 function labelIsEnglish(text: string): boolean {
-  const words = labelWords(text);
+  const words = contentWords(text);
   if (words.some(word => ENGLISH_LABEL_WORD.has(word))) return true;
-  return words.length >= 3 && words.every(word => !GERMAN_MARKER.has(word) && !/[äöüß]/.test(word));
+  const hits = englishHitCount(words);
+  return words.length >= 3 && hits >= 2 && hits * 2 >= words.length;
 }
 
-function acceptSpokenLabel(raw: string | undefined, fallback: string): string {
+function acceptSpokenLabel(raw: string | undefined): string | null {
   const spoken = speakKnownTerms((raw ?? "").trim());
-  if (!spoken || /[&+%()]/.test(spoken) || spokenStillRaw(spoken) || labelIsEnglish(spoken)) return fallback;
+  if (!spoken || /[&+%()]/.test(spoken) || spokenStillRaw(spoken) || labelIsEnglish(spoken)) return null;
   return /^[a-zäöü]/.test(spoken) ? `${spoken[0]!.toUpperCase()}${spoken.slice(1)}` : spoken;
 }
 
-function readSpokenLabels(data: unknown): { catalysts: string[]; risks: string[] } {
-  const labels = data && typeof data === "object" ? (data as { labels?: { catalysts?: unknown; risks?: unknown } }).labels : null;
-  const list = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-  return { catalysts: list(labels?.catalysts), risks: list(labels?.risks) };
+function readSpokenLabels(data: unknown): Record<string, string> {
+  const labels = data && typeof data === "object" ? (data as { labels?: unknown }).labels : null;
+  if (!labels || typeof labels !== "object" || Array.isArray(labels)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labels)) {
+    if (typeof value === "string" && /^(?:Katalysator|Risiko) \d+$/.test(key)) out[key] = value;
+  }
+  return out;
 }
 
-function fallbackSentences(id: string, facts: PodcastFacts, labels: { catalysts: string[]; risks: string[] } = { catalysts: [], risks: [] }): string[] {
+function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<string, string> = {}): string[] {
   const v = facts.values;
   const out: string[] = [];
   const add = (sentence: string) => {
@@ -456,7 +469,7 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: { catalysts:
       else out.push("Die Katalysatoren liegen nicht vor.");
       (facts.upsideNames ?? []).forEach((_name, index) => {
         const key = (["netto_upside_1", "netto_upside_2", "netto_upside_3"] as const)[index];
-        const label = acceptSpokenLabel(labels.catalysts[index], CATALYST_ORDINALS[index] ?? "Der Katalysator");
+        const label = acceptSpokenLabel(labels[`Katalysator ${index + 1}`]) ?? CATALYST_ORDINALS[index] ?? "Der Katalysator";
         if (key && v[key]) add(`${label}: Der Netto-Upside liegt bei {${key}}.`);
       });
       break;
@@ -464,8 +477,8 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: { catalysts:
       if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
       else if (!v.entry) out.push("Der rechnerische Einstieg liegt nicht vor.");
       facts.riskNames.forEach((_name, index) => {
-        const label = acceptSpokenLabel(labels.risks[index], (["Das erste Risiko", "Das zweite Risiko", "Das dritte Risiko"] as const)[index] ?? "Das Risiko");
-        out.push(`${label}.`);
+        const label = acceptSpokenLabel(labels[`Risiko ${index + 1}`]);
+        if (label) out.push(`${label}.`);
       });
       break;
     case "earnings":
@@ -539,8 +552,24 @@ function completeModelSentences(sentences: string[]): string[] {
   });
 }
 
+function splitSentences(text: string): string[] {
+  const held: string[] = [];
+  const masked = text.split(NAME_GUARD).map((part, index) => {
+    if (index % 2 === 1) {
+      held.push(part);
+      return `\u0002${held.length - 1}\u0002`;
+    }
+    return part.replace(/\b(Inc|Corp|Ltd|Co)\./g, "$1\u0003");
+  }).join("");
+  return masked.split(/(?<=[.!?])\s+/).map(part => part
+    .replace(/\u0003/g, ".")
+    .replace(/\u0002(\d+)\u0002/g, (_match, index: string) => `${NAME_GUARD}${held[Number(index)] ?? ""}${NAME_GUARD}`)
+    .trim(),
+  ).filter(Boolean);
+}
+
 function scrubSpoken(text: string): string {
-  const parts = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
+  const parts = splitSentences(text);
   const kept: string[] = [];
   for (const part of parts) {
     if (/GrowthEvidence/i.test(part)) {
@@ -559,10 +588,15 @@ function finishSpoken(text: string, facts: PodcastFacts): string {
   return polishSpoken(dedupeSentences(stripGluedGenitive(hidden, facts.protectedNames ?? [])));
 }
 
-export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] & { dropped: number } {
+export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] & { dropped: PodcastDropCounts } {
   const blocked = modelData != null && scriptContainsForbiddenGrowth(JSON.stringify(modelData));
   const fromModel = blocked ? new Map<string, string[]>() : modelSentences(modelData);
   const labels = readSpokenLabels(modelData);
+  const dropped = emptyDropCounts();
+  const note = (reason: string) => {
+    dropped.total += 1;
+    dropped.byReason[reason] = (dropped.byReason[reason] ?? 0) + 1;
+  };
   const planned = chaptersForSource(source).map(def => ({ def, fallback: fallbackSentences(def.id, facts, labels) }));
   const valuesByChapter = new Map(planned.map(item => [
     item.def.id,
@@ -573,10 +607,18 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     const foreignValues = Array.from(valuesByChapter.entries())
       .filter(([id]) => id !== def.id)
       .flatMap(([, values]) => values);
-    const model = completeModelSentences(fromModel.get(def.id) ?? [])
-      .filter(s => checkPodcastSentence(s, facts, def.id, "model").ok)
-      .filter(s => !repeatsCodeValue(s, facts, def.id, ownValues))
-      .filter(s => !repeatsCodeValue(s, facts, def.id, foreignValues));
+    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(sentence => {
+      const verdict = checkPodcastSentence(sentence, facts, def.id, "model");
+      if (!verdict.ok) {
+        note(verdict.reason);
+        return false;
+      }
+      if (repeatsCodeValue(sentence, facts, def.id, ownValues) || repeatsCodeValue(sentence, facts, def.id, foreignValues)) {
+        note("Wiederholung");
+        return false;
+      }
+      return true;
+    });
     const keepNews = def.id === "news-llm" && !!facts.values.news_age;
     const codeOnly = def.id === "schluss" || model.length === 0;
     const tagged = codeOnly
@@ -615,8 +657,8 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
       contra.durationSec = durationSec(contra.spoken);
     }
   }
-  const linted = lintChapters(chapters, facts.protectedNames ?? []);
-  return Object.assign(linted.chapters, { dropped: linted.dropped });
+  const linted = lintChapters(chapters, facts.protectedNames ?? [], note);
+  return Object.assign(linted, { dropped });
 }
 
 function hideNames(text: string, names: readonly string[]): string {
@@ -630,29 +672,30 @@ function hideNames(text: string, names: readonly string[]): string {
   return out;
 }
 
-function lintSentence(sentence: string, names: readonly string[]): boolean {
+function lintReason(sentence: string, names: readonly string[]): string | null {
   const text = sentence.trim();
-  if (!text) return false;
-  if (/von von|von das\b/i.test(text)) return false;
+  if (!text) return "leer";
+  if (/von von/i.test(text)) return "von von";
+  if (/von das\b/i.test(text)) return "von das";
   const uncovered = stripAllowedNumberTokens(hideNames(text, names));
-  if (/[&+%()]/.test(uncovered)) return false;
-  if (spokenStillRaw(uncovered)) return false;
+  if (/[&+%()]/.test(uncovered)) return "Zeichen";
+  if (spokenStillRaw(uncovered)) return "Ziffer";
   const firstWord = /^[a-zäöü][A-Za-zÄÖÜäöüß]*/.exec(text);
-  if (firstWord && !/[A-ZÄÖÜ]/.test(firstWord[0].slice(1))) return false;
-  if (predominantlyEnglish(text)) return false;
-  return true;
+  if (firstWord && !/[A-ZÄÖÜ]/.test(firstWord[0].slice(1))) return "Satzanfang";
+  if (predominantlyEnglish(uncovered)) return "englisch";
+  return null;
 }
 
-function lintChapters(chapters: StockPodcastChapter[], names: readonly string[]): { chapters: StockPodcastChapter[]; dropped: number } {
-  let dropped = 0;
+function lintChapters(chapters: StockPodcastChapter[], names: readonly string[], note: (reason: string) => void): StockPodcastChapter[] {
   const next: StockPodcastChapter[] = [];
   for (const chapter of chapters) {
     const seen = new Set<string>();
-    const parts = chapter.spoken.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
+    const parts = splitSentences(chapter.spoken);
     const kept: string[] = [];
     for (const part of parts) {
-      if (seen.has(part) || !lintSentence(part, names)) {
-        dropped += 1;
+      const reason = seen.has(part) ? "doppelt" : lintReason(part, names);
+      if (reason) {
+        note(reason);
         continue;
       }
       seen.add(part);
@@ -662,7 +705,7 @@ function lintChapters(chapters: StockPodcastChapter[], names: readonly string[])
     if (!spoken && chapter.id !== "schluss") continue;
     next.push({ ...chapter, spoken, durationSec: durationSec(spoken || chapter.spoken) });
   }
-  return { chapters: next, dropped };
+  return next;
 }
 
 export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: PodcastFacts): { systemPrompt: string; prompt: string } {
@@ -671,8 +714,8 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
     .filter(k => facts.values[k] != null && !placeholderForbiddenInModel(k));
   const systemPrompt = [
     "Du schreibst ein deutsches Podcast-Transkript als JSON.",
-    "Antworte nur mit {\"chapters\":[{\"id\":string,\"sentences\":string[]}],\"labels\":{\"catalysts\":string[],\"risks\":string[]}}.",
-    "labels.catalysts und labels.risks sind deutsche Kurznamen, einer je Payload-Titel. Keine Ziffer außer einem Produktnamen wie H100. Keine Zeichen & + % ( ). GLP-1 schreibst du als GLP-eins, Phase-3 als Phase drei. Schreibe Katalysator, nicht Katalyse.",
+    "Antworte nur mit {\"chapters\":[{\"id\":string,\"sentences\":string[]}],\"labels\":{\"<Schlüssel>\":string}}.",
+    "labels ist ein Objekt. Schlüssel sind genau die im Kontext genannten „Katalysator 1“ bis „Katalysator n“ und „Risiko 1“ bis „Risiko n“. Der Wert ist ein deutsches Kurzlabel. Keine Ziffer außer einem Produktnamen wie H100. Keine Zeichen & + % ( ). GLP-1 schreibst du als GLP-eins, Phase-3 als Phase drei. Schreibe Katalysator, nicht Katalyse. Ein Label nie nach Position zuordnen.",
     "Keine Ziffer, kein Zahlwort mit Einheit, kein YTD, kein seit Jahresbeginn.",
     "Zahlen nur als Platzhalter in geschweiften Klammern, zum Beispiel {fy_yoy}. Den Namen ohne Klammern nie schreiben. Fehlt ein Platzhalter in der Liste, nutze ihn nicht.",
     "Eine Kennzahl nennst du nur zusammen mit ihrem Platzhalter: Umsatzwachstum mit {fy_yoy}, die FCF-Marge mit {fcf_margin}, den Netto-Upside mit {netto_upside_1}. Ohne diesen Platzhalter nennst du die Kennzahl nicht.",

@@ -8,9 +8,11 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import {
+  emptyDropCounts,
   PODCAST_DISCLAIMER,
   PODCAST_PROMPT_VERSION,
   PODCAST_STAGE_TIMEOUT_MS,
+  type PodcastDropCounts,
   type StockPodcastErrorCode,
   type StockPodcastScriptResponse,
   type StockPodcastSource,
@@ -105,7 +107,7 @@ function httpFor(code: StockPodcastErrorCode): number {
   }
 }
 
-function stageTimings(analyzeMs: number, scriptMs: number, dropped = 0): StockPodcastStageTimings {
+function stageTimings(analyzeMs: number, scriptMs: number, dropped: PodcastDropCounts = emptyDropCounts()): StockPodcastStageTimings {
   return {
     analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
     script: { elapsedMs: scriptMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script, dropped },

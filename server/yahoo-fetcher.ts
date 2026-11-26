@@ -18,7 +18,7 @@
  */
 // Alias: #261 importiert minorUnitInfo aus demselben Modul (eigener Name vermeidet doppelten Bezeichner beim Merge).
 import { minorUnitInfo as chartMetaMinorUnit } from "../shared/listing-units";
-import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
+import { yahooChart, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
 import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -289,7 +289,21 @@ function finalizeSnapshotCurrency(snap: YahooSnapshot | null, qsCurrency: string
 const cache = new Map<string, { value: YahooSnapshot | null; at: number }>();
 const inflight = new Map<string, Promise<YahooSnapshot | null>>();
 
-export function clearYahooCache(): void { cache.clear(); inflight.clear(); _crumb = null; _crumbMiss = null; tsCache.clear(); }
+const chartCompanyNames = new Map<string, string>();
+
+/** Name aus der Meta der schon gelaufenen Kurshistorie. Kein neuer Call. */
+export function noteYahooChartCompanyName(symbol: string, meta: unknown): void {
+  if (!symbol || !meta || typeof meta !== "object") return;
+  const parsed = parseYahooChartMeta({ chart: { result: [{ meta }] } });
+  const name = parsed?.name?.trim();
+  if (name) chartCompanyNames.set(symbol.toUpperCase(), name);
+}
+
+export function cachedYahooChartCompanyName(symbol: string): string | null {
+  return chartCompanyNames.get(String(symbol || "").toUpperCase()) ?? null;
+}
+
+export function clearYahooCache(): void { cache.clear(); inflight.clear(); chartCompanyNames.clear(); _crumb = null; _crumbMiss = null; tsCache.clear(); }
 
 /**
  * Yahoo-Snapshot für ein Symbol (gecacht). Braucht mindestens einen Kurs
@@ -307,13 +321,15 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     const to = new Date().toISOString().slice(0, 10);
     const [qsRes, barsRes] = await Promise.allSettled([
       fetchQuoteSummary(key),
-      spaceYahooCall().then(() => yahooFetch(key, indicatorWarmupFromDate(), to)),
+      spaceYahooCall().then(() => yahooChart(key, indicatorWarmupFromDate(), to)),
     ]);
     // Rejected-Gründe loggen (z. B. Timeout/JSON-Fehler in quoteSummary, Chart-HTTP-Fehler). Werte unverändert.
     if (qsRes.status === "rejected") yahooDiag(key, "quoteSummary", null, `rejected: ${errText(qsRes.reason)}`);
     if (barsRes.status === "rejected") yahooDiag(key, "chart", null, `rejected: ${errText(barsRes.reason)}`);
     const qs = qsRes.status === "fulfilled" ? qsRes.value : null;
-    const bars = barsRes.status === "fulfilled" ? barsRes.value : [];
+    const chart = barsRes.status === "fulfilled" ? barsRes.value : null;
+    if (chart?.meta) noteYahooChartCompanyName(key, chart.meta);
+    const bars = chart?.bars ?? [];
     const lastClose = bars.length ? bars[bars.length - 1].close : null;
     const price = qs?.price ?? lastClose;
     if (!(typeof price === "number" && price > 0)) return null;

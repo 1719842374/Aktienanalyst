@@ -16,7 +16,7 @@ export type StockPodcastStage = "analyze" | "script" | "audio";
  */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v11";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v12";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
 
@@ -85,10 +85,20 @@ export interface StockPodcastStageTiming {
   timeoutMs: number;
 }
 
+/** Verworfene Sätze, gezählt nach Grund. Der Text selbst wird nicht mitgeschrieben. */
+export interface PodcastDropCounts {
+  total: number;
+  byReason: Record<string, number>;
+}
+
+export function emptyDropCounts(): PodcastDropCounts {
+  return { total: 0, byReason: {} };
+}
+
 /** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
 export interface StockPodcastStageTimings {
   analyze: StockPodcastStageTiming;
-  script: StockPodcastStageTiming & { dropped: number };
+  script: StockPodcastStageTiming & { dropped: PodcastDropCounts };
   audio: { timeoutMs: number };
 }
 

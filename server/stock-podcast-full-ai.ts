@@ -10,7 +10,8 @@ import { PODCAST_STAGE_TIMEOUT_MS } from "../shared/podcast-types";
 import type { StockPodcastErrorCode } from "../shared/podcast-types";
 import { runAnalyzeIsolated } from "./analyze-route";
 import { buildEarningsBrief, type EarningsBriefDeps } from "./chat-earnings-route";
-import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates, fmpProfile } from "./fmp";
+import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates } from "./fmp";
+import { cachedYahooChartCompanyName } from "./yahoo-fetcher";
 import {
   buildManagementInterpretPrompt,
   buildManagementInterpretSystemPrompt,
@@ -64,10 +65,9 @@ export interface FullAiDeps {
   earnings: (symbol: string) => Promise<EarningsCallBrief>;
   regulatory: (input: Parameters<typeof assessRegulatoryExposure>[0]) => Promise<any>;
   thesis: (input: ThesisStrengthInput) => any;
-  profile?: (symbol: string) => Promise<any>;
 }
 
-export type PodcastCompanySource = "analysis" | "fmp-profile" | "missing";
+export type PodcastCompanySource = "analysis" | "yahoo-chart" | "missing";
 
 function cleanCompanyName(value: unknown, ticker: string): string | null {
   if (typeof value !== "string") return null;
@@ -78,24 +78,28 @@ function cleanCompanyName(value: unknown, ticker: string): string | null {
   return name;
 }
 
-/** Firma für den Podcast. Analyze bleibt unverändert. Fehlt der Name, liest der vorhandene FMP-Profile-Client nach. */
-export async function resolvePodcastCompanyName(
+/**
+ * Firma für den Podcast. Analyze bleibt unverändert und wird nicht noch einmal nach fmpProfile gefragt.
+ * Fehlt der Name, stammt er aus longName/shortName der Chart-Meta, die die Kurshistorie desselben Laufs schon gelesen hat.
+ * Bei einem ADR zuerst das fmpSymbol, sonst der Listing-Ticker.
+ */
+export function resolvePodcastCompanyName(
   analysis: any,
   ticker: string,
-  profile: (symbol: string) => Promise<any> = fmpProfile,
-): Promise<{ name: string | null; source: PodcastCompanySource }> {
+): { name: string | null; source: PodcastCompanySource } {
   const upper = ticker.toUpperCase();
   const fromAnalysis = cleanCompanyName(analysis?.companyName, upper)
     ?? cleanCompanyName(analysis?.name, upper)
     ?? cleanCompanyName(analysis?.profile?.companyName, upper)
-    ?? cleanCompanyName(analysis?.profile?.name, upper);
+    ?? cleanCompanyName(analysis?.profile?.name, upper)
+    ?? cleanCompanyName(analysis?.quote?.name, upper);
   if (fromAnalysis) return { name: fromAnalysis, source: "analysis" };
-  try {
-    const row = await profile(upper);
-    const fromProfile = cleanCompanyName(row?.companyName, upper) ?? cleanCompanyName(row?.name, upper);
-    if (fromProfile) return { name: fromProfile, source: "fmp-profile" };
-  } catch {
-    return { name: null, source: "missing" };
+  const adrSymbol = typeof analysis?.adrSource?.fmpSymbol === "string" ? analysis.adrSource.fmpSymbol : "";
+  const symbols = adrSymbol ? [adrSymbol, upper] : [upper];
+  for (const symbol of symbols) {
+    const raw = cachedYahooChartCompanyName(symbol);
+    const fromChart = cleanCompanyName(raw, upper) && cleanCompanyName(raw, symbol) ? cleanCompanyName(raw, symbol) : null;
+    if (fromChart) return { name: fromChart, source: "yahoo-chart" };
   }
   return { name: null, source: "missing" };
 }
@@ -264,7 +268,6 @@ function defaultDeps(): FullAiDeps {
     earnings: defaultEarnings,
     regulatory: assessRegulatoryExposure,
     thesis: computeThesisStrength,
-    profile: fmpProfile,
   };
 }
 
@@ -347,7 +350,7 @@ export async function runFullAiAnalysis(
     ? (timedOut.push("supplement"), { pestel: null, management: null, earnings: null, regulatory: null, thesis: null, interpret: null })
     : supplemented;
 
-  const company = await resolvePodcastCompanyName(body, upper, deps.profile ?? fmpProfile);
+  const company = resolvePodcastCompanyName(body, upper);
   const analysis = {
     ...body,
     companyName: company.name ?? "",

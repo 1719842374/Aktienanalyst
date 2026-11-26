@@ -174,8 +174,7 @@ function main() {
   assert.equal(/liegt nicht vor|Prediction|Rejection|GLP-1|2025/.test(nvoNews), false, nvoNews);
   assert.equal(/\balt\b|weniger als einem Tag/.test(nvoNews), false, nvoNews);
   const nvoInversion = nvoKi.find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(nvoInversion, /Das erste Risiko/);
-  assert.equal(/Risiko:|GLP-eins|Phase drei/.test(nvoInversion), false, nvoInversion);
+  assert.equal(/Das erste Risiko|Risiko:|GLP-eins|Phase drei/.test(nvoInversion), false, nvoInversion);
   assert.equal(/Phase-3|<25%|2025|2026/.test(nvoInversion), false, nvoInversion);
   const nvoS17 = nvoKi.find(c => c.id === "s17")?.spoken ?? "";
   assert.match(nvoS17, /Netto-Upside liegt bei/);
@@ -193,8 +192,7 @@ function main() {
   const msftNews = assemblePodcastChapters("ki", msft, msftModel).find(c => c.id === "news-llm")?.spoken ?? "";
   assert.match(msftNews, /stammt von gestern/);
   const msftInversion = assemblePodcastChapters("ki", msft, msftModel).find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(msftInversion, /Das erste Risiko/);
-  assert.equal(/Risiko:|fünf Millionen|5M|2025/.test(msftInversion), false, msftInversion);
+  assert.equal(/Das erste Risiko|Risiko:|fünf Millionen|5M|2025/.test(msftInversion), false, msftInversion);
   ok("News-Alter ist von heute oder von gestern, englische Titel bleiben draußen");
 
   const filing = factsOf(base("NVO", "Novo Nordisk", { lastReportedQuarter: "2026-11-17" }));

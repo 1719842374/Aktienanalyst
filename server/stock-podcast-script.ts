@@ -2,7 +2,7 @@
  * Genau ein callLLMJson je Quelle. Kein zweiter Versuch.
  * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme.
  */
-import type { StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
+import type { PodcastDropCounts, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
 import { PODCAST_DISCLAIMER, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
 import { assemblePodcastChapters, buildPodcastLlmPrompt } from "../shared/podcast-script";
@@ -29,7 +29,7 @@ interface ScriptCacheEntry {
   asOfLabel: string;
   priceLabel: string | null;
   modelUsed: string | null;
-  dropped: number;
+  dropped: PodcastDropCounts;
 }
 
 const scriptCache = new Map<string, ScriptCacheEntry>();
@@ -96,7 +96,7 @@ export async function renderStockPodcastScript(opts: {
   voiceLabel: string;
   cached: boolean;
   modelUsed: string | null;
-  dropped: number;
+  dropped: PodcastDropCounts;
   facts: PodcastFacts;
 } | { ok: false; reason: "timeout" | "empty" }> {
   const voice = resolveStockPodcastVoice(opts.voiceId);

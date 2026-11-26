@@ -478,11 +478,18 @@ function buildContext(
   if (pack.earningsBrief?.status === "ok" && pack.earningsBrief.excerpt) {
     lines.push(`Earnings-Auszug: ${clip(pack.earningsBrief.excerpt, 700)}`);
   }
-  titles.forEach((title, index) => {
-    lines.push(`Titel ${index + 1} nur als Kontext, auf Deutsch umschreiben, nicht vorlesen: ${clip(title, 180)}`);
+  titles.forEach(title => {
+    lines.push(`Nur Kontext, nicht vorlesen: ${clip(title, 180)}`);
+  });
+  const riskLabels: string[] = (Array.isArray(analysis.risks) ? analysis.risks : [])
+    .map((risk: any) => text(risk?.name))
+    .filter((name: string | null): name is string => !!name)
+    .slice(0, 3);
+  riskLabels.forEach((name: string, index: number) => {
+    lines.push(`Risiko ${index + 1}, Name nur als Kontext, Label-Schlüssel „Risiko ${index + 1}“: ${clip(name, 120)}`);
   });
   upsides.forEach((row, index) => {
-    lines.push(`Katalysator ${index + 1}, Wert nur als {netto_upside_${index + 1}}, Name nur als Kontext: ${clip(row.name, 120)}`);
+    lines.push(`Katalysator ${index + 1}, Wert nur als {netto_upside_${index + 1}}, Name nur als Kontext, Label-Schlüssel „Katalysator ${index + 1}“: ${clip(row.name, 120)}`);
   });
   const available = (Object.keys(values) as PodcastPlaceholder[]).filter(k => values[k] != null && !placeholderForbiddenInModel(k));
   lines.push(`Platzhalter mit Wert: ${available.map(name => `{${name}}`).join(", ") || "keine"}`);

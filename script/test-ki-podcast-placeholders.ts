@@ -136,6 +136,7 @@ function main() {
   assert.equal(prompt.prompt.includes("149"), false);
   assert.equal(prompt.prompt.includes("114"), false);
   const chapters = assemblePodcastChapters("pdf", built, {
+    labels: { "Risiko 1": "Konzentration" },
     chapters: [{ id: "einstieg", sentences: [allowed] }],
   });
   const umsatz = chapters.find(c => c.id === "umsatz");

@@ -7,6 +7,7 @@ import { buildPodcastFacts } from "../shared/podcast-facts";
 import { assemblePodcastChapters, buildPodcastLlmPrompt, checkPodcastSentence } from "../shared/podcast-script";
 import { speakNormalize } from "../shared/podcast-speak";
 import { resolvePodcastCompanyName, type FullAiPack } from "../server/stock-podcast-full-ai";
+import { clearYahooCache, noteYahooChartCompanyName } from "../server/yahoo-fetcher";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
@@ -163,8 +164,7 @@ async function main() {
   assert.match(withGerman, /Das Exportkontroll-Risiko bleibt der Gegenpol/);
   assert.equal(/Risiko: Export controls/.test(withGerman), false, withGerman);
   const fallback = assemblePodcastChapters("ki", risk, null).find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(fallback, /Das erste Risiko/);
-  assert.equal(/Export controls/.test(fallback), false, fallback);
+  assert.equal(/Das erste Risiko|Export controls/.test(fallback), false, fallback);
   ok("Deutscher Inversionssatz ersetzt den englischen Risiko-Fallback");
 
   const toyota = listed("7203.T", "7203.T", {
@@ -247,22 +247,26 @@ async function main() {
   }
   ok("Echte Pack-Form: kein numerischer Ticker, kein leeres liegt vor, kein doppelter Satz");
 
-  const unknown = { companyName: "7203.T", ticker: "7203.T" };
-  const resolved = await resolvePodcastCompanyName(unknown, "7203.T", async () => ({ companyName: "Toyota Motor Corporation" }));
+  clearYahooCache();
+  const unknown = { companyName: "7203.T", ticker: "7203.T", dataSource: "yahoo" };
+  noteYahooChartCompanyName("7203.T", { longName: "Toyota Motor Corporation", currency: "JPY" });
+  const resolved = resolvePodcastCompanyName(unknown, "7203.T");
   assert.equal(resolved.name, "Toyota Motor Corporation");
-  assert.equal(resolved.source, "fmp-profile");
+  assert.equal(resolved.source, "yahoo-chart");
   assert.equal(unknown.companyName, "7203.T");
-  const knownName = await resolvePodcastCompanyName({ companyName: "NVIDIA Corporation" }, "NVDA", async () => {
-    throw new Error("Profil darf bei vorhandenem Namen nicht gelesen werden");
-  });
+  const knownName = resolvePodcastCompanyName({ companyName: "NVIDIA Corporation" }, "NVDA");
   assert.equal(knownName.source, "analysis");
   assert.equal(knownName.name, "NVIDIA Corporation");
-  const missing = await resolvePodcastCompanyName({ companyName: "7203.T" }, "7203.T", async () => {
-    throw new Error("down");
-  });
+  clearYahooCache();
+  const missing = resolvePodcastCompanyName({ companyName: "7203.T", dataSource: "yahoo" }, "7203.T");
   assert.equal(missing.name, null);
   assert.equal(missing.source, "missing");
-  ok("Podcast-Pfad löst den Firmennamen über den FMP-Profile-Client, Analyze bleibt unangetastet");
+  noteYahooChartCompanyName("TM", { longName: "Toyota Motor Corporation", currency: "USD" });
+  const adr = resolvePodcastCompanyName({ companyName: "7203.T", adrSource: { fmpSymbol: "TM" } }, "7203.T");
+  assert.equal(adr.name, "Toyota Motor Corporation");
+  assert.equal(adr.source, "yahoo-chart");
+  clearYahooCache();
+  ok("Podcast-Pfad liest den Namen aus der Chart-Meta und ruft fmpProfile nicht erneut");
 
   const sameDay = facts({
     ticker: "NVDA",
@@ -298,15 +302,12 @@ async function main() {
   assert.equal(bare.values.ampel, null);
   const liveModel = {
     labels: {
-      catalysts: ["Phase drei und Marktstart", "Expansion +27%", "GLP-eins"],
-      risks: [
-        "US Core Business Margin Recovery Stalls Permanently",
-        "(Lexus 2027)",
-        "Der Mirai-Nachfolger",
-        "bZ4X",
-        "Omniverse Enterprise Monetization",
-        "Wasserstoffantrieb",
-      ],
+      "Katalysator 1": "Phase drei und Marktstart",
+      "Katalysator 2": "Expansion +27%",
+      "Katalysator 3": "GLP-eins",
+      "Risiko 1": "US Core Business Margin Recovery Stalls Permanently",
+      "Risiko 2": "(Lexus 2027)",
+      "Risiko 3": "Der Mirai-Nachfolger",
     },
     chapters: [
       { id: "einstieg", sentences: ["NVDA, das Unternehmen.", "das Unternehmen. Stand vom heute.", "Die Ampel liegt nicht vor.", "Die jüngste Meldung stammt von von heute."] },
@@ -325,10 +326,12 @@ async function main() {
   assert.match(liveSpoken, /Phase drei und Marktstart/);
   assert.match(liveSpoken, /Der zweite Katalysator/);
   assert.match(liveSpoken, /GLP-eins/);
-  assert.match(liveSpoken, /Das erste Risiko/);
+  assert.equal(/Das erste Risiko/.test(liveSpoken), false, liveSpoken);
   assert.match(liveSpoken, /Der Mirai-Nachfolger/);
   assert.match(liveSpoken, /zweitausendfünfundzwanzig/);
-  assert.ok(live.dropped > 0);
+  assert.ok(live.dropped.total > 0);
+  assert.ok((live.dropped.byReason.Rohtext ?? 0) > 0);
+  assert.equal(JSON.stringify(live.dropped).includes("Phase-3"), false);
   const liveNews = live.find(c => c.id === "news")?.spoken ?? "";
   assert.equal((liveNews.match(/Die jüngste Meldung stammt von/g) ?? []).length, 1, liveNews);
   assert.equal(/jüngste Meldung/.test(live.find(c => c.id === "einstieg")?.spoken ?? ""), false);
@@ -341,8 +344,8 @@ async function main() {
   const appleSpoken = assemblePodcastChapters("ki", apple, {
     chapters: [{ id: "s13", sentences: ["Apple Inc.s Ökosystem bleibt der Kern.", "Die iPhones, Macs und Services bleiben."] }],
   }).map(c => c.spoken).join(" ");
-  assert.match(appleSpoken, /Apple Inc\./);
-  assert.equal(/s Ökosystem|Inc\.s/.test(appleSpoken), false, appleSpoken);
+  assert.match(appleSpoken, /Das Ökosystem von Apple Inc\./);
+  assert.equal(/(?<![A-Za-zÄÖÜäöü])s Ökosystem|Inc\.s/.test(appleSpoken), false, appleSpoken);
   assert.match(appleSpoken, /iPhones/);
   assert.match(appleSpoken, /Macs/);
   assert.match(appleSpoken, /Services/);
@@ -354,7 +357,73 @@ async function main() {
     ],
   }).map(c => c.spoken).join(" ");
   assert.match(longSpoken, /im Kerngeschäft/);
-  ok("Genitiv trennt Apple Inc. nicht, Plurale bleiben, der lange Name streicht den Folgesatz nicht");
+  ok("Genitiv wird zu von Apple Inc., Plurale bleiben, der lange Name streicht den Folgesatz nicht");
+
+  for (const sentence of [
+    "Hohe Margen sichern starke Cashflows.",
+    "Starke Nachfrage treibt Umsatz.",
+    "Services wachsen weiter.",
+  ]) {
+    assert.equal(checkPodcastSentence(sentence, listed("AAPL", "Apple"), "s14", "model").ok, true, sentence);
+  }
+  const appleProducts = listed("AAPL", "Apple", { keyProjects: ["iPhone", "Mac"] });
+  assert.equal(checkPodcastSentence("iPhone und Macs bleiben.", appleProducts, "s13", "model").ok, true);
+  ok("Deutsche Sätze ohne Markerwort bleiben, Englisch hängt an Stoppwörtern");
+
+  for (const [ticker, company] of [
+    ["SPY", "SPDR S&P 500 ETF Trust"],
+    ["BRK-B", "Berkshire Hathaway Inc. (Class B)"],
+  ] as const) {
+    const start = assemblePodcastChapters("pdf", listed(ticker, company), null).find(c => c.id === "einstieg")?.spoken ?? "";
+    assert.match(start, new RegExp(company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), start);
+  }
+  const quiet = assemblePodcastChapters("pdf", listed("MMM", "3M Company"), null);
+  assert.match(quiet.find(c => c.id === "news")?.spoken ?? "", /Im betrachteten Zeitfenster liegen keine Meldungen vor/);
+  ok("News-Satz und Namen mit & oder Klammer bleiben im Einstieg");
+
+  const ebayRisk = listed("EBAY", "eBay", { risks: [{ name: "US Core Business Margin Recovery Stalls Permanently" }] });
+  const ebayInv = assemblePodcastChapters("ki", ebayRisk, {
+    labels: { "Risiko 1": "US Core Business Margin Recovery Stalls Permanently" },
+    chapters: [{ id: "inversion", sentences: ["Wettbewerb durch Temu."] }],
+  }).find(c => c.id === "inversion")?.spoken ?? "";
+  assert.match(ebayInv, /Wettbewerb durch Temu/);
+  assert.equal(/Das erste Risiko|US Core Business/.test(ebayInv), false, ebayInv);
+  ok("Verworfenes Risiko-Label lässt keinen kahlen Satz stehen");
+
+  const shifted = listed("NVDA", "NVIDIA", {
+    catalysts: [
+      { name: "Null upside placeholder", nettoUpside: 0 },
+      { name: "Blackwell ramp", nettoUpside: 12 },
+      { name: "Software suite", nettoUpside: 4 },
+    ],
+  });
+  const shiftedPrompt = buildPodcastLlmPrompt("ki", shifted);
+  assert.match(shiftedPrompt.prompt, /Katalysator 1/);
+  assert.match(shiftedPrompt.prompt, /Blackwell ramp/);
+  assert.equal(/Katalysator 1[\s\S]{0,80}Null upside/.test(shiftedPrompt.prompt), false);
+  const shiftedSpoken = assemblePodcastChapters("ki", shifted, {
+    labels: { "Katalysator 1": "Blackwell-Hochlauf", "Katalysator 2": "Software-Umsatz", "Null": "Falscher Schlüssel" },
+  }).map(c => c.spoken).join(" ");
+  assert.match(shiftedSpoken, /Blackwell-Hochlauf: Der Netto-Upside liegt bei/);
+  assert.equal(/\bNull\b|Null upside/.test(shiftedSpoken), false, shiftedSpoken);
+  ok("Label-Schlüssel folgen den Upside-Katalysatoren, ein 0-Upside in der Mitte verschiebt sie nicht");
+
+  const nvoLabels = listed("NVO", "Novo Nordisk", {
+    catalysts: [
+      { name: "Phase-3 readout", nettoUpside: 3 },
+      { name: "GLP-1", nettoUpside: 2 },
+    ],
+  });
+  const nvoLabelSpoken = assemblePodcastChapters("ki", nvoLabels, {
+    labels: {
+      "Katalysator 1": "Zulassung von CagriSema in Phase-3",
+      "Katalysator 2": "GLP-1 Tablette Wegovy",
+    },
+  }).map(c => c.spoken).join(" ");
+  assert.match(nvoLabelSpoken, /Zulassung von CagriSema in Phase drei/);
+  assert.match(nvoLabelSpoken, /GLP-eins Tablette Wegovy/);
+  assert.equal(/Phase-3|GLP-1/.test(nvoLabelSpoken), false, nvoLabelSpoken);
+  ok("CagriSema in Phase-3 und GLP-1 Tablette Wegovy bleiben als Label");
 
   console.log(`ki-podcast names: ${n} checks ok`);
 }
