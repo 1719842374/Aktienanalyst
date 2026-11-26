@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildPodcastFacts } from "../shared/podcast-facts";
 import { buildPodcastLlmPrompt } from "../shared/podcast-script";
 const analysis: any = { ticker: "NVO", companyName: "Novo Nordisk A/S", currentPrice: 48, currency: "USD", sector: "Healthcare", industry: "Drug Manufacturers", catalystsSource: "llm", dataTimestamp: "2026-11-26T12:00:00.000Z",
@@ -17,7 +21,7 @@ const pack: any = { ticker: "NVO", day: "2026-11-26", generatedAt: "2026-11-26T1
   earningsBrief: null,
   regulatory: { ticker: "NVO", exposures: [{ country: "USA", regulationAxis: "price_regulation", title: "IRA Preisverhandlung", description: "Medicare verhandelt Semaglutid-Preis.", revenueShareInCountry: 0.55, estimatedImpactOnSales: -0.08, probability: 0.9, timeHorizon: "0-12m", source: { url: "https://x", publishedAt: "2026-11-01", snippet: "s" }, confidence: "high", epsImpact: -0.3, material: true, badgeOnly: false }, { country: "EU", regulationAxis: "competition_antitrust", title: "EU Kartell", description: "Prüfung.", revenueShareInCountry: 0.2, estimatedImpactOnSales: -0.01, probability: 0.2, timeHorizon: "24-36m", source: { url: "https://y", publishedAt: "2026-10-01", snippet: "t" }, confidence: "low", epsImpact: 0, material: false, badgeOnly: true }], discarded: 1, gate: { id: "REGULATORY_EXPOSURE", active: true, cap: 6, severity: "warn", rationale: "US-Preisregulierung material." }, modelUsed: "x-ai/grok-4", generatedAt: "2026-11-26T11:00:00.000Z" },
   thesisStrength: null, policyContext: { usa: "Zölle auf Pharma angedroht.", moatImpact: "Gering." }, timedOut: [], sections: { analyze: true } };
-import { buildSpeechSheet, verifyChapter } from "../shared/podcast-fluent";
+import { ALLOWED_CODE_PATTERNS, COMPOUND_FUGEN, COMPOUND_SUFFIXES, buildSpeechSheet, verifyChapter } from "../shared/podcast-fluent";
 const facts = buildPodcastFacts(pack, new Date("2026-11-26T13:00:00Z"));
 const de = buildSpeechSheet(facts, "de"), en = buildSpeechSheet(facts, "en");
 console.log("packNames", JSON.stringify([...new Set(de.packNames)]));
@@ -70,5 +74,18 @@ let sOk = 0; for (const t of STARTS) { const a = verifyChapter("s17", t, de, nul
 console.log(`STARTS ${sOk}/${STARTS.length} ok`);
 // Namens-Probes DE mit null/[]: Pflicht REJECT; Ozempic (im Pack) Pflicht OK
 const TRAPS = ["Toyota","Apple","Pfizer","Zepbound","Mounjaro","Lily","Pfizerwerk","Toyotawagen"];
-for (const n of [...TRAPS, "Lilly", "Ozempic"]) { const t = `Der stärkste Treiber ist [[pair_a]], und auch ${n} beobachtet den Markt sehr genau.`; console.log("TRAP", n.padEnd(12), "null:", verifyChapter("s17", t, de, null).notes.join(",") || "OK", "| []:", verifyChapter("s17", t, de, []).notes.join(",") || "OK", "| ents:", verifyChapter("s17", t, de, [n]).notes.join(",") || "OK"); }
+for (const n of [...TRAPS, "Lilly", "Ozempic"]) { const t = `Der stärkste Treiber ist [[pair_a]], und auch ${n} beobachtet den Markt sehr genau.`; console.log("TRAP", n.padEnd(12), "null:", verifyChapter("s17", t, de, null).notes.join(",") || "OK", "| []:", verifyChapter("s17", t, de, []).notes.join(",") || "OK", "| ents:", verifyChapter("s17", t, de, [n]).notes.join(",") || "OK", "| none:", verifyChapter("s17", t, de, [], true).notes.join(",") || "OK"); }
+const lexiconRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const lexiconFiles = ["shared/de-nouns.ts", "shared/de-closed.ts", "shared/de-companies.ts", "shared/de-nouns-long.ts", "shared/en-common.ts"];
+const lexiconHash = createHash("sha256");
+for (const rel of lexiconFiles) {
+  const bytes = readFileSync(join(lexiconRoot, rel));
+  lexiconHash.update(rel);
+  lexiconHash.update(bytes);
+  console.log("LEXICON-FILE", rel, createHash("sha256").update(bytes).digest("hex"));
+}
+lexiconHash.update(["fugen", ...COMPOUND_FUGEN].join("\n"));
+lexiconHash.update(["suffix", ...COMPOUND_SUFFIXES].join("\n"));
+lexiconHash.update(["code", ...ALLOWED_CODE_PATTERNS].join("\n"));
+console.log("LEXICON", lexiconHash.digest("hex"));
 process.exit(0);

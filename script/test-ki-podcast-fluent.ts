@@ -1274,6 +1274,43 @@ async function main() {
   assert.equal(holdoutSkipped.redo, false);
   assert.deepEqual(holdoutSkipped.reasons, []);
   ok("Die leere Hold-out-Spalte nimmt den Redo nur aus dem Entwurf, ohne festes redo");
+  const nonePack = { company: "Novo Nordisk", peers: ["Eli Lilly"], segments: ["Ozempic"], regions: ["United States"] };
+  const noneSentence = (name: string) => `Der stärkste Treiber ist der Katalysator und auch ${name} beobachtet den Markt sehr genau.`;
+  const noneOf = (name: string) => judgeHoldoutName({ pack: nonePack, language: "de", chapterId: "einstieg", text: noneSentence(name), column: "none" });
+  for (const name of ["Zepbound", "Mounjaro", "Pfizerwerk", "Toyotawagen", "Siemensaktie", "Bayerwerk", "Lindeaktie", "Pfizer", "Toyota"]) {
+    const judged = noneOf(name);
+    assert.equal(judged.ok, false, `${name} ${judged.notes.join("|")}`);
+    assert.equal(judged.redo, true, name);
+    assert.ok(judged.notes.some(note => note.startsWith("name")), `${name} ${judged.notes.join("|")}`);
+  }
+  for (const name of ["Lilly", "Ozempic"]) {
+    const judged = noneOf(name);
+    assert.equal(judged.ok, true, `${name} ${judged.notes.join("|")}`);
+    assert.equal(judged.redo, false, name);
+  }
+  const wired = seedDrafts(nvoNames, "pdf", {
+    chapters: [{ id: "einstieg", paragraph: noneSentence("Zepbound"), entities: [], none: true }],
+  }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
+  assert.ok(wired.some(draft => draft.notes.some(note => note.startsWith("name"))), wired.map(draft => draft.notes.join("|")).join(" || "));
+  const enNone = judgeHoldoutName({
+    pack: { company: "NVIDIA", peers: [], segments: ["Data Center"], regions: ["North America"] },
+    language: "en",
+    chapterId: "einstieg",
+    text: "Cloud demand and North ammunition stay with the firm in this market. The signal remains the verified view.",
+    column: "none",
+  });
+  assert.equal(enNone.notes.some(note => note.startsWith("name")), false, enNone.notes.join("|"));
+  const shortDe = verifyChapter("einstieg", "Kurz nur hier bitte.", deSheet, [], true);
+  assert.equal(shortDe.reasons.includes("language"), false, shortDe.notes.join("|"));
+  const mixed = verifyChapter("einstieg", "The company and the market and the price and the demand stay here today for the firm.", deSheet, [], true);
+  assert.ok(mixed.reasons.includes("language"), mixed.notes.join("|"));
+  const yearOk = verifyChapter("einstieg", "Das Jahr 2026 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", deSheet, [], true);
+  assert.equal(yearOk.reasons.includes("digit"), false, yearOk.notes.join("|"));
+  const quarterOk = verifyChapter("einstieg", "Das Q1 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im neuen Jahr.", deSheet, [], true);
+  assert.equal(quarterOk.reasons.includes("digit"), false, quarterOk.notes.join("|"));
+  const product = verifyChapter("einstieg", "Das Produkt H100 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", deSheet, [], true);
+  assert.equal(product.ok, false, product.notes.join("|"));
+  ok("none erreicht den Verifier, Firmen und Produktcodes werden Redo, Lilly und Ozempic bleiben");
   const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
   assert.equal(genitive.ok, false, genitive.notes.join("|"));
   assert.ok(genitive.reasons.includes("token"), genitive.notes.join("|"));

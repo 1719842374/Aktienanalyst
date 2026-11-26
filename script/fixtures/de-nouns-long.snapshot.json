@@ -1,0 +1,12 @@
+{
+  "date": "2026-11-26",
+  "endpoint": "https://query.wikidata.org/sparql",
+  "language": "de",
+  "lexicalCategory": "Q1084",
+  "minLength": 11,
+  "maxLength": 20,
+  "pattern": "^[a-zäöüß]+$",
+  "query": "SELECT ?lemma WHERE {\n  ?lexeme dct:language wd:Q188 ;\n          wikibase:lexicalCategory wd:Q1084 ;\n          wikibase:lemma ?lemma .\n  FILTER(LANG(?lemma) = \"de\")\n  FILTER(STRLEN(STR(?lemma)) > 10 && STRLEN(STR(?lemma)) <= 20)\n  FILTER(STRSTARTS(LCASE(STR(?lemma)), PREFIX))\n}",
+  "count": 115407,
+  "license": "CC0"
+}

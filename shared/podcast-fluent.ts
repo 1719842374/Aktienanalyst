@@ -8,6 +8,7 @@ import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./po
 import { DE_CLOSED_LEMMAS, DE_VERB_LEMMAS } from "./de-closed";
 import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "./de-companies";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
+import { EN_COMMON_WORDS } from "./en-common";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
 import { roundedParts, speakPercent } from "./podcast-speak";
@@ -542,7 +543,12 @@ function maskFacts(text: string, facts: SpeechFact[]): string {
   return out;
 }
 
+function contentTokenCount(text: string): number {
+  return text.split(/\s+/).map(word => word.replace(/[^A-Za-zÄÖÜäöüß]/g, "")).filter(word => word.length >= 2).length;
+}
+
 function languageOk(text: string, language: PodcastLanguage, facts: SpeechFact[]): boolean {
+  if (contentTokenCount(text) < 8) return true;
   const masked = maskFacts(text, facts);
   if (language === "de") {
     const german = masked.match(new RegExp(DE_MARKER, "gi"))?.length ?? 0;
@@ -735,6 +741,154 @@ function knownCompound(word: string): boolean {
     }
   }
   return false;
+}
+
+/** Fugen der Zerlegung. Der Lexikon-Hash umfasst diese Liste. */
+export const COMPOUND_FUGEN = ["", "s", "n", "en", "es", "e"] as const;
+
+/** Nachsilbe nur als letzter Teil, und nur wenn der Rest ein Nomen oder Verbstamm ist. */
+export const COMPOUND_SUFFIXES = ["ung", "schaft", "heit", "keit", "tum", "nis"] as const;
+
+/** Statisch erlaubte Ziffern und Codes. Produktcodes stehen hier nicht. */
+export const ALLOWED_CODE_PATTERNS = ["^Q[1-4]$", "^H[12]$", "^FY\\d{2,4}$", "^(?:19|20)\\d{2}$"] as const;
+
+const ALLOWED_CODE_RES = ALLOWED_CODE_PATTERNS.map(source => new RegExp(source, "i"));
+const EN_COMMON = new Set(EN_COMMON_WORDS);
+
+function latinForms(part: string): string[] {
+  const lower = withoutPossessive(part).toLowerCase();
+  const forms = [lower];
+  if (lower.endsWith("en") && lower.length - 2 >= 4) {
+    const stem = lower.slice(0, -2);
+    forms.push(`${stem}um`, `${stem}us`, `${stem}a`);
+  }
+  if ((lower.endsWith("um") || lower.endsWith("us")) && lower.length - 2 >= 4) {
+    forms.push(`${lower.slice(0, -2)}en`);
+  } else if (lower.endsWith("a") && lower.length - 1 >= 4) {
+    forms.push(`${lower.slice(0, -1)}en`);
+  }
+  return forms;
+}
+
+function companyForm(part: string): boolean {
+  return latinForms(part).some(form => DE_COMPANY_SET.has(form));
+}
+
+function nounLeaf(part: string): boolean {
+  const lower = withoutPossessive(part).toLowerCase();
+  if (!lower || companyForm(part)) return false;
+  if (DE_NOUNS.has(lower)) return true;
+  if (lower.length < 4) return false;
+  return latinForms(part).some(form => form !== lower && DE_NOUNS.has(form));
+}
+
+function nounOrPlural(part: string): boolean {
+  if (companyForm(part)) return false;
+  if (nounLeaf(part)) return true;
+  const lower = withoutPossessive(part).toLowerCase();
+  for (const suffix of ["en", "n", "e", "s"]) {
+    if (!lower.endsWith(suffix) || lower.length - suffix.length < 4) continue;
+    const stem = lower.slice(0, -suffix.length);
+    if (companyForm(stem)) return false;
+    if (nounLeaf(stem)) return true;
+  }
+  return false;
+}
+
+function verbStem(part: string): boolean {
+  if (part.length < 4 || companyForm(part)) return false;
+  if (DE_VERBS.has(part)) return true;
+  return part.length >= 4 && DE_VERBS.has(`${part}en`);
+}
+
+/** Alle Teile gewöhnliche Nomen. Ein Firmenteil gibt nie frei. */
+function ordinaryCompound(word: string, depth = 0): boolean {
+  const lower = withoutPossessive(word).toLowerCase();
+  if (lower.length < 4 || depth > 6 || companyForm(lower)) return false;
+  if (nounOrPlural(lower)) return true;
+  for (const suffix of COMPOUND_SUFFIXES) {
+    if (!lower.endsWith(suffix) || lower.length - suffix.length < 4) continue;
+    const rest = lower.slice(0, -suffix.length);
+    if (companyForm(rest)) continue;
+    if (nounOrPlural(rest) || verbStem(rest) || (rest.length >= 8 && ordinaryCompound(rest, depth + 1))) return true;
+  }
+  if (lower.length < 8) return false;
+  for (let endLen = lower.length - 4; endLen >= 4; endLen--) {
+    const end = lower.slice(lower.length - endLen);
+    const left = lower.slice(0, lower.length - endLen);
+    for (const fuge of COMPOUND_FUGEN) {
+      if (fuge && !left.endsWith(fuge)) continue;
+      const head = fuge ? left.slice(0, -fuge.length) : left;
+      if (head.length < 4) continue;
+      if (companyForm(head) || companyForm(end)) continue;
+      const headOk = nounOrPlural(head) || ordinaryCompound(head, depth + 1);
+      const endOk = nounOrPlural(end) || ordinaryCompound(end, depth + 1);
+      if (headOk && endOk) return true;
+    }
+  }
+  return false;
+}
+
+function packBlob(sheet: SpeechSheet): string {
+  return `${sheet.facts.map(fact => fact.spoken).join(" ")} ${sheet.context} ${(sheet.packNames ?? []).join(" ")} ${(sheet.realNames ?? []).join(" ")} ${(sheet.placeNames ?? []).join(" ")}`.toLowerCase();
+}
+
+function inPackFacts(clean: string, sheet: SpeechSheet): boolean {
+  if (clean.length < 2) return false;
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9äöüß])${escaped}(?:$|[^a-z0-9äöüß])`).test(packBlob(sheet));
+}
+
+function codeAllowed(token: string, sheet: SpeechSheet): boolean {
+  if (ALLOWED_CODE_RES.some(pattern => pattern.test(token))) return true;
+  if (!/\d/.test(token) || !/[A-Za-zÄÖÜäöüß]/.test(token)) return false;
+  return packBlob(sheet).includes(token.toLowerCase());
+}
+
+function nameShaped(token: string): boolean {
+  if (!token) return false;
+  if (/\d/.test(token)) return true;
+  if (/[a-zäöü][A-ZÄÖÜ]/.test(token)) return true;
+  return /^[A-ZÄÖÜ]/.test(token);
+}
+
+function noneTokenCleared(token: string, sheet: SpeechSheet): boolean {
+  const clean = withoutPossessive(token).toLowerCase();
+  if (!clean || !nameShaped(token)) return true;
+  if (codeAllowed(token, sheet)) return true;
+  if (releasedNames(sheet).has(clean) || inPackFacts(clean, sheet)) return true;
+  if (token.includes("-")) {
+    const parts = token.split("-").filter(Boolean);
+    if (parts.length > 1 && parts.every(part => noneTokenCleared(part, sheet))) return true;
+  }
+  if (companyForm(clean)) return false;
+  if (sheet.language === "en") return EN_COMMON.has(clean) || EN_LEXICON.has(clean);
+  if (DE_LEXICON.has(clean) || DE_CLOSED.has(clean)) return true;
+  return nounOrPlural(clean) || ordinaryCompound(clean);
+}
+
+function noneNameMiss(text: string, sheet: SpeechSheet): string | null {
+  for (const sentence of podcastSentences(text)) {
+    for (const word of sentence.split(/\s+/).filter(Boolean)) {
+      const token = tokenBody(word);
+      if (!token || noneTokenCleared(token, sheet)) continue;
+      return token;
+    }
+  }
+  return null;
+}
+
+function tokenBody(word: string): string {
+  return word.replace(/^[^A-Za-zÄÖÜäöüß0-9]+|[^A-Za-zÄÖÜäöüß0-9]+$/g, "");
+}
+
+function strayDigit(spoken: string, sheet: SpeechSheet): string | null {
+  for (const raw of spoken.split(/\s+/)) {
+    const token = tokenBody(raw);
+    if (!token || !/\d/.test(token) || codeAllowed(token, sheet)) continue;
+    return token.match(/\d+/)?.[0] ?? token;
+  }
+  return null;
 }
 
 /** Exakte Freigabe, kein Präfix. CEO und Kunden stehen hier nicht. */
@@ -1074,7 +1228,7 @@ const ARTICLE_SLOT = /\b(ein|eine|einem|einen|one|a|an)\s+\[\[(fy_yoy|wacc|g_sta
 const DOUBLED_UNIT = /\b(Dollar|Prozent|Euro|dollars|percent)\s+\1\b/i;
 const DATE_ARTICLE = /\b(?:Der|Die|Das|Den|The)\s+\[\[(?:as_of|call_date)\]\]/;
 
-export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet, entities?: string[] | null): ChapterVerdict {
+export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet, entities?: string[] | null, none = false): ChapterVerdict {
   const facts = factsForChapter(sheet, chapterId);
   const spoken = applyFactTokens(raw, sheet.facts).replace(/\s+/g, " ").trim();
   const reasons: string[] = [];
@@ -1084,7 +1238,8 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
     notes.push(`${code} ${word}`);
   };
   if (!spoken) reasons.push("empty");
-  if (/\d/.test(spoken)) note("digit", spoken.match(/\d+/)?.[0] ?? "digit");
+  const digit = spoken ? strayDigit(spoken, sheet) : null;
+  if (digit) note("digit", digit);
   if (/\[\[[a-z0-9_]+\]\]s\b/i.test(raw)) note("token", "genitive");
   if (/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/.test(spoken) || BARE_PLACEHOLDER.test(spoken)) {
     note("placeholder", spoken.match(/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/)?.[0] ?? "placeholder");
@@ -1102,6 +1257,10 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (company) {
     note("name", company.word);
     if (company.ambiguous) note("ambiguous", company.word);
+  }
+  if (none && spoken) {
+    const missed = noneNameMiss(spoken, sheet);
+    if (missed && !notes.some(item => item === `name ${missed}`)) note("name", missed);
   }
   const possessive = spoken ? possessiveNameHit(spoken, sheet) : null;
   if (possessive) note("name", possessive);
@@ -1499,7 +1658,6 @@ function entityField(
   const listed = entities.get(id);
   if (!Array.isArray(listed)) return { state: "missing", names: null };
   if (listed.length === 0 && !none) return { state: "missing", names: null };
-  if (listed.length === 0 && mentionsListedName(raw, sheet, id)) return { state: "missing", names: null };
   return { state: "ok", names: listed };
 }
 
@@ -1533,7 +1691,7 @@ export function seedDrafts(
       });
       continue;
     }
-    const verdict = verifyChapter(def.id, raw, sheet, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet)));
+    const verdict = verifyChapter(def.id, raw, sheet, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet)), none?.has(def.id) === true);
     drafts.push({
       id: def.id,
       attempts: 1,
@@ -1573,7 +1731,7 @@ export function applyRedo(
     }
     const priorListed = prior?.get(draft.id);
     const priorNames = Array.isArray(priorListed) ? priorListed : [];
-    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(priorNames, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet))));
+    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(priorNames, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet))), none?.has(draft.id) === true);
     return {
       id: draft.id,
       attempts: draft.attempts + 1,
@@ -1647,6 +1805,8 @@ function sheetFromHoldout(pack: HoldoutNamePack, language: PodcastLanguage, chap
   const facts: SpeechFact[] = [
     { id: "company", spoken: pack.company, source: "holdout.company" },
     ...pack.peers.slice(0, 3).map((name, index) => ({ id: `peer_${"abc"[index] ?? "a"}`, spoken: name, source: "holdout.peers" })),
+    ...pack.segments.map((name, index) => ({ id: `segment_${index}`, spoken: name, source: "holdout.segments" })),
+    ...pack.regions.map((name, index) => ({ id: `region_${index}`, spoken: name, source: "holdout.regions" })),
   ];
   for (const id of CHAPTER_FACT_IDS[chapterId] ?? []) {
     if (!facts.some(fact => fact.id === id)) facts.push({ id, spoken: slot, source: "holdout.slot" });
@@ -1679,15 +1839,17 @@ export function judgeHoldoutName(input: {
   modelNames?: string[];
 }): { ok: boolean; redo: boolean; reasons: string[]; notes: string[] } {
   const sheet = sheetFromHoldout(input.pack, input.language, input.chapterId);
-  if (input.column === "empty") {
+  if (input.column === "empty" || input.column === "none") {
     const source: StockPodcastSource = chaptersForSource("pdf").some(def => def.id === input.chapterId) ? "pdf" : "ki";
+    const none = input.column === "none";
     const drafts = seedDrafts(sheet, source, {
-      chapters: [{ id: input.chapterId, paragraph: input.text, entities: [] }],
-    }, new Map([[input.chapterId, []]]), new Set(), new Set());
+      chapters: [{ id: input.chapterId, paragraph: input.text, entities: [], ...(none ? { none: true } : {}) }],
+    }, new Map([[input.chapterId, []]]), new Set(), none ? new Set([input.chapterId]) : new Set());
     const draft = drafts.find(row => row.id === input.chapterId);
     const reasons = draft?.reasons ?? [];
     const notes = draft?.notes ?? [];
-    return { ok: reasons.length === 0, redo: reasons.includes("entities"), reasons, notes };
+    const redo = none ? reasons.length > 0 : reasons.includes("entities");
+    return { ok: reasons.length === 0, redo, reasons, notes };
   }
   const names = input.column === "list" ? (input.modelNames ?? []) : [];
   const verdict = verifyChapter(input.chapterId, input.text, sheet, names);

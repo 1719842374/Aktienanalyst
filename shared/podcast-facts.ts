@@ -321,6 +321,10 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const rawTicker = text(analysis.ticker) ?? pack.ticker;
   const silentTicker = isNumericTicker(rawTicker) ? rawTicker : null;
   const namedCompany = companyFromAnalysis(analysis, rawTicker);
+  const peers = Array.isArray(analysis.peerComparison?.peers) ? analysis.peerComparison.peers : [];
+  const peerTickers = peers
+    .map((peer: any) => text(peer?.ticker) ?? text(peer?.symbol))
+    .filter((name: string | null): name is string => !!name && !isNumericTicker(name));
   const segmentAndProjects = [
     ...(Array.isArray(analysis.keyProjects) ? analysis.keyProjects.map((p: any) => text(p)) : []),
   ].filter((t): t is string => !!t);
@@ -328,6 +332,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     silentTicker ? null : rawTicker,
     namedCompany,
     ...segmentAndProjects,
+    ...peerTickers,
   ].filter((t): t is string => !!t);
   const tokens = [
     silentTicker ? null : rawTicker,
@@ -408,7 +413,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     payloadTitles,
     newsTitles: news.map(item => item.title),
     upsideNames: upsides.map(row => row.name),
-    peerNames: (Array.isArray(analysis.peerComparison?.peers) ? analysis.peerComparison.peers : [])
+    peerNames: peers
       .map((peer: any) => text(peer?.name) ?? text(peer?.companyName))
       .filter((name: string | null): name is string => !!name),
     placeNames: collectPlaceNames(pack),
