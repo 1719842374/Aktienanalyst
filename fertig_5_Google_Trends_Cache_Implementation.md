@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Google Trends Cache – Implementierung im Code (Stand 2026-10-09)
 
 ## Ziel

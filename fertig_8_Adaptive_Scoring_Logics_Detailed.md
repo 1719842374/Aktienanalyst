@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Adaptive Scoring-Logiken – Detaillierte Erklärung
 
 ## Warum die aktuelle Logik nur teilweise adaptiv ist

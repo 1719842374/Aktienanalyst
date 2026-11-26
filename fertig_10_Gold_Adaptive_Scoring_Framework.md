@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Gold Adaptive Scoring Framework
 ## Vollständige Dokumentation (Stand 2026-10-11)
 

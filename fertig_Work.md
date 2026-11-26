@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Future Work — Offene Roadmap Stock Analyst Pro (Aktienanalyst)
 
 > **Stand: 19.08.2026**  

@@ -3,7 +3,7 @@
 > **Stand:** 17.08.2026  
 > **Status:** Spec fertig · Implementierung offen (Quick-Win ~1–2 h)  
 > **Referenz:** Chat 17.08.2026 (Amazon-Screenshot + Analyse der Segment-Pipeline)  
-> **Eintrag in:** [Future_Work.md](./Future_Work.md) §6
+> **Eintrag in:** [Future_Work.md](./fertig_Work.md) §6
 
 ---
 

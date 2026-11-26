@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Scoring-Logik – Adaptivität und historische Crashes (2001, 2008, 2022)
 
 ## Frage
