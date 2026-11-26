@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { currencyWord } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
-import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd, speakQuarterPhrase, speakYear } from "./podcast-speak";
+import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakNewsAge, speakNormalize, speakPercent, speakPriceUsd, speakQuarterPhrase, speakYear } from "./podcast-speak";
 
 export const PODCAST_PLACEHOLDERS = [
   "ticker", "company", "as_of", "currency_word", "statement_currency_word",
@@ -15,6 +15,7 @@ export const PODCAST_PLACEHOLDERS = [
   "entry", "crv", "quarter_yoy", "quarter_period_end", "ttm_revenue", "ttm_period_end",
   "top_segment", "top_segment_share", "call_date", "call_quarter", "catalyst_mode",
   "news_1", "news_2", "news_3", "news_age", "fy_yoy", "gj_year",
+  "fcf_margin", "netto_upside_1", "netto_upside_2", "netto_upside_3",
 ] as const;
 
 export type PodcastPlaceholder = (typeof PODCAST_PLACEHOLDERS)[number];
@@ -54,12 +55,17 @@ export const PLACEHOLDER_KIND: Record<PodcastPlaceholder, PlaceholderKind> = {
   news_age: "text",
   fy_yoy: "percent",
   gj_year: "name",
+  fcf_margin: "percent",
+  netto_upside_1: "percent",
+  netto_upside_2: "percent",
+  netto_upside_3: "percent",
 };
 
 const MODEL_FORBIDDEN = new Set<PodcastPlaceholder>([
   "price", "dcf_fair", "dcf_low", "dcf_high", "entry", "ttm_revenue",
   "as_of", "call_date", "quarter_period_end", "ttm_period_end",
   "call_quarter", "catalyst_mode", "currency_word", "statement_currency_word",
+  "news_1", "news_2", "news_3",
 ]);
 
 export function placeholderForbiddenInModel(name: PodcastPlaceholder): boolean {
@@ -86,6 +92,10 @@ export interface PodcastFacts {
   hasPorter: boolean;
   hasPestel: boolean;
   riskNames: string[];
+  /** Risiko- und News-Titel. Das Modell bekommt sie nur als Kontext, nicht als Satz. */
+  payloadTitles: string[];
+  /** Fiskalquartal oder der Hinweis, dass nur das zuletzt gemeldete Quartal vorliegt. */
+  reportedQuarterLine: string | null;
   proSeed: string | null;
   contraSeed: string | null;
   redactedContext: string;
@@ -163,7 +173,7 @@ function quarterOf(label: string | null): { q: number; year: number } | null {
 }
 
 function redact(textIn: string): string {
-  return textIn.replace(/\d+(?:[.,]\d+)?/g, "…").replace(/\s+/g, " ").trim();
+  return textIn.replace(/[<>%]/g, " ").replace(/\d+(?:[.,]\d+)?/g, "…").replace(/\s+/g, " ").trim();
 }
 
 function clip(textIn: string, max: number): string {
@@ -229,9 +239,10 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const brief = pack.earningsBrief;
   let earningsState: PodcastFacts["earningsState"] = "missing";
   let earningsNote: string | null = "Ein Earnings-Call-Transkript liegt nicht vor.";
-  let callQuarter: string | null = speakQuarterPhrase(reportedQuarter ?? "") ;
+  const fiscalFromLabel = speakQuarterPhrase(reportedQuarter ?? "");
+  let callQuarter: string | null = fiscalFromLabel;
   if (brief && brief.status === "ok" && brief.quarter && brief.year) {
-    callQuarter = speakQuarterPhrase(`Q${brief.quarter} GJ${brief.year}`);
+    callQuarter = speakQuarterPhrase(`Q${brief.quarter} GJ${brief.year}`) ?? fiscalFromLabel;
     const reportedQ = quarterOf(reportedQuarter);
     const briefIndex = brief.year * 4 + brief.quarter;
     const reportedIndex = reportedQ ? reportedQ.year * 4 + reportedQ.q : null;
@@ -245,13 +256,18 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
       earningsNote = null;
     }
   }
+  const reportedQuarterLine = callQuarter
+    ? `Zuletzt gemeldet wurde das ${callQuarter}.`
+    : (reportedQuarter ? "Das zuletzt gemeldete Quartal liegt vor." : null);
   const nextCallLine = nextCallIsFuture && nextCallSpoken
     ? `Der nächste Earnings Call ist für den ${nextCallSpoken} angekündigt.`
     : null;
   const source = analysis.catalystsSource === "llm" || analysis.llmMode === true ? "llm" : "generic";
   const mode = spokenCatalystMode(analysis);
   const risks = Array.isArray(analysis.risks) ? analysis.risks : [];
-  const riskNames = risks.map((r: any) => text(r?.name)).filter((n: string | null): n is string => !!n).slice(0, 3);
+  const riskNames: string[] = risks.map((r: any) => text(r?.name)).filter((n: string | null): n is string => !!n).slice(0, 3);
+  const upsides = catalystUpsides(analysis);
+  const fcfMargin = finite(analysis.fcfMargin) && analysis.fcfMargin !== 0 ? analysis.fcfMargin : null;
   const catalysts = Array.isArray(analysis.catalysts) ? analysis.catalysts : [];
   const tokens = [
     text(analysis.ticker) ?? pack.ticker,
@@ -287,13 +303,21 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     call_date: nextCallSpoken,
     call_quarter: callQuarter,
     catalyst_mode: mode,
-    news_1: news[0]?.title ?? null,
-    news_2: news[1]?.title ?? null,
-    news_3: news[2]?.title ?? null,
-    news_age: news.length ? `${speakAge(news[news.length - 1]!.ageDays)}` : null,
+    news_1: null,
+    news_2: null,
+    news_3: null,
+    news_age: news.length ? speakNewsAge(news[0]!.ageDays) : null,
     fy_yoy: fy == null ? null : speakPercent(fy),
     gj_year: gj,
+    fcf_margin: fcfMargin == null ? null : speakPercent(fcfMargin),
+    netto_upside_1: upsides[0] ? speakPercent(upsides[0].upside) : null,
+    netto_upside_2: upsides[1] ? speakPercent(upsides[1].upside) : null,
+    netto_upside_3: upsides[2] ? speakPercent(upsides[2].upside) : null,
   };
+  const payloadTitles = [...riskNames, ...news.map(item => item.title)];
+  const spokenRisks = riskNames
+    .map(name => speakNormalize(name))
+    .filter((name): name is string => !!name);
   const peerBanner = text(analysis.peerSet?.banner);
   const flags = Array.isArray(pack.thesisStrength?.flags) ? pack.thesisStrength.flags.map((f: any) => String(f)) : [];
   const sectorFlag = plainSectorFlag(flags.find((f: string) => /Sektor-Referenz nicht belastbar|GrowthEvidence|Peer-Gap fehlt/.test(f)) ?? null);
@@ -320,10 +344,25 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     hasPorter,
     hasPestel,
     riskNames,
+    payloadTitles,
+    reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,
-    contraSeed: values.entry ? `Der rechnerische Einstieg liegt bei ${values.entry}.` : (riskNames.length ? `Die genannten Risiken sind ${riskNames.join(", ")}.` : null),
-    redactedContext: buildContext(pack, values),
+    contraSeed: values.entry ? `Der rechnerische Einstieg liegt bei ${values.entry}.` : (spokenRisks.length ? `Die genannten Risiken sind ${spokenRisks.join(", ")}.` : null),
+    redactedContext: buildContext(pack, values, payloadTitles, upsides),
   };
+}
+
+function catalystUpsides(analysis: any): Array<{ name: string; upside: number }> {
+  const rows = Array.isArray(analysis?.catalysts) ? analysis.catalysts : [];
+  const out: Array<{ name: string; upside: number }> = [];
+  for (const row of rows) {
+    const name = text(row?.name);
+    const upside = finite(row?.nettoUpside) ? row.nettoUpside : null;
+    if (!name || upside == null || upside === 0) continue;
+    out.push({ name, upside });
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 function speakRoundedCrv(n: number): string {
@@ -331,14 +370,12 @@ function speakRoundedCrv(n: number): string {
   return spoken ?? "";
 }
 
-function speakAge(days: number): string {
-  if (days <= 0) return "weniger als einem Tag";
-  if (days === 1) return "einen Tag";
-  const word = speakPriceUsd(days, 3)?.replace(/ Dollar$/, "") ?? String(days);
-  return `${word} Tage`;
-}
-
-function buildContext(pack: FullAiPack, values: PodcastFactValues): string {
+function buildContext(
+  pack: FullAiPack,
+  values: PodcastFactValues,
+  titles: string[],
+  upsides: Array<{ name: string; upside: number }>,
+): string {
   const analysis = pack.analysis ?? {};
   const lines: string[] = [];
   const thesis = text(analysis.growthThesis);
@@ -369,7 +406,13 @@ function buildContext(pack: FullAiPack, values: PodcastFactValues): string {
   if (pack.earningsBrief?.status === "ok" && pack.earningsBrief.excerpt) {
     lines.push(`Earnings-Auszug: ${clip(pack.earningsBrief.excerpt, 700)}`);
   }
-  const available = (Object.keys(values) as PodcastPlaceholder[]).filter(k => values[k] != null);
+  titles.forEach((title, index) => {
+    lines.push(`Titel ${index + 1} nur als Kontext, auf Deutsch umschreiben, nicht vorlesen: ${clip(title, 180)}`);
+  });
+  upsides.forEach((row, index) => {
+    lines.push(`Katalysator ${index + 1}, Wert nur als {netto_upside_${index + 1}}, Name nur als Kontext: ${clip(row.name, 120)}`);
+  });
+  const available = (Object.keys(values) as PodcastPlaceholder[]).filter(k => values[k] != null && !placeholderForbiddenInModel(k));
   lines.push(`Platzhalter mit Wert: ${available.map(name => `{${name}}`).join(", ") || "keine"}`);
   return lines.join("\n");
 }

@@ -36,6 +36,8 @@ function shell(partial: Partial<PodcastFacts> & Pick<PodcastFacts, "values">): P
     hasPorter: true,
     hasPestel: true,
     riskNames: ["Konzentration"],
+    payloadTitles: [],
+    reportedQuarterLine: null,
     proSeed: "Ein Pro-Punkt liegt nicht vor.",
     contraSeed: "Die genannten Risiken sind Konzentration.",
     redactedContext: "These ohne Ziffern",
@@ -55,6 +57,7 @@ const values = {
   catalyst_mode: "Katalysatoren: generisch (Sektor)",
   news_1: null, news_2: null, news_3: null, news_age: null,
   fy_yoy: "einhundertvierzehn Prozent", gj_year: "2026",
+  fcf_margin: null, netto_upside_1: null, netto_upside_2: null, netto_upside_3: null,
 };
 
 function main() {
@@ -79,9 +82,9 @@ function main() {
 
   const spoken = applyPlaceholders("Das Umsatzwachstum im Geschäftsjahr {gj_year} beträgt {fy_yoy}.", facts, "umsatz");
   assert.ok(spoken);
-  assert.match(spoken!, /Geschäftsjahr 2026/);
+  assert.match(spoken!, /Geschäftsjahr zweitausendsechsundzwanzig/);
   assert.match(spoken!, /Prozent/);
-  assert.equal(/\d/.test(spoken!.replace(/2026/g, "")), false);
+  assert.equal(/\d/.test(spoken!), false);
   assert.equal(spoken!.includes("YTD"), false);
   ok("Code setzt Geschäftsjahr und Prozent ein, das Modell liefert nur Platzhalter");
 

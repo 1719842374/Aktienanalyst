@@ -6,7 +6,7 @@
 import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { PODCAST_DISCLAIMER } from "./podcast-types";
 import { PLACEHOLDER_KIND, PODCAST_PLACEHOLDERS, placeholderForbiddenInModel, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
-import { keepCompleteSentences } from "./podcast-speak";
+import { keepCompleteSentences, speakNormalize, spokenStillRaw } from "./podcast-speak";
 
 const PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
 const ALLOWED = new Set<string>(PODCAST_PLACEHOLDERS);
@@ -146,6 +146,47 @@ function nameUsedAsAmount(sentence: string): boolean {
   return /(?:stieg|steigt|steigen|auf)\s+\{top_segment\}/i.test(sentence);
 }
 
+const METRIC_NEEDS: ReadonlyArray<{ re: RegExp; placeholders: readonly string[] }> = [
+  { re: /Netto-?Upside/i, placeholders: ["netto_upside_1", "netto_upside_2", "netto_upside_3"] },
+  { re: /Umsatzwachstum/i, placeholders: ["fy_yoy"] },
+  { re: /FCF-Marge/i, placeholders: ["fcf_margin"] },
+  { re: /Scope[-\s]+Emissionen/i, placeholders: [] },
+  { re: /GLP-Technologie/i, placeholders: [] },
+];
+
+function metricWithoutPlaceholder(sentence: string): boolean {
+  for (const rule of METRIC_NEEDS) {
+    if (!rule.re.test(sentence)) continue;
+    if (rule.placeholders.length === 0) return true;
+    if (!rule.placeholders.some(name => sentence.includes(`{${name}}`))) return true;
+  }
+  return false;
+}
+
+const INTERNAL_NAME = /\b(?:RevWachstum|fcfMargin|nettoUpside|revenueGrowth|bruttoUpside|newsItems|lastReportedQuarter|growthThesis)\b|\b[a-zäöüß][a-zäöüß0-9]*[A-Z][A-Za-z0-9]*\b/;
+
+function copiesPayloadTitle(sentence: string, titles: readonly string[]): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/[^a-zäöüß]+/g, "");
+  const body = fold(speakNormalize(sentence) ?? sentence);
+  for (const title of titles) {
+    const folded = fold(speakNormalize(title) ?? title);
+    if (folded.length >= 16 && body.includes(folded)) return true;
+  }
+  return false;
+}
+
+const GERMAN_MARKER = new Set(["der", "die", "das", "ist", "sind", "liegt", "stammt", "und", "für", "fuer", "mit", "vom", "ein", "eine", "im", "am", "auf", "nicht", "bei", "den", "dem", "des", "wird", "wurde", "bleibt", "nennt"]);
+const ENGLISH_MARKER = new Set(["for", "the", "of", "and", "with", "prediction", "rejection", "under", "miss", "delays", "weight", "loss", "efficacy", "seats", "faces", "plan", "trail", "from"]);
+
+/** Englischer Payload-Titel ohne deutschen Satz. Der Code-Satz „Risiko:“ ist davon ausgenommen. */
+function looksLikeEnglishTitle(sentence: string): boolean {
+  const spoken = speakNormalize(sentence) ?? sentence;
+  const words = spoken.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 1);
+  if (words.some(word => GERMAN_MARKER.has(word))) return false;
+  const english = words.filter(word => ENGLISH_MARKER.has(word)).length;
+  return english >= 1 && words.length >= 3;
+}
+
 export function polishSpoken(text: string): string {
   let out = text.replace(/\s+/g, " ").trim();
   let prev = "";
@@ -159,7 +200,7 @@ export function polishSpoken(text: string): string {
 
 export function checkPodcastSentence(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): { ok: true } | { ok: false; reason: string } {
@@ -184,6 +225,18 @@ export function checkPodcastSentence(
   }
   if (origin === "model" && /GrowthEvidence|Katalysatoren:/i.test(raw)) return { ok: false, reason: "interne Zeile" };
   if (hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
+  if (origin === "model" && metricWithoutPlaceholder(raw)) return { ok: false, reason: "Kennzahl ohne Platzhalter" };
+  if (origin === "model" && INTERNAL_NAME.test(raw)) return { ok: false, reason: "interner Bezeichner" };
+  if (origin === "model" && /\{news_age\}\s+alt\b|weniger als einem Tag|einem Tag alt|einen Tag alt/i.test(raw)) {
+    return { ok: false, reason: "Alter ist schon eine Wendung" };
+  }
+  if (origin === "model" && /\b(?:Kurs|Fairwert|Einstieg)\b|faire[rn]?\s+Wert/i.test(raw)) {
+    return { ok: false, reason: "Kurs nur im Code-Satz" };
+  }
+  if (origin === "model" && /Quartal zum/i.test(raw)) return { ok: false, reason: "Meldedatum ist kein Quartalsende" };
+  if (origin === "model" && (copiesPayloadTitle(raw, facts.payloadTitles) || looksLikeEnglishTitle(raw))) {
+    return { ok: false, reason: "Rohtext" };
+  }
   if (origin === "code") return { ok: true };
   let rest = raw.replace(PLACEHOLDER_RE, " ");
   if (/[{}]/.test(rest)) return { ok: false, reason: "ungültige Klammer" };
@@ -196,7 +249,7 @@ export function checkPodcastSentence(
 
 export function applyPlaceholders(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): string | null {
@@ -213,8 +266,8 @@ export function applyPlaceholders(
   });
   if (missing) return null;
   const polished = polishSpoken(filled);
-  if (!polished || spokenLeaksPlaceholder(polished) || /\d{4}-\d{2}-\d{2}/.test(polished)) return null;
-  return polished;
+  if (!polished || spokenLeaksPlaceholder(polished)) return null;
+  return speakNormalize(polished);
 }
 
 export function balanceProContra(pro: string, contra: string): { pro: string; contra: string } {
@@ -238,6 +291,7 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
   switch (id) {
     case "einstieg":
       add("{ticker}, {company}. Stand vom {as_of}.");
+      if (v.price) add("Der Kurs steht bei {price}.");
       if (v.ampel) add("Die Ampel steht auf {ampel}.");
       else out.push("Die Ampel liegt nicht vor.");
       break;
@@ -261,6 +315,7 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
       break;
     case "s14":
       out.push(facts.hasPestel ? "Zur PESTEL-Lage liegt eine Einordnung vor." : "PESTEL liegt nicht vor.");
+      if (v.fcf_margin) add("Die FCF-Marge liegt bei {fcf_margin}.");
       break;
     case "dcf":
       if (v.dcf_fair) add("Der faire Wert liegt bei {dcf_fair}.");
@@ -279,31 +334,39 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
     case "s17":
       if (v.catalyst_mode) out.push(/[.!?]$/.test(v.catalyst_mode) ? v.catalyst_mode : `${v.catalyst_mode}.`);
       else out.push("Die Katalysatoren liegen nicht vor.");
+      if (v.netto_upside_1) add("Der Netto-Upside liegt bei {netto_upside_1}.");
+      if (v.netto_upside_2) add("Ein weiterer Netto-Upside liegt bei {netto_upside_2}.");
+      if (v.netto_upside_3) add("Ein weiterer Netto-Upside liegt bei {netto_upside_3}.");
       break;
     case "inversion":
       if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
       else out.push("Der rechnerische Einstieg liegt nicht vor.");
-      out.push(facts.riskNames.length ? `Die Inversion nennt ${facts.riskNames.join(" und ")}.` : "Die Inversion liegt nicht vor.");
+      {
+        const risks = facts.riskNames
+          .map(name => speakNormalize(name))
+          .filter((name): name is string => !!name)
+          .map(name => `Risiko: ${name}.`);
+        if (risks.length === 0) out.push("Die Inversion liegt nicht vor.");
+        else for (const line of risks) out.push(line);
+      }
       break;
     case "earnings":
       if (facts.earningsState === "ready" && v.call_quarter) add("Der letzte vorliegende Call ist {call_quarter}.");
       else if (facts.earningsState === "stale" && facts.earningsNote) out.push(facts.earningsNote);
       else {
         out.push("Ein Earnings-Call-Transkript liegt nicht vor.");
-        if (v.call_quarter) out.push(`Zuletzt gemeldet wurde das ${v.call_quarter}.`);
+        if (facts.reportedQuarterLine) out.push(facts.reportedQuarterLine);
       }
       if (facts.nextCallLine) out.push(facts.nextCallLine);
       else if (facts.callEstimated) out.push("Der nächste Termin ist geschätzt.");
       break;
     case "news":
-      if (v.news_1) add("Die jüngste Meldung ist {news_1}.");
-      if (v.news_2) add("Eine weitere Meldung ist {news_2}.");
-      if (v.news_3) add("Eine weitere Meldung ist {news_3}.");
-      if (v.news_age) add("Die älteste gesprochene Meldung ist {news_age} alt.");
-      if (!v.news_1) out.push("Im betrachteten Zeitfenster liegen keine Meldungen vor.");
+      if (v.news_age) add("Die jüngste Meldung stammt {news_age}.");
+      else out.push("Im betrachteten Zeitfenster liegen keine Meldungen vor.");
       break;
     case "news-llm":
-      out.push("Eine eigene News-Anknüpfung liegt nicht vor.");
+      if (v.news_age) add("Die jüngste Meldung stammt {news_age}.");
+      else out.push("Eine eigene News-Anknüpfung liegt nicht vor.");
       break;
     case "schluss":
       out.push(PODCAST_DISCLAIMER);
@@ -356,27 +419,41 @@ function completeModelSentences(sentences: string[]): string[] {
 
 function scrubSpoken(text: string): string {
   const parts = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
-  const kept = parts.map(part => {
-    if (/GrowthEvidence/i.test(part)) return "Die Sektor-Referenz ist nicht belastbar.";
-    if (spokenLeaksPlaceholder(part) || /\d{4}-\d{2}-\d{2}/.test(part)) return "Die Angabe liegt nicht vor.";
-    return polishSpoken(part);
-  });
+  const kept: string[] = [];
+  for (const part of parts) {
+    if (/GrowthEvidence/i.test(part)) {
+      kept.push("Die Sektor-Referenz ist nicht belastbar.");
+      continue;
+    }
+    if (spokenLeaksPlaceholder(part)) continue;
+    const normalized = speakNormalize(polishSpoken(part));
+    if (normalized) kept.push(normalized);
+  }
   return polishSpoken(kept.join(" ")).trim();
 }
 
 export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] {
   const blocked = modelData != null && scriptContainsForbiddenGrowth(JSON.stringify(modelData));
   const fromModel = blocked ? new Map<string, string[]>() : modelSentences(modelData);
-  const chapters = chaptersForSource(source).map(def => {
-    const fallback = fallbackSentences(def.id, facts);
-    const codeValues = fallback.flatMap(sentence => valuesOfPlaceholders(sentence, facts));
+  const planned = chaptersForSource(source).map(def => ({ def, fallback: fallbackSentences(def.id, facts) }));
+  const valuesByChapter = new Map(planned.map(item => [
+    item.def.id,
+    item.fallback.flatMap(sentence => valuesOfPlaceholders(sentence, facts)),
+  ]));
+  const chapters = planned.map(({ def, fallback }) => {
+    const ownValues = valuesByChapter.get(def.id) ?? [];
+    const foreignValues = Array.from(valuesByChapter.entries())
+      .filter(([id]) => id !== def.id)
+      .flatMap(([, values]) => values);
     const model = completeModelSentences(fromModel.get(def.id) ?? [])
       .filter(s => checkPodcastSentence(s, facts, def.id, "model").ok)
-      .filter(s => !repeatsCodeValue(s, facts, def.id, codeValues));
+      .filter(s => !repeatsCodeValue(s, facts, def.id, ownValues))
+      .filter(s => !repeatsCodeValue(s, facts, def.id, foreignValues));
+    const keepNews = def.id === "news-llm" && !!facts.values.news_age;
     const codeOnly = def.id === "schluss" || model.length === 0;
     const tagged = codeOnly
       ? fallback.map(text => ({ text, origin: "code" as const }))
-      : CODE_OWNED_CHAPTERS.has(def.id)
+      : CODE_OWNED_CHAPTERS.has(def.id) || keepNews
         ? [...fallback.map(text => ({ text, origin: "code" as const })), ...model.map(text => ({ text, origin: "model" as const }))]
         : model.map(text => ({ text, origin: "model" as const }));
     const spokenParts = tagged
@@ -415,12 +492,18 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
 
 export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: PodcastFacts): { systemPrompt: string; prompt: string } {
   const ids = chaptersForSource(source).map(c => `${c.id} (${c.title})`).join(", ");
-  const available = (Object.keys(facts.values) as PodcastPlaceholder[]).filter(k => facts.values[k] != null);
+  const available = (Object.keys(facts.values) as PodcastPlaceholder[])
+    .filter(k => facts.values[k] != null && !placeholderForbiddenInModel(k));
   const systemPrompt = [
     "Du schreibst ein deutsches Podcast-Transkript als JSON.",
     "Antworte nur mit {\"chapters\":[{\"id\":string,\"sentences\":string[]}]}.",
     "Keine Ziffer, kein Zahlwort mit Einheit, kein YTD, kein seit Jahresbeginn.",
     "Zahlen nur als Platzhalter in geschweiften Klammern, zum Beispiel {fy_yoy}. Den Namen ohne Klammern nie schreiben. Fehlt ein Platzhalter in der Liste, nutze ihn nicht.",
+    "Eine Kennzahl nennst du nur zusammen mit ihrem Platzhalter: Umsatzwachstum mit {fy_yoy}, die FCF-Marge mit {fcf_margin}, den Netto-Upside mit {netto_upside_1}. Ohne diesen Platzhalter nennst du die Kennzahl nicht.",
+    "Keine internen Namen wie RevWachstum und keine camelCase-Feldnamen.",
+    "Englische Überschriften nicht abschreiben. Formuliere den Inhalt auf Deutsch. Titel im Kontext sind nur Hintergrund.",
+    "Das Alter einer Meldung steht fertig in {news_age}: von heute, von gestern oder vor drei Tagen. Schreibe: Die jüngste Meldung stammt {news_age}. Nicht: weniger als einem Tag alt. Nicht: einen Tag alt.",
+    "Kurs, fairer Wert und Einstieg schreibt nur der Code. Das Quartal ist ein Fiskalquartal oder das zuletzt gemeldete Quartal, nie das Meldedatum.",
     "Erfinde keine Kennzahl. Ein Satz ohne belegten Platzhalter sagt nichts Zahlenhaftes.",
     facts.catalystGeneric ? "Katalysatoren sind generisch. Nenne sie nicht firmenspezifisch." : "Katalysatoren dürfen als KI-firmenspezifisch bezeichnet werden.",
   ].join(" ");
@@ -436,7 +519,7 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
 }
 
 export function spokenHasDigits(chapters: StockPodcastChapter[]): boolean {
-  return chapters.some(c => /\d/.test(c.spoken.replace(/S&P 500|\bS\d{1,2}\b|\bQ[1-4]\b|\b(?:GJ|FY)\d{4}\b|\b(?:19|20)\d{2}\b|\b\d+-nm\b|\bH100\b|\bB200\b/g, "")));
+  return chapters.some(c => spokenStillRaw(c.spoken));
 }
 
 export function placeholderValues(values: PodcastFactValues): PodcastFactValues {

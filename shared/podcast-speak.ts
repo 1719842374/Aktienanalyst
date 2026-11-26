@@ -157,15 +157,73 @@ export function speakYear(year: number): string {
   return speakUnsigned(year);
 }
 
-/** Fiskalquartal oder „Quartal zum …“, nur in Worten. Roh-ISO wird nicht zurückgegeben. */
+/** Fiskalquartal in Worten. Ein ISO-Datum ist das Meldedatum, nicht das Quartalsende. */
 export function speakQuarterPhrase(raw: string): string | null {
   const fiscal = /Q\s*([1-4])\b(?:\s*(?:FY|GJ)\s*((?:19|20)\d{2}))?/i.exec(raw);
   if (fiscal?.[2]) return `Quartal ${speakUnsigned(Number(fiscal[1]))} im Geschäftsjahr ${speakYear(Number(fiscal[2]))}`;
   if (fiscal) return `Quartal ${speakUnsigned(Number(fiscal[1]))}`;
-  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-  if (!iso) return null;
-  const spoken = speakIsoDate(`${iso[1]}-${iso[2]}-${iso[3]}`, "dat");
-  return spoken ? `Quartal zum ${spoken}` : null;
+  return null;
+}
+
+/** Fertige Altersphrase. Der Satz heißt „stammt von heute“, nicht „ist weniger als einem Tag alt“. */
+export function speakNewsAge(days: number): string {
+  if (!Number.isFinite(days) || days <= 0) return "von heute";
+  if (Math.trunc(days) === 1) return "von gestern";
+  return `vor ${speakUnsigned(Math.trunc(days))} Tagen`;
+}
+
+const CAMEL_CASE = /\b[a-zäöüß][a-zäöüß0-9]*[A-Z][A-Za-z0-9]*\b/;
+
+/** true, wenn der Endtext noch Ziffern, <, >, % oder camelCase enthält. */
+export function spokenStillRaw(text: string): boolean {
+  return /\d/.test(text) || /[<>%]/.test(text) || CAMEL_CASE.test(text);
+}
+
+function speakCount(raw: string): string | null {
+  const n = Number(raw.replace(",", "."));
+  if (!Number.isFinite(n) || Math.abs(n) >= 1_000_000) return null;
+  const spoken = Number.isInteger(n) ? speakInt(n) : speakRounded(n, 3);
+  if (!spoken || /\d/.test(spoken)) return null;
+  return spoken;
+}
+
+/**
+ * Letzter Schritt für jeden gesprochenen Satz, Code und Modell.
+ * Zahlen, Jahre, Prozent, <, >, K, M und Mrd sowie Bindestrich-Zahlen werden Worte.
+ * Bleibt danach Rohtext stehen, ist der Satz unbrauchbar.
+ */
+export function speakNormalize(text: string): string | null {
+  let out = text.normalize("NFKC");
+  const swap = (pattern: RegExp, to: (num: string, extra?: string) => string | null) => {
+    out = out.replace(pattern, (full: string, num: string, extra?: string) => to(num, extra) ?? full);
+  };
+  swap(/<\s*(\d+(?:[.,]\d+)?)\s*%/g, num => {
+    const spoken = speakPercent(Number(num.replace(",", ".")));
+    return spoken ? `unter ${spoken}` : null;
+  });
+  swap(/>\s*(\d+(?:[.,]\d+)?)\s*%/g, num => {
+    const spoken = speakPercent(Number(num.replace(",", ".")));
+    return spoken ? `über ${spoken}` : null;
+  });
+  swap(/(\d+(?:[.,]\d+)?)\s*%/g, num => speakPercent(Number(num.replace(",", "."))));
+  swap(/(\d+(?:[.,]\d+)?)\s*(Mrd|Mio|M|K)\b/gi, (num, unit) => {
+    const spoken = speakCount(num);
+    if (!spoken || !unit) return null;
+    const key = unit.toLowerCase();
+    const word = key === "mrd" ? "Milliarden" : key === "k" ? "Tausend" : "Millionen";
+    return `${spoken} ${word}`;
+  });
+  out = out.replace(/\b((?:19|20)\d{2})\b/g, (_full, year: string) => speakYear(Number(year)));
+  out = out.replace(/\b([A-Za-zÄÖÜäöüß]{2,})-(\d{1,2})\b/g, (full, prefix: string, num: string) => {
+    const word = speakUnsigned(Number(num));
+    if (!word || /\d/.test(word)) return full;
+    if (prefix === prefix.toUpperCase() && /[A-ZÄÖÜ]/.test(prefix)) return `${prefix}-${word}`;
+    return `${prefix} ${word}`;
+  });
+  out = out.replace(/\b(\d+(?:[.,]\d+)?)\b/g, (full, num: string) => speakCount(num) ?? full);
+  out = out.replace(/\s+/g, " ").trim();
+  if (!out || spokenStillRaw(out)) return null;
+  return out;
 }
 
 export function priceLabelDe(n: number | null): string | null {
