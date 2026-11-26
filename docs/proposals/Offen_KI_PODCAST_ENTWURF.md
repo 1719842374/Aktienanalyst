@@ -29,12 +29,12 @@ Diesen Pfad nicht zum Aktien-Button ausbauen. Anderes Publikum, anderer Cache, d
 
 ### Offene PRs, die spätere Baudateien berühren
 
-#435 und #464 sind auf Philips Entscheidung vom 26.11. geschlossen. Die übrigen Zeilen nicht mergen und nicht als Ist behandeln.
+#435 und #464 bleiben offen, nicht mergen (Philip 26.11.2026 13:11). Grund: Philip kann nicht beurteilen, ob dort OpenRouter benutzt wurde, und der Player saß dort an der falschen Stelle. Die übrigen Zeilen nicht mergen und nicht als Ist behandeln.
 
 | PR | Bezug | Folge für diesen Entwurf |
 |---|---|---|
-| [#435](https://github.com/1719842374/Aktienanalyst/pull/435) `cursor/stock-podcast-player-a101` | Aktien-Player, Piper, `POST /api/stock-podcast/:symbol`, Browser-Fallback. Skript lässt das Modell Zahlen schreiben. Cache-Key ist Ticker+Quartal, nicht der Hash der Kennzahlen. Liegt in Section 2, nicht an der g*-Zeile | Auf Philips Entscheidung vom 26.11. geschlossen. Schließen übernimmt die GitHub-Lane. Dieser Entwurf schließt die PR nicht |
-| [#464](https://github.com/1719842374/Aktienanalyst/pull/464) `cursor/podcast-browser-speech-428a` | `speechSynthesis` für den Researcher-Podcast | Auf Philips Entscheidung vom 26.11. geschlossen. Schließen übernimmt die GitHub-Lane. Dieser Entwurf schließt die PR nicht |
+| [#435](https://github.com/1719842374/Aktienanalyst/pull/435) `cursor/stock-podcast-player-a101` | Aktien-Player, Piper, `POST /api/stock-podcast/:symbol`, Browser-Fallback. Skript lässt das Modell Zahlen schreiben. Cache-Key ist Ticker+Quartal, nicht der Hash der Kennzahlen. Liegt in Section 2, nicht an der g*-Zeile | Bleiben offen, nicht mergen (Philip 26.11.2026 13:11). Grund: Philip kann nicht beurteilen, ob dort OpenRouter benutzt wurde, und der Player saß dort an der falschen Stelle |
+| [#464](https://github.com/1719842374/Aktienanalyst/pull/464) `cursor/podcast-browser-speech-428a` | `speechSynthesis` für den Researcher-Podcast | Bleiben offen, nicht mergen (Philip 26.11.2026 13:11). Grund: Philip kann nicht beurteilen, ob dort OpenRouter benutzt wurde, und der Player saß dort an der falschen Stelle |
 | [#475](https://github.com/1719842374/Aktienanalyst/pull/475) | `ExecSummaryCard.tsx`, `server/exec-summary.ts` | Gleicher Slot wie der Player. Vor einem Bau gegen den dann aktuellen `main` lesen |
 | [#491](https://github.com/1719842374/Aktienanalyst/pull/491), [#492](https://github.com/1719842374/Aktienanalyst/pull/492) | Section 2, #492 zusätzlich `Dashboard.tsx` und ein noch nicht auf `main` liegendes `server/segment-gap-route.ts` | Segment-Lücken sind nicht die Umsatzquelle des Podcasts |
 
@@ -393,7 +393,7 @@ Folgerung für Audio:
 1. Platz: Desktop rechts neben der g*-Zeile, Mobile per Flex-Wrap darunter. Look offen bis Designer-Mock und Philips OK. Vor diesem OK kein Bauauftrag (Abnahme, Gate).
 2. TTS: bestehender `OPENROUTER_API_KEY`, `POST /api/v1/audio/speech`. Kein neuer Key, keine neue Env-Variable. Tagesobergrenze und 429 wie in C6.
 3. Umsatz: Geschäftsjahres-Wachstum aus `revenueGrowth` (`analyze-route.ts` 688–693), gesprochen als „Geschäftsjahr“. „liegt nicht vor“ nur, wenn der Vorjahresumsatz fehlt. „Hauptumsatzträger liegt nicht vor“ bleibt bei fehlenden Segmenten.
-4. #435 und #464: auf Philips Entscheidung vom 26.11. geschlossen. Die GitHub-Lane schließt sie. Dieser Entwurf schließt keine PR.
+4. #435 und #464 bleiben offen, nicht mergen (Philip 26.11.2026 13:11). Grund: Philip kann nicht beurteilen, ob dort OpenRouter benutzt wurde, und der Player saß dort an der falschen Stelle.
 
 Offen bleibt nur die Mock-Freigabe des Looks.
 
