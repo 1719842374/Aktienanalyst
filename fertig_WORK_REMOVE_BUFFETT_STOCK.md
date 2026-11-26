@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), main fdb162c4, Beleg client/src/pages/RecessionDashboard.tsx:196 BuffettRatioPanel. Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # WORK – Buffett-Indikator aus Aktien-Dashboard entfernen
 
 **Stand:** 27.10.2026  
