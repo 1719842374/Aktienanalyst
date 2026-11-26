@@ -65,7 +65,7 @@ const MODEL_FORBIDDEN = new Set<PodcastPlaceholder>([
   "price", "dcf_fair", "dcf_low", "dcf_high", "entry", "ttm_revenue",
   "as_of", "call_date", "quarter_period_end", "ttm_period_end",
   "call_quarter", "catalyst_mode", "currency_word", "statement_currency_word",
-  "news_1", "news_2", "news_3",
+  "news_1", "news_2", "news_3", "crv",
 ]);
 
 export function placeholderForbiddenInModel(name: PodcastPlaceholder): boolean {
@@ -94,8 +94,12 @@ export interface PodcastFacts {
   riskNames: string[];
   /** Ticker, Firma, Segment, Katalysator- und Produktnamen. Beim Einsetzen geschützt. */
   protectedNames: string[];
-  /** Risiko- und News-Titel. Das Modell bekommt sie nur als Kontext, nicht als Satz. */
+  /** Risiko-, News- und Katalysator-Titel. Das Modell bekommt sie nur als Kontext. */
   payloadTitles: string[];
+  /** Namen der Katalysatoren mit Netto-Upside, parallel zu netto_upside_1..3. */
+  upsideNames: string[];
+  /** Numerischer Börsenkürzel, der nie gesprochen wird. */
+  silentTicker: string | null;
   /** Fiskalquartal oder der Hinweis, dass nur das zuletzt gemeldete Quartal vorliegt. */
   reportedQuarterLine: string | null;
   proSeed: string | null;
@@ -258,9 +262,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
       earningsNote = null;
     }
   }
-  const reportedQuarterLine = callQuarter
-    ? `Zuletzt gemeldet wurde das ${callQuarter}.`
-    : (reportedQuarter ? "Das zuletzt gemeldete Quartal liegt vor." : null);
+  const reportedQuarterLine = callQuarter ? `Zuletzt gemeldet wurde das ${callQuarter}.` : null;
   const nextCallLine = nextCallIsFuture && nextCallSpoken
     ? `Der nächste Earnings Call ist für den ${nextCallSpoken} angekündigt.`
     : null;
@@ -272,28 +274,28 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const fcfMargin = finite(analysis.fcfMargin) && analysis.fcfMargin !== 0 ? analysis.fcfMargin : null;
   const catalysts = Array.isArray(analysis.catalysts) ? analysis.catalysts : [];
   const rawTicker = text(analysis.ticker) ?? pack.ticker;
-  const rawCompany = text(analysis.companyName);
-  const speakTicker = !/^\d{3,}(?:\.[A-Za-z]{1,4})?$/.test(rawTicker);
+  const silentTicker = isNumericTicker(rawTicker) ? rawTicker : null;
+  const namedCompany = companyFromAnalysis(analysis, rawTicker);
   const productNames = [
     ...catalysts.map((c: any) => text(c?.name)),
     segment?.name ?? null,
     ...(Array.isArray(analysis.keyProjects) ? analysis.keyProjects.map((p: any) => text(p)) : []),
   ].filter((t): t is string => !!t);
   const protectedNames = [
-    speakTicker ? rawTicker : null,
-    rawCompany,
+    silentTicker ? null : rawTicker,
+    namedCompany,
     ...productNames,
   ].filter((t): t is string => !!t);
   const tokens = [
-    rawTicker,
-    rawCompany,
+    silentTicker ? null : rawTicker,
+    namedCompany,
     ...productNames,
     ...riskNames,
   ].filter((t): t is string => !!t);
   const moneyWord = reported === "USD" || fx != null ? "Dollar" : currencyWord(reported);
   const values: PodcastFactValues = {
-    ticker: speakTicker ? rawTicker : null,
-    company: rawCompany ?? (speakTicker ? rawTicker : null),
+    ticker: silentTicker ? null : rawTicker,
+    company: namedCompany ?? "das Unternehmen",
     as_of: speakIsoDate(asOf.iso, "dat"),
     currency_word: moneyWord,
     statement_currency_word: moneyWord,
@@ -360,11 +362,39 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     riskNames,
     protectedNames,
     payloadTitles,
+    upsideNames: upsides.map(row => row.name),
+    silentTicker,
     reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,
     contraSeed: values.entry ? `Der rechnerische Einstieg liegt bei ${values.entry}.` : (spokenRisks.length ? `Die genannten Risiken sind ${spokenRisks.join(", ")}.` : null),
     redactedContext: buildContext(pack, values, payloadTitles, upsides),
   };
+}
+
+function isNumericTicker(ticker: string): boolean {
+  return /^\d{3,}(?:\.[A-Za-z]{1,4})?$/.test(ticker.trim());
+}
+
+function sameSymbol(a: string, b: string): boolean {
+  return a.trim().toUpperCase() === b.trim().toUpperCase();
+}
+
+/** Profilname, nie der Börsenkürzel selbst. Analyze setzt companyName sonst auf den Ticker. */
+function companyFromAnalysis(analysis: any, ticker: string): string | null {
+  const candidates = [
+    analysis?.companyName,
+    analysis?.name,
+    analysis?.shortName,
+    analysis?.longName,
+    analysis?.profile?.companyName,
+    analysis?.profile?.name,
+  ];
+  for (const raw of candidates) {
+    const name = text(raw);
+    if (!name || name === ticker || isNumericTicker(name) || (isNumericTicker(ticker) && sameSymbol(name, ticker))) continue;
+    return name;
+  }
+  return null;
 }
 
 function catalystUpsides(analysis: any): Array<{ name: string; upside: number }> {
@@ -393,6 +423,14 @@ function buildContext(
 ): string {
   const analysis = pack.analysis ?? {};
   const lines: string[] = [];
+  const sector = text(analysis.sector);
+  const industry = text(analysis.industry);
+  lines.push([
+    `Firma: ${values.company ?? "das Unternehmen"}.`,
+    sector ? `Sektor: ${sector}.` : "",
+    industry ? `Branche: ${industry}.` : "",
+    "Einen numerischen Börsenkürzel nicht schreiben und kein s an einen Namen hängen.",
+  ].filter(Boolean).join(" "));
   const thesis = text(analysis.growthThesis);
   if (thesis) lines.push(`These: ${clip(thesis, 500)}`);
   const forces = analysis.moatAssessment?.porterForces;

@@ -16,7 +16,7 @@ export type StockPodcastStage = "analyze" | "script" | "audio";
  */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v9";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v10";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
 

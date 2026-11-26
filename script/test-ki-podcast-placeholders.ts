@@ -38,6 +38,8 @@ function shell(partial: Partial<PodcastFacts> & Pick<PodcastFacts, "values">): P
     riskNames: ["Konzentration"],
     protectedNames: partial.protectedNames ?? ["NVDA", "NVIDIA", "H100"],
     payloadTitles: [],
+    upsideNames: partial.upsideNames ?? [],
+    silentTicker: partial.silentTicker ?? null,
     reportedQuarterLine: null,
     proSeed: "Ein Pro-Punkt liegt nicht vor.",
     contraSeed: "Die genannten Risiken sind Konzentration.",

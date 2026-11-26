@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { buildPodcastFacts } from "../shared/podcast-facts";
-import { assemblePodcastChapters, checkPodcastSentence } from "../shared/podcast-script";
+import { assemblePodcastChapters, buildPodcastLlmPrompt, checkPodcastSentence } from "../shared/podcast-script";
 import { speakNormalize } from "../shared/podcast-speak";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 
@@ -141,7 +141,8 @@ function main() {
   const blockedSpoken = assemblePodcastChapters("ki", blocked, {
     chapters: [{ id: "s17", sentences: rejected }],
   }).map(c => c.spoken).join(" ");
-  assert.equal(/30Mrd|USD500|EUR250|FY27|5x|NVIDIA2025|30B|ramp \+/.test(blockedSpoken), false, blockedSpoken);
+  assert.equal(/30Mrd|USD500|EUR250|\bFY27\b|5x|NVIDIA2025/.test(blockedSpoken), false, blockedSpoken);
+  assert.match(blockedSpoken, /Katalysator Blackwell Q3 2025 ramp \+40% to 30B: Der Netto-Upside liegt bei/);
   ok("Die sieben Modellsätze mit Zahl, Einheit oder Währung kommen nicht ins Audio");
 
   const kept = "NVIDIA nutzt H100, B200, GB200, A17, Microsoft 365 und den S&P 500 im Quartal Q4.";
@@ -163,6 +164,85 @@ function main() {
   const fallback = assemblePodcastChapters("ki", risk, null).find(c => c.id === "inversion")?.spoken ?? "";
   assert.match(fallback, /Risiko: Export controls/);
   ok("Deutscher Inversionssatz ersetzt den englischen Risiko-Fallback");
+
+  const toyota = listed("7203.T", "7203.T", {
+    sector: "Consumer Cyclical",
+    industry: "Auto Manufacturers",
+    crv: -0.2,
+    newsItems: [{ title: "Output update", pubDate: "2026-11-19T00:00:00.000Z" }],
+    catalysts: [{ name: "Hybrid demand", nettoUpside: 4 }],
+    growthThesis: "Hybride bleiben der Kern.",
+    lastReportedQuarter: "2026-11-17",
+    nextEarningsDate: "2027-02-10",
+  });
+  assert.equal(toyota.values.ticker, null);
+  assert.equal(toyota.values.company, "das Unternehmen");
+  assert.equal(toyota.silentTicker, "7203.T");
+  const toyotaModel = {
+    chapters: [
+      { id: "einstieg", sentences: ["7203.Ts liefert weiter."] },
+      { id: "s13", sentences: ["7203.Ts liefert weiter.", "Die jüngste Meldung stammt von vor sieben Tagen."] },
+      { id: "s17", sentences: ["7203.T im Jahr 2025 und 2026."] },
+      { id: "news-llm", sentences: ["Die jüngste Meldung stammt von vor sieben Tagen."] },
+      { id: "these", sentences: ["Eine Investmentthese liegt vor."] },
+      { id: "inversion", sentences: ["IRA-Subventionen für Stahlproduktion und Grünstahl bleiben der Kontext."] },
+    ],
+  };
+  const toyotaSpoken = [
+    ...assemblePodcastChapters("pdf", toyota, toyotaModel),
+    ...assemblePodcastChapters("ki", toyota, toyotaModel),
+  ].map(c => c.spoken).join(" ");
+  assert.equal(/7203|siebentausend/.test(toyotaSpoken), false, toyotaSpoken);
+  assert.match(toyotaSpoken, /das Unternehmen/);
+  assert.match(toyotaSpoken, /Katalysator Hybrid demand: Der Netto-Upside liegt bei/);
+  const toyotaNews = assemblePodcastChapters("ki", toyota, toyotaModel).find(c => c.id === "news-llm")?.spoken ?? "";
+  assert.equal((toyotaNews.match(/Die jüngste Meldung stammt von vor sieben Tagen/g) ?? []).length, 1, toyotaNews);
+  assert.equal(/Eine Investmentthese liegt vor|zuletzt gemeldete Quartal liegt vor/.test(toyotaSpoken), false);
+  const toyotaPrompt = buildPodcastLlmPrompt("ki", toyota);
+  assert.match(toyotaPrompt.prompt, /Firma: das Unternehmen/);
+  assert.match(toyotaPrompt.prompt, /Sektor: Consumer Cyclical/);
+  assert.match(toyotaPrompt.prompt, /Branche: Auto Manufacturers/);
+  assert.equal(toyotaPrompt.prompt.includes("7203"), false);
+  const named = listed("7203.T", "Toyota Motor Corporation", { sector: "Consumer Cyclical", industry: "Auto Manufacturers" });
+  assert.match(assemblePodcastChapters("pdf", named, null).map(c => c.spoken).join(" "), /Toyota Motor Corporation/);
+  ok("7203.T ohne Profilname heißt das Unternehmen und der Kürzel wird nicht gesprochen");
+
+  const mmmCrv = listed("MMM", "3M Company", { crv: -0.312, dcfFairValue: 90, maxEntryCrv3: 110 });
+  assert.equal(checkPodcastSentence("Das Forward-KGV von {crv}x bleibt offen.", mmmCrv, "dcf", "model").ok, false);
+  assert.equal(checkPodcastSentence("Der Kapitalwert-Rendite-Multiplikator liegt bei {crv}.", mmmCrv, "dcf", "model").ok, false);
+  const mmmDcf = assemblePodcastChapters("pdf", mmmCrv, {
+    chapters: [{ id: "dcf", sentences: ["Das Forward-KGV von {crv}x bleibt offen."] }],
+  }).find(c => c.id === "dcf")?.spoken ?? "";
+  assert.match(mmmDcf, /Das Chance-Risiko-Verhältnis liegt bei/);
+  assert.equal(/zweix|Forward-KGV|Kapitalwert-Rendite|\bx\b/.test(mmmDcf), false, mmmDcf);
+  ok("CRV steht nur im Code-Satz und ohne x");
+
+  const ebayInc = listed("EBAY", "eBay Inc.");
+  const ebaySpoken = assemblePodcastChapters("pdf", ebayInc, {
+    chapters: [{ id: "einstieg", sentences: ["eBay Inc.s Marktplatz bleibt offen."] }],
+  }).map(c => c.spoken).join(" ");
+  assert.match(ebaySpoken, /eBay Inc\./);
+  assert.equal(/Inc\.\./.test(ebaySpoken), false, ebaySpoken);
+  assert.equal(/eBay Inc\.s/.test(ebaySpoken), false, ebaySpoken);
+  const nvoName = listed("NVO", "Novo Nordisk A/S");
+  const nvoSpoken = assemblePodcastChapters("ki", nvoName, {
+    chapters: [{ id: "s13", sentences: ["Novo Nordisk A/Ss Pipeline bleibt der Kern."] }],
+  }).map(c => c.spoken).join(" ");
+  assert.match(nvoSpoken, /Novo Nordisk A\/S /);
+  assert.equal(/A\/Ss/.test(nvoSpoken), false, nvoSpoken);
+  ok("Namen behalten keinen Genitiv-s und keinen doppelten Punkt");
+
+  for (const packFacts of [toyota, mmmCrv, ebayInc, nvoName, named]) {
+    const chapters = assemblePodcastChapters("pdf", packFacts, null);
+    const spoken = chapters.map(c => c.spoken).join(" ");
+    for (const chapter of chapters) {
+      const sentences = chapter.spoken.split(/(?<=[.!?])\s+/).filter(Boolean);
+      assert.equal(new Set(sentences).size, sentences.length, `${chapter.id}: ${chapter.spoken}`);
+    }
+    if (packFacts.silentTicker) assert.equal(spoken.includes(packFacts.silentTicker), false);
+    assert.equal(/(?<!nicht )liegt vor\./.test(spoken), false, spoken);
+  }
+  ok("Echte Pack-Form: kein numerischer Ticker, kein leeres liegt vor, kein doppelter Satz");
 
   console.log(`ki-podcast names: ${n} checks ok`);
 }

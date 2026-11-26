@@ -109,8 +109,7 @@ function main() {
     ],
   });
   for (const chapter of nvoKi) assertNoLeak(`NVO ${chapter.id}`, chapter.spoken);
-  assert.match(nvoKi.find(c => c.id === "s14")?.spoken ?? "", /PESTEL/);
-  assert.equal(nvoKi.find(c => c.id === "s14")?.spoken.includes("fy_yoy"), false);
+  assert.equal(/fy_yoy|Einordnung vor/.test(nvoKi.find(c => c.id === "s14")?.spoken ?? ""), false);
   assert.match(nvoKi.find(c => c.id === "earnings")?.spoken ?? "", /liegt nicht vor/);
   assert.match(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "", /Geschäftsjahr zweitausendsechsundzwanzig/);
   assert.equal(/\d/.test(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "1"), false);

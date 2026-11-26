@@ -64,7 +64,7 @@ function main() {
 
   const msft = factsOf(baseAnalysis);
   assert.equal(msft.values.call_quarter, null);
-  assert.equal(msft.reportedQuarterLine, "Das zuletzt gemeldete Quartal liegt vor.");
+  assert.equal(msft.reportedQuarterLine, null);
   assert.equal((msft.reportedQuarterLine ?? "").includes("2026-10-28"), false);
   assert.match(msft.nextCallLine ?? "", /für den siebenundzwanzigsten Januar/);
   assert.equal(msft.nextCallLine?.includes("2027-01-27"), false);
@@ -89,8 +89,7 @@ function main() {
   assert.match(spoken("earnings"), /Ein Earnings-Call-Transkript liegt nicht vor/);
   assert.match(spoken("earnings"), /Der nächste Earnings Call ist für den siebenundzwanzigsten Januar/);
   assert.equal(/war am/.test(spoken("earnings")), false);
-  assert.match(spoken("earnings"), /Das zuletzt gemeldete Quartal liegt vor/);
-  assert.equal(/Quartal zum|Oktober/.test(spoken("earnings")), false);
+  assert.equal(/Das zuletzt gemeldete Quartal liegt vor|Quartal zum|Oktober/.test(spoken("earnings")), false);
   assert.equal(/\d/.test(spoken("earnings")), false);
   assert.equal(spoken("umsatz").includes("beträgt Dollar"), false);
   assert.match(spoken("umsatz"), /Umsatzwachstum im Geschäftsjahr/);
@@ -167,7 +166,7 @@ function main() {
   assert.equal(nvdaEarnings.includes("2026-10-28"), false);
   assert.equal(/\d/.test(nvdaEarnings), false);
   assert.equal(/fand am|Quartal zum|Oktober/.test(nvdaEarnings), false);
-  assert.match(nvdaEarnings, /Das zuletzt gemeldete Quartal liegt vor/);
+  assert.equal(/Das zuletzt gemeldete Quartal liegt vor/.test(nvdaEarnings), false);
   ok("NVDA: künftiger Call wird angekündigt, das Meldedatum wird nicht zum Quartalsende");
 
   console.log(`ki-podcast insertion: ${n} checks ok`);

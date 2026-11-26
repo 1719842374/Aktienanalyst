@@ -169,7 +169,7 @@ export function speakQuarterPhrase(raw: string): string | null {
 export function speakNewsAge(days: number): string {
   if (!Number.isFinite(days) || days <= 0) return "von heute";
   if (Math.trunc(days) === 1) return "von gestern";
-  return `vor ${speakUnsigned(Math.trunc(days))} Tagen`;
+  return `von vor ${speakUnsigned(Math.trunc(days))} Tagen`;
 }
 
 /** Trennt einen eingesetzten Eigennamen vom Normalisierer. */

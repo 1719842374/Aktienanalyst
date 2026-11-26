@@ -126,7 +126,7 @@ function main() {
   assert.equal(speakNormalize("Prediction for 2027.")?.includes("2027"), false);
   assert.equal(speakNewsAge(0), "von heute");
   assert.equal(speakNewsAge(1), "von gestern");
-  assert.equal(speakNewsAge(3), "vor drei Tagen");
+  assert.equal(speakNewsAge(3), "von vor drei Tagen");
   ok("speakNormalize macht Ziffern, Prozent, 5M und Bindestrich-Zahlen zu Worten");
 
   const nvo = factsOf(base("NVO", "Novo Nordisk", {
@@ -198,8 +198,7 @@ function main() {
 
   const filing = factsOf(base("NVO", "Novo Nordisk", { lastReportedQuarter: "2026-11-17" }));
   const filingEarnings = assemblePodcastChapters("ki", filing, badModel("Oral GLP-1 faces FDA Rejection 2025.")).find(c => c.id === "earnings")?.spoken ?? "";
-  assert.match(filingEarnings, /Das zuletzt gemeldete Quartal liegt vor/);
-  assert.equal(/Quartal zum|siebzehnten|November/.test(filingEarnings), false, filingEarnings);
+  assert.equal(/Das zuletzt gemeldete Quartal liegt vor|Quartal zum|siebzehnten|November/.test(filingEarnings), false, filingEarnings);
   const yoy = filing.values.fy_yoy ?? "";
   assert.ok(yoy.length >= 12);
   assert.equal(filingEarnings.includes(yoy), false, filingEarnings);
@@ -220,8 +219,8 @@ function main() {
   ok("Einstieg nennt bei vorhandenem Kurs mehr als den Stand");
 
   const prompt = buildPodcastLlmPrompt("ki", nvo);
-  assert.match(prompt.systemPrompt, /von heute, von gestern oder vor drei Tagen/);
-  assert.match(prompt.systemPrompt, /stammt \{news_age\}/);
+  assert.match(prompt.systemPrompt, /von heute, von gestern oder von vor drei Tagen/);
+  assert.match(prompt.systemPrompt, /Diesen Satz nicht wiederholen/);
   assert.match(prompt.prompt, /nicht vorlesen/);
   assert.equal(prompt.prompt.includes("2025"), false);
   assert.equal(prompt.prompt.includes("<"), false);

@@ -212,7 +212,7 @@ export function polishSpoken(text: string): string {
 
 export function checkPodcastSentence(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames" | "silentTicker">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): { ok: true } | { ok: false; reason: string } {
@@ -236,7 +236,7 @@ export function checkPodcastSentence(
     return { ok: false, reason: "Platzhalter passt nicht zum Satz" };
   }
   if (origin === "model" && /GrowthEvidence|Katalysatoren:/i.test(raw)) return { ok: false, reason: "interne Zeile" };
-  if (hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
+  if (origin === "model" && hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
   if (origin === "model" && metricWithoutPlaceholder(raw)) return { ok: false, reason: "Kennzahl ohne Platzhalter" };
   if (origin === "model" && INTERNAL_NAME.test(stripTokens(raw.replace(PLACEHOLDER_RE, " "), facts.protectedNames ?? []))) {
     return { ok: false, reason: "interner Bezeichner" };
@@ -248,6 +248,18 @@ export function checkPodcastSentence(
     return { ok: false, reason: "Kurs nur im Code-Satz" };
   }
   if (origin === "model" && /Quartal zum/i.test(raw)) return { ok: false, reason: "Meldedatum ist kein Quartalsende" };
+  if (origin === "model" && /\b(?:crv|Forward-KGV|KGV|Kapitalwert-Rendite)\b/i.test(raw)) {
+    return { ok: false, reason: "CRV nur im Code-Satz" };
+  }
+  if (origin === "model" && /(?:\d|zwei|drei|vier|fünf|sechs|sieben|acht|neun|null|eins)\s*x\b/i.test(raw)) {
+    return { ok: false, reason: "x-Suffix" };
+  }
+  if (origin === "model" && /liegt vor\.?$/.test(raw) && !/liegt nicht vor/.test(raw) && !/\{[a-z0-9_]+\}/.test(raw)) {
+    return { ok: false, reason: "ohne Inhalt" };
+  }
+  if (origin === "model" && facts.silentTicker && new RegExp(`\\b${facts.silentTicker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?\\b`, "i").test(raw)) {
+    return { ok: false, reason: "numerischer Ticker" };
+  }
   if (origin === "model" && (copiesPayloadTitle(raw, facts.payloadTitles) || looksLikeEnglishTitle(raw))) {
     return { ok: false, reason: "Rohtext" };
   }
@@ -263,7 +275,7 @@ export function checkPodcastSentence(
 
 export function applyPlaceholders(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames" | "silentTicker">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): string | null {
@@ -280,7 +292,8 @@ export function applyPlaceholders(
     return value;
   });
   if (missing) return null;
-  const guarded = guardNames(filled, facts.protectedNames ?? []);
+  const hidden = hideSilentTicker(filled, facts.silentTicker, facts.values.company ?? "das Unternehmen");
+  const guarded = guardNames(hidden, facts.protectedNames ?? []);
   const polished = polishSpoken(guarded);
   if (!polished || spokenLeaksPlaceholder(unguard(polished))) return null;
   const spoken = speakNormalize(polished);
@@ -296,6 +309,40 @@ export function balanceProContra(pro: string, contra: string): { pro: string; co
   return { pro: complete, contra };
 }
 
+function hideSilentTicker(text: string, ticker: string | null, company: string): string {
+  if (!ticker) return text;
+  const escaped = ticker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`\\b${escaped}s?\\b`, "gi"), company);
+}
+
+function stripGluedGenitive(text: string, names: readonly string[]): string {
+  let out = text;
+  const sorted = Array.from(new Set(names.map(name => name.trim()).filter(name => name.length >= 2)))
+    .sort((a, b) => b.length - a.length);
+  for (const name of sorted) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(${escaped})s(?![A-Za-zÄÖÜäöüß])`, "g"), "$1");
+  }
+  return out;
+}
+
+function dedupeSentences(text: string): string {
+  const parts = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of parts) {
+    if (seen.has(part)) continue;
+    seen.add(part);
+    kept.push(part);
+  }
+  return kept.join(" ");
+}
+
+function withoutEmptyPresence(sentence: string): boolean {
+  if (/liegt nicht vor/.test(sentence)) return true;
+  return !/liegt (?:eine |ein )?[A-Za-zÄÖÜäöüß-]+ vor\.?$/.test(sentence);
+}
+
 function durationSec(spoken: string): number {
   const words = spoken.split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.round((words / 140) * 60));
@@ -308,21 +355,21 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
     if (checkPodcastSentence(sentence, facts, id, "code").ok) out.push(sentence);
   };
   switch (id) {
-    case "einstieg":
+    case "einstieg": {
       if (v.ticker && v.company) add("{ticker}, {company}. Stand vom {as_of}.");
       else if (v.company) add("{company}. Stand vom {as_of}.");
       else if (v.ticker) add("{ticker}. Stand vom {as_of}.");
-      else out.push("Der Name liegt nicht vor.");
       if (v.price) add("Der Kurs steht bei {price}.");
       if (v.ampel) add("Die Ampel steht auf {ampel}.");
       else out.push("Die Ampel liegt nicht vor.");
       break;
+    }
     case "zusammenfassung":
       if (v.price) add("Der Kurs steht bei {price}.");
       else out.push("Der Kurs liegt nicht vor.");
       break;
     case "these":
-      out.push(facts.hasThesis ? "Eine Investmentthese liegt vor." : "Die These liegt nicht vor.");
+      if (!facts.hasThesis) out.push("Die These liegt nicht vor.");
       break;
     case "umsatz":
       if (v.fy_yoy && v.gj_year) add("Das Umsatzwachstum im Geschäftsjahr {gj_year} beträgt {fy_yoy}.");
@@ -333,10 +380,10 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
       if (facts.segmentPeriodMissing) out.push("Die Periode des Segments liegt nicht vor.");
       break;
     case "s13":
-      out.push(facts.hasPorter ? "Zu Moat und Porter liegt eine Einordnung vor." : "Moat und Porter liegen nicht vor.");
+      if (!facts.hasPorter) out.push("Moat und Porter liegen nicht vor.");
       break;
     case "s14":
-      out.push(facts.hasPestel ? "Zur PESTEL-Lage liegt eine Einordnung vor." : "PESTEL liegt nicht vor.");
+      if (!facts.hasPestel) out.push("PESTEL liegt nicht vor.");
       if (v.fcf_margin) add("Die FCF-Marge liegt bei {fcf_margin}.");
       break;
     case "dcf":
@@ -356,9 +403,10 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
     case "s17":
       if (v.catalyst_mode) out.push(/[.!?]$/.test(v.catalyst_mode) ? v.catalyst_mode : `${v.catalyst_mode}.`);
       else out.push("Die Katalysatoren liegen nicht vor.");
-      if (v.netto_upside_1) add("Der Netto-Upside liegt bei {netto_upside_1}.");
-      if (v.netto_upside_2) add("Ein weiterer Netto-Upside liegt bei {netto_upside_2}.");
-      if (v.netto_upside_3) add("Ein weiterer Netto-Upside liegt bei {netto_upside_3}.");
+      (facts.upsideNames ?? []).forEach((name, index) => {
+        const key = (["netto_upside_1", "netto_upside_2", "netto_upside_3"] as const)[index];
+        if (name && key && v[key]) add(`Katalysator ${name}: Der Netto-Upside liegt bei {${key}}.`);
+      });
       break;
     case "inversion":
       if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
@@ -396,7 +444,7 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
     default:
       out.push("Das Kapitel liegt nicht vor.");
   }
-  return out.filter(s => s.trim().length > 0);
+  return out.filter(s => s.trim().length > 0 && withoutEmptyPresence(s.trim()));
 }
 
 function modelSentences(data: unknown): Map<string, string[]> {
@@ -451,7 +499,12 @@ function scrubSpoken(text: string): string {
     const normalized = speakNormalize(polishSpoken(part));
     if (normalized) kept.push(normalized);
   }
-  return unguard(polishSpoken(kept.join(" ")).trim());
+  return unguard(kept.join(" ").trim());
+}
+
+function finishSpoken(text: string, facts: PodcastFacts): string {
+  const hidden = hideSilentTicker(text, facts.silentTicker, facts.values.company ?? "das Unternehmen");
+  return polishSpoken(dedupeSentences(stripGluedGenitive(hidden, facts.protectedNames ?? [])));
 }
 
 export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] {
@@ -481,10 +534,10 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     const spokenParts = tagged
       .map(part => applyPlaceholders(part.text, facts, def.id, part.origin))
       .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
-    let spoken = scrubSpoken(spokenParts.join(" ").trim()) || "Die Angabe liegt nicht vor.";
+    let spoken = finishSpoken(scrubSpoken(spokenParts.join(" ").trim()), facts) || "Die Angabe liegt nicht vor.";
     if (def.id === "umsatz" && !/Geschäftsjahr/.test(spoken)) {
       const fiscal = applyPlaceholders(fallbackSentences("umsatz", facts)[0] ?? "", facts, "umsatz", "code");
-      if (fiscal) spoken = scrubSpoken(`${fiscal} ${spoken}`);
+      if (fiscal) spoken = finishSpoken(scrubSpoken(`${fiscal} ${spoken}`), facts);
     }
     if (def.id === "schluss" && !spoken.includes(PODCAST_DISCLAIMER)) spoken = `${spoken} ${PODCAST_DISCLAIMER}`.trim();
     return {
@@ -524,8 +577,10 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
     "Eine Kennzahl nennst du nur zusammen mit ihrem Platzhalter: Umsatzwachstum mit {fy_yoy}, die FCF-Marge mit {fcf_margin}, den Netto-Upside mit {netto_upside_1}. Ohne diesen Platzhalter nennst du die Kennzahl nicht.",
     "Keine internen Namen wie RevWachstum und keine camelCase-Feldnamen.",
     "Englische Überschriften nicht abschreiben. Formuliere den Inhalt auf Deutsch. Titel im Kontext sind nur Hintergrund.",
-    "Das Alter einer Meldung steht fertig in {news_age}: von heute, von gestern oder vor drei Tagen. Schreibe: Die jüngste Meldung stammt {news_age}. Nicht: weniger als einem Tag alt. Nicht: einen Tag alt.",
-    "Kurs, fairer Wert und Einstieg schreibt nur der Code. Das Quartal ist ein Fiskalquartal oder das zuletzt gemeldete Quartal, nie das Meldedatum.",
+    "Das Alter einer Meldung schreibt der Code einmal: Die jüngste Meldung stammt von heute, von gestern oder von vor drei Tagen. Diesen Satz nicht wiederholen.",
+    "Kurs, fairer Wert, Einstieg und das Chance-Risiko-Verhältnis schreibt nur der Code. Kein x hinter eine Kennzahl, kein Forward-KGV, keine Kapitalwert-Rendite.",
+    "Risiken fasst du auf Deutsch zusammen. Den englischen Titel nicht kopieren und kein s an einen Eigennamen hängen.",
+    "Eine andere Firma und einen anderen Sektor nicht erfinden. Ein numerisches Börsenkürzel nicht schreiben.",
     "Erfinde keine Kennzahl. Ein Satz ohne belegten Platzhalter sagt nichts Zahlenhaftes.",
     facts.catalystGeneric ? "Katalysatoren sind generisch. Nenne sie nicht firmenspezifisch." : "Katalysatoren dürfen als KI-firmenspezifisch bezeichnet werden.",
   ].join(" ");
