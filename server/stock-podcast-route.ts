@@ -10,9 +10,11 @@ import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import {
   PODCAST_DISCLAIMER,
   PODCAST_PROMPT_VERSION,
+  PODCAST_STAGE_TIMEOUT_MS,
   type StockPodcastErrorCode,
   type StockPodcastScriptResponse,
   type StockPodcastSource,
+  type StockPodcastStageTimings,
   resolveStockPodcastVoice,
 } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts } from "../shared/podcast-facts";
@@ -94,6 +96,8 @@ function httpFor(code: StockPodcastErrorCode): number {
     case "NO_API_KEY":
     case "LLM_UNAVAILABLE":
       return 503;
+    case "BAD_REQUEST":
+      return 400;
     default: {
       const _never: never = code;
       return _never;
@@ -101,11 +105,20 @@ function httpFor(code: StockPodcastErrorCode): number {
   }
 }
 
+function stageTimings(analyzeMs: number, scriptMs: number): StockPodcastStageTimings {
+  return {
+    analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
+    script: { elapsedMs: scriptMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script },
+    audio: { timeoutMs: PODCAST_STAGE_TIMEOUT_MS.audio },
+  };
+}
+
 function successBody(opts: {
   ticker: string;
   source: StockPodcastSource;
   pack: FullAiPack;
   packCached: boolean;
+  stages: StockPodcastStageTimings;
   script: Awaited<ReturnType<typeof renderStockPodcastScript>> & { ok: true };
 }): StockPodcastScriptResponse {
   const voice = resolveStockPodcastVoice(opts.script.voice);
@@ -124,6 +137,7 @@ function successBody(opts: {
     packCached: opts.packCached,
     promptVersion: PODCAST_PROMPT_VERSION,
     disclaimer: PODCAST_DISCLAIMER,
+    stages: opts.stages,
   };
 }
 
@@ -136,7 +150,7 @@ export async function handleStockPodcastScript(
     const first = parsed.error.issues[0];
     return {
       http: 400,
-      body: errorBody("LLM_UNAVAILABLE", `Ungültige Anfrage: ${first?.path.join(".") || "body"} ${first?.message ?? ""}`.trim().slice(0, 200), "script"),
+      body: errorBody("BAD_REQUEST", `Ungültige Anfrage: ${first?.path.join(".") || "body"} ${first?.message ?? ""}`.trim().slice(0, 200), "script"),
     };
   }
   const ticker = parsed.data.ticker.toUpperCase();
@@ -158,6 +172,7 @@ export async function handleStockPodcastScript(
   }
 
   const regenerate = parsed.data.regenerate === true;
+  const analyzeStarted = Date.now();
   const peeked = !regenerate ? peekPodcastPack(ticker, now) : null;
   let counted = false;
   let pack = peeked;
@@ -178,6 +193,8 @@ export async function handleStockPodcastScript(
     packCached = result.packCached;
   }
   if (regenerate) dropPodcastScripts(ticker, day);
+  const analyzeMs = Date.now() - analyzeStarted;
+  const scriptStarted = Date.now();
 
   const facts = buildPodcastFacts(pack, now);
   const factsHash = hashPodcastFacts(facts.values);
@@ -191,6 +208,7 @@ export async function handleStockPodcastScript(
         source,
         pack,
         packCached,
+        stages: stageTimings(analyzeMs, Date.now() - scriptStarted),
         script: {
           ok: true,
           cacheKey: scriptHit.entry.cacheKey,
@@ -220,7 +238,7 @@ export async function handleStockPodcastScript(
       body: errorBody("LLM_UNAVAILABLE", "KI-Podcast n/a — LLM nicht erreichbar.", "script", ticker, source),
     };
   }
-  return { http: 200, body: successBody({ ticker, source, pack, packCached, script: rendered }) };
+  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted), script: rendered }) };
 }
 
 export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandlerDeps): void {
@@ -257,7 +275,7 @@ export async function handleStockPodcastAudio(
   const cacheKey = typeof query.cacheKey === "string" ? query.cacheKey : "";
   const voice = resolveStockPodcastVoice(typeof query.voice === "string" ? query.voice : undefined);
   if (!chapterId || !ticker || !source || !cacheKey) {
-    return { ok: false, http: 400, body: errorBody("LLM_UNAVAILABLE", "Ungültige Audio-Anfrage.", "audio", ticker || undefined, source ?? undefined) };
+    return { ok: false, http: 400, body: errorBody("BAD_REQUEST", "Ungültige Audio-Anfrage.", "audio", ticker || undefined, source ?? undefined) };
   }
   const script = peekPodcastScript(cacheKey);
   const chapter = script?.chapters.find(c => c.id === chapterId);

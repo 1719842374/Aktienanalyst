@@ -179,3 +179,10 @@ export function rankAfterRounding(values: RankedFigures): { ok: boolean; sig: 3 
   if (pairs(4)) return { ok: true, sig: 4 };
   return { ok: false, sig: 4 };
 }
+
+/** Behält nur Sätze, die mit Punkt, Ausrufe- oder Fragezeichen enden. Ein abgeschnittenes Wort fällt weg. */
+export function keepCompleteSentences(text: string): string {
+  const parts = text.match(/[^.!?]*[.!?]+/g);
+  if (!parts) return "";
+  return parts.map(s => s.trim()).filter(Boolean).join(" ");
+}

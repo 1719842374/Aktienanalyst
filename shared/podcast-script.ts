@@ -6,10 +6,13 @@
 import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { PODCAST_DISCLAIMER } from "./podcast-types";
 import { PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
+import { keepCompleteSentences } from "./podcast-speak";
 
 const PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
 const ALLOWED = new Set<string>(PODCAST_PLACEHOLDERS);
 
+const BARE_PLACEHOLDER = new RegExp(`\\b(?:${PODCAST_PLACEHOLDERS.join("|")})\\b`, "i");
+const SNAKE_PLACEHOLDER = new RegExp(`\\b(?:${PODCAST_PLACEHOLDERS.filter(name => name.includes("_")).join("|")})\\b`, "i");
 const NUMBER_WORD = /^(?:null|eins|ein|eine|einen|einem|einer|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf|dreizehn|vierzehn|fünfzehn|fuenfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig|dreißig|dreissig|vierzig|fünfzig|fuenfzig|sechzig|siebzig|achtzig|neunzig|hundert|tausend|(?:ein|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun)?und(?:zwanzig|dreißig|dreissig|vierzig|fünfzig|fuenfzig|sechzig|siebzig|achtzig|neunzig))$/i;
 const UNIT = /^(?:prozent|milliarden|millionen|dollar|euro|us-dollar|prozentpunkte|punkte|mal|quartale)$/i;
 const BANNED = /\b(hälfte|haelfte|drittel|viertel|verdoppelt|verdreifacht|halbiert)\b|\b[A-Za-zÄÖÜäöüß]*fach\b/i;
@@ -39,6 +42,7 @@ export const KI_PODCAST_CHAPTERS: ChapterDef[] = [
   { id: "s17", title: "Katalysatoren", llmOwned: false },
   { id: "s13", title: "Moat und Porter", llmOwned: false },
   { id: "s14", title: "PESTEL", llmOwned: false },
+  { id: "umsatz", title: "Umsatz", llmOwned: false },
   { id: "inversion", title: "Inversion", llmOwned: false },
   { id: "earnings", title: "Earnings Call", llmOwned: false },
   { id: "news-llm", title: "News-Anknüpfung (LLM-eigen)", llmOwned: true },
@@ -109,6 +113,15 @@ function stripTokens(text: string, tokens: string[]): string {
   return out;
 }
 
+function hasBarePlaceholder(text: string): boolean {
+  return BARE_PLACEHOLDER.test(text.replace(PLACEHOLDER_RE, " "));
+}
+
+/** Nach dem Einsetzen: geschweifte Reste und nackte snake_case-Namen dürfen nicht gesprochen werden. */
+export function spokenLeaksPlaceholder(text: string): boolean {
+  return /\{[a-z0-9_]+\}/i.test(text) || SNAKE_PLACEHOLDER.test(text);
+}
+
 export function checkPodcastSentence(sentence: string, facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">, chapterId = ""): { ok: true } | { ok: false; reason: string } {
   const raw = sentence.trim();
   if (!raw) return { ok: false, reason: "leer" };
@@ -123,6 +136,7 @@ export function checkPodcastSentence(sentence: string, facts: Pick<PodcastFacts,
     const value = facts.values[name as PodcastPlaceholder];
     if (value == null || value.trim() === "") return { ok: false, reason: `Platzhalter ohne Wert ${name}` };
   }
+  if (hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
   let rest = raw.replace(PLACEHOLDER_RE, " ");
   if (/[{}]/.test(rest)) return { ok: false, reason: "ungültige Klammer" };
   rest = stripTokens(rest, facts.tokens);
@@ -139,10 +153,9 @@ export function applyPlaceholders(sentence: string, facts: Pick<PodcastFacts, "v
 
 export function balanceProContra(pro: string, contra: string): { pro: string; contra: string } {
   if (contra.length >= pro.length) return { pro, contra };
-  const slice = pro.slice(0, contra.length);
-  const punct = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
-  const next = punct >= 0 ? slice.slice(0, punct + 1).trim() : slice.trim();
-  return { pro: next, contra };
+  const complete = keepCompleteSentences(pro.slice(0, contra.length));
+  if (!complete) return { pro, contra };
+  return { pro: complete, contra };
 }
 
 function durationSec(spoken: string): number {
@@ -164,7 +177,7 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
       break;
     case "zusammenfassung":
       if (facts.proSeed) out.push(facts.proSeed);
-      else out.push("Ein Pro-Punkt liegt nicht vor.");
+      else out.push("Der Kurs liegt nicht vor.");
       break;
     case "these":
       out.push(facts.hasThesis ? "Eine Investmentthese liegt vor." : "Die These liegt nicht vor.");
@@ -185,11 +198,15 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
       break;
     case "dcf":
       if (v.dcf_fair) add("Der faire Wert liegt bei {dcf_fair}.");
+      else out.push("Der faire Wert liegt nicht vor.");
       if (v.g_star) add("Das implizite Wachstum liegt bei {g_star}.");
+      else out.push("Das implizite Wachstum liegt nicht vor.");
       if (v.wacc) add("Der Kapitalkostensatz liegt bei {wacc}.");
+      else out.push("Der Kapitalkostensatz liegt nicht vor.");
       if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
+      else if (!v.entry) out.push("Der rechnerische Einstieg liegt nicht vor.");
       if (v.crv) add("Das Chance-Risiko-Verhältnis liegt bei {crv}.");
-      if (!v.dcf_fair && !v.g_star && !v.wacc && !v.entry) out.push("Bewertungszahlen liegen nicht vor.");
+      else out.push("Das Chance-Risiko-Verhältnis liegt nicht vor.");
       if (facts.peerBanner) out.push(facts.peerBanner);
       if (facts.sectorFlag) out.push(facts.sectorFlag);
       break;
@@ -241,16 +258,38 @@ function modelSentences(data: unknown): Map<string, string[]> {
   return map;
 }
 
+const CODE_OWNED_CHAPTERS = new Set(["zusammenfassung", "dcf", "umsatz", "earnings", "s17"]);
+
+function completeModelSentences(sentences: string[]): string[] {
+  return sentences.flatMap(sentence => {
+    const complete = keepCompleteSentences(sentence);
+    if (!complete) return [];
+    return complete.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
+  });
+}
+
+function scrubSpoken(text: string): string {
+  const parts = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
+  const kept = parts.map(part => (spokenLeaksPlaceholder(part) ? "liegt nicht vor." : part));
+  return kept.join(" ").trim();
+}
+
 export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] {
   const blocked = modelData != null && scriptContainsForbiddenGrowth(JSON.stringify(modelData));
   const fromModel = blocked ? new Map<string, string[]>() : modelSentences(modelData);
   const chapters = chaptersForSource(source).map(def => {
-    const model = (fromModel.get(def.id) ?? []).filter(s => checkPodcastSentence(s, facts, def.id).ok);
-    const chosen = model.length > 0 && def.id !== "schluss" ? model : fallbackSentences(def.id, facts);
+    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(s => checkPodcastSentence(s, facts, def.id).ok);
+    const fallback = fallbackSentences(def.id, facts);
+    const chosen = def.id === "schluss" || model.length === 0
+      ? fallback
+      : CODE_OWNED_CHAPTERS.has(def.id)
+        ? [...fallback, ...model]
+        : model;
     const spokenParts = chosen
       .map(s => applyPlaceholders(s, facts, def.id))
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
-    let spoken = spokenParts.join(" ").trim() || "Das Kapitel liegt nicht vor.";
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map(s => (spokenLeaksPlaceholder(s) ? "liegt nicht vor." : s));
+    let spoken = scrubSpoken(spokenParts.join(" ").trim()) || "Das Kapitel liegt nicht vor.";
     if (def.id === "umsatz" && !/Geschäftsjahr/.test(spoken)) {
       const fiscal = applyPlaceholders(fallbackSentences("umsatz", facts)[0] ?? "", facts, "umsatz");
       if (fiscal) spoken = `${fiscal} ${spoken}`.trim();
@@ -292,14 +331,14 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
     "Du schreibst ein deutsches Podcast-Transkript als JSON.",
     "Antworte nur mit {\"chapters\":[{\"id\":string,\"sentences\":string[]}]}.",
     "Keine Ziffer, kein Zahlwort mit Einheit, kein YTD, kein seit Jahresbeginn.",
-    "Zahlen nur als Platzhalter aus der erlaubten Liste. Fehlt ein Platzhalter in der Liste, nutze ihn nicht.",
+    "Zahlen nur als Platzhalter in geschweiften Klammern, zum Beispiel {fy_yoy}. Den Namen ohne Klammern nie schreiben. Fehlt ein Platzhalter in der Liste, nutze ihn nicht.",
     "Erfinde keine Kennzahl. Ein Satz ohne belegten Platzhalter sagt nichts Zahlenhaftes.",
     facts.catalystGeneric ? "Katalysatoren sind generisch. Nenne sie nicht firmenspezifisch." : "Katalysatoren dürfen als KI-firmenspezifisch bezeichnet werden.",
   ].join(" ");
   const prompt = [
     `Quelle: ${source}.`,
     `Kapitel in dieser Reihenfolge: ${ids}.`,
-    `Erlaubte Platzhalter mit vorhandenem Wert: ${available.join(", ") || "keine"}.`,
+    `Erlaubte Platzhalter mit vorhandenem Wert: ${available.map(name => `{${name}}`).join(", ") || "keine"}.`,
     "Kontext, Ziffern entfernt:",
     facts.redactedContext || "kein Zusatzkontext",
     "Das Schlusskapitel bleibt kurz. Der Disclaimer wird vom Code angehängt.",

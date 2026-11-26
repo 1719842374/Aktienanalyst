@@ -71,6 +71,8 @@ function main() {
   assert.equal(checkPodcastSentence("Umsatz YTD", facts).ok, false);
   assert.equal(checkPodcastSentence("Unbekannt {foo}", facts).ok, false);
   assert.equal(checkPodcastSentence("Quartal {quarter_yoy}", facts).ok, false);
+  assert.equal(checkPodcastSentence("Der Termin ist call_date und call_quarter.", facts).ok, false);
+  assert.equal(checkPodcastSentence("Wachstum fy_yoy im Jahr gj_year.", facts).ok, false);
   assert.equal(checkPodcastSentence("Die Liste ist firmenspezifisch.", facts, "s17").ok, false);
   ok("Validator lässt Produktnamen durch und lehnt Ziffern, Zahlwörter, YTD und leere Platzhalter ab");
 

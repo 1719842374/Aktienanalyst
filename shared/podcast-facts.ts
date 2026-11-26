@@ -4,11 +4,10 @@
  * Fremdwährung wird vor der Sprechform in USD gerechnet, wenn ein Kurs vorliegt.
  */
 import { createHash } from "node:crypto";
-import { catalystsModeLabel } from "./bias-fixes";
 import { currencyWord } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
-import { priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd } from "./podcast-speak";
+import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd } from "./podcast-speak";
 
 export const PODCAST_PLACEHOLDERS = [
   "ticker", "company", "as_of", "currency_word", "statement_currency_word",
@@ -122,7 +121,20 @@ function redact(textIn: string): string {
 
 function clip(textIn: string, max: number): string {
   const clean = redact(textIn);
-  return clean.length <= max ? clean : `${clean.slice(0, max)}…`;
+  if (clean.length <= max) return clean;
+  return keepCompleteSentences(clean.slice(0, max));
+}
+
+function spokenCatalystMode(analysis: any): string {
+  const llm = analysis?.catalystsSource === "llm" || analysis?.llmMode === true;
+  if (!llm) return "Katalysatoren: generisch (Sektor)";
+  const raw = text(analysis?.growthThesisGeneratedAt) ?? text(analysis?.catalystsTimestamp) ?? text(analysis?.dataTimestamp);
+  if (!raw) return "Katalysatoren: KI-firmenspezifisch";
+  const when = new Date(raw);
+  if (Number.isNaN(when.getTime())) return "Katalysatoren: KI-firmenspezifisch";
+  const day = isoDay(raw, when);
+  const spoken = speakIsoDate(day.iso);
+  return spoken ? `Katalysatoren: KI-firmenspezifisch, Stand ${spoken}` : "Katalysatoren: KI-firmenspezifisch";
 }
 
 export function hashPodcastFacts(values: PodcastFactValues): string {
@@ -171,8 +183,8 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
       earningsNote = null;
     }
   }
-  const source = analysis.catalystsSource === "llm" ? "llm" : "generic";
-  const mode = text(analysis.execSummary?.modeLine) ?? catalystsModeLabel(source, text(analysis.catalystsTimestamp));
+  const source = analysis.catalystsSource === "llm" || analysis.llmMode === true ? "llm" : "generic";
+  const mode = spokenCatalystMode(analysis);
   const risks = Array.isArray(analysis.risks) ? analysis.risks : [];
   const riskNames = risks.map((r: any) => text(r?.name)).filter((n: string | null): n is string => !!n).slice(0, 3);
   const catalysts = Array.isArray(analysis.catalysts) ? analysis.catalysts : [];
@@ -292,6 +304,6 @@ function buildContext(pack: FullAiPack, values: PodcastFactValues): string {
     lines.push(`Earnings-Auszug: ${clip(pack.earningsBrief.excerpt, 700)}`);
   }
   const available = (Object.keys(values) as PodcastPlaceholder[]).filter(k => values[k] != null);
-  lines.push(`Platzhalter mit Wert: ${available.join(", ") || "keine"}`);
+  lines.push(`Platzhalter mit Wert: ${available.map(name => `{${name}}`).join(", ") || "keine"}`);
   return lines.join("\n");
 }

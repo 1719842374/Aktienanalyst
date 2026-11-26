@@ -3,17 +3,20 @@
  * Der Markt-Podcast (shared/podcast-transcript.ts) bleibt ein anderer Cache.
  */
 
-export const STOCK_PODCAST_ERROR_CODES = ["NO_API_KEY", "LLM_UNAVAILABLE", "RATE_LIMITED", "KI_MODE_OFF"] as const;
+export const STOCK_PODCAST_ERROR_CODES = ["NO_API_KEY", "LLM_UNAVAILABLE", "RATE_LIMITED", "KI_MODE_OFF", "BAD_REQUEST"] as const;
 export type StockPodcastErrorCode = (typeof STOCK_PODCAST_ERROR_CODES)[number];
 
 export type StockPodcastSource = "pdf" | "ki";
 
 export type StockPodcastStage = "analyze" | "script" | "audio";
 
-/** Eine frische Erzeugung je Quelle und Tag. Ein dritter Neu-Lauf ist 429. Cache-Treffer zählen nicht. */
+/**
+ * Obergrenze neuer Erzeugungen je Ticker bis Mitternacht Europe/Madrid.
+ * Cache-Treffer zählen nicht. PDF und KI-Analyse teilen sich dieses Limit.
+ */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v4";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v5";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
 
@@ -77,6 +80,18 @@ export interface StockPodcastChapter {
   audioUrl: string | null;
 }
 
+export interface StockPodcastStageTiming {
+  elapsedMs: number;
+  timeoutMs: number;
+}
+
+/** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
+export interface StockPodcastStageTimings {
+  analyze: StockPodcastStageTiming;
+  script: StockPodcastStageTiming;
+  audio: { timeoutMs: number };
+}
+
 export interface StockPodcastScriptResponse {
   ok: true;
   ticker: string;
@@ -92,6 +107,7 @@ export interface StockPodcastScriptResponse {
   packCached: boolean;
   promptVersion: string;
   disclaimer: string;
+  stages: StockPodcastStageTimings;
 }
 
 export interface StockPodcastErrorResponse {
