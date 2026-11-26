@@ -70,38 +70,66 @@ const request = buildPodcastScriptRequest({
   ticker: " NVDA ",
   source: "ki",
   voice: PODCAST_DEFAULT_VOICE,
+  regenerate: false,
 });
-check("Request trimmt den Ticker und setzt fullAi sowie fresh",
-  request.ticker === "NVDA" && request.source === "ki" && request.voice === "de-DE-Mia:MAI-Voice-2.1" && request.fullAi === true && request.fresh === true);
+const renewed = buildPodcastScriptRequest({
+  ticker: "NVDA",
+  source: "pdf",
+  voice: "browser",
+  regenerate: true,
+});
+check("Quellen-Klick setzt regenerate false und fullAi, ohne fresh",
+  request.ticker === "NVDA" && request.source === "ki" && request.voice === "de-DE-Mia:MAI-Voice-2.1"
+  && request.fullAi === true && request.regenerate === false && !("fresh" in request));
+check("Neu erzeugen setzt regenerate true und schickt die Browser-Stimme nicht",
+  renewed.regenerate === true && renewed.fullAi === true && !("voice" in renewed) && !("fresh" in renewed));
 check("Request schickt keine Analyse mit", !("analysis" in request) && !("facts" in request));
 check("Skript-Pfad ist POST /api/podcast/script", PODCAST_SCRIPT_PATH === "/api/podcast/script");
-check("Audio-Pfad hängt Stimme und Cache-Key an",
-  podcastAudioPath("s17", "de-DE-Mia:MAI-Voice-2.1", "hash") === "/api/podcast/audio/s17?voice=de-DE-Mia%3AMAI-Voice-2.1&cacheKey=hash");
+check("Audio-URL enthält ticker, source, voice und cacheKey",
+  podcastAudioPath({
+    chapterId: "s17",
+    ticker: "NVDA",
+    source: "ki",
+    voice: "de-DE-Mia:MAI-Voice-2.1",
+    cacheKey: "hash",
+  }) === "/api/podcast/audio/s17?ticker=NVDA&source=ki&voice=de-DE-Mia%3AMAI-Voice-2.1&cacheKey=hash");
 
 const scriptBody = {
+  ok: true,
+  ticker: "NVDA",
   chapters: [
-    { id: "s17", title: "Katalysatoren", template: "Kapitel {ticker}", spoken: "Die Katalysatoren liegen vor.", durationSec: 72, audioUrl: "/api/podcast/audio/s17" },
-    { id: "s10", label: "Inversion", spoken: "Die Inversion liegt nicht vor.", durationSec: 204, audioUrl: null },
+    { id: "s17", title: "S17", label: "Katalysatoren", template: "Kapitel {ticker}", spoken: "Die Katalysatoren liegen vor.", durationSec: 72, llmOwned: false, audioUrl: null },
+    { id: "s10", title: "S10", label: "Inversion", template: "", spoken: "Die Inversion liegt nicht vor.", durationSec: 204, llmOwned: true, audioUrl: null },
   ],
-  asOf: "2026-11-26",
+  asOf: "2026-11-26T12:00:00.000Z",
+  asOfLabel: "26.11.2026",
   cacheKey: "nvda-2026-11-26-ki",
   source: "ki",
   voice: "de-DE-Mia:MAI-Voice-2.1",
+  voiceLabel: "Mia",
   priceLabel: "149,3",
-  cacheHit: true,
+  cached: true,
+  packCached: true,
+  promptVersion: "stock-podcast-v4",
+  disclaimer: "Dies ist keine Anlageberatung.",
 };
 const parsed = parsePodcastScript(scriptBody, "pdf");
-check("Parser liest title und label, asOf, cacheKey, audioUrl",
+check("Parser liest das Response-Shape von #529",
   parsed?.chapters.length === 2
   && parsed.chapters[0]?.label === "Katalysatoren"
-  && parsed.chapters[1]?.label === "Inversion"
-  && parsed.asOf === "2026-11-26"
+  && parsed.chapters[1]?.llmOwned === true
+  && parsed.asOf === "26.11.2026"
   && parsed.cacheKey === "nvda-2026-11-26-ki"
-  && parsed.chapters[0]?.audioUrl === "/api/podcast/audio/s17"
   && parsed.priceLabel === "149,3"
+  && parsed.voiceLabel === "Mia"
   && parsed.source === "ki"
-  && parsed.cached === true);
-check("Cache-Treffer zählt nicht gegen das Tageslimit", countsAgainstDailyLimit({ cacheHit: true }) === false && countsAgainstDailyLimit({ cached: false }) === true);
+  && parsed.cached === true
+  && parsed.packCached === true);
+check("ok false ist kein Skript", parsePodcastScript({ ok: false, errorCode: "LLM_UNAVAILABLE", chapters: scriptBody.chapters }, "ki") === null);
+check("Cache- und Pack-Treffer zählen nicht gegen das Tageslimit",
+  countsAgainstDailyLimit({ cached: true, packCached: false }) === false
+  && countsAgainstDailyLimit({ cached: false, packCached: true }) === false
+  && countsAgainstDailyLimit({ cached: false, packCached: false }) === true);
 check("Fehlende Dauer kommt aus 140 Wörtern je Minute", estimateDurationSec(new Array(140).fill("Wort").join(" ")) === 60 && estimateDurationSec("") === 1);
 check("Parser ohne Kapitel ist kein Skript", parsePodcastScript({ chapters: [], asOf: "2026-11-26" }, "ki") === null);
 check("Ziffer im Kapiteltext ist Sache des Server-Validators, der Client zeigt spoken",
@@ -371,7 +399,9 @@ const hookSrc = readFileSync("client/src/hooks/usePodcast.ts", "utf8");
 const selectAt = hookSrc.indexOf("const selectSource");
 check("Hook startet nicht /api/analyze und nicht den Markt-Podcast",
   !hookSrc.includes("/api/analyze") && !hookSrc.includes("/api/podcast/brief") && hookSrc.includes('"/api/podcast/script"'));
-check("Klick auf eine Quelle startet den Lauf", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 160).includes("run("));
+check("Klick auf eine Quelle startet den Lauf mit regenerate false", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 180).includes("run(next, false)"));
+check("Neu erzeugen ruft den Lauf mit regenerate true auf", hookSrc.includes("void run(sourceRef.current, true)"));
+check("Hook schickt kein fresh", !hookSrc.includes("fresh"));
 check("Mount ruft run( nicht auf", !/useEffect\(\(\) => \{\s*void run\(/.test(hookSrc));
 
 const dashboard = readFileSync("client/src/pages/Dashboard.tsx", "utf8");

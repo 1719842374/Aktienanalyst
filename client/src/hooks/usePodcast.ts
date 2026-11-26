@@ -6,17 +6,21 @@
  * nach shared/ kopiert. Nach dem Merge von PR A auf den shared-Export
  * umstellen. PR B wird erst nach PR A gemergt.
  *
- * Vertrag, gegen den der Hook gebaut ist — keine eigenen Felder:
- *   POST /api/podcast/script
- *   Body: { ticker, source: "pdf" | "ki", voice, fullAi: true, fresh: true }
- *   200:  { chapters: [{ id, title, template?, spoken, durationSec?, audioUrl? }],
- *             asOf, cacheKey, source, voice, price? | priceLabel?, cached? | cacheHit? }
- *   Der Player-Typ der Spec nennt `label` statt `title`; beides wird gelesen.
- *   429 oder errorCode RATE_LIMITED: Tageslimit.
- *   errorCode NO_API_KEY oder error === OPENROUTER_NO_KEY_MESSAGE.
- *   errorCode LLM_UNAVAILABLE oder HTTP 402: „KI-Podcast n/a — LLM nicht erreichbar.“
- *   GET /api/podcast/audio/:chapterId?voice=&cacheKey=  audio/mpeg
- *   Liegt audioUrl am Kapitel, wird diese URL verwendet.
+ * Lokale Spiegelung von shared/podcast-types.ts auf PR #529 (Head 60e6b906).
+ * Nicht aus shared/ importieren, solange #529 nicht auf main liegt.
+ * Nach dem Merge von #529 per Merge-Commit auf die shared-Exports umstellen.
+ *
+ * POST /api/podcast/script, Zod strict:
+ *   { ticker, source: "pdf"|"ki", regenerate?: boolean (Default false), fullAi?: boolean, voice? }
+ *   Normaler Klick: regenerate false (Cache/Pack am selben Tag, zählt nicht gegen PODCAST_DAILY_MAX).
+ *   „Neu erzeugen“: regenerate true. Das Zod-Schema ist strict und kennt kein weiteres Flag.
+ *   Stimme "browser" geht nicht an den Server (speechSynthesis, kein Audio-GET).
+ * 200 StockPodcastScriptResponse: ok, ticker, source, asOf, asOfLabel, priceLabel,
+ *   cacheKey, voice, voiceLabel, chapters[{id,title,label,template,spoken,durationSec,llmOwned,audioUrl}],
+ *   cached, packCached, promptVersion, disclaimer.
+ * Fehler StockPodcastErrorResponse: ok false, errorCode, error, stage.
+ * GET /api/podcast/audio/:chapterId?ticker&source&voice&cacheKey — sonst 400.
+ * Dieselbe Query wie stockPodcastAudioPath.
  *
  * Kein zweiter Analyze-Lauf. Die sichtbare Dashboard-UI bleibt unverändert.
  * Erzeugung nur aus dem Click-Handler, nie beim Mount.
@@ -79,6 +83,12 @@ export const PODCAST_VOICES: readonly PodcastVoiceOption[] = [
 ];
 
 export const PODCAST_DEFAULT_VOICE = PODCAST_VOICES[0]!.id;
+export const PODCAST_BROWSER_VOICE = "browser";
+
+/** Server-Stimmen gehen an Skript und Audio. Der Browser-Notnagel bleibt lokal. */
+export function isServerVoice(voice: string): boolean {
+  return voice.trim().length > 0 && voice !== PODCAST_BROWSER_VOICE;
+}
 
 export const PODCAST_VOICE_GROUPS: { id: PodcastVoiceOption["group"]; label: string }[] = [
   { id: "openrouter", label: "OpenRouter" },
@@ -86,12 +96,15 @@ export const PODCAST_VOICE_GROUPS: { id: PodcastVoiceOption["group"]; label: str
   { id: "browser", label: "Browser" },
 ];
 
+export type PodcastErrorCode = "NO_API_KEY" | "LLM_UNAVAILABLE" | "RATE_LIMITED" | "KI_MODE_OFF";
+
+/** Spiegel von StockPodcastScriptResponse. `src` am Kapitel ist nur die abspielbare Blob-URL. */
 export interface PodcastScriptRequest {
   ticker: string;
   source: PodcastSource;
-  voice: string;
+  regenerate: boolean;
   fullAi: true;
-  fresh: true;
+  voice?: string;
 }
 
 /** Kapitel, wie der Player sie spricht. `src` ist die aufgelöste Audio-URL, kein Serverfeld. */
@@ -101,6 +114,7 @@ export interface PodcastChapterView {
   spoken: string;
   durationSec: number;
   audioUrl: string | null;
+  llmOwned?: boolean;
   src: string | null;
 }
 
@@ -111,7 +125,9 @@ export interface ParsedPodcastScript {
   source: PodcastSource | null;
   voice: string | null;
   priceLabel: string | null;
+  voiceLabel: string | null;
   cached: boolean;
+  packCached: boolean;
 }
 
 export type PodcastFailure =
@@ -200,21 +216,33 @@ export function buildPodcastScriptRequest(input: {
   ticker: string;
   source: PodcastSource;
   voice: string;
+  regenerate: boolean;
 }): PodcastScriptRequest {
-  return {
+  const request: PodcastScriptRequest = {
     ticker: input.ticker.trim(),
     source: input.source,
-    voice: input.voice,
+    regenerate: input.regenerate,
     fullAi: true,
-    fresh: true,
   };
+  if (isServerVoice(input.voice)) request.voice = input.voice;
+  return request;
 }
 
-export function podcastAudioPath(chapterId: string, voice: string, cacheKey: string): string {
-  const query = new URLSearchParams();
-  query.set("voice", voice);
-  if (cacheKey) query.set("cacheKey", cacheKey);
-  return `/api/podcast/audio/${encodeURIComponent(chapterId)}?${query.toString()}`;
+/** Gleiche Query-Reihenfolge wie stockPodcastAudioPath in shared/podcast-types.ts (#529). */
+export function podcastAudioPath(opts: {
+  chapterId: string;
+  ticker: string;
+  source: PodcastSource;
+  voice: string;
+  cacheKey: string;
+}): string {
+  const query = new URLSearchParams({
+    ticker: opts.ticker,
+    source: opts.source,
+    voice: opts.voice,
+    cacheKey: opts.cacheKey,
+  });
+  return `/api/podcast/audio/${encodeURIComponent(opts.chapterId)}?${query.toString()}`;
 }
 
 export function stageWhileScriptPending(elapsedMs: number): Exclude<PodcastLoadingStage, "audio"> {
@@ -253,9 +281,9 @@ export function spanAt(spans: ChapterSpan[], sec: number): ChapterSpan | null {
   return found ?? spans[spans.length - 1] ?? null;
 }
 
-/** Cache-Treffer zählen nicht gegen das Tageslimit. */
-export function countsAgainstDailyLimit(body: { cached?: boolean; cacheHit?: boolean }): boolean {
-  return !(body.cached === true || body.cacheHit === true);
+/** Cache- und Pack-Treffer zählen nicht gegen PODCAST_DAILY_MAX. */
+export function countsAgainstDailyLimit(body: { cached?: boolean; packCached?: boolean }): boolean {
+  return !(body.cached === true || body.packCached === true);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -263,19 +291,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function chapterLabel(record: Record<string, unknown>): string {
-  if (typeof record.title === "string" && record.title.trim()) return record.title.trim();
   if (typeof record.label === "string" && record.label.trim()) return record.label.trim();
+  if (typeof record.title === "string" && record.title.trim()) return record.title.trim();
   return "";
 }
 
-function readPriceLabel(record: Record<string, unknown>): string | null {
-  if (typeof record.priceLabel === "string" && record.priceLabel.trim()) return record.priceLabel.trim();
-  if (typeof record.price === "number" && Number.isFinite(record.price)) return formatPodcastPrice(record.price);
-  return null;
-}
-
 export function parsePodcastScript(body: unknown, requestedSource: PodcastSource): ParsedPodcastScript | null {
-  if (!isRecord(body) || !Array.isArray(body.chapters)) return null;
+  if (!isRecord(body) || body.ok === false || !Array.isArray(body.chapters)) return null;
   const chapters: PodcastChapterView[] = [];
   for (const entry of body.chapters) {
     if (!isRecord(entry) || typeof entry.id !== "string" || !entry.id.trim()) continue;
@@ -286,18 +308,30 @@ export function parsePodcastScript(body: unknown, requestedSource: PodcastSource
       ? entry.durationSec
       : estimateDurationSec(spoken);
     const audioUrl = typeof entry.audioUrl === "string" && entry.audioUrl.trim() ? entry.audioUrl.trim() : null;
-    chapters.push({ id: entry.id.trim(), label, spoken, durationSec, audioUrl, src: null });
+    chapters.push({
+      id: entry.id.trim(),
+      label,
+      spoken,
+      durationSec,
+      audioUrl,
+      llmOwned: entry.llmOwned === true,
+      src: null,
+    });
   }
   if (chapters.length === 0) return null;
   const source = body.source === "pdf" || body.source === "ki" ? body.source : requestedSource;
+  const asOfLabel = typeof body.asOfLabel === "string" && body.asOfLabel.trim() ? body.asOfLabel.trim() : "";
+  const asOf = asOfLabel || (typeof body.asOf === "string" ? body.asOf : "");
   return {
     chapters,
-    asOf: typeof body.asOf === "string" ? body.asOf : "",
+    asOf,
     cacheKey: typeof body.cacheKey === "string" ? body.cacheKey : "",
     source,
     voice: typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : null,
-    priceLabel: readPriceLabel(body),
-    cached: body.cached === true || body.cacheHit === true,
+    priceLabel: typeof body.priceLabel === "string" && body.priceLabel.trim() ? body.priceLabel.trim() : null,
+    voiceLabel: typeof body.voiceLabel === "string" && body.voiceLabel.trim() ? body.voiceLabel.trim() : null,
+    cached: body.cached === true,
+    packCached: body.packCached === true,
   };
 }
 
@@ -305,10 +339,12 @@ export function classifyPodcastFailure(status: number, body: unknown): PodcastFa
   const record = isRecord(body) ? body : null;
   const code = record && typeof record.errorCode === "string" ? record.errorCode : "";
   const error = record && typeof record.error === "string" ? record.error.trim() : "";
+  const failed = status >= 400 || record?.ok === false;
+  if (!failed && !code) return null;
   if (status === 429 || code === "RATE_LIMITED") return { kind: "limit" };
   if (code === "NO_API_KEY" || error === OPENROUTER_NO_KEY_MESSAGE) return { kind: "no_key" };
   if (code === "LLM_UNAVAILABLE" || status === 402) return { kind: "llm" };
-  if (status >= 400) {
+  if (failed) {
     if (error && error.length <= 240 && !error.startsWith("<")) return { kind: "message", text: error };
     return { kind: "llm" };
   }
@@ -585,7 +621,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
 
   const loadAudio = useCallback(async (list: PodcastChapterView[], voice: string, cacheKey: string, requestId: number) => {
     revokeBlobs();
-    if (voice === "browser") {
+    if (!isServerVoice(voice)) {
       modeRef.current = "speech";
       const cleared = list.map((chapter) => ({ ...chapter, src: null }));
       chaptersRef.current = cleared;
@@ -600,9 +636,13 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       if (remote) {
         src = remote;
       } else {
-        const path = chapter.audioUrl && chapter.audioUrl.startsWith("/")
-          ? chapter.audioUrl
-          : podcastAudioPath(chapter.id, voice, cacheKey);
+        const path = podcastAudioPath({
+          chapterId: chapter.id,
+          ticker,
+          source: sourceRef.current,
+          voice,
+          cacheKey,
+        });
         try {
           const res = await apiRequest("GET", path, undefined, PODCAST_AUDIO_TIMEOUT_MS);
           if (requestId !== reqRef.current) return;
@@ -625,13 +665,13 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     modeRef.current = playable ? "audio" : "speech";
     chaptersRef.current = resolved;
     setChapters(resolved);
-  }, [revokeBlobs]);
+  }, [revokeBlobs, ticker]);
 
   const adoptScript = useCallback((parsed: ParsedPodcastScript) => {
     cacheKeyRef.current = parsed.cacheKey;
     const nextSource = parsed.source ?? sourceRef.current;
     if (parsed.source) setSource(parsed.source);
-    if (parsed.voice) setVoiceId(parsed.voice);
+    if (parsed.voice && voiceRef.current !== PODCAST_BROWSER_VOICE) setVoiceId(parsed.voice);
     setStandAsOf(formatPodcastAsOf(parsed.asOf, asOfFallback.current));
     setStandPrice(parsed.priceLabel ?? priceFallback.current);
     chaptersRef.current = parsed.chapters;
@@ -640,7 +680,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     return nextSource;
   }, [applyClock]);
 
-  const run = useCallback(async (nextSource: PodcastSource) => {
+  const run = useCallback(async (nextSource: PodcastSource, regenerate: boolean) => {
     const requestId = ++reqRef.current;
     setSource(nextSource);
     sourceRef.current = nextSource;
@@ -658,7 +698,12 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       const res = await apiRequest(
         "POST",
         PODCAST_SCRIPT_PATH,
-        buildPodcastScriptRequest({ ticker, source: nextSource, voice: voiceRef.current }),
+        buildPodcastScriptRequest({
+          ticker,
+          source: nextSource,
+          voice: voiceRef.current,
+          regenerate,
+        }),
         PODCAST_SCRIPT_TIMEOUT_MS,
       );
       if (requestId !== reqRef.current) return;
@@ -680,7 +725,8 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       }
       adoptScript(parsed);
       setStage("audio");
-      await loadAudio(parsed.chapters, parsed.voice ?? voiceRef.current, parsed.cacheKey, requestId);
+      const playbackVoice = voiceRef.current === PODCAST_BROWSER_VOICE ? PODCAST_BROWSER_VOICE : (parsed.voice ?? voiceRef.current);
+      await loadAudio(parsed.chapters, playbackVoice, parsed.cacheKey, requestId);
       if (requestId !== reqRef.current) return;
       play();
     } catch {
@@ -781,11 +827,15 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, [bindMediaSession, chapters, source, voiceId, speed]);
 
   const selectSource = useCallback((next: PodcastSource) => {
-    void run(next);
+    void run(next, false);
   }, [run]);
 
   const generate = useCallback(() => {
-    void run(sourceRef.current);
+    void run(sourceRef.current, false);
+  }, [run]);
+
+  const regenerate = useCallback(() => {
+    void run(sourceRef.current, true);
   }, [run]);
 
   const cycleSpeed = useCallback(() => {
@@ -799,7 +849,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   const togglePlay = useCallback(() => {
     if (stateRef.current === "playing") pause();
     else if (chaptersRef.current.length > 0) play();
-    else void run(sourceRef.current);
+    else void run(sourceRef.current, false);
   }, [pause, play, run]);
 
   const spans = chapterSpans(chapters);
@@ -820,7 +870,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     standPrice,
     selectSource,
     generate,
-    regenerate: generate,
+    regenerate,
     retry: generate,
     togglePlay,
     seekTo,
