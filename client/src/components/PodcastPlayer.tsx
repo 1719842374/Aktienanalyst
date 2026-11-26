@@ -18,6 +18,7 @@ import {
   formatSpeedLabel,
   formatStandLine,
   podcastLimitDetail,
+  podcastLimitTooltip,
   podcastSourceLabel,
   podcastUiCopy,
   usePodcast,
@@ -380,7 +381,7 @@ export function PodcastPlayerView({
                   aria-checked={selected}
                   aria-disabled={disabled}
                   disabled={disabled}
-                  title={limited ? podcastUiCopy(code).limitTooltip : undefined}
+                  title={limited ? podcastLimitTooltip(ticker, code) : undefined}
                   data-testid={`button-podcast-lang-${code}`}
                   aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
                   className={cn(

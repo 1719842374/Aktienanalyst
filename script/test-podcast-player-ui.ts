@@ -46,6 +46,7 @@ import {
   podcastAudioPath,
   podcastIdleSubtitle,
   podcastLimitDetail,
+  podcastLimitTooltip,
   stageWhileScriptPending,
 } from "../client/src/hooks/usePodcast";
 import { PodcastPlayer, PodcastPlayerView, PodcastVoiceMenu } from "../client/src/components/PodcastPlayer";
@@ -185,15 +186,17 @@ check("Stand-Zeile", formatStandLine("26.11.2026", "149,3", "pdf", "Eve") === "S
 check("Datum ohne Zeitzone bleibt der Kalendertag, Mitternacht Madrid springt",
   formatPodcastAsOf("2026-11-26") === "26.11.2026" && formatPodcastAsOf("2026-11-26T23:30:00.000Z") === "27.11.2026");
 check("Idle-Unterzeile nennt Quelle und Ticker", podcastIdleSubtitle("ki", "NVDA") === "Nur auf Klick · frische Analyse · KI-Analyse · NVDA");
-check("Limit-Unterzeile je Ticker nennt nicht die andere Sprache",
+check("Limit-Unterzeile je Ticker teilt Deutsch und Englisch",
   PODCAST_LIMIT_SCOPE === "ticker"
   && podcastLimitDetail("NVDA", "de", "ticker") === "Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar."
-  && podcastLimitDetail("NVDA", "en", "ticker") === "The daily limit applies only to the English episode. Cached episodes stay playable."
-  && !podcastLimitDetail("NVDA", "de", "ticker").includes("andere Sprache")
-  && !podcastLimitDetail("NVDA", "en", "ticker").toLowerCase().includes("other language"));
-check("Limit je Sprache nennt die andere Sprache und den Cache",
+  && podcastLimitDetail("NVDA", "en", "ticker") === "Not available again today for NVDA. German and English share the daily limit."
+  && podcastLimitTooltip("NVDA", "en", "ticker") === podcastLimitDetail("NVDA", "en", "ticker")
+  && !podcastLimitDetail("NVDA", "en", "ticker").includes("only the English episode"));
+check("Limit je Sprache nutzt den Spec-Satz nur dort",
   podcastLimitDetail("NVDA", "de", "ticker-language") === "Für NVDA ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar."
-  && podcastLimitDetail("NVDA", "en", "ticker-language") === "This language is not available again today for NVDA. The other language and cached episodes stay playable.");
+  && podcastLimitDetail("NVDA", "en", "ticker-language") === "The daily limit applies only to the English episode."
+  && podcastLimitTooltip("NVDA", "en", "ticker-language") === "The daily limit applies only to the English episode."
+  && podcastLimitTooltip("NVDA", "de", "ticker") === "Tageslimit erreicht.");
 check("429 markiert bei ticker beide Sprachen, bei ticker-language nur eine",
   languagesMarkedByLimit("ticker", "de").join(",") === "de,en"
   && languagesMarkedByLimit("ticker", "en").join(",") === "de,en"
@@ -641,9 +644,9 @@ check("EN-Limit zeigt den Limit-Zustand ohne Retry",
   const enButton = englishLimit.slice(englishLimit.lastIndexOf("<button", enAt), englishLimit.indexOf(">", enAt));
   const langAt = englishLimit.indexOf('data-testid="podcast-language"');
   const langSeg = englishLimit.slice(englishLimit.lastIndexOf("<div", langAt), englishLimit.indexOf(">", langAt));
-  check("EN-Limit-Tooltip ist der Spec-Satz",
-  podcastUiCopy("en").limitTooltip === "The daily limit applies only to the English episode."
-  && englishLimit.includes('title="The daily limit applies only to the English episode."'));
+  check("EN-Limit-Tooltip nennt das gemeinsame Kontingent",
+  englishLimit.includes('title="Not available again today for NVDA. German and English share the daily limit."')
+  && !englishLimit.includes("only the English episode"));
 check("Ungewähltes EN-Label nutzt slate-600", idle.includes("text-slate-600"));
 check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
     enButton.includes("opacity-[0.45]")

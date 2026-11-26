@@ -419,7 +419,7 @@ export function podcastUiCopy(language: PodcastLanguage): {
         audioDetail: "OpenRouter TTS, xAI fallback",
         noKey: "AI is unavailable: no OpenRouter key is configured on this server. No answer is generated.",
         noKeyDetail: "The podcast transcript needs OPENROUTER_API_KEY. The PDF export stays unchanged.",
-        limitTooltip: "The daily limit applies only to the English episode.",
+        limitTooltip: "German and English share the daily limit.",
         back15: "15 seconds back",
         forward15: "15 seconds forward",
         prevChapter: "Previous chapter",
@@ -471,11 +471,21 @@ export function podcastLimitDetail(
   scope: PodcastLimitScope = PODCAST_LIMIT_SCOPE,
 ): string {
   if (scope === "ticker-language") {
-    if (language === "en") return `This language is not available again today for ${ticker}. The other language and cached episodes stay playable.`;
+    if (language === "en") return "The daily limit applies only to the English episode.";
     return `Für ${ticker} ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar.`;
   }
-  if (language === "en") return `The daily limit applies only to the English episode. Cached episodes stay playable.`;
+  if (language === "en") return `Not available again today for ${ticker}. German and English share the daily limit.`;
   return `Für ${ticker} heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.`;
+}
+
+/** Tooltip folgt dem Scope. Der Satz „only the English episode“ gilt nur für ticker-language. */
+export function podcastLimitTooltip(
+  ticker: string,
+  language: PodcastLanguage,
+  scope: PodcastLimitScope = PODCAST_LIMIT_SCOPE,
+): string {
+  if (language === "en") return podcastLimitDetail(ticker, language, scope);
+  return podcastUiCopy(language).limitTooltip;
 }
 
 export function estimateDurationSec(spoken: string): number {
