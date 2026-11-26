@@ -165,14 +165,14 @@ Datei bleibt `Offen_`, solange S5 und Euphorie offen sind. Nicht von Hand auf `F
 | `WORK_IMPLEMENTIERUNG_OFFEN.md` | `5b476265` (#521) | Ticket-Index | Kopf nennt `65ba08dd`, nicht `5eec205a`. Revert-Liste vollständig | teilweise | eine Zeile: HEAD ist `5eec205a`, Flag aus |
 | `WORK_IST_VS_SOLL.md` | `65ba08dd` | Audit Code vs Specs | Kopf `4286b44f`. Inhalt vor #512 und vor dem Revert-Nachzug | teilweise | kein App-Code. Nicht als einzige Ampel benutzen |
 | `WORK_KI_CHAT_BIG_PICTURE.md` | `8e131831` | Earnings Call, eine Geschichte | Teilkontext #289/#293, Test `script/test-chat-big-picture.ts`. SEC-Call: Draft #430 offen | teilweise | Earnings-Call-Quelle. Modellwahl ist Env |
-| `WORK_KI_CHAT_ERROR.md` | `9ae49a3e` | 400-Zeichen-Cap auf der These weg | `shared/chat-context.ts:161–174`, Budget 36 000, These 18 000 Zeichen. Test `script/test-chat-fact-limit.ts` akzeptiert 1 200 | erledigt | keine. Kandidat `fertig_`, nicht umbenannt |
-| `WORK_KI_CHAT_LIMIT_ALL.md` | `509c6829` | jedes Fakt-Feld mindestens 1 000 | dasselbe Budget, nicht ein festes Zod-Max 1 000. These, Rationale, Notes hängen am Budget (`chat-context.ts:161`) | erledigt | Abweichung dokumentiert. Kandidat `fertig_` |
+| `fertig_WORK_KI_CHAT_ERROR.md` | `9ae49a3e` | 400-Zeichen-Cap auf der These weg | `shared/chat-context.ts:161–174`, Budget 36 000, These 18 000 Zeichen. Test `script/test-chat-fact-limit.ts` akzeptiert 1 200 | erledigt | keine. Umbenannt in #525 (Stabschef 26.11.2026) |
+| `fertig_WORK_KI_CHAT_LIMIT_ALL.md` | `509c6829` | jedes Fakt-Feld mindestens 1 000 | dasselbe Budget, nicht ein festes Zod-Max 1 000. These, Rationale, Notes hängen am Budget (`chat-context.ts:161`) | erledigt | Abweichung dokumentiert. Umbenannt in #525 (Stabschef 26.11.2026) |
 | `WORK_KI_CHAT_SCHEMA.md` | `9d0ffb4b` | Schema der ganzen Analyse | #289/#293 Kontext auf main. Nicht jede Beispielzeile neu gelesen | teilweise | Restfelder nur anzeigen |
 | `WORK_KI_CHAT_SCHEMA_UPDATE.md` | `6e208232` | dominante Klasse immer, keine 30-%-Schwelle | `dominantThesisClass` `shared/chat-context.ts:124–132`, UI `ThesisStrengthPanel.tsx:15`, Test `script/test-chat-big-picture.ts:45` | erledigt | Kandidat `fertig_` |
 | `WORK_KOMBINATIONSKURS_AMPEL.md` | `81280295` | Ampel-Segmente auf dem Aktienkurs S12 mit DCF/RSL | #445 färbt die Kurslinie nach der TA-Ampel. #358 ist der Portfolio-Kombinationskurs, andere Fläche | teilweise | Philip (Design, Rating), wenn DCF/RSL die Farbe mitbestimmen sollen |
 | `WORK_KOSTENUEBERSICHT.md` | `556b0406` | Stichtag 31.10. Kosten | keine Code-Änderung verlangt | erledigt | Doku-Stichtag, kein Bau. Kein Feature-Kandidat |
 | `WORK_MORNING_BRIEFING.md` | `65ba08dd` | Briefing 1:1 wie Country Macro Pulse | `Researcher.tsx:503` `BriefingModal` ist das alte Layout. #503 revertiert durch #520. Draft #180 HOLD | offen | revertiert durch #520. Philip (Design) |
-| `WORK_NVO_TECHNICAL_OVERRIDE.md` | `8bb4967f` (#256) | Death Cross + RSL + schwacher Moat → höchstens NEUTRAL | `shared/bias-fixes.ts:147–187`: drei Bedingungen, Deckel auf NEUTRAL `[4.5, 6.49]`, Schwelle `TECH_MOAT_RSL_THRESHOLD = 105` (`:179`). Test `script/test-tech-moat-override.ts`. #256 | erledigt | Kandidat `fertig_`, nicht umbenannt. Spec §9 erwähnt noch Philips Tabelle |
+| `fertig_WORK_NVO_TECHNICAL_OVERRIDE.md` | `8bb4967f` (#256) | Death Cross + RSL + schwacher Moat → höchstens NEUTRAL | `shared/bias-fixes.ts:147–187`: drei Bedingungen, Deckel auf NEUTRAL `[4.5, 6.49]`, Schwelle `TECH_MOAT_RSL_THRESHOLD = 105` (`:179`). Test `script/test-tech-moat-override.ts`. #256 | erledigt | Umbenannt in #525 (Stabschef 26.11.2026). Spec §9 erwähnt noch Philips Tabelle |
 | `WORK_PEER_RELATIVE_VALUATION_BUGS.md` | `4be80cbc` | Peer-Add, Suche, KI-Darstellung | Overrides #258/#262. KI in derselben Tabelle #462 revertiert durch #520 | teilweise | revertiert durch #520. Philip (Peer), Score unangetastet lassen |
 | `WORK_PEER_SELECTION.md` | `3f7aac58` | Industrie, Overrides, Cache, Tabs | #258/#260/#262/#291 auf main | teilweise | Default-Tab Forward-KGV nicht von Philip bestätigt |
 | `WORK_PEER_SELECTION_DETAILED.md` | `d3adadb9` | dieselbe Lösung im Detail | wie oben, Filter-Tabs nur Ansicht | teilweise | Philip (Peer) für den Default |
@@ -181,8 +181,8 @@ Datei bleibt `Offen_`, solange S5 und Euphorie offen sind. Nicht von Hand auf `F
 | `WORK_REALZINS_ADJUST.md` | `31f4e27b` | Buffett um Realzins adjustieren | nicht im Score-Slot | offen | Philip (Score) |
 | `WORK_RECESSION_EARNINGS_GROWTH_PLOT.md` | `2bfa46ce` | Gewinnwachstum Index-Ebene | `RecessionGrowthSection.tsx`, `useRecessionGrowth.ts`, `server/recession-growth-route.ts:57`, `server/routes.ts:549`. #419/#426 | teilweise | Differenz in Prozentpunkten: revertiert durch #520 (#468) |
 | `WORK_RECESSION_GROWTH_GAP.md` | `65ba08dd` | Gap analog Inventory | dieselbe Kette, `GapCard` in `RecessionGrowthSection.tsx:255` | teilweise | revertiert durch #520 (#468) |
-| `WORK_RECESSION_TA_CHART.md` | `a510053c` | TA wie Aktien-S12 | `RecessionDashboard.tsx:194` `RecessionTaSection`, #284 🟢 Soft | teilweise | nicht alle Pane-Wünsche neu gegengeprüft. Kein `fertig_`-Vorschlag |
-| `WORK_REMOVE_BUFFETT_STOCK.md` | `8673abff` | Buffett-Sektion aus der Aktienanalyse | kein Mount in `Dashboard.tsx`. Rezession behält das Panel (`:196`). #355 | erledigt | Kandidat `fertig_`. Pfade `StockDashboard.tsx` / `server/routes/stock.ts` in der Spec sind veraltet |
+| `WORK_RECESSION_TA_CHART.md` | `a510053c` | TA wie Aktien-S12 | `RecessionDashboard.tsx:194` `RecessionTaSection`, #284 🟢 Soft | teilweise | nicht alle Pane-Wünsche neu gegengeprüft. Kein `fertig_`-Vorschlag. #525 nicht umbenannt: der Beleg zeigt nur den Mount `RecessionTaSection` (`RecessionDashboard.tsx:194`), nicht dass der Soll „TA wie Aktien-S12“ erledigt ist |
+| `fertig_WORK_REMOVE_BUFFETT_STOCK.md` | `8673abff` | Buffett-Sektion aus der Aktienanalyse | kein Mount in `Dashboard.tsx`. Rezession behält das Panel (`:196`). #355 | erledigt | Umbenannt in #525 (Stabschef 26.11.2026). Pfade `StockDashboard.tsx` / `server/routes/stock.ts` in der Spec sind veraltet |
 | `WORK_SCENARIO_CONE_STOCK.md` | `12cefb5e` | Kegel nur Anzeige | `TechnicalChart.tsx:33` `ScenarioCone`. Echte Wahrscheinlichkeiten in der Spec offen. Draft #497 offen | teilweise | Kegel-Formel nur mit Philip, wenn Ziele sich ändern (Draft #497) |
 | `WORK_SCORING_ADDITIONS_MSFT.md` | `7590d48b` | EY, Quality, Accruals in den Score | EY ist Overlay (#380), nicht der Score | offen | Philip (Score) |
 | `WORK_SECTION_WEIGHTING_ADAPTIVE.md` | `8bb4967f` | jede Sektion adaptiv gewichten | nur der Tech-Moat-Deckel #256. Volle 20-Sektionen-Gewichtung nicht | teilweise | Philip (Score). Spec §9 lässt `fertig_` nicht zu |
@@ -215,16 +215,16 @@ Diese Commits sind Historie, ihr Baum ist es nicht. Spec-Prefixe der schon `fert
 
 #501, #504, #508, #509, #513 sind Doku-Ampeln derselben Commits und ebenfalls zurück.
 
-## 5. Kandidaten für `fertig_` (nicht umbenannt)
+## 5. Kandidaten für `fertig_`
 
-Nur Dateien, deren Soll auf main belegt ist. Philip entscheidet den Rename.
+Nur Dateien, deren Soll auf main belegt ist. Philip entscheidet den Rename. Vier Zeilen sind in #525 umbenannt (Stabschef 26.11.2026, Beleg SPEC_INVENTUR_SOLL_IST.md @fdb162c4). `WORK_KI_CHAT_SCHEMA_UPDATE.md` bleibt Kandidat und wird nicht umbenannt.
 
 | Datei | Warum | Einschränkung |
 |---|---|---|
-| `WORK_REMOVE_BUFFETT_STOCK.md` | Soll „Sektion weg“ erfüllt. #355, kein Mount, Panel nur in der Rezession | Pfade in der Spec sind veraltet |
-| `WORK_KI_CHAT_ERROR.md` | 400-Zeichen-Fehler ist weg | DC-Gegencheck 26.11.: Kandidat, nicht umbenannt |
-| `WORK_KI_CHAT_LIMIT_ALL.md` | alle drei Textarten über dem alten 400er, These 18 000 ≥ 1 000 | DC-Gegencheck 26.11.: Kandidat, nicht umbenannt. Nicht das wörtliche Zod-Max 1 000 |
-| `WORK_NVO_TECHNICAL_OVERRIDE.md` | Gate auf main. `shared/bias-fixes.ts:147–187` (Kommentar der drei Bedingungen, `TechMoatOverride`, Schwellen 105 / 4.5 / 6.49) | DC-Gegencheck 26.11.: Kandidat, nicht umbenannt. Spec §9 nennt weiterhin Philips Vorher/Nachher-Tabelle |
+| `fertig_WORK_REMOVE_BUFFETT_STOCK.md` | Soll „Sektion weg“ erfüllt. #355, kein Mount, Panel nur in der Rezession | Umbenannt in #525 (Stabschef 26.11.2026). Pfade in der Spec sind veraltet |
+| `fertig_WORK_KI_CHAT_ERROR.md` | 400-Zeichen-Fehler ist weg | Umbenannt in #525 (Stabschef 26.11.2026) |
+| `fertig_WORK_KI_CHAT_LIMIT_ALL.md` | alle drei Textarten über dem alten 400er, These 18 000 ≥ 1 000 | Umbenannt in #525 (Stabschef 26.11.2026). Nicht das wörtliche Zod-Max 1 000 |
+| `fertig_WORK_NVO_TECHNICAL_OVERRIDE.md` | Gate auf main. `shared/bias-fixes.ts:147–187` (Kommentar der drei Bedingungen, `TechMoatOverride`, Schwellen 105 / 4.5 / 6.49) | Umbenannt in #525 (Stabschef 26.11.2026). Spec §9 nennt weiterhin Philips Vorher/Nachher-Tabelle |
 | `WORK_KI_CHAT_SCHEMA_UPDATE.md` | dominante Klasse ohne 30-%-Schwelle | — |
 | `WORK_KOSTENUEBERSICHT.md` | Stichtagsnotiz ohne Code-Soll | kein Feature. Optionaler Doku-Rename |
 

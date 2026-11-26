@@ -1,4 +1,4 @@
-Status: Fertig (Philip 26.11.2026), main fdb162c4, Beleg shared/chat-context.ts:161–174 CHAT_LIMITS. Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
+Status: Fertig (Stabschef 26.11.2026, Beleg SPEC_INVENTUR_SOLL_IST.md @fdb162c4), main fdb162c4, Beleg shared/chat-context.ts:161–174 CHAT_LIMITS. Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # WORK – KI-Chat Fehler bei KI-Analyse
 
 **Stand:** 27.10.2026  
