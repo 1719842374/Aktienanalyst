@@ -87,9 +87,14 @@ async function main() {
 
   resetStockPodcastRouteState();
   let analyzeCalls = 0;
+  let llmCalls = 0;
   const deps = {
     now: () => noonMadridWinter,
     llmAvailable: () => true,
+    llm: async () => {
+      llmCalls += 1;
+      return { data: { chapters: [] }, modelUsed: "test" };
+    },
     fullAi: (ticker: string, opts?: { regenerate?: boolean; now?: Date }) => runFullAiAnalysis(ticker, {
       ...opts,
       now: noonMadridWinter,
@@ -118,45 +123,51 @@ async function main() {
   assert.equal(first.body.ok, true);
   if (first.body.ok) {
     assert.equal(first.body.packCached, false);
-    assert.equal(first.body.asOf, "2026-11-26");
-    assert.equal(first.body.cacheKey, "spack:NVDA:2026-11-26");
-    assert.equal(first.body.sections.pestelLlm, true);
-    assert.equal(first.body.sections.policyContext, true);
-    assert.equal(first.body.sections.management, true);
-    assert.equal(first.body.sections.managementInterpret, true);
-    assert.equal(first.body.sections.earningsBrief, true);
-    assert.equal(first.body.sections.regulatory, true);
-    assert.equal(first.body.sections.thesisStrength, true);
+    assert.equal(first.body.cached, false);
+    assert.equal(first.body.source, "pdf");
+    assert.equal(first.body.voice, "de-DE-Mia:MAI-Voice-2.1");
+    assert.ok(first.body.chapters.some(c => c.id === "inversion"));
+    assert.ok(first.body.chapters.some(c => c.spoken.includes("Dies ist keine Anlageberatung.")));
+    assert.ok(first.body.chapters.some(c => /Geschäftsjahr/.test(c.spoken)));
+    assert.equal(first.body.chapters.some(c => /YTD|seit Jahresbeginn/.test(c.spoken)), false);
   }
   assert.equal(analyzeCalls, 1);
+  assert.equal(llmCalls, 1);
 
-  const second = await handleStockPodcastScript({ ticker: "NVDA", source: "ki" }, deps);
+  const second = await handleStockPodcastScript({ ticker: "NVDA", source: "pdf" }, deps);
   assert.equal(second.http, 200);
-  if (second.body.ok) assert.equal(second.body.packCached, true);
+  if (second.body.ok) assert.equal(second.body.cached, true);
   assert.equal(analyzeCalls, 1);
+  assert.equal(llmCalls, 1);
   assert.equal(podcastDailyCount("NVDA", noonMadridWinter), 1);
-  ok("Pack 1× je Tag und Ticker, zweiter Abruf ist Cache und zählt nicht");
+  ok("Dieselbe Quelle am selben Tag ist Skript-Cache und zählt nicht");
 
-  const again = await handleStockPodcastScript({ ticker: "NVDA", source: "pdf", regenerate: true }, deps);
-  assert.equal(again.http, 200);
-  if (again.body.ok) assert.equal(again.body.packCached, false);
-  assert.equal(analyzeCalls, 2);
+  const other = await handleStockPodcastScript({ ticker: "NVDA", source: "ki" }, deps);
+  assert.equal(other.http, 200);
+  if (other.body.ok) {
+    assert.equal(other.body.packCached, true);
+    assert.equal(other.body.cached, false);
+    assert.ok(other.body.chapters.some(c => c.id === "news-llm" && c.llmOwned));
+  }
+  assert.equal(analyzeCalls, 1);
+  assert.equal(llmCalls, 2);
   assert.equal(podcastDailyCount("NVDA", noonMadridWinter), 2);
-  ok("regenerate erzwingt einen neuen Pack und zählt als Erzeugung");
+  ok("Zweite Quelle nutzt denselben Pack und ein eigenes Skript");
 
-  const limited = await handleStockPodcastScript({ ticker: "NVDA", source: "ki", regenerate: true }, deps);
+  const limited = await handleStockPodcastScript({ ticker: "NVDA", source: "pdf", regenerate: true }, deps);
   assert.equal(limited.http, 429);
   assert.equal(limited.body.ok, false);
   if (!limited.body.ok) assert.equal(limited.body.errorCode, "RATE_LIMITED");
-  assert.equal(analyzeCalls, 2);
-  ok("Dritte Neu-Erzeugung am selben Tag ist 429, ohne weiteren Analyze-Lauf");
+  assert.equal(analyzeCalls, 1);
+  assert.equal(llmCalls, 2);
+  ok("Weitere Neu-Erzeugung am selben Tag ist 429, ohne weiteren Lauf");
 
   resetPodcastPackCache();
   resetPodcastDailyLimit();
   const noKey = await handleStockPodcastScript({ ticker: "NVDA", source: "pdf" }, { ...deps, llmAvailable: () => false });
   assert.equal(noKey.http, 503);
   if (!noKey.body.ok) assert.equal(noKey.body.errorCode, "NO_API_KEY");
-  assert.equal(analyzeCalls, 2);
+  assert.equal(analyzeCalls, 1);
   ok("Ohne OpenRouter-Key kein Analyze-Lauf");
 
   const off = await handleStockPodcastScript({ ticker: "NVDA", source: "pdf", fullAi: false }, deps);

@@ -1,0 +1,181 @@
+/**
+ * Rundung und Sprechform für den Aktien-Podcast.
+ * Das Modell schreibt diese Wörter nicht. Nur der Code setzt sie ein.
+ */
+
+const ONES = ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"] as const;
+const TEENS = ["zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn"] as const;
+const TENS = ["", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig"] as const;
+const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"] as const;
+const ORDINALS = [
+  "", "erster", "zweiter", "dritter", "vierter", "fünfter", "sechster", "siebter", "achter", "neunter",
+  "zehnter", "elfter", "zwölfter", "dreizehnter", "vierzehnter", "fünfzehnter", "sechzehnter", "siebzehnter", "achtzehnter", "neunzehnter",
+  "zwanzigster", "einundzwanzigster", "zweiundzwanzigster", "dreiundzwanzigster", "vierundzwanzigster", "fünfundzwanzigster",
+  "sechsundzwanzigster", "siebenundzwanzigster", "achtundzwanzigster", "neunundzwanzigster", "dreißigster", "einunddreißigster",
+] as const;
+
+export function roundSig(n: number, sig: number): number {
+  if (!Number.isFinite(n) || n === 0 || sig < 1) return 0;
+  const neg = n < 0;
+  const abs = Math.abs(n);
+  const exp = Math.floor(Math.log10(abs));
+  const pow = 10 ** (exp - sig + 1);
+  let scaled = Math.round(abs / pow);
+  let outPow = pow;
+  if (scaled >= 10 ** sig) {
+    scaled = Math.round(abs / (pow * 10));
+    outPow = pow * 10;
+  }
+  const out = scaled * outPow;
+  const clean = Number((neg ? -out : out).toPrecision(sig));
+  return Object.is(clean, -0) ? 0 : clean;
+}
+
+function partsFromPrecision(n: number, sig: number): { int: number; frac: string } {
+  const rounded = roundSig(Math.abs(n), sig);
+  const s = rounded.toPrecision(sig);
+  if (s.includes("e") || s.includes("E")) {
+    const [mantissa, expRaw] = s.toLowerCase().split("e");
+    const exp = Number(expRaw);
+    const [mi, mf = ""] = mantissa.split(".");
+    const digits = `${mi}${mf}`.replace("-", "");
+    if (exp >= 0) {
+      const intDigits = exp + 1;
+      const intPart = digits.slice(0, intDigits).padEnd(intDigits, "0");
+      return { int: Number(intPart), frac: digits.slice(intDigits).replace(/0+$/, "") };
+    }
+    return { int: 0, frac: `${"0".repeat(-exp - 1)}${digits}`.replace(/0+$/, "") };
+  }
+  const [i, f = ""] = s.split(".");
+  return { int: Number(i), frac: f.replace(/0+$/, "") };
+}
+
+export function speakInt(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  const v = Math.trunc(Math.abs(n));
+  const neg = n < 0 ? "minus " : "";
+  return neg + speakUnsigned(v);
+}
+
+function speakUnsigned(v: number): string {
+  if (v < 10) return ONES[v] ?? "null";
+  if (v < 20) return TEENS[v - 10] ?? "";
+  if (v < 100) {
+    const ten = Math.floor(v / 10);
+    const one = v % 10;
+    if (one === 0) return TENS[ten] ?? "";
+    const head = one === 1 ? "ein" : ONES[one];
+    return `${head}und${TENS[ten]}`;
+  }
+  if (v < 1000) {
+    const h = Math.floor(v / 100);
+    const rest = v % 100;
+    const hWord = h === 1 ? "einhundert" : `${ONES[h]}hundert`;
+    return rest === 0 ? hWord : `${hWord}${speakUnsigned(rest)}`;
+  }
+  if (v < 1_000_000) {
+    const th = Math.floor(v / 1000);
+    const rest = v % 1000;
+    const thWord = th === 1 ? "eintausend" : `${speakUnsigned(th)}tausend`;
+    return rest === 0 ? thWord : `${thWord}${speakUnsigned(rest)}`;
+  }
+  return String(v);
+}
+
+export function speakRounded(n: number, sig: number): string | null {
+  if (!Number.isFinite(n)) return null;
+  const neg = n < 0 ? "minus " : "";
+  const { int, frac } = partsFromPrecision(n, sig);
+  const head = speakUnsigned(int);
+  if (!frac) return `${neg}${head}`;
+  const tail = frac.split("").map(d => ONES[Number(d)] ?? d).join(" ");
+  return `${neg}${head} Komma ${tail}`;
+}
+
+export function speakPercent(n: number): string | null {
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n * 10) / 10;
+  const neg = rounded < 0 ? "minus " : "";
+  const abs = Math.abs(rounded);
+  const whole = Math.trunc(abs);
+  const frac = Math.round((abs - whole) * 10);
+  const head = speakUnsigned(whole);
+  const body = frac === 0 ? head : `${head} Komma ${ONES[frac]}`;
+  return `${neg}${body} Prozent`;
+}
+
+export function speakAmountUsd(n: number): string | null {
+  if (!Number.isFinite(n)) return null;
+  const abs = Math.abs(n);
+  const neg = n < 0 ? "minus " : "";
+  let core = n;
+  let unit = "Dollar";
+  if (abs >= 1e12) {
+    core = n / 1e12;
+    unit = "Billionen Dollar";
+  } else if (abs >= 1e9) {
+    core = n / 1e9;
+    unit = "Milliarden Dollar";
+  } else if (abs >= 1e6) {
+    core = n / 1e6;
+    unit = "Millionen Dollar";
+  }
+  const spoken = speakRounded(Math.abs(core), 3);
+  if (!spoken) return null;
+  return `${neg}${spoken} ${unit}`;
+}
+
+export function speakPriceUsd(n: number, sig = 3): string | null {
+  const spoken = speakRounded(n, sig);
+  if (!spoken) return null;
+  return `${spoken} Dollar`;
+}
+
+export function speakIsoDate(iso: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const ordinal = ORDINALS[day];
+  const monthName = MONTHS[month - 1];
+  if (!ordinal || !monthName) return null;
+  const yearWord = year >= 2000 && year < 2100
+    ? (year === 2000 ? "zweitausend" : `zweitausend${speakUnsigned(year - 2000)}`)
+    : speakUnsigned(year);
+  return `${ordinal} ${monthName} ${yearWord}`;
+}
+
+export function priceLabelDe(n: number | null): string | null {
+  if (n == null || !Number.isFinite(n)) return null;
+  return n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+}
+
+export interface RankedFigures {
+  price: number | null;
+  entry: number | null;
+  fair: number | null;
+  low: number | null;
+  high: number | null;
+}
+
+/** true, wenn die Reihenfolge nach dem Runden dieselbe bleibt. Bei Gleichstand einmal vier Stellen, sonst false. */
+export function rankAfterRounding(values: RankedFigures): { ok: boolean; sig: 3 | 4 } {
+  const pairs = (sig: number) => {
+    const keys = ["price", "entry", "fair", "low", "high"] as const;
+    const raw = keys.map(k => values[k]).filter((n): n is number => n != null && Number.isFinite(n));
+    const rounded = raw.map(n => roundSig(n, sig));
+    for (let i = 0; i < raw.length; i++) {
+      for (let j = i + 1; j < raw.length; j++) {
+        const before = Math.sign(raw[i]! - raw[j]!);
+        const after = Math.sign(rounded[i]! - rounded[j]!);
+        if (before !== 0 && before !== after) return false;
+      }
+    }
+    return true;
+  };
+  if (pairs(3)) return { ok: true, sig: 3 };
+  if (pairs(4)) return { ok: true, sig: 4 };
+  return { ok: false, sig: 4 };
+}

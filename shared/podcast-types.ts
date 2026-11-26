@@ -103,4 +103,18 @@ export interface StockPodcastErrorResponse {
   source?: StockPodcastSource;
 }
 
-export type StockPodcastResponse = StockPodcastScriptResponse | StockPodcastErrorResponse;
+export function stockPodcastAudioPath(opts: {
+  chapterId: string;
+  ticker: string;
+  source: StockPodcastSource;
+  voice: string;
+  cacheKey: string;
+}): string {
+  const q = new URLSearchParams({
+    ticker: opts.ticker,
+    source: opts.source,
+    voice: opts.voice,
+    cacheKey: opts.cacheKey,
+  });
+  return `/api/podcast/audio/${encodeURIComponent(opts.chapterId)}?${q.toString()}`;
+}
