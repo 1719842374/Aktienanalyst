@@ -319,12 +319,18 @@ export function PodcastPlayerView({
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
-        <div data-testid="podcast-toolbar" className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+        <div
+          data-testid="podcast-toolbar"
+          className={cn(
+            "flex w-full flex-wrap items-stretch gap-2 [container-type:inline-size]",
+            state === "loading" && "pointer-events-none opacity-[0.62]",
+          )}
+        >
           <div
             role="radiogroup"
             aria-label="Podcast-Quelle"
             data-testid="podcast-source"
-            className="flex min-w-[min(100%,12rem)] max-w-full flex-1 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
+            className="flex min-w-[min(100%,12rem)] flex-[1_1_16rem] rounded-md border border-border bg-muted/40 p-0.5 text-xs font-semibold [@container(max-width:22rem)]:flex-[1_1_100%] max-[430px]:flex-[1_1_100%]"
           >
             <button
               type="button"
@@ -333,7 +339,7 @@ export function PodcastPlayerView({
               data-testid="button-podcast-source-pdf"
               aria-label="Quelle PDF-basiert"
               className={cn(
-                "min-h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 source === "pdf" ? "bg-foreground text-background" : "text-muted-foreground",
               )}
               onClick={() => onSourceChange("pdf")}
@@ -347,7 +353,7 @@ export function PodcastPlayerView({
               data-testid="button-podcast-source-ki"
               aria-label="Quelle KI-Analyse"
               className={cn(
-                "min-h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 source === "ki" ? "bg-foreground text-background" : "text-muted-foreground",
               )}
               onClick={() => onSourceChange("ki")}
@@ -359,7 +365,7 @@ export function PodcastPlayerView({
             role="radiogroup"
             aria-label="Podcast-Sprache"
             data-testid="podcast-language"
-            className="flex min-w-[min(100%,18.5rem)] max-w-full shrink-0 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
+            className="flex w-[9.75rem] min-w-[6.5rem] flex-[0_0_auto] gap-0.5 rounded-[8px] border border-border/85 bg-muted/40 p-0.5 text-[11px] font-semibold [@container(max-width:22rem)]:w-auto [@container(max-width:22rem)]:max-w-full [@container(max-width:22rem)]:flex-[1_1_100%] max-[430px]:w-auto max-[430px]:max-w-full max-[430px]:flex-[1_1_100%]"
           >
             {(["de", "en"] as const).map((code) => {
               const hasCache = cachedLanguages[code];

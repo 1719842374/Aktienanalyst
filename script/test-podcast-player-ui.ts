@@ -239,8 +239,45 @@ check("Sprachschalter DE | EN, Default DE",
   && idle.includes('data-testid="button-podcast-lang-en"')
   && idle.includes('aria-label="Sprache Deutsch"')
   && idle.includes("min-h-11")
-  && idle.includes("flex flex-wrap items-center gap-x-4 gap-y-2.5")
   && !idle.includes("min-[376px]"));
+{
+  const toolbarAt = idle.indexOf('data-testid="podcast-toolbar"');
+  const sourceAt = idle.indexOf('data-testid="podcast-source"');
+  const langAt = idle.indexOf('data-testid="podcast-language"');
+  const toolbar = idle.slice(idle.lastIndexOf("<div", toolbarAt), idle.indexOf(">", toolbarAt));
+  const sourceSeg = idle.slice(idle.lastIndexOf("<div", sourceAt), idle.indexOf(">", sourceAt));
+  const langSeg = idle.slice(idle.lastIndexOf("<div", langAt), idle.indexOf(">", langAt));
+  const langButtonAt = idle.indexOf('data-testid="button-podcast-lang-de"');
+  const langButton = idle.slice(langButtonAt, idle.indexOf(">", langButtonAt));
+  check("Toolbar folgt dem v5-Mock",
+    toolbar.includes("flex w-full flex-wrap items-stretch gap-2")
+    && sourceSeg.includes("flex-[1_1_16rem]")
+    && sourceSeg.includes("min-w-[min(100%,12rem)]")
+    && sourceSeg.includes("text-xs")
+    && sourceSeg.includes("[@container(max-width:22rem)]:flex-[1_1_100%]")
+    && sourceSeg.includes("max-[430px]:flex-[1_1_100%]")
+    && idle.includes("h-11 flex-1")
+    && langSeg.includes("flex-[0_0_auto]")
+    && langSeg.includes("w-[9.75rem]")
+    && langSeg.includes("min-w-[6.5rem]")
+    && langSeg.includes("gap-0.5")
+    && langSeg.includes("rounded-[8px]")
+    && langSeg.includes("border-border/85")
+    && langSeg.includes("bg-muted/40")
+    && langSeg.includes("p-0.5")
+    && langButton.includes("min-h-11")
+    && langButton.includes("min-w-11")
+    && langButton.includes("flex-1")
+    && langSeg.includes("[@container(max-width:22rem)]:w-auto")
+    && langSeg.includes("[@container(max-width:22rem)]:max-w-full")
+    && langSeg.includes("[@container(max-width:22rem)]:flex-[1_1_100%]")
+    && langSeg.includes("max-[430px]:w-auto")
+    && langSeg.includes("max-[430px]:max-w-full")
+    && langSeg.includes("max-[430px]:flex-[1_1_100%]")
+    && !langSeg.includes("18.5rem")
+    && !toolbar.includes("gap-x-4")
+    && !toolbar.includes("gap-y-2.5"));
+}
 check("Idle ohne Extra-Icons und ohne Leisten-Controls",
   !idle.includes('data-testid="button-podcast-play"')
   && !idle.includes("Download")
@@ -273,6 +310,12 @@ check("Loading zeigt drei Stufen, aktiv ist das Transkript",
   && loading.includes("OpenRouter interpretiert die Analyse")
   && loading.includes("font-bold text-[#1ED760]")
   && loading.indexOf("podcast-loading-step-script") < loading.indexOf("font-bold"));
+{
+  const toolbarAt = loading.indexOf('data-testid="podcast-toolbar"');
+  const toolbar = loading.slice(loading.lastIndexOf("<div", toolbarAt), loading.indexOf(">", toolbarAt));
+  check("Toolbar ist während der Erzeugung gesperrt",
+    toolbar.includes("pointer-events-none") && toolbar.includes("opacity-[0.62]"));
+}
 
 const chapters: PodcastChapterView[] = [
   { id: "s17", label: "Katalysatoren", spoken: "Katalysator-Text.", durationSec: 72, audioUrl: null, src: null },
@@ -455,6 +498,11 @@ check("Hook startet nicht /api/analyze und nicht den Markt-Podcast",
 check("Klick auf eine Quelle startet den Lauf mit regenerate false", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 180).includes("run(next, false)"));
 check("Neu erzeugen ruft den Lauf mit regenerate true auf", hookSrc.includes("void run(sourceRef.current, true)"));
 check("Hook schickt kein fresh-Feld", !hookSrc.includes("fresh:"));
+check("Kopfkommentar nennt keinen Commit", !hookSrc.includes("64168d9c") && !hookSrc.includes("60e6b906"));
+{
+  const adopt = hookSrc.slice(hookSrc.indexOf("const adoptScript"), hookSrc.indexOf("const run", hookSrc.indexOf("const adoptScript")));
+  check("adoptScript setzt voiceRef mit der Stimme", adopt.includes("voiceRef.current = parsed.voice") && adopt.includes("setVoiceId(parsed.voice)"));
+}
 check("Sprachwechsel ruft keinen Lauf auf", (() => {
   const start = hookSrc.indexOf("const selectLanguage");
   const end = hookSrc.indexOf("const generate", start);

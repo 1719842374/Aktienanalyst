@@ -10,7 +10,7 @@
  * Nicht aus shared/ importieren, solange #529 nicht auf main liegt.
  * Nach dem Merge von #529 per Merge-Commit auf die shared-Exports umstellen.
  *
- * POST /api/podcast/script, Zod strict (Head 64168d9c von #529):
+ * POST /api/podcast/script, Zod strict auf #529:
  *   { ticker, source, regenerate?, fullAi?, voice?, language?: "de"|"en" (Default de) }
  *   language kommt additiv in der Antwort zurück. Audio-Query hängt language an,
  *   wie stockPodcastAudioPath. Fehlt sie, setzt der Server de.
@@ -981,7 +981,10 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     cacheKeyRef.current = parsed.cacheKey;
     const nextSource = parsed.source ?? sourceRef.current;
     if (parsed.source) setSource(parsed.source);
-    if (parsed.voice && voiceRef.current !== PODCAST_BROWSER_VOICE) setVoiceId(parsed.voice);
+    if (parsed.voice && voiceRef.current !== PODCAST_BROWSER_VOICE) {
+      voiceRef.current = parsed.voice;
+      setVoiceId(parsed.voice);
+    }
     setStandAsOf(formatPodcastAsOf(parsed.asOf, asOfFallback.current));
     setStandPrice(parsed.priceLabel ?? priceFallback.current);
     chaptersRef.current = parsed.chapters;
