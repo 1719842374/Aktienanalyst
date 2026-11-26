@@ -199,11 +199,11 @@ async function main() {
 
   const inventedRaw = "Toyota hat starke Patente und Apple kauft Novo Nordisk. Der Satz bleibt trotzdem lang genug für die Prüfung hier.";
   const inventedBackup = verifyChapter("s13", inventedRaw, deSheet, []);
-  assert.equal(inventedBackup.reasons.includes("name"), false, inventedBackup.notes.join("|"));
+  assert.equal(inventedBackup.reasons.includes("name"), true, inventedBackup.notes.join("|"));
   const invented = verifyChapter("s13", inventedRaw, deSheet, ["Toyota", "Apple", "Novo Nordisk"]);
   assert.equal(invented.ok, false);
   assert.ok(invented.reasons.includes("name"));
-  ok("Deutsche Eigennamen fallen über die Entitätsliste, nicht über die Großschreibung");
+  ok("Deutsche Eigennamen außerhalb der belegten Substantive fallen auch ohne Liste");
 
   resetPodcastScriptCache();
   const good = fallbackParagraph("umsatz", deSheet);
@@ -297,11 +297,11 @@ async function main() {
 
   const leadingRaw = "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.";
   const leadingEmpty = verifyChapter("zusammenfassung", leadingRaw, deSheet, []);
-  assert.equal(leadingEmpty.notes.some(note => note === "name Toyota"), false, leadingEmpty.notes.join("|"));
+  assert.equal(leadingEmpty.notes.some(note => note === "name Toyota"), true, leadingEmpty.notes.join("|"));
   const leading = verifyChapter("zusammenfassung", leadingRaw, deSheet, ["Toyota"]);
   assert.equal(leading.ok, false);
   assert.ok(leading.notes.some(note => note === "name Toyota"), leading.notes.join("|"));
-  ok("Toyota am Satzanfang fällt nur, wenn die Entitätsliste ihn nennt");
+  ok("Toyota am Satzanfang fällt auch ohne Entitätsliste");
 
   const ordered = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ticker: "NVDA",
@@ -562,15 +562,19 @@ async function main() {
   const countFallback = (pool: ProbePool, sheet: typeof probeDe, entitiesFor: (raw: string) => string[] | null) => {
     let total = 0;
     let fallen = 0;
+    const names: string[] = [];
     for (const [id, rows] of Object.entries(pool)) {
       for (const row of rows) {
         const raw = expandLegacy(row, sheet);
         const verdict = verifyChapter(id, raw, sheet, entitiesFor(raw));
         total += 1;
-        if (!verdict.ok) fallen += 1;
+        if (!verdict.ok) {
+          fallen += 1;
+          names.push(verdict.notes.filter(note => note.startsWith("name ")).join(",") || verdict.notes.join(","));
+        }
       }
     }
-    return { total, fallen };
+    return { total, fallen, names };
   };
   const deBackup = countFallback(dePool, probeDe, () => null);
   const enBackup = countFallback(enPool, probeEn, () => null);
@@ -591,7 +595,7 @@ async function main() {
     }
     return { total, fallen };
   })();
-  assert.ok(deBackup.fallen / deBackup.total <= 0.1, `DE backup ${deBackup.fallen}/${deBackup.total}`);
+  assert.ok(deBackup.fallen / deBackup.total <= 0.1, `DE backup ${deBackup.fallen}/${deBackup.total} ${deBackup.names.join(" || ")}`);
   assert.ok(enBackup.fallen / enBackup.total <= 0.1, `EN backup ${enBackup.fallen}/${enBackup.total}`);
   assert.equal(deExtracted.fallen, deBackup.fallen);
   assert.equal(enExtracted.fallen, enBackup.fallen);
@@ -648,7 +652,7 @@ async function main() {
     ["Zepbound bleibt der Vergleich für die Firma und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie trägt die Nachfrage.", "Zepbound"],
   ];
   for (const [sentence, name] of deNames) {
-    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).reasons.includes("name"), false, sentence);
+    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).reasons.includes("name"), true, sentence);
     assert.equal(verifyChapter("einstieg", sentence, probeDe, [name]).ok, false, sentence);
     const redo = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
       chapters: [{ id: "einstieg", paragraph: sentence, entities: [name] }],
@@ -720,7 +724,7 @@ async function main() {
   }, new Map([["einstieg", []]]), new Map());
   assert.ok(redoEmpty[0]?.reasons.includes("entities"), redoEmpty[0]?.notes.join("|"));
   const appleBlackwell = "Im Vergleich zu Apple bleibt blackwell der zweite Treiber und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie bleibt der Maßstab für die Firma.";
-  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).reasons.includes("name"), false);
+  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).reasons.includes("name"), true);
   assert.equal(verifyChapter("s17", appleBlackwell, probeDe, ["Apple", "blackwell"]).ok, false);
   const plain = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
   assert.equal(verifyChapter("zusammenfassung", plain, probeDe, ["Zephyr"]).ok, true);
@@ -1102,6 +1106,44 @@ async function main() {
     const verdict = verifyChapter("einstieg", sentence, probeDe, [name]);
     assert.equal(verdict.ok, false, `${name} ${verdict.notes.join("|")}`);
     assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+  }
+  const nvoNames = buildSpeechSheet(buildPodcastFacts(pack("NVO", {
+    ...baseFacts,
+    ticker: "NVO",
+    companyName: "Novo Nordisk",
+    podcastCompanySource: "yahoo-chart",
+    revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+    catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 4 }],
+    risks: [{ name: "Wettbewerb durch Lilly" }],
+    newsItems: [{ title: "Ozempic", pubDate: "2026-11-25T08:00:00.000Z" }],
+    growthThesis: "Die Nachfrage trägt die Geschichte der Firma.",
+  }), NOON), "de");
+  const atStart = (name: string) => `${name} bleibt in diesem Jahr der Vergleich für die Firma und der Kurs stützt die Bewertung. Die Aktie trägt die Nachfrage.`;
+  const inMiddle = (name: string) => `Die Firma sieht ${name} und der Kurs bleibt der Maßstab für den Markt im neuen Jahr. Die Aktie stützt die Bewertung.`;
+  for (const name of ["Toyota", "Apple", "Pfizer", "Zepbound", "Mounjaro", "Lily"]) {
+    for (const sentence of [atStart(name), inMiddle(name)]) {
+      for (const entities of [null, []] as Array<string[] | null>) {
+        const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+        assert.equal(verdict.ok, false, `${name} ${entities === null ? "null" : "[]"} ${verdict.notes.join("|")}`);
+        assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+      }
+      const listed = verifyChapter("einstieg", sentence, nvoNames, [name]);
+      assert.equal(listed.ok, false, `${name} liste ${listed.notes.join("|")}`);
+      const missing = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: sentence }] }, new Map());
+      assert.ok(missing.some(draft => draft.id === "einstieg" && draft.reasons.length > 0), name);
+    }
+  }
+  for (const name of ["Lilly", "Ozempic", "Novo Nordisk"]) {
+    for (const sentence of [atStart(name), inMiddle(name)]) {
+      for (const entities of [null, []] as Array<string[] | null>) {
+        const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+        assert.equal(verdict.ok, true, `${name} ${entities === null ? "null" : "[]"} ${verdict.notes.join("|")}`);
+      }
+    }
+  }
+  for (const word of ["Aktienkurs", "Handel", "Tag"]) {
+    const verdict = verifyChapter("einstieg", inMiddle(word), nvoNames, []);
+    assert.equal(verdict.ok, true, `${word} ${verdict.notes.join("|")}`);
   }
   const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));

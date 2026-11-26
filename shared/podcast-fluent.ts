@@ -5,6 +5,7 @@
  */
 import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
+import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
 import { roundedParts, speakPercent } from "./podcast-speak";
@@ -63,7 +64,7 @@ const DE_MARKER = /\b(der|die|das|den|dem|und|ist|liegt|bei|für|im|ein|eine|nic
 const EN_MARKER = /\b(the|and|of|to|for|with|from|this|that|is|are|stands|stay|stays)\b/i;
 const DE_LEAK = /\b(der|die|das|den|dem|und|liegt|liegen|nicht|für|eine|einer|ist|sind|geschäftsjahr|prozent|anlageberatung|heute|gestern|beträgt|steht|stammt|faktenblatt|angabe|jüngste)\b/i;
 
-const DE_LEXICON = new Set(`der die das den dem des ein eine einer einem einen eines eins und oder für von mit auf im in am an bei aus nach vor über unter zwischen ohne als auch noch nur sehr hier dort dann dazu damit dieser diese dieses diesen diesem belegte belegten größten grössten größte grösste jüngste naechste nächste rechnerische faire genannt wir heute danach zuletzt ampel einordnung wert verhältnis komma aktie firma jahr monat januar februar märz maerz april mai juni juli august september oktober november dezember umsatz gewinn marge wachstum kurs bewertung risiko chance katalysator segment markt branche unternehmen gesellschaft anleger nachfrage angebot wettbewerb preis regulierung produktion plattform software zukunft vergleich massstab maßstab hebel rahmen gegenpol spitze liste einschätzung einschaetzung meldung fenster alter stand datum quartal prozent dollar euro potenzial potential anteil aufteilung jahreswert geschäftsjahr geschaeftsjahr einstieg these geschichte hersteller spezialist nachricht bericht periode termin kapitel lauf angabe faktenblatt werte satz absatz überblick ueberblick bild sicht lage trend ausblick ergebnis verlust cashflow rendite dividende bilanz zins kapital kosten ertrag volumen stück kueck kunde käufer kaeufer region land welt europa asien amerika geschäft geschaeft call earnings umsatzwachstum marktwert gegenseite einordnung vollständig vollstaendig zahlen quelle`.split(/\s+/));
+const DE_LEXICON = new Set(`der die das den dem des ein eine einer einem einen eines eins und oder für von mit auf im in am an bei beim aus nach vor über unter zwischen ohne als auch noch nur sehr hier dort dann dazu damit dieser diese dieses diesen diesem alles seit gegen daneben vorne zuerst beide beides schaut bewertet spannend belegte belegten größten grössten größte grösste jüngste naechste nächste rechnerische faire genannt wir heute danach zuletzt ampel einordnung wert verhältnis komma aktie firma jahr monat januar februar märz maerz april mai juni juli august september oktober november dezember umsatz gewinn marge wachstum kurs bewertung risiko chance katalysator segment markt branche unternehmen gesellschaft anleger nachfrage angebot wettbewerb preis regulierung produktion plattform software zukunft vergleich massstab maßstab hebel rahmen gegenpol spitze liste einschätzung einschaetzung meldung fenster alter stand datum quartal prozent dollar euro potenzial potential anteil aufteilung jahreswert geschäftsjahr geschaeftsjahr einstieg these geschichte hersteller spezialist nachricht bericht periode termin kapitel lauf angabe faktenblatt werte satz absatz überblick ueberblick bild sicht lage trend ausblick ergebnis verlust cashflow rendite dividende bilanz zins kapital kosten ertrag volumen stück kueck kunde käufer kaeufer region land welt europa asien amerika geschäft geschaeft call earnings umsatzwachstum marktwert gegenseite einordnung vollständig vollstaendig zahlen quelle`.split(/\s+/));
 
 const EN_LEXICON = new Set(`the a an we this that these those our their its and of in for from with at to by on as after not today date price fair value largest next latest verified catalyst catalysts risk risks report reports signal view thesis opening calculated entry period investment advice figures figure revenue growth fiscal year annual segment share potential demand margin quarter date window source chapter episode company market competition platform data center gaming dollars dollar percent point negative zero picture split chance ratio call earnings`.split(/\s+/));
 
@@ -660,6 +661,41 @@ function withoutPossessive(word: string): string {
   return word.replace(/(?:['’]s|['’])$/, "");
 }
 
+const DE_NOUNS = new Set(DE_NOUN_LEMMAS);
+
+function foldUmlaut(word: string): string {
+  return word.replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ß/g, "ss");
+}
+
+function nounKeys(word: string): string[] {
+  const lower = withoutPossessive(word).toLowerCase();
+  const folded = foldUmlaut(lower);
+  return folded === lower ? [lower] : [lower, folded];
+}
+
+function isListedNoun(word: string): boolean {
+  return nounKeys(word).some(key => DE_NOUNS.has(key));
+}
+
+function provenGermanNoun(word: string): boolean {
+  const lower = withoutPossessive(word).toLowerCase();
+  if (isListedNoun(lower)) return true;
+  for (const suffix of ["en", "er", "e", "n", "s"]) {
+    if (lower.length - suffix.length < 4 || !lower.endsWith(suffix)) continue;
+    if (isListedNoun(lower.slice(0, -suffix.length))) return true;
+  }
+  for (let tailLen = 4; tailLen <= lower.length - 4; tailLen++) {
+    const tail = lower.slice(lower.length - tailLen);
+    if (isListedNoun(tail)) return true;
+    for (const suffix of ["en", "er", "e", "n", "s"]) {
+      if (!tail.endsWith(suffix)) continue;
+      const core = tail.slice(0, -suffix.length);
+      if (core.length >= 4 && isListedNoun(core)) return true;
+    }
+  }
+  return false;
+}
+
 function placeBits(text: string): string[] {
   return withoutPossessive(text).replace(/\./g, "").split(/[^A-Za-zÄÖÜäöüß]+/)
     .map(bit => withoutPossessive(bit))
@@ -714,7 +750,7 @@ function packNameLeak(text: string, sheet: SpeechSheet): string | null {
 }
 
 /** Strukturelle Kandidaten. Ein leeres Extraktor-Ergebnis schaltet diese Prüfung nicht ab. */
-function structuralName(text: string, sheet: SpeechSheet): string | null {
+function structuralName(text: string, sheet: SpeechSheet, proveNouns = false): string | null {
   const allowed = allowedWords(sheet);
   const names = knownNames(sheet);
   for (const sentence of podcastSentences(text)) {
@@ -723,6 +759,10 @@ function structuralName(text: string, sheet: SpeechSheet): string | null {
       const clean = tokenCore(words[i] ?? "");
       if (!clean || wordAllowed(withoutPossessive(clean), allowed, sheet.language)) continue;
       if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
+      if (proveNouns && sheet.language === "de" && /^[A-ZÄÖÜ]/.test(withoutPossessive(clean))) {
+        if (!provenGermanNoun(clean)) return clean;
+        continue;
+      }
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
       const allCaps = /^[A-ZÄÖÜ]{2,5}$/.test(clean);
@@ -909,7 +949,8 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
-  const structural = spoken ? structuralName(spoken, sheet) : null;
+  const proveNouns = entities == null || entities.length === 0;
+  const structural = spoken ? structuralName(spoken, sheet, proveNouns) : null;
   const leaked = spoken ? packNameLeak(spoken, sheet) : null;
   const extra = spoken ? entityHit(entities, raw, spoken, sheet) : null;
   const name = structural ?? leaked ?? extra;
