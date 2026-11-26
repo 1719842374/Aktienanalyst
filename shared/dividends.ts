@@ -19,6 +19,9 @@ export interface DividendHistoryResponse {
   note: string | null;
   /** ISO currency the source states for the amounts (FMP row `currency`/`reportedCurrency`, Yahoo meta.currency). null = source states none. */
   currency?: string | null;
+  /** Gesetz, wenn die USD-Umrechnung einen abgelaufenen FX-Cache-Kurs benutzt hat. */
+  fxStale?: boolean;
+  fxAgeMs?: number | null;
 }
 
 const CCY = /^[A-Z]{3}$/;

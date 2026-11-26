@@ -123,6 +123,8 @@ import {
   fmpQuote,
   fmpEarningsCalendar,
   convertFmpRowsToUsd,
+  publishStatementFx,
+  statementFxFromRows,
   dedupeSegmentsByName,
   filterGeographicDuplicates,
   dropAliasRevenueDuplicates,
@@ -664,6 +666,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
       // C1 (#252): FMP 402 → Yahoo-Fallback ohne Statements. Dann keine Bewertung (DCF/Score/Rating null).
       const yahooOnly = (fmpData as any).source === "yahoo";
+      let statementFx = (fmpData as any).statementFx
+        ?? statementFxFromRows(financials?.income)
+        ?? statementFxFromRows(analyst?.estimates);
+      if (statementFx && (fmpData as any).statementFx == null) {
+        const priceCcy = String(profile?.currency ?? "USD").toUpperCase();
+        statementFx = { ...statementFx, blocksUsdMix: statementFx.missing === true && priceCcy === "USD" };
+      }
+      const fxBlocksUsdMix = statementFx?.blocksUsdMix === true;
       // FMP-ADR: 402-Listing mit Fundamentaldaten über das US-/ADR-Symbol (analyze-helpers fmpViaAdrData). Volle
       // Bewertung (source 'fmp'); weitere FMP-Calls dieses Laufs gehen an das ADR-Symbol, Kurs/Chart bleiben lokal.
       const adrInfo = (fmpData as any).adr ?? null;
@@ -938,7 +948,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         : 0;
 
       // Backfill forwardPE if the ratios endpoint didn't supply it.
-      if (!(forwardPE > 0) && nextFyEpsAbs > 0 && price > 0) {
+      if (!fxBlocksUsdMix && !(forwardPE > 0) && nextFyEpsAbs > 0 && price > 0) {
         forwardPE = price / nextFyEpsAbs;
       }
 
@@ -1716,7 +1726,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Negativer FCF bekommt den Grund 'negativer FCF' (gleiche Regel wie dcfApplicable §3.3).
       let dcfFairValue: number | null = null;
       const dcfNaReason: "negativer FCF" | null = fcfTTM < 0 ? "negativer FCF" : null;
-      if (fcfTTM > 0 && sharesOutstanding > 0 && dcfWacc > dcfTerminalGrowth) {
+      if (!fxBlocksUsdMix && fcfTTM > 0 && sharesOutstanding > 0 && dcfWacc > dcfTerminalGrowth) {
         let pvFCF = 0;
         for (let y = 1; y <= dcfYears; y++) {
           pvFCF += fcfTTM * Math.pow(1 + dcfGrowthRate, y) / Math.pow(1 + dcfWacc, y);
@@ -1863,7 +1873,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       let scoring: StockAnalysis["scoring"] = undefined;
       try {
-        scoring = yahooOnly ? undefined : buildScoringForAnalysis({
+        scoring = (yahooOnly || fxBlocksUsdMix) ? undefined : buildScoringForAnalysis({
           ctx: {
             impliedGStar,
             quarterlyRevenueChronological,
@@ -2274,7 +2284,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
       // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
       // C1 (#252): bei Yahoo-Daten weder Server-CRV noch Backtest-Snapshot (keine 0-Werte ins Scoring).
-      if (!yahooOnly) try {
+      if (!yahooOnly && !fxBlocksUsdMix) try {
         // Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
         // Nutzer-Praezisierung 30.08.2026): invDcf/CRV jetzt ECHT serverseitig
         // berechnen — ueber dieselben reinen Funktionen wie die Live-UI
@@ -2423,10 +2433,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
       }
 
-      if (!yahooOnly) {
+      if (!yahooOnly && !fxBlocksUsdMix) {
         applyBiasFix(analysis);
         attachExecSummary(analysis);
       }
+      publishStatementFx(analysis, statementFx);
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
       diskCacheSet(cacheKey, analysis);
       return res.json(analysis);

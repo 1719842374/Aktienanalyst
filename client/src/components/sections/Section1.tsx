@@ -139,6 +139,16 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       )}
 
+      {data.fxConversion && (
+        <div className={`border rounded-lg p-3 mb-3 text-xs ${data.fxConversion.naReason || data.fxConversion.fxRateOneWarning ? "bg-amber-500/10 border-amber-500/30 text-amber-300" : "bg-blue-500/10 border-blue-500/20 text-blue-300"}`} data-testid="fx-conversion-notice">
+          {data.fxConversion.naReason
+            ? data.fxConversion.naReason
+            : data.fxConversion.fxRateOneWarning
+              ? `Warnung: ${data.fxConversion.reportedCurrency} ist nicht USD, verwendeter Kurs ist 1.`
+              : `Wechselkurs ${data.fxConversion.reportedCurrency}USD ${data.fxConversion.rate} aus dem Cache, Alter ${data.fxConversion.fxAgeMs} ms.`}
+        </div>
+      )}
+
       {data.currencyInfo && (
         <div className={`${data.currencyInfo.converted ? "bg-blue-500/10 border-blue-500/20" : "bg-amber-500/10 border-amber-500/20"} border rounded-lg p-3 flex items-start gap-2`} data-testid="currency-info">
           <span className="text-base flex-shrink-0">💱</span>
@@ -151,6 +161,12 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               — {data.currencyInfo.note ?? `${data.currencyInfo.fxPair} = ${data.currencyInfo.fxRate.toFixed(4)}`}
               {data.currencyInfo.converted ? " Alle Bewertungen und DCF-Berechnungen in USD." : ""}
             </span>
+            {data.currencyInfo.fxStale && (
+              <span className="block text-amber-300">Cache-Kurs, Alter {data.currencyInfo.fxAgeMs} ms.</span>
+            )}
+            {data.currencyInfo.fxRateOneWarning && (
+              <span className="block text-amber-300">Warnung: Berichtswährung ist nicht USD, verwendeter Kurs ist 1.</span>
+            )}
           </div>
         </div>
       )}
@@ -214,8 +230,8 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           </thead>
           <tbody className="divide-y divide-border/50">
             <Row label="EPS TTM" value={yahooValueMissing(data, data.epsTTM) ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM as number)}`} />
-            <Row label="EPS adj. FY" value={yNum(data.epsAdjFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
-            <Row label="EPS Consensus Next FY" value={yNum(data.epsConsensusNextFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
+            <Row label="EPS adj. FY" value={data.epsAdjFY == null || yNum(data.epsAdjFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
+            <Row label="EPS Consensus Next FY" value={data.epsConsensusNextFY == null || yNum(data.epsConsensusNextFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
@@ -263,7 +279,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               <tr className="border-b border-border/50">
                 <td className="py-1.5 px-2 text-muted-foreground">PEG</td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  <span>{yNum(data.pegRatio)}</span>
+                  <span>{data.pegRatio == null ? "n/a" : yNum(data.pegRatio)}</span>
                   {data.lynchClass && !yahoo && (
                     <span title={data.lynchPEGBasis || data.lynchClass}
                       className={`ml-2 text-[9px] px-1.5 py-0.5 rounded font-medium cursor-help ${
