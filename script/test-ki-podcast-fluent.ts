@@ -1398,8 +1398,13 @@ async function main() {
     "Größere Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Steigende Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Mehr Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Einige Werte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Gekaufte Ware bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Die Märkte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Der Kurs trägt die Märkte und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Das Großunternehmen bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Der Hochgeschwindigkeitszug bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Der Kurs in New York bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
   ];
   for (const text of calmDe) {
     for (const entities of [null, []] as const) {
@@ -1413,6 +1418,8 @@ async function main() {
     "Higher demand remains the verified view for the firm this year. Competition holds the market.",
     "More demand remains the verified view for the firm this year. Competition holds the market.",
     "Growing demand remains the verified view for the firm this year. Competition holds the market.",
+    "Several buyers remain the verified view for the firm this year. Competition holds the market.",
+    "Largest demand remains the verified view for the firm this year. Competition holds the market.",
   ];
   for (const text of calmEn) {
     const verdict = verifyChapter("einstieg", text, probeEn, null);
@@ -1434,6 +1441,17 @@ async function main() {
   assert.equal(peerNone.notes.some(note => /siemens/i.test(note)), false, peerNone.notes.join("|"));
   const bayerNone = verifyChapter("einstieg", "Der Kurs bleibt der Maßstab und Bayer steht im Satz der Firma. Die Aktie stützt die Bewertung im neuen Jahr.", probeDe, [], true);
   assert.ok(bayerNone.notes.some(note => /bayer/i.test(note)), bayerNone.notes.join("|"));
+  const bayerList = verifyChapter("einstieg", "Der Kurs bleibt der Maßstab und Bayer steht im Satz der Firma. Die Aktie stützt die Bewertung im neuen Jahr.", probeDe, ["Toyota"]);
+  assert.ok(bayerList.notes.some(note => /bayer/i.test(note)), bayerList.notes.join("|"));
+  const shortForeign = "Pfizerwerk stützt Kursbewertung heute sehr deutlich weltweit insgesamt.";
+  const shortForeignVerdict = verifyChapter("einstieg", shortForeign, probeDe, [], true);
+  assert.equal(shortForeignVerdict.reasons.includes("language"), false, shortForeignVerdict.notes.join("|"));
+  assert.ok(shortForeignVerdict.notes.some(note => note.toLowerCase().includes("pfizerwerk")), shortForeignVerdict.notes.join("|"));
+  const cloud = "Der Kurs bleibt der Maßstab und CloudX stützt die Firma im neuen Jahr. Die Aktie trägt die Nachfrage.";
+  const cloudList = verifyChapter("einstieg", cloud, probeDe, ["Toyota"]);
+  assert.equal(cloudList.notes.some(note => /cloudx/i.test(note)), false, cloudList.notes.join("|"));
+  const cloudNone = verifyChapter("einstieg", cloud, probeDe, [], true);
+  assert.ok(cloudNone.notes.some(note => /cloudx/i.test(note)), cloudNone.notes.join("|"));
   ok("Satzanfang und Plural bleiben frei, Pfizerwerk und Bayer unter none nicht");
   const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
   assert.equal(genitive.ok, false, genitive.notes.join("|"));
