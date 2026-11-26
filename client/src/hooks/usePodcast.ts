@@ -10,8 +10,10 @@
  * Nicht aus shared/ importieren, solange #529 nicht auf main liegt.
  * Nach dem Merge von #529 per Merge-Commit auf die shared-Exports umstellen.
  *
- * POST /api/podcast/script, Zod strict:
- *   { ticker, source: "pdf"|"ki", regenerate?: boolean (Default false), fullAi?: boolean, voice? }
+ * POST /api/podcast/script, Zod strict (Head 64168d9c von #529):
+ *   { ticker, source, regenerate?, fullAi?, voice?, language?: "de"|"en" (Default de) }
+ *   language kommt additiv in der Antwort zurück. Audio-Query hängt language an,
+ *   wie stockPodcastAudioPath. Fehlt sie, setzt der Server de.
  *   Normaler Klick: regenerate false (Cache/Pack am selben Tag, zählt nicht gegen PODCAST_DAILY_MAX).
  *   „Neu erzeugen“: regenerate true. Das Zod-Schema ist strict und kennt kein weiteres Flag.
  *   Stimme "browser" geht nicht an den Server (speechSynthesis, kein Audio-GET).
@@ -84,6 +86,93 @@ export const PODCAST_VOICES: readonly PodcastVoiceOption[] = [
 
 export const PODCAST_DEFAULT_VOICE = PODCAST_VOICES[0]!.id;
 export const PODCAST_BROWSER_VOICE = "browser";
+export const PODCAST_LANGUAGE_STORAGE_KEY = "aktienanalyst.podcast.language";
+export const PODCAST_EN_DEFAULT_VOICE = "en-US-Harper:MAI-Voice-2.1";
+
+export type PodcastLanguage = "de" | "en";
+
+const SHARED_VOICES: readonly PodcastVoiceOption[] = PODCAST_VOICES.filter((voice) => voice.group !== "openrouter");
+
+/** Englische OpenRouter-Stimmen derselben Mai-Voice-2.1, plus xAI und Browser. */
+export const PODCAST_VOICES_EN: readonly PodcastVoiceOption[] = [
+  { id: PODCAST_EN_DEFAULT_VOICE, slug: "harper-en", name: "Harper", group: "openrouter" },
+  { id: "en-US-Grant:MAI-Voice-2.1", slug: "grant-en", name: "Grant", group: "openrouter" },
+  ...SHARED_VOICES,
+];
+
+export function voicesForLanguage(language: PodcastLanguage): readonly PodcastVoiceOption[] {
+  switch (language) {
+    case "de":
+      return PODCAST_VOICES;
+    case "en":
+      return PODCAST_VOICES_EN;
+    default: {
+      const unreachable: never = language;
+      return unreachable;
+    }
+  }
+}
+
+export function defaultVoiceForLanguage(language: PodcastLanguage): string {
+  switch (language) {
+    case "de":
+      return PODCAST_DEFAULT_VOICE;
+    case "en":
+      return PODCAST_EN_DEFAULT_VOICE;
+    default: {
+      const unreachable: never = language;
+      return unreachable;
+    }
+  }
+}
+
+export function voiceFitsLanguage(language: PodcastLanguage, voiceId: string): boolean {
+  return voicesForLanguage(language).some((voice) => voice.id === voiceId);
+}
+
+export function readPodcastLanguage(storage: { getItem(key: string): string | null } | null): PodcastLanguage {
+  const raw = storage?.getItem(PODCAST_LANGUAGE_STORAGE_KEY);
+  return raw === "en" ? "en" : "de";
+}
+
+export function writePodcastLanguage(storage: { setItem(key: string, value: string): void } | null, language: PodcastLanguage): void {
+  storage?.setItem(PODCAST_LANGUAGE_STORAGE_KEY, language);
+}
+
+/** Wechsel ohne Cache zeigt Idle und startet keinen Lauf. Mit Cache wird sofort abgespielt. */
+export function decideLanguageSwitch(hasCache: boolean): "play" | "idle" {
+  return hasCache ? "play" : "idle";
+}
+
+/** Tageslimit sperrt nur die betroffene Sprache, und nur solange kein Cache da ist. */
+export function languageSegmentDisabled(opts: { limited: boolean; hasCache: boolean; loading: boolean }): boolean {
+  if (opts.loading) return true;
+  return opts.limited && !opts.hasCache;
+}
+
+export function podcastScriptCacheKey(ticker: string, source: PodcastSource, language: PodcastLanguage): string {
+  return `${ticker}|${source}|${language}`;
+}
+
+export function podcastLimitKey(ticker: string, language: PodcastLanguage): string {
+  return `${ticker}|${language}`;
+}
+
+export interface PodcastLanguageCache {
+  chapters: PodcastChapterView[];
+  cacheKey: string;
+  asOf: string;
+  priceLabel: string;
+  limited: boolean;
+}
+
+function browserStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
 
 /** Server-Stimmen gehen an Skript und Audio. Der Browser-Notnagel bleibt lokal. */
 export function isServerVoice(voice: string): boolean {
@@ -104,6 +193,7 @@ export interface PodcastScriptRequest {
   source: PodcastSource;
   regenerate: boolean;
   fullAi: true;
+  language: PodcastLanguage;
   voice?: string;
 }
 
@@ -126,6 +216,7 @@ export interface ParsedPodcastScript {
   voice: string | null;
   priceLabel: string | null;
   voiceLabel: string | null;
+  language: PodcastLanguage | null;
   cached: boolean;
   packCached: boolean;
 }
@@ -150,7 +241,7 @@ export function podcastSourceLabel(source: PodcastSource): string {
 }
 
 export function voiceById(id: string): PodcastVoiceOption | undefined {
-  return PODCAST_VOICES.find((voice) => voice.id === id);
+  return PODCAST_VOICES.find((voice) => voice.id === id) ?? PODCAST_VOICES_EN.find((voice) => voice.id === id);
 }
 
 export function voiceNameFor(id: string): string {
@@ -217,12 +308,14 @@ export function buildPodcastScriptRequest(input: {
   source: PodcastSource;
   voice: string;
   regenerate: boolean;
+  language?: PodcastLanguage;
 }): PodcastScriptRequest {
   const request: PodcastScriptRequest = {
     ticker: input.ticker.trim(),
     source: input.source,
     regenerate: input.regenerate,
     fullAi: true,
+    language: input.language ?? "de",
   };
   if (isServerVoice(input.voice)) request.voice = input.voice;
   return request;
@@ -235,12 +328,14 @@ export function podcastAudioPath(opts: {
   source: PodcastSource;
   voice: string;
   cacheKey: string;
+  language?: PodcastLanguage;
 }): string {
   const query = new URLSearchParams({
     ticker: opts.ticker,
     source: opts.source,
     voice: opts.voice,
     cacheKey: opts.cacheKey,
+    language: opts.language ?? "de",
   });
   return `/api/podcast/audio/${encodeURIComponent(opts.chapterId)}?${query.toString()}`;
 }
@@ -330,6 +425,7 @@ export function parsePodcastScript(body: unknown, requestedSource: PodcastSource
     voice: typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : null,
     priceLabel: typeof body.priceLabel === "string" && body.priceLabel.trim() ? body.priceLabel.trim() : null,
     voiceLabel: typeof body.voiceLabel === "string" && body.voiceLabel.trim() ? body.voiceLabel.trim() : null,
+    language: body.language === "en" || body.language === "de" ? body.language : null,
     cached: body.cached === true,
     packCached: body.packCached === true,
   };
@@ -390,7 +486,11 @@ export interface UsePodcastResult {
   speed: PodcastSpeed;
   standAsOf: string;
   standPrice: string;
+  language: PodcastLanguage;
+  cachedLanguages: Record<PodcastLanguage, boolean>;
+  limitedLanguages: Record<PodcastLanguage, boolean>;
   selectSource: (source: PodcastSource) => void;
+  selectLanguage: (language: PodcastLanguage) => void;
   generate: () => void;
   regenerate: () => void;
   retry: () => void;
@@ -403,7 +503,8 @@ export interface UsePodcastResult {
 
 export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodcastOptions): UsePodcastResult {
   const [source, setSource] = useState<PodcastSource>("ki");
-  const [voiceId, setVoiceId] = useState(PODCAST_DEFAULT_VOICE);
+  const [language, setLanguage] = useState<PodcastLanguage>(() => readPodcastLanguage(browserStorage()));
+  const [voiceId, setVoiceId] = useState(() => defaultVoiceForLanguage(readPodcastLanguage(browserStorage())));
   const [state, setState] = useState<PodcastPlayerState>("idle");
   const [stage, setStage] = useState<PodcastLoadingStage>("analyze");
   const [error, setError] = useState<PodcastFailure | null>(null);
@@ -412,9 +513,17 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   const [speed, setSpeed] = useState<PodcastSpeed>(1);
   const [standAsOf, setStandAsOf] = useState(asOfLabel);
   const [standPrice, setStandPrice] = useState(priceLabel);
+  const [cacheEpoch, setCacheEpoch] = useState(0);
 
   const sourceRef = useRef(source);
+  const languageRef = useRef(language);
   const voiceRef = useRef(voiceId);
+  const voiceByLanguageRef = useRef<Record<PodcastLanguage, string>>({
+    de: defaultVoiceForLanguage("de"),
+    en: defaultVoiceForLanguage("en"),
+  });
+  const scriptCacheRef = useRef(new Map<string, PodcastLanguageCache>());
+  const limitRef = useRef(new Map<string, boolean>());
   const stateRef = useRef(state);
   const chaptersRef = useRef(chapters);
   const currentSecRef = useRef(0);
@@ -429,7 +538,9 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   const priceFallback = useRef(priceLabel);
 
   sourceRef.current = source;
+  languageRef.current = language;
   voiceRef.current = voiceId;
+  voiceByLanguageRef.current[language] = voiceId;
   stateRef.current = state;
   chaptersRef.current = chapters;
   speedRef.current = speed;
@@ -452,33 +563,13 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
   }, [audioRef, clearSpeechTimer]);
 
-  const resetForTicker = useCallback(() => {
-    reqRef.current += 1;
-    stopOutput();
-    revokeBlobs();
-    chaptersRef.current = [];
-    currentSecRef.current = 0;
-    activeIdRef.current = null;
-    cacheKeyRef.current = "";
-    setChapters([]);
-    setCurrentSec(0);
-    setState("idle");
-    setStage("analyze");
-    setError(null);
-    setStandAsOf(asOfFallback.current);
-    setStandPrice(priceFallback.current);
-  }, [revokeBlobs, stopOutput]);
-
   useEffect(() => {
-    resetForTicker();
     return () => {
       reqRef.current += 1;
       stopOutput();
       revokeBlobs();
     };
-    // Reset nur wenn die Aktie wechselt. asOf/Kurs aktualisieren den Fallback, nicht den Lauf.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticker]);
+  }, [ticker, revokeBlobs, stopOutput]);
 
   const applyClock = useCallback((sec: number) => {
     const next = clampSeek(sec, totalDuration(chaptersRef.current));
@@ -642,6 +733,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
           source: sourceRef.current,
           voice,
           cacheKey,
+          language: languageRef.current,
         });
         try {
           const res = await apiRequest("GET", path, undefined, PODCAST_AUDIO_TIMEOUT_MS);
@@ -666,6 +758,30 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     chaptersRef.current = resolved;
     setChapters(resolved);
   }, [revokeBlobs, ticker]);
+
+  useEffect(() => {
+    const slot = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, sourceRef.current, languageRef.current));
+    const limited = limitRef.current.get(podcastLimitKey(ticker, languageRef.current)) === true;
+    if (slot && slot.chapters.length > 0) {
+      const chapters = slot.chapters.map((chapter) => ({ ...chapter, src: null }));
+      chaptersRef.current = chapters;
+      setChapters(chapters);
+      cacheKeyRef.current = slot.cacheKey;
+      setStandAsOf(formatPodcastAsOf(slot.asOf, asOfFallback.current));
+      setStandPrice(slot.priceLabel || priceFallback.current);
+      setError(null);
+      setState("paused");
+      stateRef.current = "paused";
+      void loadAudio(chapters, voiceRef.current, slot.cacheKey, reqRef.current);
+      return;
+    }
+    chaptersRef.current = [];
+    setChapters([]);
+    setCurrentSec(0);
+    setError(limited ? { kind: "limit" } : null);
+    setState(limited ? "limit" : "idle");
+    stateRef.current = limited ? "limit" : "idle";
+  }, [ticker, loadAudio]);
 
   const adoptScript = useCallback((parsed: ParsedPodcastScript) => {
     cacheKeyRef.current = parsed.cacheKey;
@@ -703,6 +819,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
           source: nextSource,
           voice: voiceRef.current,
           regenerate,
+          language: languageRef.current,
         }),
         PODCAST_SCRIPT_TIMEOUT_MS,
       );
@@ -712,6 +829,16 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       const failure = classifyPodcastFailure(res.status, body);
       if (failure?.kind === "limit" || res.status === 429) {
         if (parsed) adoptScript(parsed);
+        limitRef.current.set(podcastLimitKey(ticker, languageRef.current), true);
+        const remembered = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, nextSource, languageRef.current));
+        scriptCacheRef.current.set(podcastScriptCacheKey(ticker, nextSource, languageRef.current), {
+          chapters: parsed?.chapters ?? remembered?.chapters ?? chaptersRef.current,
+          cacheKey: parsed?.cacheKey ?? remembered?.cacheKey ?? cacheKeyRef.current,
+          asOf: parsed?.asOf ?? remembered?.asOf ?? "",
+          priceLabel: parsed?.priceLabel ?? remembered?.priceLabel ?? priceFallback.current,
+          limited: true,
+        });
+        setCacheEpoch((value) => value + 1);
         setState("limit");
         stateRef.current = "limit";
         return;
@@ -724,6 +851,14 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
         return;
       }
       adoptScript(parsed);
+      scriptCacheRef.current.set(podcastScriptCacheKey(ticker, nextSource, parsed.language ?? languageRef.current), {
+        chapters: parsed.chapters,
+        cacheKey: parsed.cacheKey,
+        asOf: parsed.asOf,
+        priceLabel: parsed.priceLabel ?? priceFallback.current,
+        limited: false,
+      });
+      setCacheEpoch((value) => value + 1);
       setStage("audio");
       const playbackVoice = voiceRef.current === PODCAST_BROWSER_VOICE ? PODCAST_BROWSER_VOICE : (parsed.voice ?? voiceRef.current);
       await loadAudio(parsed.chapters, playbackVoice, parsed.cacheKey, requestId);
@@ -830,6 +965,51 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     void run(next, false);
   }, [run]);
 
+  const selectLanguage = useCallback((next: PodcastLanguage) => {
+    if (stateRef.current === "loading" || next === languageRef.current) return;
+    const key = podcastScriptCacheKey(ticker, sourceRef.current, next);
+    const slot = scriptCacheRef.current.get(key);
+    const hasCache = (slot?.chapters.length ?? 0) > 0;
+    const limited = limitRef.current.get(podcastLimitKey(ticker, next)) === true;
+    if (languageSegmentDisabled({ limited, hasCache, loading: false })) return;
+    const nextVoice = voiceFitsLanguage(next, voiceByLanguageRef.current[next])
+      ? voiceByLanguageRef.current[next]
+      : defaultVoiceForLanguage(next);
+    voiceByLanguageRef.current[next] = nextVoice;
+    languageRef.current = next;
+    setLanguage(next);
+    voiceRef.current = nextVoice;
+    setVoiceId(nextVoice);
+    writePodcastLanguage(browserStorage(), next);
+    if (decideLanguageSwitch(hasCache) === "play" && slot) {
+      const chapters = slot.chapters.map((chapter) => ({ ...chapter, src: null }));
+      chaptersRef.current = chapters;
+      setChapters(chapters);
+      cacheKeyRef.current = slot.cacheKey;
+      currentSecRef.current = 0;
+      setCurrentSec(0);
+      setStandAsOf(formatPodcastAsOf(slot.asOf, asOfFallback.current));
+      setStandPrice(slot.priceLabel || priceFallback.current);
+      setError(null);
+      setState("paused");
+      stateRef.current = "paused";
+      const requestId = ++reqRef.current;
+      void loadAudio(chapters, nextVoice, slot.cacheKey, requestId).then(() => {
+        if (requestId !== reqRef.current) return;
+        play();
+      });
+      return;
+    }
+    stopOutput();
+    chaptersRef.current = [];
+    currentSecRef.current = 0;
+    setChapters([]);
+    setCurrentSec(0);
+    setError(null);
+    setState("idle");
+    stateRef.current = "idle";
+  }, [loadAudio, play, stopOutput, ticker]);
+
   const generate = useCallback(() => {
     void run(sourceRef.current, false);
   }, [run]);
@@ -854,9 +1034,21 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
 
   const spans = chapterSpans(chapters);
   const activeChapterId = spanAt(spans, currentSec)?.id ?? null;
+  const cachedLanguages: Record<PodcastLanguage, boolean> = {
+    de: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "de"))?.chapters.length ?? 0) > 0,
+    en: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "en"))?.chapters.length ?? 0) > 0,
+  };
+  const limitedLanguages: Record<PodcastLanguage, boolean> = {
+    de: limitRef.current.get(podcastLimitKey(ticker, "de")) === true,
+    en: limitRef.current.get(podcastLimitKey(ticker, "en")) === true,
+  };
+  void cacheEpoch;
 
   return {
     source,
+    language,
+    cachedLanguages,
+    limitedLanguages,
     voiceId,
     state,
     stage,
@@ -869,6 +1061,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     standAsOf,
     standPrice,
     selectSource,
+    selectLanguage,
     generate,
     regenerate,
     retry: generate,

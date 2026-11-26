@@ -15,7 +15,15 @@ import {
   PODCAST_NO_KEY_DETAIL,
   PODCAST_SCRIPT_PATH,
   PODCAST_VOICES,
+  PODCAST_EN_DEFAULT_VOICE,
+  PODCAST_LANGUAGE_STORAGE_KEY,
   buildPodcastScriptRequest,
+  decideLanguageSwitch,
+  defaultVoiceForLanguage,
+  languageSegmentDisabled,
+  readPodcastLanguage,
+  voicesForLanguage,
+  writePodcastLanguage,
   chapterSpans,
   clampSeek,
   classifyPodcastFailure,
@@ -78,9 +86,15 @@ const renewed = buildPodcastScriptRequest({
   voice: "browser",
   regenerate: true,
 });
-check("Quellen-Klick setzt regenerate false und fullAi, ohne fresh",
+check("Quellen-Klick setzt regenerate false, language de und fullAi, ohne fresh",
   request.ticker === "NVDA" && request.source === "ki" && request.voice === "de-DE-Mia:MAI-Voice-2.1"
-  && request.fullAi === true && request.regenerate === false && !("fresh" in request));
+  && request.fullAi === true && request.regenerate === false && request.language === "de" && !("fresh" in request));
+check("Englisch steht im Request und die Default-Stimme ist Harper",
+  buildPodcastScriptRequest({ ticker: "NVDA", source: "ki", voice: PODCAST_EN_DEFAULT_VOICE, regenerate: false, language: "en" }).language === "en"
+  && defaultVoiceForLanguage("en") === "en-US-Harper:MAI-Voice-2.1"
+  && voicesForLanguage("en").some((voice) => voice.id === "en-US-Harper:MAI-Voice-2.1")
+  && !voicesForLanguage("en").some((voice) => voice.id === "de-DE-Mia:MAI-Voice-2.1")
+  && voicesForLanguage("de").some((voice) => voice.id === "de-DE-Mia:MAI-Voice-2.1"));
 check("Neu erzeugen setzt regenerate true und schickt die Browser-Stimme nicht",
   renewed.regenerate === true && renewed.fullAi === true && !("voice" in renewed) && !("fresh" in renewed));
 check("Request schickt keine Analyse mit", !("analysis" in request) && !("facts" in request));
@@ -92,7 +106,15 @@ check("Audio-URL enthält ticker, source, voice und cacheKey",
     source: "ki",
     voice: "de-DE-Mia:MAI-Voice-2.1",
     cacheKey: "hash",
-  }) === "/api/podcast/audio/s17?ticker=NVDA&source=ki&voice=de-DE-Mia%3AMAI-Voice-2.1&cacheKey=hash");
+  }) === "/api/podcast/audio/s17?ticker=NVDA&source=ki&voice=de-DE-Mia%3AMAI-Voice-2.1&cacheKey=hash&language=de"
+  && podcastAudioPath({
+    chapterId: "s17",
+    ticker: "NVDA",
+    source: "ki",
+    voice: "en-US-Harper:MAI-Voice-2.1",
+    cacheKey: "hash",
+    language: "en",
+  }) === "/api/podcast/audio/s17?ticker=NVDA&source=ki&voice=en-US-Harper%3AMAI-Voice-2.1&cacheKey=hash&language=en");
 
 const scriptBody = {
   ok: true,
@@ -108,6 +130,7 @@ const scriptBody = {
   voice: "de-DE-Mia:MAI-Voice-2.1",
   voiceLabel: "Mia",
   priceLabel: "149,3",
+  language: "de",
   cached: true,
   packCached: true,
   promptVersion: "stock-podcast-v4",
@@ -124,7 +147,8 @@ check("Parser liest das Response-Shape von #529",
   && parsed.voiceLabel === "Mia"
   && parsed.source === "ki"
   && parsed.cached === true
-  && parsed.packCached === true);
+  && parsed.packCached === true
+  && parsed.language === "de");
 check("ok false ist kein Skript", parsePodcastScript({ ok: false, errorCode: "LLM_UNAVAILABLE", chapters: scriptBody.chapters }, "ki") === null);
 check("Cache- und Pack-Treffer zählen nicht gegen das Tageslimit",
   countsAgainstDailyLimit({ cached: true, packCached: false }) === false
@@ -188,6 +212,13 @@ check("Idle: Quellen, Default KI-Analyse, grüner Play, Hinweis",
   && idle.includes("#1ED760")
   && idle.includes('data-html2canvas-ignore')
   && idle.includes("min-w-[min(100%,18.5rem)]"));
+check("Sprachschalter DE | EN, Default DE",
+  idle.includes('data-testid="podcast-language"')
+  && idle.includes('data-testid="button-podcast-lang-de"')
+  && idle.includes('data-testid="button-podcast-lang-en"')
+  && idle.includes('aria-label="Sprache Deutsch"')
+  && idle.includes("min-h-11")
+  && idle.includes("min-[376px]:flex-row"));
 check("Idle ohne Extra-Icons und ohne Leisten-Controls",
   !idle.includes('data-testid="button-podcast-play"')
   && !idle.includes("Download")
@@ -402,6 +433,29 @@ check("Hook startet nicht /api/analyze und nicht den Markt-Podcast",
 check("Klick auf eine Quelle startet den Lauf mit regenerate false", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 180).includes("run(next, false)"));
 check("Neu erzeugen ruft den Lauf mit regenerate true auf", hookSrc.includes("void run(sourceRef.current, true)"));
 check("Hook schickt kein fresh", !hookSrc.includes("fresh"));
+check("Sprachwechsel ruft keinen Lauf auf", (() => {
+  const start = hookSrc.indexOf("const selectLanguage");
+  const end = hookSrc.indexOf("const generate", start);
+  return start > 0 && end > start && !hookSrc.slice(start, end).includes("run(");
+})());
+{
+  const memory = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => { memory.set(key, value); },
+  };
+  check("Sprache fehlt → Default DE", readPodcastLanguage(storage) === "de" && PODCAST_LANGUAGE_STORAGE_KEY === "aktienanalyst.podcast.language");
+  writePodcastLanguage(storage, "en");
+  check("Sprache bleibt in aktienanalyst.podcast.language", readPodcastLanguage(storage) === "en" && memory.get(PODCAST_LANGUAGE_STORAGE_KEY) === "en");
+  writePodcastLanguage(storage, "de");
+  check("Ungültiger Speicherwert fällt auf DE", readPodcastLanguage({ getItem: () => "fr" }) === "de");
+}
+check("Wechsel ohne Cache bleibt Idle, mit Cache wird gespielt", decideLanguageSwitch(false) === "idle" && decideLanguageSwitch(true) === "play");
+check("Tageslimit sperrt nur die Sprache ohne Cache",
+  languageSegmentDisabled({ limited: true, hasCache: false, loading: false }) === true
+  && languageSegmentDisabled({ limited: true, hasCache: true, loading: false }) === false
+  && languageSegmentDisabled({ limited: false, hasCache: false, loading: false }) === false
+  && languageSegmentDisabled({ limited: true, hasCache: true, loading: true }) === true);
 check("Mount ruft run( nicht auf", !/useEffect\(\(\) => \{\s*void run\(/.test(hookSrc));
 
 const dashboard = readFileSync("client/src/pages/Dashboard.tsx", "utf8");

@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { SkipBack, SkipForward } from "lucide-react";
+import { Check, SkipBack, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { OPENROUTER_NO_KEY_MESSAGE } from "@shared/openrouter-no-key";
@@ -17,6 +17,8 @@ import {
   PODCAST_NO_KEY_DETAIL,
   PODCAST_VOICE_GROUPS,
   PODCAST_VOICES,
+  languageSegmentDisabled,
+  voicesForLanguage,
   formatClock,
   formatSpeedLabel,
   formatStandLine,
@@ -27,10 +29,12 @@ import {
   voiceNameFor,
   type PodcastChapterView,
   type PodcastFailure,
+  type PodcastLanguage,
   type PodcastLoadingStage,
   type PodcastPlayerState,
   type PodcastSource,
   type PodcastSpeed,
+  type PodcastVoiceOption,
 } from "@/hooks/usePodcast";
 
 const STAGE_ORDER: PodcastLoadingStage[] = ["analyze", "script", "audio"];
@@ -98,10 +102,12 @@ export function PodcastVoiceMenu({
   activeId,
   onSelect,
   className,
+  voices = PODCAST_VOICES,
 }: {
   activeId: string;
   onSelect: (voiceId: string) => void;
   className?: string;
+  voices?: readonly PodcastVoiceOption[];
 }) {
   return (
     <ul
@@ -110,11 +116,14 @@ export function PodcastVoiceMenu({
       data-testid="podcast-voice-menu"
       className={cn("max-h-72 w-56 overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", className)}
     >
-      {PODCAST_VOICE_GROUPS.map((group) => (
+      {PODCAST_VOICE_GROUPS.map((group) => {
+        const options = voices.filter((voice) => voice.group === group.id);
+        if (options.length === 0) return null;
+        return (
         <li key={group.id} className="px-1 py-1">
           <div className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{group.label}</div>
           <ul role="group" aria-label={group.label}>
-            {PODCAST_VOICES.filter((voice) => voice.group === group.id).map((voice) => {
+            {options.map((voice) => {
               const selected = voice.id === activeId;
               return (
                 <li key={voice.id} role="presentation">
@@ -136,7 +145,8 @@ export function PodcastVoiceMenu({
             })}
           </ul>
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
@@ -194,6 +204,11 @@ export interface PodcastPlayerViewProps {
   onSkipChapter: (dir: -1 | 1) => void;
   onSpeed: () => void;
   onVoiceChange: (voiceId: string) => void;
+  language?: PodcastLanguage;
+  cachedLanguages?: Record<PodcastLanguage, boolean>;
+  limitedLanguages?: Record<PodcastLanguage, boolean>;
+  onLanguageChange?: (language: PodcastLanguage) => void;
+  voices?: readonly PodcastVoiceOption[];
 }
 
 export function PodcastPlayerView({
@@ -220,6 +235,11 @@ export function PodcastPlayerView({
   onSkipChapter,
   onSpeed,
   onVoiceChange,
+  language = "de",
+  cachedLanguages = { de: false, en: false },
+  limitedLanguages = { de: false, en: false },
+  onLanguageChange,
+  voices,
 }: PodcastPlayerViewProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const voiceButtonRef = useRef<HTMLButtonElement>(null);
@@ -302,40 +322,77 @@ export function PodcastPlayerView({
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
-        <div
-          role="radiogroup"
-          aria-label="Podcast-Quelle"
-          data-testid="podcast-source"
-          className="flex w-full rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
-        >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={source === "pdf"}
-            data-testid="button-podcast-source-pdf"
-            aria-label="Quelle PDF-basiert"
-            className={cn(
-              "min-h-8 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              source === "pdf" ? "bg-foreground text-background" : "text-muted-foreground",
-            )}
-            onClick={() => onSourceChange("pdf")}
+        <div data-testid="podcast-toolbar" className="flex flex-col gap-2 min-[376px]:flex-row min-[376px]:items-center">
+          <div
+            role="radiogroup"
+            aria-label="Podcast-Quelle"
+            data-testid="podcast-source"
+            className="flex w-full min-[376px]:min-w-0 min-[376px]:flex-1 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
           >
-            PDF-basiert
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={source === "ki"}
-            data-testid="button-podcast-source-ki"
-            aria-label="Quelle KI-Analyse"
-            className={cn(
-              "min-h-8 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              source === "ki" ? "bg-foreground text-background" : "text-muted-foreground",
-            )}
-            onClick={() => onSourceChange("ki")}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === "pdf"}
+              data-testid="button-podcast-source-pdf"
+              aria-label="Quelle PDF-basiert"
+              className={cn(
+                "min-h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                source === "pdf" ? "bg-foreground text-background" : "text-muted-foreground",
+              )}
+              onClick={() => onSourceChange("pdf")}
+            >
+              PDF-basiert
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === "ki"}
+              data-testid="button-podcast-source-ki"
+              aria-label="Quelle KI-Analyse"
+              className={cn(
+                "min-h-11 flex-1 rounded-[5px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                source === "ki" ? "bg-foreground text-background" : "text-muted-foreground",
+              )}
+              onClick={() => onSourceChange("ki")}
+            >
+              KI-Analyse
+            </button>
+          </div>
+          <div
+            role="radiogroup"
+            aria-label="Podcast-Sprache"
+            data-testid="podcast-language"
+            className="flex w-full min-[376px]:w-auto min-[376px]:shrink-0 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
           >
-            KI-Analyse
-          </button>
+            {(["de", "en"] as const).map((code) => {
+              const hasCache = cachedLanguages[code];
+              const limited = limitedLanguages[code];
+              const disabled = languageSegmentDisabled({ limited, hasCache, loading: state === "loading" });
+              const selected = language === code;
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-disabled={disabled}
+                  disabled={disabled}
+                  title={limited ? "Tageslimit erreicht." : undefined}
+                  data-testid={`button-podcast-lang-${code}`}
+                  aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
+                  className={cn(
+                    "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-[376px]:flex-none",
+                    selected ? "bg-foreground text-background" : "text-muted-foreground",
+                    disabled && "cursor-not-allowed opacity-50",
+                  )}
+                  onClick={() => onLanguageChange?.(code)}
+                >
+                  {code}
+                  {hasCache ? <Check className="h-3.5 w-3.5" aria-hidden="true" data-testid={`podcast-lang-cached-${code}`} /> : null}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {state === "idle" && (
@@ -511,7 +568,16 @@ export function PodcastPlayerView({
               </div>
             </details>
             {(state === "playing" || state === "paused") && (
-              <Button type="button" variant="outline" size="sm" className="self-start" data-testid="button-podcast-regenerate" onClick={onRegenerate}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="self-start"
+                data-testid="button-podcast-regenerate"
+                disabled={limitedLanguages[language]}
+                title={limitedLanguages[language] ? "Tageslimit erreicht." : undefined}
+                onClick={onRegenerate}
+              >
                 Neu erzeugen
               </Button>
             )}
@@ -524,6 +590,7 @@ export function PodcastPlayerView({
           <div ref={menuRef} id={menuId} className="z-[60]" style={{ position: "fixed", top: menuStyle.top, left: menuStyle.left }}>
             <PodcastVoiceMenu
               activeId={voiceId}
+              voices={voices ?? voicesForLanguage(language)}
               onSelect={(id) => {
                 setMenuOpen(false);
                 onVoiceChange(id);
@@ -573,6 +640,10 @@ export function PodcastPlayer({
       onSkipChapter={model.skipChapter}
       onSpeed={model.cycleSpeed}
       onVoiceChange={model.changeVoice}
+      language={model.language}
+      cachedLanguages={model.cachedLanguages}
+      limitedLanguages={model.limitedLanguages}
+      onLanguageChange={model.selectLanguage}
     />
   );
 }
