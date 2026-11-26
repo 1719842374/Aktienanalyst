@@ -365,7 +365,7 @@ async function main() {
   const plausible = buildSpeechSheet(buildPodcastFacts(nvda, NOON), "de");
   const modelChapters = chaptersForSource("pdf")
     .filter(def => def.id !== "schluss" && factsForChapter(plausible, def.id).length)
-    .map(def => ({ id: def.id, paragraph: fallbackParagraph(def.id, plausible), entities: [] as string[] }));
+    .map(def => ({ id: def.id, paragraph: fallbackParagraph(def.id, plausible), entities: ["NVIDIA"] }));
   for (const row of modelChapters) {
     const verdict = verifyChapter(row.id, row.paragraph, plausible);
     assert.equal(verdict.ok, true, `${row.id} ${verdict.reasons.join(",")} ${row.paragraph}`);
@@ -633,9 +633,9 @@ async function main() {
     ["einstieg", probeEn, "The price stands at [[price]] dollars and stays the verified market value. The figures are dated [[as_of]] and stay tied to that date.", null],
     ["einstieg", probeEn, "We look at Apple today and the price stands at [[price]]. The figures are dated [[as_of]] and stay tied to that date.", ["Apple"]],
     ["s17", probeEn, "At the top stands [[pair_a]] and blackwell remains the next driver. This list stays the verified set for the company.", ["blackwell"]],
-    ["einstieg", probeDe, "Der Stand bezieht sich auf den [[as_of]] und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", null],
-    ["news", probeDe, "Die jüngste Meldung stammt von [[news_age]] und bleibt im betrachteten Fenster. Diese Meldung bleibt der belegte Stand der Firma.", null],
-    ["umsatz", probeEn, "Revenue rose in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
+    ["einstieg", probeDe, "Wir sprechen heute über Pfizer, und der Kurs steht bei [[price]]. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", ["Pfizer"]],
+    ["news", probeEn, "The latest report is 4 days old and stays inside the window we considered. The figures stay tied to that close.", null],
+    ["umsatz", probeEn, "Revenue grew by 12 percent in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
   ];
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
@@ -678,18 +678,31 @@ async function main() {
   assert.equal(geld.reasons.includes("name"), false, geld.notes.join("|"));
   const geWord = verifyChapter("zusammenfassung", "Die GE bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["GE"]);
   assert.equal(geWord.ok, false);
-  const rose = verifyChapter("umsatz", "Revenue rose in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", probeEn, []);
-  assert.equal(rose.ok, false);
-  assert.ok(rose.reasons.includes("number"), rose.notes.join("|"));
+  const roseBy = verifyChapter("umsatz", "Revenue rose by [[fy_yoy]] in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", probeEn, []);
+  assert.equal(roseBy.ok, true, roseBy.notes.join("|"));
   const blackPack = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ...probeAnalysis,
-    newsItems: [{ title: "Blackwell", pubDate: "2026-11-25T08:00:00.000Z" }],
-    risks: [{ name: "Lilly" }],
+    newsItems: [{ title: "New Blackwell demand", pubDate: "2026-11-25T08:00:00.000Z" }],
+    peerComparison: { peers: [{ name: "Lilly" }] },
   }), NOON), "de");
   const blackLeak = verifyChapter("einstieg", "Die Firma nennt blackwell und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", blackPack, []);
   assert.equal(blackLeak.ok, false, blackLeak.notes.join("|"));
   const lily = verifyChapter("inversion", "Die Firma sieht Lily und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", blackPack, []);
   assert.equal(lily.ok, false, lily.notes.join("|"));
+  const ordinaryTitle = verifyChapter("einstieg", "Die Zulassung bleibt der Maßstab und die Phase stützt den Wettbewerb der Firma im neuen Jahr. Diabetes und die Preisregulierung bleiben der belegte Rahmen.", blackPack, []);
+  assert.equal(ordinaryTitle.ok, true, ordinaryTitle.notes.join("|"));
+  const enter = verifyChapter("umsatz", "Investors enter the fiscal year and the segment stays the verified split of the company. Demand remains the verified view.", probeEn, []);
+  assert.equal(enter.ok, true, enter.notes.join("|"));
+  const withFirm = "Wir sprechen heute über NVIDIA und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const firmEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: withFirm, entities: [] }] }, new Map([["einstieg", []]]));
+  assert.ok(firmEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), firmEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  const noName = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
+  const bareEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "zusammenfassung", paragraph: noName, entities: [] }] }, new Map([["zusammenfassung", []]]));
+  assert.equal(bareEmpty.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), false, bareEmpty.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
+  const redoEmpty = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["entities"], notes: ["entities fehlt"], spoken: "" }], {
+    chapters: [{ id: "einstieg", paragraph: withFirm, entities: [] }],
+  }, new Map([["einstieg", []]]), new Map());
+  assert.ok(redoEmpty[0]?.reasons.includes("entities"), redoEmpty[0]?.notes.join("|"));
   const appleBlackwell = "Im Vergleich zu Apple bleibt blackwell der zweite Treiber und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie bleibt der Maßstab für die Firma.";
   assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).reasons.includes("name"), false);
   assert.equal(verifyChapter("s17", appleBlackwell, probeDe, ["Apple", "blackwell"]).ok, false);
@@ -797,9 +810,140 @@ async function main() {
     return drafts.some(draft => draft.id === id && draft.reasons.includes("entities"));
   }).length;
   assert.ok(missingId >= 24, `fehlende ID ${missingId}/25`);
+  const baseFacts = {
+    currency: "USD",
+    currentPrice: 100,
+    dataTimestamp: "2026-11-26T11:00:00.000Z",
+    s17Verdict: "GELB",
+    dcfConservative: 120,
+    crv: 1.1,
+    maxEntryCrv3: 90,
+    financialStatements: { incomeStatement: { revenueGrowth: 8 } },
+    waccPct: 9,
+    impliedGStar: 4,
+    lastReportedQuarter: "Q3 FY2026",
+    nextEarningsDate: "2027-02-24",
+    _podcastInternals: { revenueY1: 1, fiscalYear: "2026", fxRateToUsd: 1, reportedCurrency: "USD" },
+  };
+  const prosePacks: Array<{ ticker: string; analysis: Record<string, unknown>; de: string[]; en: string[] }> = [
+    {
+      ticker: "NVO",
+      analysis: {
+        ...baseFacts,
+        ticker: "NVO",
+        companyName: "Novo Nordisk",
+        podcastCompanySource: "yahoo-chart",
+        revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+        catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 8 }, { name: "Wettbewerb im Markt", nettoUpside: 3 }],
+        risks: [{ name: "Preisregulierung" }, { name: "Marktstart" }],
+        newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
+        growthThesis: "Die Nachfrage nach der Therapie trägt die Geschichte der Firma.",
+      },
+      de: [
+        "Die Zulassung bleibt der Maßstab und die Phase stützt die Firma im neuen Jahr. Der Wettbewerb bleibt der belegte Rahmen.",
+        "Diabetes bleibt der Markt und die Preisregulierung stützt die Einordnung der Firma. Der Marktstart bleibt der nächste Punkt.",
+        "Die Phase der Zulassung bleibt offen und der Wettbewerb trägt die Firma weiter. Die Preisregulierung bleibt der belegte Rahmen.",
+        "Der Marktstart folgt der Zulassung und die Firma hält den Wettbewerb im Blick. Diabetes bleibt der größte Block.",
+        "Die Preisregulierung trifft den Markt und die Zulassung bleibt der Maßstab der Firma. Die Phase bleibt der belegte Stand.",
+        "Wettbewerb und Zulassung bleiben die Lage und die Firma trägt den Marktstart weiter. Die Phase stützt die Einordnung.",
+      ],
+      en: [
+        "Approval stays the verified view and the phase remains open for the firm this year. Competition holds the market.",
+        "Diabetes stays the segment and price regulation remains the verified question. The launch stays the next point.",
+        "The phase of approval remains open and competition holds the firm this year. Price regulation stays the view.",
+        "The launch follows approval and the firm holds competition in view this year. Diabetes remains the split.",
+        "Price regulation meets the market and approval stays the verified view for the firm. The phase remains open.",
+        "Competition and approval remain the view and the firm holds the launch this year. The phase stays verified.",
+      ],
+    },
+    {
+      ticker: "NVDA",
+      analysis: {
+        ...baseFacts,
+        ticker: "NVDA",
+        companyName: "NVIDIA",
+        podcastCompanySource: "yahoo-chart",
+        currentPrice: 149.3,
+        dcfConservative: 180,
+        revenueSegments: [{ name: "Data Center", percentage: 80, fiscalYear: "2026" }],
+        catalysts: [{ name: "Rechenzentren", nettoUpside: 12 }, { name: "Software", nettoUpside: 4 }],
+        risks: [{ name: "Exportregeln" }, { name: "Lieferengpass" }],
+        newsItems: [{ title: "New Blackwell demand", pubDate: "2026-11-25T08:00:00.000Z" }],
+        growthThesis: "Die Nachfrage nach Rechenbeschleunigern trägt die Geschichte der Firma.",
+      },
+      de: [
+        "Die Rechenzentren bleiben der Maßstab und die Software stützt die Firma im neuen Jahr. Die Exportregeln bleiben der Rahmen.",
+        "Der Lieferengpass trifft den Markt und die Software bleibt der belegte Stand der Firma. Die Rechenzentren tragen die Nachfrage.",
+        "Exportregeln und Software bleiben die Lage und die Firma hält die Rechenzentren im Blick. Der Lieferengpass bleibt begrenzt.",
+        "Die Software stützt den Ausbau und die Rechenzentren bleiben der größte Block der Firma. Die Exportregeln bleiben genannt.",
+        "Der Lieferengpass bleibt der Gegenwind und die Software trägt die Firma im neuen Jahr. Die Rechenzentren stützen die Nachfrage.",
+      ],
+      en: [
+        "Software stays the verified view and export rules remain the question for the firm. Demand holds the segment.",
+        "The supply constraint meets the market and software remains the verified view this year. Demand stays open for the firm.",
+        "Export rules and software remain the view and the firm holds demand in the market. The segment stays verified.",
+        "Investors enter the year and software stays the verified split of the firm. Demand remains the open question.",
+        "The moderate question stays with software and export rules remain the verified view. Demand holds the firm.",
+      ],
+    },
+    {
+      ticker: "MMM",
+      analysis: {
+        ...baseFacts,
+        ticker: "MMM",
+        companyName: "3M",
+        podcastCompanySource: "yahoo-chart",
+        revenueSegments: [{ name: "Safety", percentage: 40, fiscalYear: "2026" }],
+        catalysts: [{ name: "Industrial adhesives", nettoUpside: 5 }, { name: "Klebstoff", nettoUpside: 2 }],
+        risks: [{ name: "Price cuts" }, { name: "Preisdruck" }],
+        newsItems: [{ title: "Higher prices", pubDate: "2026-11-25T08:00:00.000Z" }],
+        growthThesis: "Die Nachfrage nach dem Klebstoff trägt die Geschichte der Firma.",
+      },
+      de: [
+        "Der Klebstoff bleibt der Maßstab und der Preisdruck stützt die Firma im neuen Jahr. Der Wettbewerb bleibt der Rahmen.",
+        "Die Zulassung bleibt offen und der Preisdruck trifft den Markt der Firma. Der Klebstoff trägt die Nachfrage.",
+        "Wettbewerb und Preisdruck bleiben die Lage und die Firma hält den Klebstoff im Blick. Die Zulassung bleibt genannt.",
+        "Der Preisdruck bleibt begrenzt und der Klebstoff stützt die Firma im neuen Jahr. Der Wettbewerb bleibt der Maßstab.",
+        "Die Firma sieht den Preisdruck und der Klebstoff bleibt der belegte Stand im Markt. Die Zulassung stützt die Lage.",
+      ],
+      en: [
+        "Price cuts stay the verified question and the firm holds demand in the market. Higher prices remain the view.",
+        "Safety stays the segment and industrial adhesives remain the verified driver this year. Demand holds the firm.",
+        "Higher prices meet the market and price cuts remain the moderate question for the firm. Demand stays open for the company.",
+        "Industrial adhesives stay the view and the firm holds the safety segment this year. Prices remain moderate in the market.",
+        "The firm enters the year and price cuts stay the verified question in the market. Demand remains the view.",
+      ],
+    },
+  ];
+  let proseOk = 0;
+  let proseN = 0;
+  const proseFail: string[] = [];
+  for (const row of prosePacks) {
+    const deSheet = buildSpeechSheet(buildPodcastFacts(pack(row.ticker, row.analysis), NOON), "de");
+    const enSheet = buildSpeechSheet(buildPodcastFacts(pack(row.ticker, row.analysis), NOON), "en");
+    for (const text of row.de) {
+      proseN += 1;
+      const verdict = verifyChapter("einstieg", text, deSheet, []);
+      if (verdict.ok) proseOk += 1;
+      else proseFail.push(`${row.ticker} de: ${verdict.notes.join(",")}`);
+    }
+    for (const text of row.en) {
+      proseN += 1;
+      const verdict = verifyChapter("einstieg", text, enSheet, []);
+      if (verdict.ok) proseOk += 1;
+      else proseFail.push(`${row.ticker} en: ${verdict.notes.join(",")}`);
+    }
+  }
+  assert.ok(proseOk / proseN >= 0.9, `${proseOk}/${proseN} ${proseFail.join(" || ")}`);
   const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
     .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
-  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ mit Angabe ${rejected}/25, Backup ${backupRejected}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei Angabe: ${passed.join(" || ") || "keine"}.`);
+  const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"]).ok).length;
+  const emptyListRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, []).ok).length;
+  const emptyListPipeline = foreignNegatives.filter(([id, sheet, raw]) => {
+    const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [] }] }, new Map([[id, []]]));
+    return drafts.some(draft => draft.id === id && draft.reasons.includes("entities"));
+  }).length;
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Titelprosa ${proseOk}/${proseN}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ voll ${rejected}/25, Blatt ${sheetNameRejected}/25, [] ${emptyListRejected}/25, []-Redo ${emptyListPipeline}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei voll: ${passed.join(" || ") || "keine"}.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

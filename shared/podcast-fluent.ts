@@ -29,8 +29,10 @@ export interface SpeechSheet {
   pendingTitles: PendingTitle[];
   /** Sätze, die der Code setzt und die das Modell nicht als Token sieht. */
   codeLines: CodeLine[];
-  /** Eigennamen aus dem Pack: Firma, Peers, Segmente, Katalysatoren, Risiken, News. */
+  /** Exakte Treffer: Firma, Peers, geschützte Namen und Namensform aus Titeln. */
   packNames: string[];
+  /** Nur Firma, Peers und geschützte Namen. Nur diese haben eine Ein-Zeichen-Distanz. */
+  realNames: string[];
 }
 
 export interface CodeLine {
@@ -296,30 +298,54 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     context: modelContext(facts.redactedContext),
     pendingTitles,
     codeLines,
-    packNames: collectPackNames(facts),
+    ...collectPackNames(facts),
   };
 }
 
-function collectPackNames(facts: PodcastFacts): string[] {
-  const raw = [
-    facts.values.company,
+function wordHasNameForm(word: string): boolean {
+  return /[a-zäöü][A-ZÄÖÜ]/.test(word) || /\d/.test(word) || /^[A-ZÄÖÜ]{2,5}$/.test(word);
+}
+
+function titleNameTokens(title: string): string[] {
+  const words = title.split(/[^A-Za-zÄÖÜäöüß0-9]+/).filter(Boolean);
+  const english = looksEnglishTitle(title);
+  const out: string[] = [];
+  words.forEach((word, index) => {
+    const named = wordHasNameForm(word) || (english && index > 0 && /^[A-ZÄÖÜ]/.test(word));
+    if (named && word.length >= 2) out.push(word.toLowerCase());
+  });
+  return out;
+}
+
+function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[] } {
+  const realNames: string[] = [];
+  const pushReal = (item: string | null | undefined) => {
+    if (!item) return;
+    for (const word of item.split(/[^A-Za-zÄÖÜäöüß0-9]+/)) {
+      if (word.length < 2) continue;
+      const lower = word.toLowerCase();
+      if (!realNames.includes(lower)) realNames.push(lower);
+    }
+  };
+  pushReal(facts.values.company);
+  for (const peer of facts.peerNames ?? []) pushReal(peer);
+  for (const name of facts.protectedNames) pushReal(name);
+  const packNames = [...realNames];
+  const titles = [
     ...facts.payloadTitles,
     ...facts.upsideNames,
     ...facts.riskNames,
-    ...facts.protectedNames,
     facts.measures?.segmentName ?? null,
     ...(facts.measures?.catalystNames ?? []),
     ...(facts.measures?.riskNames ?? []),
-    ...(facts.peerNames ?? []),
   ];
-  const names: string[] = [];
-  for (const item of raw) {
-    if (!item) continue;
-    for (const word of item.split(/[^A-Za-zÄÖÜäöüß]+/)) {
-      if (word.length >= 4) names.push(word.toLowerCase());
+  for (const title of titles) {
+    if (!title) continue;
+    for (const lower of titleNameTokens(title)) {
+      if (!packNames.includes(lower)) packNames.push(lower);
     }
   }
-  return names;
+  return { packNames, realNames };
 }
 
 /** Nackte Altersphrase. Die Präposition setzt der Satz, nicht der Token. */
@@ -575,16 +601,14 @@ function nearKnownName(lower: string, names: string[]): boolean {
 
 function packNameLeak(text: string, sheet: SpeechSheet): string | null {
   const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
-  const names = sheet.packNames ?? [];
+  const exact = sheet.packNames ?? [];
   const spoken = [...sheet.facts.map(fact => fact.spoken), ...sheet.codeLines.map(line => line.spoken)].join(" ");
   for (const sentence of podcastSentences(text)) {
     for (const word of sentence.split(/\s+/).filter(Boolean)) {
       const clean = tokenCore(word);
       const lower = clean.toLowerCase();
       if (lower.length < 4 || lexicon.has(lower)) continue;
-      const exact = names.includes(lower);
-      const near = names.some(name => name.length >= 4 && !inflectionOnly(lower, name) && withinOneEdit(lower, name));
-      if (!exact && !near) continue;
+      if (!exact.includes(lower) && !nearKnownName(lower, sheet.realNames ?? [])) continue;
       if (entityMentioned(clean, spoken)) continue;
       return clean;
     }
@@ -644,7 +668,7 @@ function mergeEntityLists(first: string[] | null | undefined, redo: string[] | n
 }
 
 const DE_NUMBER_ATOMS = ["milliarden", "millionen", "milliarde", "million", "tausend", "hundert", "neunzehn", "achtzehn", "siebzehn", "sechzehn", "fünfzehn", "fuenfzehn", "vierzehn", "dreizehn", "zwölf", "zwoelf", "elf", "neunzig", "achtzig", "siebzig", "sechzig", "fünfzig", "fuenfzig", "vierzig", "dreißig", "dreissig", "zwanzig", "zehn", "neun", "acht", "sieben", "sechs", "fünf", "fuenf", "vier", "drei", "zwei", "null"];
-const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved|twice|half|twofold|double|triple|dozen|highest|record|couple|quarter|rose)\b/i;
+const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved|twice|half|twofold|double|triple|dozen|highest|record|couple|quarter)\b/i;
 const DE_FOLD = /\b(verdoppelt|verdreifacht|halbiert|hälfte|haelfte|drittel|viertel|rekord|höchster|höchste|höchsten|höchstem)\b|\b[A-Za-zÄÖÜäöüß]*fach\b|höchste[rnms]?\s+seit/i;
 
 function isGermanQuantity(word: string): boolean {
@@ -727,7 +751,7 @@ export function quantityWord(text: string, sheet: SpeechSheet): string | null {
 }
 
 export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
-  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [] }) != null;
+  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [], realNames: [] }) != null;
 }
 
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {
@@ -1100,15 +1124,42 @@ export interface FluentDraft {
   entityState?: "ok" | "missing" | "invalid";
 }
 
+function namesThatMustBeListed(sheet: SpeechSheet, chapterId: string): string[] {
+  const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
+  const names = [...(sheet.realNames ?? [])];
+  for (const fact of factsForChapter(sheet, chapterId)) {
+    for (const word of fact.spoken.split(/[^A-Za-zÄÖÜäöüß0-9]+/)) {
+      if (!wordHasNameForm(word)) continue;
+      const lower = word.toLowerCase();
+      if (lower.length < 2 || lexicon.has(lower) || names.includes(lower)) continue;
+      names.push(lower);
+    }
+  }
+  return names;
+}
+
+function mentionsListedName(raw: string, sheet: SpeechSheet, chapterId: string): boolean {
+  const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
+  const spoken = applyFactTokens(raw, sheet.facts);
+  for (const name of namesThatMustBeListed(sheet, chapterId)) {
+    if (name.length < 2 || lexicon.has(name)) continue;
+    if (entityMentioned(name, spoken) || entityMentioned(name, raw)) return true;
+  }
+  return false;
+}
+
 function entityField(
   entities: Map<string, string[] | null> | null | undefined,
   invalid: Set<string> | undefined,
   id: string,
+  raw: string,
+  sheet: SpeechSheet,
 ): { state: "ok" | "missing" | "invalid"; names: string[] | null } {
   if (invalid?.has(id)) return { state: "invalid", names: null };
   if (!entities?.has(id)) return { state: "missing", names: null };
   const listed = entities.get(id);
   if (!Array.isArray(listed)) return { state: "missing", names: null };
+  if (listed.length === 0 && mentionsListedName(raw, sheet, id)) return { state: "missing", names: null };
   return { state: "ok", names: listed };
 }
 
@@ -1129,7 +1180,7 @@ export function seedDrafts(
       drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], notes: ["empty"], spoken: "" });
       continue;
     }
-    const field = entityField(entities, invalid, def.id);
+    const field = entityField(entities, invalid, def.id, raw, sheet);
     if (field.state !== "ok") {
       drafts.push({
         id: def.id,
@@ -1167,7 +1218,7 @@ export function applyRedo(
     if (!draft.reasons.length || draft.reasons[0] === "empty" || draft.reasons[0] === "timeout") return draft;
     const raw = found.get(draft.id) ?? "";
     if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], notes: ["empty"], spoken: "" };
-    const field = entityField(entities, invalid, draft.id);
+    const field = entityField(entities, invalid, draft.id, raw, sheet);
     if (field.state !== "ok") {
       return {
         ...draft,
