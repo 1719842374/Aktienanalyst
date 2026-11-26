@@ -98,13 +98,15 @@ Nach `POST /api/analyze` (der Lauf, der die Seite füllt) liegt `StockAnalysis` 
 | Pro/Contra | `execSummary.pro`, `execSummary.contra` | ja, auch im generischen Modus | Länge ist nicht ausgeglichen |
 | Inversion | Section 8 rechnet `invertedDcf` clientseitig aus `data`; Serverfeld `invertedDcf` kann im Exec-Input stehen | die Funktion existiert (`shared/valuation-signal.ts` `invertedDcf`) | Podcast-Kapitel existiert nicht |
 | S17-Katalysatoren | `catalysts[]` (`name`, `pos`, `gb`, `timeline`, `context`) | ja. KI-Text in `context`/`deepDive` nur nach LLM bzw. `/api/catalyst-enrich` | — |
-| Umsatz „YTD“ | **kein Feld** | Jahres-YoY: `financialStatements.incomeStatement.revenueGrowth`, berechnet als letztes Geschäftsjahr gegen das Vorjahr (`analyze-route.ts` 688–693) | kein Kalender-YTD, kein Geschäftsjahr-YTD, Quartalsreihen nicht auf dem Payload (`quarterlyRevenueChronological` nur intern fürs Scoring, Zeilen 1655–1668 und 1869) |
-| Top-Segment | `revenueSegments[]` (`name`, `revenue`, `percentage`, `growth`, `fiscalYear`, `source`) | ja, wenn FMP/SEC/kuratiert etwas lief. Sonst `revenueSegmentsSource: "none"` und `revenueSegmentsMessage` | `segment-gap-route.ts` ist nicht auf main (nur PR #492) |
+| Umsatz, Quartal gegen Vorjahresquartal | kein Feld auf `StockAnalysis` | — | Die Quartalszeilen laufen in `analyze-route.ts` 1655–1668 (`fmpIncomeStatementQuarterly`) und werden zu `quarterlyRevenueChronological` (nur Zahlen, ohne Datum) für `calcRealizedGrowth8QServer` (`server/scoring-integration.ts` 111–137). Auf dem Payload bleibt `scoring.gateInputs.realizedGrowth8QPercent` plus `realizedGrowthMethod` (`yoy_8q` oder `qoq_annualized`) und `realizedGrowthQuartersUsed` (`shared/schema.ts` 589–593). Das ist die Summe der letzten vier Quartale gegen die vier davor, oder ein annualisiertes Quartal-zu-Quartal. Es ist nicht ein Quartal gegen dasselbe Quartal im Vorjahr, und es hat kein Periodenende |
+| Umsatz, rollierende vier Quartale | kein Umsatzfeld | `fcfTTM` und `epsTTM` sind Cashflow und Gewinn je Aktie (`schema.ts` 479, 497), nicht der Umsatz | `revenueTTM` gibt es in `server/valuechain-fmp-enrichment.ts` 86 und in `server/backtest/pit-valuation.ts` 475. Beides hängt nicht am Analyse-Payload. `financialStatements.incomeStatement.revenue` und `.revenueGrowth` (`schema.ts` 539–540) sind das letzte Geschäftsjahr gegen das Vorjahr (`analyze-route.ts` 688–693), ohne Periodenende |
+| Periodenende des Umsatzes | `lastReportedQuarter` | Label wie `Q3 FY2026` aus `lastReportedQuarterLabel` (`server/analyze-helpers.ts` 381–431). Das Datum der Zeile wird nur zum Sortieren benutzt und nicht mitgeliefert | kein ISO-Periodenende auf `StockAnalysis`. `revenueSegments[].fiscalYear` ist optional und ein Jahr oder ein Datum der Segmentquelle, nicht der Umsatzperiode des Gesamtkonzerns |
+| Top-Segment | `revenueSegments[]` (`name`, `revenue`, `percentage`, `growth`, `fiscalYear`, `source`) | ja, wenn FMP, SEC oder die kuratierte Liste etwas lief. Sonst `revenueSegmentsSource: "none"` und `revenueSegmentsMessage` | `segment-gap-route.ts` ist nicht auf main (nur PR #492). Fehlt die Aufteilung, sagt der Podcast „Hauptumsatzträger liegt nicht vor“ und schätzt nichts |
 | Earnings-Call-**Termin** | `nextEarningsDate`, `lastReportedQuarter`, `nextEarningsIsEstimate` | ja | das ist der Termin, nicht das Transkript |
 | Earnings-Call-**Transkript** | nicht auf `StockAnalysis` | separater, schon vorhandener Pfad: `useEarningsBrief` → `GET /api/chat/earnings-brief/:symbol` → `buildEarningsBrief` (`server/chat-earnings-route.ts`). Zwei FMP-Calls: `fmpEarningCallTranscriptDates` und `fmpEarningCallTranscript` (`server/fmp.ts` 1228–1238). Cache ist eine `Map` im Prozess, Schlüssel nur das Symbol | nicht im Analyze-Payload. Für Phase 2, nicht für Phase 1 |
 | News | `newsItems[]` (`title`, `source`, `pubDate`, `url`, `relativeTime`), gefüllt in `analyze-route.ts` etwa 1340 über `fetchNewsFromGoogleRSS` (`server/news-peers.ts` 97–102) | ja, mit dem Analyze | keine eigene `/api/news`-Route. Alter und 14-Tage-Filter für den Podcast existieren nicht |
 
-Berichtswährung: Listing `data.currency`. Statement-Währung für DCF/Entry wie in `exec-summary.ts` `currencyWord` (JOB D). Jahresumsatzwachstum ist der Geschäftsjahresvergleich, nicht „year to date“.
+Berichtswährung: Listing `data.currency`. Statement-Währung für DCF und Entry wie in `exec-summary.ts` `currencyWord` (JOB D). Ein Quartalsvergleich und ein Umsatz über vier Quartale dürfen nur gesprochen werden, wenn Rate, Periodenende und Währung zusammen im JSON stehen. Das ist auf diesem Stand nicht der Fall. Das Geschäftsjahreswachstum wird nicht als Ersatz eingesprochen.
 
 ### B4. DCF-Spanne WACC ±1 Prozentpunkt
 
@@ -132,7 +134,15 @@ FMP, `GET /api/fmp-budget` (`analyze-route.ts` 496–502), Zähler `getFmpBudget
 - Tageslimit Default **15000** (`FMP_DAILY_LIMIT`), Warnung 10000, Planung 13 Calls je Analyse. Der Kommentar in Zeile 28 sagt „default 750“; der Code setzt 15000. Es gilt der Code.
 - Jeder `fmpFetch` zählt **1**, auch bei 429, **bevor** die Antwort da ist (`fmp.ts` 56–57). Ein Transkript kostet im App-Budget **2** (Daten + Inhalt), Retries zusätzlich. Einen höheren FMP-Listenpreis für Transkripte kodiert die App nicht. Kein Live-Call in dieser Prüfung.
 
-KI: kein eigenes Token-Kontingent im Repo. OpenRouter antwortet 402, `llm-openrouter.ts` loggt „token budget exhausted“ und bricht die Runde ab. `callLLMJson` deckelt `max_tokens` bei 4000. Der Markt-Podcast nutzt 2800 Tokens und 30 s (`PODCAST_LLM_TIMEOUT_MS` = `CHAT_LLM_TIMEOUT_MS`).
+KI: kein eigenes Token-Kontingent im Repo. OpenRouter antwortet 402, `llm-openrouter.ts` loggt „token budget exhausted“ und bricht die Runde ab. `callLLMJson` deckelt `max_tokens` bei 4000. Der Markt-Podcast nutzt 2800 Tokens und 30 s (`PODCAST_LLM_TIMEOUT_MS` = `CHAT_LLM_TIMEOUT_MS`). Rate-Limit je IP, 20 Anfragen je 60 Sekunden: `CHAT_RATE_LIMIT` und `chatRateLimited` in `server/chat-route.ts` 21 und 190–204. Segment-Kinder: `takeSegmentChildrenSlot` in `server/segment-growth-route.ts` 155–164.
+
+### B7. PDF
+
+`client/src/lib/exportPdf.ts` liest `execSummary.headline` nicht. Die Zeichenkette kommt im Client-Fallback nicht vor: `buildClientPdf` Zeilen 98–106 setzt Kurs, Worst Case, Fair Value, CRV, Max-Entry und `scoring.finalScore`.
+
+Die sichtbare g*-Zeile kommt ins PDF nur als Pixel. `captureSections` Zeilen 61–82 fotografiert das DOM der Dashboard-Sektionen mit html2canvas. `Dashboard.tsx` übergibt die Sektions-Refs, Sektion 1 ist die Karte mit der Zeile. `windowWidth` ist mindestens 1024 (Zeile 71). Ein Player, der bei dieser Breite neben der Zeile steht, stünde auf jedem Sektionsbild.
+
+`server/pdf-export.ts` hat ein eigenes Feld `narrative.execSummary` (Zeilen 294–325 und 480–483), ein LLM-Absatz, nicht `execSummary.headline`.
 
 ---
 
@@ -148,18 +158,28 @@ Zahlen erzeugt das Modell nicht. Es schreibt Fließtext mit Platzhaltern. Code s
 
 Geschlossene Liste. Alles andere ist ein unbekannter Platzhalter und verwirft den Satz.
 
-`{ticker}` `{company}` `{as_of}` `{currency_word}` `{statement_currency_word}` `{price}` `{score}` `{ampel}` `{wacc}` `{g_star}` `{dcf_fair}` `{dcf_low}` `{dcf_high}` `{entry}` `{crv}` `{fy_yoy}` `{top_segment}` `{top_segment_share}` `{call_date}` `{call_quarter}` `{news_1}` `{news_2}` `{news_3}` `{news_age}`.
+`{ticker}` `{company}` `{as_of}` `{currency_word}` `{statement_currency_word}` `{price}` `{score}` `{ampel}` `{wacc}` `{g_star}` `{dcf_fair}` `{dcf_low}` `{dcf_high}` `{entry}` `{crv}` `{quarter_yoy}` `{quarter_period_end}` `{ttm_revenue}` `{ttm_period_end}` `{top_segment}` `{top_segment_share}` `{call_date}` `{call_quarter}` `{catalyst_mode}` `{news_1}` `{news_2}` `{news_3}` `{news_age}`.
 
-`{ytd_growth}` steht in der Wunschliste, hat auf `main` keinen Wert. Der Builder nimmt ihn nicht in das JSON auf. Der Validator entfernt den Satz oder setzt „liegt nicht vor“. Erfindet kein YTD.
+`{quarter_yoy}`, `{quarter_period_end}`, `{ttm_revenue}` und `{ttm_period_end}` bleiben auf diesem Stand `null` (B3). Der Builder legt sie nicht als Zahl an. Der Satz fällt weg, das Kapitel sagt, dass Quartalsvergleich und Umsatz über vier Quartale nicht vorliegen. `{dcf_low}` und `{dcf_high}` nur nach C5.
 
-`{dcf_low}` und `{dcf_high}` nur, wenn die Spanne aus C5 zustande kommt. Sonst ebenso weglassen.
+Validator, rein, ohne Netz, geplante Datei `shared/podcast-script.ts`, Test `script/test-ki-podcast-placeholders.ts`. Ablauf auf dem Modelltext, bevor Platzhalter ersetzt werden:
 
-Validator, rein, ohne Netz, geplante Datei `shared/podcast-script.ts`, Test `script/test-ki-podcast-placeholders.ts`:
+1. Platzhalter `{name}` heraustrennen und gegen die Liste prüfen (b, c).
+2. Positivliste aus dem Rest entfernen, erst danach nach Ziffern suchen.
+3. Zahlwörter prüfen.
 
-- (a) Im LLM-Text steht keine Ziffer (`/\d/`). Prozentzeichen, Währungskürzel und Daten schreibt das Modell nicht.
-- (b) Jeder `{name}`-Treffer steht in der Liste.
-- (c) Jeder erlaubte Platzhalter im Satz hat einen endlichen Wert oder einen freigegebenen Text im JSON. Sonst fällt der Satz weg. Bleibt vom Kapitel nichts, spricht das Kapitel „liegt nicht vor“.
-- Ein Satz mit einer Ziffer oder einem fremden Platzhalter wird verworfen, nicht nachgebessert durch das Modell in derselben Antwort. Ein zweiter Versuch ist erlaubt, höchstens einer, mit demselben JSON. Scheitert er, fällt das Kapitel auf die festen Sätze ohne Modell zurück (nur Platzhalter aus dem JSON, plus „liegt nicht vor“).
+Positivliste, damit Q3, S&P 500, H100, B200, 3-nm und GJ2027 nicht als erfundene Zahl gelten:
+
+- Fest: `S` plus ein oder zwei Ziffern (deckt S17), `Q` plus 1–4, `GJ` oder `FY` plus vier Ziffern, eine vierstellige Jahreszahl 19xx oder 20xx, `S&P 500`, ein Muster `Ziffern-nm` (deckt 3-nm), die Produktkürzel `H100` und `B200`.
+- Dazu jedes Token, das genau so in den Fakten steht: Ticker, Firmenname, Segmentname, Katalysatorname, `keyProjects`. Steht „H100“ nur im freien Satz und nicht in den Fakten, trägt es die feste Liste trotzdem.
+
+(a) Nach dem Entfernen bleibt keine Ziffer. Eine erfundene `14` oder `149` im Freitext fällt durch. (b) Jeder `{name}`-Treffer steht in der Liste. (c) Jeder erlaubte Platzhalter im Satz hat einen endlichen Wert oder einen freigegebenen Text im JSON. Sonst fällt der Satz weg. Bleibt vom Kapitel nichts, spricht das Kapitel „liegt nicht vor“.
+
+Deutsche Zahlwörter: ein Wort oder eine Kette aus der Reihe null bis zwölf, dreizehn bis neunzehn, die Zehner, hundert, tausend, optional mit „Komma“ dazwischen, unmittelbar vor „Prozent“, „Milliarden“, „Millionen“ oder „Dollar“. „vierzehn Prozent“ wird abgelehnt, auch ohne Ziffer. „H100“ bleibt, weil es kein Zahlwort vor einer dieser Einheiten ist.
+
+Akzeptanztests in derselben Datei, ohne Netz: ein NVDA-Skript mit Produktnamen, Q3, S17, GJ-Kürzel, 3-nm und S&P 500 läuft ohne Fehlalarm durch; ein Freitext mit erfundener Ziffer wird abgelehnt; der Satz nur mit „H100“ besteht; der Satz mit „vierzehn Prozent“ wird abgelehnt.
+
+Ein verworfener Satz wird nicht in derselben Antwort nachgebessert. Ein zweiter Versuch ist erlaubt, höchstens einer, mit demselben JSON. Scheitert er, fällt das Kapitel auf die festen Sätze ohne Modell zurück.
 
 Rundung vor der Sprechform, eine Stelle, danach Worte:
 
@@ -177,10 +197,10 @@ Feste Reihenfolge. Ziel 800–1000 Wörter gesamt, gesprochen etwa 6–7 Minuten
 | 1 | Einstieg | 1 | Ticker, Name, Datenstand (`dataTimestamp` oder `_cachedAt`), Ampel-Wort. Erster Satz nennt den Stand |
 | 2 | Executive Summary | 1 | `execSummary.pro` / `contra`, Fazit-Sätze. Pro wird auf die Länge des Contra-Blocks gekürzt, nie umgekehrt mit erfundenen Punkten gefüllt |
 | 3 | These | 1 | `growthThesis`, sonst „liegt nicht vor“ |
-| 4 | Umsatz | 1 | Jahres-YoY als Geschäftsjahr gegen Vorjahr, Berichtswährung ansagen. Top-Segment mit `percentage` und `fiscalYear`. Kein YTD |
+| 4 | Umsatz | 1 | Quartal gegen dasselbe Quartal im Vorjahr und Umsatz der letzten vier Quartale, jeweils nur mit Periodenende und Währung, zum Beispiel „Q3 GJ2027, Stand 26.10.2026“. Beides fehlt auf dem Payload (B3), also „liegt nicht vor“. Das Geschäftsjahreswachstum ist kein Ersatz. Fehlt `revenueSegments`, lautet der Satz „Hauptumsatzträger liegt nicht vor“. Kein Schätzwert, kein anderer Segmentname |
 | 5 | Earnings Call | 2 | Nur Phase 2. Transkript älter als `lastReportedQuarter`: Kapitel entfällt mit einem Satz, der das Alter nennt. Fehlende Quelle: „liegt nicht vor“ |
 | 6 | DCF | 1 | fair, optional Spanne, g*, WACC, Entry, CRV. Kein neues Kursziel |
-| 7 | S17 | 1 | Katalysatoren mit Name, PoS, GB, nur als Platzhalter |
+| 7 | S17 | 1 | Katalysatoren mit Name, PoS, GB, nur als Platzhalter. Steht der Modus auf generisch, wird `{catalyst_mode}` zum Wortlaut aus `catalystsModeLabel` (`shared/bias-fixes.ts` 268–273): „Katalysatoren: generisch (Sektor)“. Derselbe Text steht in der Karte (`ExecSummaryCard.tsx` 116–118). Das Kapitel darf diese Katalysatoren nicht als unternehmensspezifisch bezeichnen. Nur `catalystsSource === "llm"` erlaubt „KI-firmenspezifisch“ |
 | 8 | Inversion | 1 | Immer vorhanden, auch wenn die Zahl fehlt („liegt nicht vor“). Inhalt aus der bestehenden Inversion (`invertedDcf` / Section-8-Text), nicht aus einem neuen Modell |
 | 9 | News | 3 | Höchstens 3 Einträge mit `pubDate` innerhalb von 14 Tagen, Quelle und Datum. Alter der ältesten gesprochenen Meldung im letzten Satz des Kapitels |
 | 10 | Schluss | 1 | „Dies ist keine Anlageberatung.“ Immer, auch wenn das Modell ihn vergisst (`PODCAST_DISCLAIMER` bleibt die Formulierung) |
@@ -217,15 +237,11 @@ Komponente, neu, erst nach Freigabe: `client/src/components/sections/PodcastPlay
 
 Hook `client/src/hooks/usePodcast.ts`: liest `data` aus dem Dashboard, kein `useMutation` auf `/api/analyze`. Skript: `POST /api/podcast/script` mit dem Fakten-JSON. Audio, erst nach Freigabe: `GET /api/podcast/audio/:id` je Kapitel.
 
-### C5. DCF-Spanne im MVP
+### C5. DCF-Spanne
 
-Die Spanne kommt nur aus dem vorhandenen Aufruf:
+Die Zelle steht in `client/src/components/sections/Section5.tsx` `sensitivityMatrix`, Zeilen 189–208. `waccDeltas` ist `[-1, 0, 1]`, `growthDeltas` ist `[-2, 0, 2]` (Zeilen 190–191). Die Schleife Zeilen 193–204 ruft `calculateFCFFDCF` mit `waccOverride: mainResult.wacc + wd` und verschiebt das Wachstum um `gd`. Die Spanne ±1 Prozentpunkt sind nur die beiden Ergebnisse mit `wd` gleich −1 oder +1 und `gd` gleich 0. Die Funktion liegt in `shared/valuation-signal.ts` Zeile 609, die Default-Parameter in `buildDefaultDCFParams` Zeile 508 derselben Datei.
 
-`calculateFCFFDCF({ ...dieselben Parameter wie der angezeigte Hauptdurchlauf in Section 5, waccOverride: angezeigteWacc ± 1 })`.
-
-Wachstum, Margin und ERP bleiben die des angezeigten Laufs (die Matrix-Zelle mit Wachstumsdifferenz 0). Optimistic und Macro-Stress sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`.
-
-Liefern die beiden Läufe keine endliche Zahl je Aktie, fehlen `{dcf_low}` und `{dcf_high}`. Es wird keine zweite DCF-Formel geschrieben. Die Ergebnisse werden nicht nach `dcfFairValue` oder in den Score zurückgeschrieben.
+Die Spanne kommt nur ins Skript, wenn der Server genau diese beiden Ergebnisse in das Fakten-JSON schreibt (`dcf_low`, `dcf_high`). Optimistic und Macro-Stress (Zeilen 211–215) sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`. Schreibt P1 diese zwei Zahlen nicht, bleiben `{dcf_low}` und `{dcf_high}` draußen. Es wird keine zweite DCF-Formel geschrieben. Die Ergebnisse werden nicht nach `dcfFairValue` oder in den Score zurückgeschrieben.
 
 ### C6. Server, Schema, Cache, Budget
 
@@ -238,9 +254,17 @@ Liefern die beiden Läufe keine endliche Zahl je Aktie, fehlen `{dcf_low}` und `
 | Audio | `GET /api/podcast/audio/:chapterId` | Erst Phase Audio. `Content-Type: audio/mpeg`, je Kapitel, nicht Base64 im Skript-JSON |
 | Registrierung | `server/routes-register.ts` | neben der bestehenden Markt-Route, die unverändert bleibt |
 
-Cache-Key = SHA-256 des kanonischen Fakten-JSON plus `promptVersion` plus `voice`. Preis, Score oder ein Katalysator im JSON ändern den Key. Anzeige am Player: „Stand: …“ aus `asOf` (ISO des `dataTimestamp`). TTL wie der Disk-Cache, 7 Tage, zusätzlich an den Hash gebunden: abgelaufener Eintrag wird neu erzeugt, ein neuer Hash auch vorher. Der Markt-Key `podcast_transcript__SYMBOL` wird nicht wiederverwendet.
+Erzeugung nur auf Klick. `usePodcast` startet weder beim Laden der Seite noch am Ende von `/api/analyze`. Skript und Audio entstehen erst im Click-Handler.
 
-Budget: ein Skript-Call, Deckel 1500 Ausgabe-Tokens (800–1000 Wörter plus JSON-Gerüst; der heutige `callLLMJson`-Deckel 4000 bleibt die harte Grenze). Cache-Treffer kosten keinen Call. Phase 2 zusätzlich höchstens die zwei schon vorhandenen FMP-Transcript-Calls, und nur wenn der Earnings-Brief für das Symbol nicht schon im Prozess-Cache liegt. 402 von OpenRouter: Kapitel „liegt nicht vor“, kein Retry-Sturm.
+Cache-Key des Skripts = SHA-256 des kanonischen Fakten-JSON plus `promptVersion` plus `voice`. Eine alte MP3-Datei wird nur wieder abgespielt, wenn die eingesetzten Kapitelzahlen gleich sind und das gesprochene Skript keine kursabhängige Zahl enthält. Kursabhängig sind der Kurs selbst, die Upside zum DCF, das KGV und der Abstand zum Entry. Enthält das Skript eine davon, nimmt der Hash den Kurs auf, und der Player zeigt sichtbar „Stand {Datum}, Kurs {Kurs}“. Ohne diese Zahl darf die MP3 bei gleichem Zahlenstand und gleicher Stimme bleiben. Anzeige „Stand: …“ aus `asOf` (`dataTimestamp`) gilt in jedem Fall. TTL des Skripttexts wie der Disk-Cache, 7 Tage, zusätzlich an den Hash gebunden. Der Markt-Key `podcast_transcript__SYMBOL` wird nicht wiederverwendet.
+
+Budget, vorhandene Muster, kein zweiter Zähler für FMP:
+
+- Tagesobergrenze je Ticker nach `chatRateLimited` (`server/chat-route.ts` 21, 190–198, Aufruf 202–204): eine `Map` von Zeitstempeln, Schlüssel ist der Ticker, Fenster bis zur nächsten Mitternacht Europe/Madrid, Konstante `PODCAST_DAILY_MAX`. Gezählt wird nur ein Klick, der neu erzeugt. Ein Cache-Treffer zählt nicht. Über der Grenze HTTP 429, Text in der Art der Chat-Antwort „Zu viele Chat-Anfragen. Bitte kurz warten.“, für den Client dasselbe `errorCode: "RATE_LIMITED"` wie `analyze-route.ts` 644–647.
+- Das globale FMP-Tagesbudget (`isFmpBudgetLow`, `analyze-route.ts` 637–648) bleibt die Grenze für Phase 2. Phase 1 ruft FMP nicht auf. Ein 402 von OpenRouter beendet den Skript-Call, Kapitel „liegt nicht vor“, kein Retry-Sturm.
+- Dieselbe Slot-Form wie `takeSegmentChildrenSlot` (`server/segment-growth-route.ts` 155–164) ist die zweite vorhandene Vorlage (Zeitstempel je Schlüssel, Fenster, Maximum). Der Podcast nimmt die Chat-Variante, weil sie schon 429 an einer KI-Route ausliefert.
+
+Token-Deckel ein Skript-Call, 1500 Ausgabe-Tokens (800–1000 Wörter plus JSON-Gerüst). Der heutige `callLLMJson`-Deckel 4000 bleibt die harte Grenze. Phase 2 zusätzlich höchstens die zwei schon vorhandenen FMP-Transcript-Calls, und nur wenn der Earnings-Brief für das Symbol nicht schon im Prozess-Cache liegt.
 
 ### C7. Phasen
 
@@ -326,7 +350,8 @@ Folgerung für Audio:
 - #475 ändert dieselbe Karte. Ein Bau ohne Rebase überschreibt die Ampel.
 - `SectionCard` `overflow-hidden` schneidet einen zu breiten Player ab, wenn er nicht umbricht.
 - Flex-Kind ohne `min-w-0` / `w-fit` macht die g*-Zeile entweder immer zur vollen Breite (Player immer darunter) oder überläuft (Zeile abgeschnitten).
-- Jahres-YoY als „YTD“ zu sprechen wäre eine falsche Zahl. Das Feld heißt im Skript `{fy_yoy}` und der Satz nennt Geschäftsjahr und Währung.
+- Geschäftsjahreswachstum als Quartalsvergleich oder als Umsatz über vier Quartale zu sprechen wäre eine falsche Zahl. Beide Raten fehlen auf dem Payload (B3). Fehlt die Segmentliste, heißt der Satz „Hauptumsatzträger liegt nicht vor“.
+- Ein Flex-Player im DOM von Sektion 1 verändert das PDF, weil `captureSections` die Karte fotografiert (`exportPdf.ts` 61–82, `windowWidth` mindestens 1024).
 - `DCF_CALIBRATION.enabled` anzufassen, um eine Spanne zu bekommen, ist verboten (#526).
 - Ein Podcast-Handler, der `POST /api/analyze` oder `trackFmpCall` in Phase 1 auslöst, verbraucht Budget und kann den Score-Pfad berühren. Phase 1 hat keinen FMP-Call.
 - Ephemerer Render-Disk: Audio-Dateien dort gelten als weg.
@@ -336,9 +361,10 @@ Folgerung für Audio:
 1. Fünf Ticker, darunter einer mit langem Firmennamen und einer ohne Call-Datum oder ohne WACC. Viewports 375, 768 und 1280 px. Die g*-Zeile ist komplett sichtbar und wird vom Player nicht überdeckt. Wrap ohne Media-Query: bei wenig Restbreite steht der Player in der Zeile unter der g*-Zeile und über dem Katalysator-Hinweis.
 2. Ampel-Klassen und der Wortlaut der g*-Zeile bleiben. Einziger DOM-Zuwachs im Slot ist der Wrapper plus der Player.
 3. Kein `n/a` an einer Stelle, an der heute ein Wert steht. Fehlendes heißt „liegt nicht vor“. `Call n/v` in der sichtbaren Zeile bleibt, wie `formatEarningsCall` es heute schreibt; der gesprochene Satz sagt „ein Call-Termin liegt nicht vor“.
-4. Validator-Test grün: keine Ziffer im Modelltext, nur bekannte Platzhalter, fehlender Wert entfernt den Satz, Contra-Länge ≥ Pro-Länge, Inversion immer ein Kapitel, Disclaimer immer, Cache-Key ändert sich mit dem Kurs.
-5. Score, Rating, Entry, `dcfFairValue` vor und nach dem Abspielen identisch. Kein Aufruf von `POST /api/analyze` aus `usePodcast`.
+4. Validator-Test grün: Positivliste lässt S17, Q3, H100, B200, 3-nm, eine Jahreszahl, ein GJ-Kürzel und S&P 500 durch. Ein NVDA-Skript mit Produktnamen hat keinen Fehlalarm. Eine erfundene Ziffer im Freitext wird abgelehnt. „H100“ besteht. „vierzehn Prozent“ wird abgelehnt. Fehlender Wert entfernt den Satz. Contra-Länge ≥ Pro-Länge. Inversion immer ein Kapitel. Disclaimer immer. Steht S17 auf „generisch (Sektor)“, sagt das Skript diesen Wortlaut und nennt die Katalysatoren nicht unternehmensspezifisch. Die DCF-Spanne fehlt, solange der Server die Zelle aus `Section5.tsx` 193–204 mit `gd === 0` und `wd` ±1 nicht ins JSON schreibt.
+5. Score, Rating, Entry, `dcfFairValue` vor und nach dem Abspielen identisch. Kein Aufruf von `POST /api/analyze` aus `usePodcast`. Erzeugung nur auf Klick. Ein zweiter Klick desselben Tickers am selben Tag in Europe/Madrid erhält 429, ein Cache-Treffer nicht.
 6. Gesperrtes iPhone ist erst mit Phase Audio abgenommen. Phase 0 dokumentiert die Lücke im Player.
+7. PDF: Vorher- und Nachher-Export desselben Tickers. Der Flex-Wrapper ändert das PDF nicht. Kein Player und kein Platzhalter dafür im Bild, kein anderer Umbruch der g*-Zeile. Umsetzung: vor `captureSections` ist der Player nicht im DOM, der Wrapper setzt während der Aufnahme `display: contents`, die Zeile bleibt der bisherige Absatz. `exportPdf.ts` liest die Headline weiterhin nicht als Text (B7).
 
 ### Aufwand, technisch, keine Kalenderdauer
 
@@ -351,8 +377,8 @@ Folgerung für Audio:
 
 1. Slot neben der g*-Zeile und das Aussehen des Players. Flex-Wrap ist der technische Vorschlag, nicht die Freigabe.
 2. TTS-Zugang: neuer Anbieter-Key, oder der bestehende OpenRouter-Key für `/api/v1/audio/speech` (Katalogmodell mit MP3 und `de-DE`, zum Beispiel `microsoft/mai-voice-2.1`). Ohne diese Antwort bleibt es bei Phase 0.
-3. Darf `{fy_yoy}` im Umsatz-Kapitel vorkommen, ausdrücklich als Geschäftsjahr gegen Vorjahr und nicht als YTD? Ein echtes YTD liegt auf `main` nicht.
-4. PR #435 und #464 schließen, sobald dieser Entwurf gilt, damit niemand den alten Zahlen-Pfad merget.
+3. Quartalsvergleich und Umsatz über vier Quartale liegen nicht auf dem Payload (B3). Das Kapitel sagt das, bis ein späterer Schritt die Quartalszeilen mit Datum und Währung ausliefert. Dieser Entwurf fügt sie nicht hinzu.
+4. PR #435 und #464 bleiben offen und sind „nicht mergen“, bis Philip entscheidet. Dieser Entwurf schließt sie nicht.
 
 ---
 
@@ -363,9 +389,12 @@ Folgerung für Audio:
 | Player rechts unter der Ampel, neben der g*-Zeile | Absatz 111–114, volle Breite, kein Player | Wrapper `flex flex-wrap`, Player-Kind mit Mindestbreite, Hinweis bleibt darunter. Look offen |
 | Fester Breakpoint 375/Desktop | keiner an der Zeile | keiner. Wrap. Abnahme bei 375, 768, 1280 |
 | KI-Analyse-Button liefert den Text | Toolbar „KI“ startet `/api/analyze`. Chat ist separat. g*-Zeile ist schon `execSummary` | Podcast liest den geladenen Stand. These nur wenn `growthThesis` schon da ist |
-| Zahlen nie vom Modell | Markt-Podcast bittet nur darum; #435 prüft es nicht hart | Platzhalter, Validator (a)(b)(c), Test |
-| WACC ±1 Pp | Matrix in Section 5, gekoppelt mit Wachstum ±2 | nur die Zelle Wachstum 0, sonst keine Spanne |
-| YTD und Top-Segment | Jahres-YoY und `revenueSegments` | YoY mit Jahr und Währung; Segment oder „liegt nicht vor“; kein erfundenes YTD |
+| Zahlen nie vom Modell | Markt-Podcast bittet nur darum; #435 prüft es nicht hart | Platzhalter, Positivliste, Zahlwörter vor Prozent und Größen, Test |
+| WACC ±1 Pp | Matrix in Section 5, Zeilen 189–208, gekoppelt mit Wachstum ±2 | nur die Zelle `gd === 0` und `wd` ±1, und nur wenn der Server sie ins JSON schreibt. Sonst in P1 draußen |
+| Umsatz und Top-Segment | Geschäftsjahr gegen Vorjahr; Quartals-YoY und Umsatz-TTM fehlen; `revenueSegments` optional | Quartalsvergleich und vier Quartale nur mit Periodenende und Währung, sonst „liegt nicht vor“. Segment fehlt: „Hauptumsatzträger liegt nicht vor“ |
+| S17 generisch | `catalystsModeLabel`, Karte zeigt den Wortlaut | Podcast spricht denselben Wortlaut und nennt die Liste nicht firmenspezifisch |
+| PDF | Screenshot der Sektion, Headline nicht als Textfeld | Player beim Export nicht im DOM, Umbruch der Zeile unverändert, Nachweis Vorher/Nachher |
+| Kosten | FMP-Tagesbudget global, Chat 20 je Minute je IP | Erzeugung nur auf Klick, Tagesobergrenze je Ticker nach `chatRateLimited`, MP3 ohne kursabhängige Zahl wiederverwendbar |
 | Earnings-Transkript | FMP-Route des Chats, 2 Budget-Calls, nicht im Payload | Phase 2, sonst Kapitel „liegt nicht vor“ |
 | News | `newsItems` im Analyze, keine News-Route | Phase 3, max. 3 aus 14 Tagen |
 | Cache Ticker+Stand+Version | Markt-Cache nur Symbol, 7 Tage | Hash(JSON)+`promptVersion`+`voice`, sichtbarer Stand |
