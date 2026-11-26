@@ -670,7 +670,8 @@ check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
 check("EN-Loading und EN-Fehler nennen die Spec-Sätze",
   podcastUiCopy("en").scriptLabel === "Transcript in progress …"
   && podcastUiCopy("en").audioLabel === "Audio is being created …"
-  && podcastUiCopy("en").noKeyDetail.includes("This error applies only to the English episode."));
+  && !podcastUiCopy("en").noKeyDetail.includes("This error applies only to the English episode.")
+  && !podcastUiCopy("en").llmUnavailable.includes("This error applies only to the English episode."));
 check("EN-Idle sagt Create, On click only, und runs all sections",
   podcastUiCopy("en").idleTitle === "Create AI podcast"
   && podcastUiCopy("en").idleHint.includes("runs")
