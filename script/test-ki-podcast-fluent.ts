@@ -25,6 +25,7 @@ import {
 import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
 import { chaptersForSource, PDF_PODCAST_CHAPTERS } from "../shared/podcast-script";
 import { dePool, enPool, type ProbePool } from "./fixtures/podcast-inverter-pools";
+import { PODCAST_NEGATIVES_25 } from "./fixtures/podcast-negatives-25";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 import { renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
 import { handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
@@ -617,33 +618,12 @@ async function main() {
   const stillDouble = verifyChapter("news", "Die Meldung stammt von vor fünf Tagen und bleibt im Fenster der Firma. Der Kurs stützt die Bewertung.", probeDe);
   assert.equal(stillDouble.ok, false);
   assert.ok(stillDouble.reasons.includes("prep"));
-  const foreignNegatives: Array<[string, typeof probeDe, string, string[] | null]> = [
-    ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] hat sich verdoppelt und bleibt der Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
-    ["umsatz", probeDe, "Der Gewinn der Firma wurde halbiert und bleibt der belegte Stand. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
-    ["umsatz", probeDe, "Das Wachstum ist dreifach so hoch und bleibt der Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt belegt.", null],
-    ["umsatz", probeDe, "Das Wachstum beträgt fünfzig Prozent und bleibt der Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt belegt.", null],
-    ["einstieg", probeDe, "Der Kurs steht bei [[price]] und bleibt der höchste Stand seit dem letzten Lauf. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
-    ["einstieg", probeDe, "Der Kurs steht bei [[price]] und bleibt ein Rekord für die Firma. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
-    ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] beträgt [[fy_yoy]] Prozent und ist der belegte Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
-    ["umsatz", probeDe, "Das Wachstum ist ein [[fy_yoy]] und bleibt der belegte Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
-    ["einstieg", probeDe, "Der [[as_of]] ist der belegte Stand und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", null],
-    ["einstieg", probeDe, "Der Kurs steht bei n/a und bleibt der Marktwert der Aktie. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
-    ["einstieg", probeDe, "Wir sprechen heute über Apple, und der Kurs steht bei [[price]]. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", ["Apple"]],
-    ["s17", probeDe, "An der Spitze steht [[pair_a]] und blackwell bleibt der zweite Treiber. Diese Liste bleibt der belegte Stand der Firma.", ["blackwell"]],
-    ["dcf", probeDe, "Der faire Wert liegt bei [[dcf_fair]] und stammt aus der belegten Bewertung. Das Chance-Risiko-Verhältnis liegt bei minus eins Komma zwei und bleibt der belegte Satz.", null],
-    ["umsatz", probeEn, "Revenue doubled in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
-    ["umsatz", probeEn, "Revenue is twice the prior year and remains the verified annual figure. The segment stays the verified split of the company.", null],
-    ["umsatz", probeEn, "The margin is half the prior year and remains the verified figure. The segment stays the verified split of the company.", null],
-    ["umsatz", probeEn, "Growth is twofold and remains the verified annual figure for the company. The segment stays the verified split of the company.", null],
-    ["einstieg", probeEn, "The price stands at [[price]] and remains the highest since the prior year. The figures are dated [[as_of]] and stay tied to that date.", null],
-    ["einstieg", probeEn, "The price stands at [[price]] and remains a record for the company. The figures are dated [[as_of]] and stay tied to that date.", null],
-    ["einstieg", probeEn, "The price stands at [[price]] dollars and stays the verified market value. The figures are dated [[as_of]] and stay tied to that date.", null],
-    ["einstieg", probeEn, "We look at Apple today and the price stands at [[price]]. The figures are dated [[as_of]] and stay tied to that date.", ["Apple"]],
-    ["s17", probeEn, "At the top stands [[pair_a]] and blackwell remains the next driver. This list stays the verified set for the company.", ["blackwell"]],
-    ["einstieg", probeDe, "Wir sprechen heute über Pfizer, und der Kurs steht bei [[price]]. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", ["Pfizer"]],
-    ["news", probeEn, "The latest report is 4 days old and stays inside the window we considered. The figures stay tied to that close.", null],
-    ["umsatz", probeEn, "Revenue grew by 12 percent in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
-  ];
+  const foreignNegatives: Array<[string, typeof probeDe, string, string[] | null]> = PODCAST_NEGATIVES_25.map(row => [
+    row.chapterId,
+    row.language === "de" ? probeDe : probeEn,
+    row.text,
+    row.entities,
+  ]);
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
   assert.equal(foreignNegatives.length, 25);
@@ -1257,7 +1237,16 @@ async function main() {
   assert.ok(pharmaRedo.some(draft => draft.reasons.includes("entities")), pharmaRedo.map(draft => draft.notes.join("|")).join(" || "));
   const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
     .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
-  const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"]).ok).length;
+  const blattNames = ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"];
+  const passesColumn = (names: string[]) => PODCAST_NEGATIVES_25.filter(row => {
+    const sheet = row.language === "de" ? probeDe : probeEn;
+    return verifyChapter(row.chapterId, row.text, sheet, names).ok;
+  }).map(row => row.id);
+  const blattPassIds = passesColumn(blattNames);
+  const emptyPassIds = passesColumn([]);
+  assert.deepEqual(blattPassIds, ["N12", "N22"]);
+  assert.deepEqual(emptyPassIds, ["N12", "N22"]);
+  const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, blattNames).ok).length;
   const emptyListRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, []).ok).length;
   const emptyListPipeline = foreignNegatives.filter(([id, sheet, raw]) => {
     const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [] }] }, new Map([[id, []]]));
@@ -1281,7 +1270,7 @@ async function main() {
   const enEmptyPath = emptyPath(enPool, probeEn);
   assert.ok(deEmptyPath.fallen / deEmptyPath.total <= 0.1, `DE []-Pfad ${deEmptyPath.fallen}/${deEmptyPath.total}`);
   assert.ok(enEmptyPath.fallen / enEmptyPath.total <= 0.1, `EN []-Pfad ${enEmptyPath.fallen}/${enEmptyPath.total}`);
-  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. []-Pfad DE ${deEmptyPath.fallen}/${deEmptyPath.total}, EN ${enEmptyPath.fallen}/${enEmptyPath.total}. Titelprosa ${proseOk}/${proseN}, Nah-Basis-Fehltreffer ${proseFail.length}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ voll ${rejected}/25, Blatt ${sheetNameRejected}/25, [] ${emptyListRejected}/25, []-Redo ${emptyListPipeline}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei voll: ${passed.join(" || ") || "keine"}. NVO DE ${nvoDeOk}/11, EN ${nvoEnOk}/9.`);
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. []-Pfad DE ${deEmptyPath.fallen}/${deEmptyPath.total}, EN ${enEmptyPath.fallen}/${enEmptyPath.total}. Titelprosa ${proseOk}/${proseN}, Nah-Basis-Fehltreffer ${proseFail.length}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ voll ${rejected}/25, Blatt ${sheetNameRejected}/25, [] ${emptyListRejected}/25, []-Redo ${emptyListPipeline}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei Blatt: ${blattPassIds.join(", ") || "keine"}. Durch bei []: ${emptyPassIds.join(", ") || "keine"}. Durch bei voll: ${passed.join(" || ") || "keine"}. NVO DE ${nvoDeOk}/11, EN ${nvoEnOk}/9.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",
