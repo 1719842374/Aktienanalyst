@@ -772,12 +772,45 @@ function atSentenceStart(words: string[], index: number): boolean {
   return /[:.!?]$/.test(words[index - 1] ?? "");
 }
 
-/** Akteur ohne Artikel: Rolle davor oder finite Akteursverbform danach. Pack-Belege sind schon ausgesiebt. */
+const STEIGEN = new Set(["steigt", "steigen", "stieg", "stiegen"]);
+const BLEIBEN = new Set(["bleibt", "bleiben", "blieb", "blieben"]);
+
+function closedClassWord(word: string): boolean {
+  if (provenContentNoun(word)) return false;
+  return adjectiveStems(word).some(stem => DE_CLOSED.has(stem));
+}
+
+function provenContentNoun(word: string): boolean {
+  return listedNounForm(word) || knownCompound(word) || germanNounEnding(word);
+}
+
+function stockOfName(words: string[], index: number): boolean {
+  if (index < 2) return false;
+  const prev = tokenCore(words[index - 1] ?? "").toLowerCase();
+  const prev2 = tokenCore(words[index - 2] ?? "").toLowerCase();
+  return prev === "von" && (prev2 === "aktie" || prev2 === "aktien");
+}
+
+function remainsCompetitor(words: string[], index: number): boolean {
+  const next = tokenCore(words[index + 1] ?? "").toLowerCase();
+  if (!BLEIBEN.has(next)) return false;
+  for (let later = index + 1; later < words.length; later++) {
+    if (ACTOR_ROLE.has(tokenCore(words[later] ?? "").toLowerCase())) return true;
+  }
+  return false;
+}
+
+/** Rolle, Aktienbesitz oder Prädikat „bleibt … Wettbewerber“. Ein bloßes Verb danach gilt nicht für belegte Substantive und nicht für Adverbien. */
 function actorSlot(words: string[], index: number): boolean {
   const prev = index > 0 ? tokenCore(words[index - 1] ?? "").toLowerCase() : "";
-  if (ACTOR_ROLE.has(prev)) return true;
-  if (determinerBefore(words, index) || DE_PREPOSITION.has(prev)) return false;
+  const bare = withoutPossessive(tokenCore(words[index] ?? ""));
   const next = tokenCore(words[index + 1] ?? "").toLowerCase();
+  if (ACTOR_ROLE.has(prev) || stockOfName(words, index)) return true;
+  if (remainsCompetitor(words, index) && !closedClassWord(bare)) return true;
+  if (closedClassWord(bare) && !provenContentNoun(bare)) return false;
+  if (determinerBefore(words, index) || DE_PREPOSITION.has(prev)) return false;
+  if (prev === "auch" && ACTOR_VERB.has(next)) return true;
+  if (provenContentNoun(bare)) return atSentenceStart(words, index) && STEIGEN.has(next);
   return ACTOR_VERB.has(next);
 }
 

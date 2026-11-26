@@ -1165,6 +1165,36 @@ async function main() {
       assert.equal(verdict.ok, true, `Lilly ${entities === null ? "null" : entities.join(",") || "[]"} ${verdict.notes.join("|")}`);
     }
   }
+  const plainSubjects = [
+    "Konkurrenz beobachtet den Markt sehr genau und wartet auf Fehler.",
+    "Kurzfristig steigt der Kurs, langfristig zählt aber das Geschäft.",
+    "Auch Umsatz steigt im neuen Jahr und der Kurs bleibt der Maßstab für die Firma.",
+    "Politik beobachtet die Preise sehr genau und der Kurs bleibt der Maßstab für die Firma.",
+  ];
+  for (const sentence of plainSubjects) {
+    for (const entities of [null, []] as Array<string[] | null>) {
+      const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+      assert.equal(verdict.ok, true, `${entities === null ? "null" : "[]"} ${sentence} ${verdict.notes.join("|")}`);
+      assert.equal(verdict.reasons.includes("name"), false, sentence);
+    }
+  }
+  const heldNames = ["Allianz", "Linde", "Bayer", "Volkswagen", "Henkel", "Lufthansa", "Siemens", "Rheinmetall"];
+  const heldFrames = (name: string) => [
+    `${name} bleibt ein wichtiger Wettbewerber im Markt und wächst seit Jahren stetig weiter.`,
+    `Die Aktie von ${name} ist zuletzt deutlich gestiegen, und das zeigt den starken Wettbewerb.`,
+    `Der Wettbewerber ${name} bleibt im Markt und der Kurs stützt die Bewertung der Firma.`,
+    `Auch ${name} steigt im Markt und der Kurs bleibt der Maßstab für die Firma im Jahr.`,
+    `Der Konkurrent ${name} bleibt im Markt und der Kurs stützt die Bewertung der Firma.`,
+  ];
+  for (const name of heldNames) {
+    for (const sentence of heldFrames(name)) {
+      for (const entities of [null, [], [name]] as Array<string[] | null>) {
+        const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+        assert.equal(verdict.ok, false, `${name} ${entities === null ? "null" : entities.join(",") || "[]"} ${verdict.notes.join("|")}`);
+        assert.ok(verdict.reasons.includes("name"), `${name} ${sentence} ${verdict.notes.join("|")}`);
+      }
+    }
+  }
   const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));
   assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));
