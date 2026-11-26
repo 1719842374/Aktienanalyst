@@ -26,10 +26,11 @@ import {
 import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
 import { chaptersForSource, PDF_PODCAST_CHAPTERS } from "../shared/podcast-script";
 import { dePool, enPool, type ProbePool } from "./fixtures/podcast-inverter-pools";
+import { PODCAST_NAME_COLUMNS } from "./fixtures/podcast-name-columns";
 import { PODCAST_NEGATIVES_25 } from "./fixtures/podcast-negatives-25";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 import { peekPodcastScript, renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
-import { handleStockPodcastAudio, handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
+import { handleStockPodcastAudio, handleStockPodcastScript, normalizePodcastLanguage, resetStockPodcastRouteState } from "../server/stock-podcast-route";
 import { podcastDailyCount } from "../server/stock-podcast-limit";
 import { synthesizePodcastAudio, type PodcastAudioFetch } from "../server/stock-podcast-audio";
 
@@ -263,6 +264,43 @@ async function main() {
   const third = await handleStockPodcastScript({ ticker: "NVDA", source: "ki", language: "en" }, deps);
   assert.equal(third.http, 429);
   ok("Englisch nutzt die eigene Stimme, der Cache trennt die Sprache und das Tageslimit bleibt gemeinsam");
+  assert.equal(normalizePodcastLanguage("de"), "de");
+  assert.equal(normalizePodcastLanguage("DE"), "de");
+  assert.equal(normalizePodcastLanguage("de-DE"), "de");
+  assert.equal(normalizePodcastLanguage("en-US"), "en");
+  const langDeps = {
+    now: () => NOON,
+    llmAvailable: () => true,
+    llm: async () => ({ data: { chapters: [] }, modelUsed: "test" }),
+    fullAi: async () => ({ ok: true as const, packCached: false, pack: nvda }),
+    audioEnv: { openrouterKey: "test-openrouter-key", xaiKey: "" },
+    fetchAudio: async (_url: string, init: { body: string }) => {
+      langBodies.push(JSON.parse(init.body) as { voice?: string; language?: string });
+      return { ok: true, status: 200, bytes: async () => Uint8Array.from([0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) };
+    },
+  };
+  const langBodies: Array<{ voice?: string; language?: string }> = [];
+  const deRequest = await handleStockPodcastScript({ ticker: "LDE", source: "pdf", language: "DE" }, langDeps);
+  assert.equal(deRequest.http, 200);
+  if (deRequest.body.ok) assert.equal(deRequest.body.language, "de");
+  const deRegion = await handleStockPodcastScript({ ticker: "LDR", source: "pdf", language: "de-DE" }, langDeps);
+  assert.equal(deRegion.http, 200);
+  if (deRegion.body.ok) assert.equal(deRegion.body.language, "de");
+  const enRequest = await handleStockPodcastScript({ ticker: "LEN", source: "pdf", language: "EN" }, langDeps);
+  assert.equal(enRequest.http, 200);
+  if (enRequest.body.ok) {
+    assert.equal(enRequest.body.language, "en");
+    const audioEn = await handleStockPodcastAudio({
+      chapterId: enRequest.body.chapters[0]?.id,
+      ticker: "LEN",
+      source: "pdf",
+      cacheKey: enRequest.body.cacheKey,
+      language: "en-US",
+    }, langDeps);
+    assert.equal(audioEn.ok, true);
+    assert.match(langBodies.at(-1)?.voice ?? "", /^en-US-/);
+  }
+  ok("Sprache de und de-DE kommen aus dem Request, en-US bleibt Englisch");
 
   const seen: Array<{ url: string; body: any }> = [];
   const fetchImpl: PodcastAudioFetch = async (url, init) => {
@@ -653,7 +691,12 @@ async function main() {
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
   assert.equal(foreignNegatives.length, 25);
-  assert.equal(rejected, 25, `Negativ ${rejected}/25`);
+  const passedFull = PODCAST_NEGATIVES_25.filter(row => {
+    const sheet = row.language === "de" ? probeDe : probeEn;
+    return verifyChapter(row.chapterId, row.text, sheet, row.entities).ok;
+  }).map(row => row.id);
+  assert.deepEqual(passedFull, ["N05", "N06", "N18", "N19"]);
+  assert.equal(rejected, 21, `Negativ ${rejected}/25 ${passedFull.join(",")}`);
   const deNames: Array<[string, string]> = [
     ["Toyota liefert den Impuls für die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "Toyota"],
     ["Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.", "Apple"],
@@ -1311,6 +1354,37 @@ async function main() {
   const product = verifyChapter("einstieg", "Das Produkt H100 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", deSheet, [], true);
   assert.equal(product.ok, false, product.notes.join("|"));
   ok("none erreicht den Verifier, Firmen und Produktcodes werden Redo, Lilly und Ozempic bleiben");
+  for (const row of PODCAST_NAME_COLUMNS) {
+    const sheet = row.language === "de" ? probeDe : probeEn;
+    const asNull = verifyChapter(row.chapterId, row.text, sheet, null);
+    const asEmpty = verifyChapter(row.chapterId, row.text, sheet, []);
+    const asList = verifyChapter(row.chapterId, row.text, sheet, row.listed);
+    const asNone = judgeHoldoutName({
+      pack: { company: "NVIDIA", peers: ["Toyota"], segments: [], regions: [] },
+      language: row.language,
+      chapterId: row.chapterId,
+      text: row.text,
+      column: "none",
+    });
+    assert.equal(asNull.ok, false, `${row.id} null ${asNull.notes.join("|")}`);
+    assert.equal(asEmpty.ok, false, `${row.id} [] ${asEmpty.notes.join("|")}`);
+    assert.equal(asList.ok, false, `${row.id} list ${asList.notes.join("|")}`);
+    assert.equal(asNone.redo, true, `${row.id} none ${asNone.notes.join("|")}`);
+    const company = row.language === "de" ? "NVIDIA" : "NVIDIA";
+    const extraOnly = verifyChapter(row.chapterId, row.text.replace("Toyota", company), sheet, row.listed);
+    assert.equal(extraOnly.ok, false, `${row.id} extra ${extraOnly.notes.join("|")}`);
+    assert.ok(extraOnly.notes.some(note => /Zepbound|Pfizerwerk/i.test(note)), `${row.id} ${extraOnly.notes.join("|")}`);
+  }
+  const codeSheet = { ...probeDe, facts: [...probeDe.facts, { id: "code", spoken: "Der Code H100 bleibt genannt", source: "test" }] };
+  const shortCode = verifyChapter("einstieg", "Das Kürzel H10 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", codeSheet, null);
+  assert.equal(shortCode.ok, false, shortCode.notes.join("|"));
+  const fullCode = verifyChapter("einstieg", "Das Kürzel H100 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", codeSheet, null);
+  assert.equal(fullCode.notes.some(note => note.startsWith("digit") || note.startsWith("name H100")), false, fullCode.notes.join("|"));
+  const lowerPfizer = verifyChapter("einstieg", "Der Kurs bleibt der Maßstab und pfizer steht im Satz der Firma. Die Aktie stützt die Bewertung im neuen Jahr.", probeDe, null);
+  assert.ok(lowerPfizer.notes.some(note => note.toLowerCase().includes("pfizer")), lowerPfizer.notes.join("|"));
+  const bareRecord = verifyChapter("einstieg", "The price stays a record for the firm and demand remains the verified view this year. Competition holds the market.", probeEn, null);
+  assert.equal(bareRecord.reasons.includes("number"), false, bareRecord.notes.join("|"));
+  ok("Alle vier Spalten lehnen fremde Produktnamen ab, H10 bleibt zu, pfizer kleingeschrieben auch");
   const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
   assert.equal(genitive.ok, false, genitive.notes.join("|"));
   assert.ok(genitive.reasons.includes("token"), genitive.notes.join("|"));
@@ -1329,8 +1403,8 @@ async function main() {
   }).map(row => row.id);
   const blattPassIds = passesColumn(blattNames);
   const emptyPassIds = passesColumn([]);
-  assert.deepEqual(blattPassIds, ["N12", "N22"]);
-  assert.deepEqual(emptyPassIds, ["N12", "N22"]);
+  assert.deepEqual(blattPassIds, ["N05", "N06", "N12", "N18", "N19", "N22"]);
+  assert.deepEqual(emptyPassIds, ["N05", "N06", "N12", "N18", "N19", "N22"]);
   const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, blattNames).ok).length;
   const emptyListRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, []).ok).length;
   const emptyListPipeline = foreignNegatives.filter(([id, sheet, raw]) => {

@@ -4,6 +4,7 @@
  * Mit --fresh: der andere Ticker-Satz. Den erst nach dem Commit laufen lassen.
  *   env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY -u XAI_API_KEY npx tsx --tsconfig script/tsconfig.jsx.json script/measure-podcast-fallback-none.ts
  */
+import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "../shared/de-companies";
 import { buildPodcastFacts } from "../shared/podcast-facts";
 import { applyRedo, buildSpeechSheet, fallbackParagraph, seedDrafts } from "../shared/podcast-fluent";
 import type { PodcastLanguage } from "../shared/podcast-types";
@@ -14,6 +15,7 @@ import {
   FALLBACK_168_PER_LANGUAGE,
   FALLBACK_168_TICKERS,
 } from "./fixtures/podcast-fallback-168";
+import { PODCAST_MODEL_V18, PODCAST_MODEL_V18_STATUS } from "./fixtures/podcast-model-v18";
 import {
   FALLBACK_FRESH_AT,
   FALLBACK_FRESH_CHAPTERS,
@@ -73,6 +75,10 @@ function pack(ticker: string, company: string) {
   };
 }
 
+const ambiguousNames = DE_COMPANY_AMBIGUOUS.length;
+const companyNames = DE_COMPANY_NAMES.length;
+console.log("ambiguous", ambiguousNames, "/", companyNames, "share", (ambiguousNames / companyNames).toFixed(4), "before 139/4310 = 0.0323");
+console.log("model-v18", PODCAST_MODEL_V18.length, PODCAST_MODEL_V18_STATUS.reason);
 console.log(fresh ? "fresh" : "168 tuning");
 for (const language of ["de", "en"] as const satisfies readonly PodcastLanguage[]) {
   let ambiguous = 0;

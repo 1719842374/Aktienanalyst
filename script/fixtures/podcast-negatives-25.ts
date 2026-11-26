@@ -1,11 +1,9 @@
 /**
  * 25 Negativfälle, fest vor der Abnahme.
  *
- * Blatt 23/25 und die leere Liste 23/25 lassen genau zwei Fälle durch:
- * N12 (Deutsch, Kapitel s17) und N22 (Englisch, Kapitel s17).
- * In beiden steht „blackwell“ kleingeschrieben. Das Firmenlexikon trifft nur
- * großgeschriebene Formen, und weder die Blatt-Namen noch [] enthalten das Wort.
- * Nur die eigene Liste ["blackwell"] lehnt den Satz ab.
+ * N12 und N22 lassen Blatt und [] durch, weil „blackwell“ kleingeschrieben ist
+ * und nicht in de-companies steht. N05, N06, N18 und N19 nennen Rekord oder highest
+ * ohne folgende Zahl und sind deshalb keine Zahlen-Behauptung.
  */
 export interface PodcastNegativeCase {
   id: string;
