@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # SerpApi Rate-Limit-Probleme – Detaillierte Erklärung (Stand 2026-10-09)
 
 ## 1. Was ist SerpApi?

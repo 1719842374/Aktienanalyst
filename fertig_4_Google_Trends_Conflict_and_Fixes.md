@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Google Trends Score – Konflikt, Problem und Lösung (Stand 2026-10-09)
 
 ## 1. Der Konflikt mit dem Google-Trends-Score

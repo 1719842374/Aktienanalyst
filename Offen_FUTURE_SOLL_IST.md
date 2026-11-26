@@ -120,9 +120,7 @@ FMP-402, Yahoo, Dividenden-Plot, Credit, Buffett, Chart-Bündel, regionale Gauge
 
 ### (a) Umsetzbare Soll-Punkte
 
-1. Kette: Perplexity → FMP → **Yahoo nur bei FMP-Fehler, besonders 402** → klarer Frontend-Fehler. Neue Datei `server/yahoo-fetcher.ts`. Mapping nur Kurs, Market Cap, PE, EPS, History. Cache und Rate-Limit. Tests: `VOW3.DE`, `BMW.DE`, `SAP.DE` fallen auf Yahoo; `AAPL` bleibt auf FMP; ungültiger Ticker crasht nicht.
 2. Frontend-Text bei 402: Plan deckt das Symbol nicht, Fallback aktiv bzw. warum nicht.
-3. `.DE` nicht auf ein anderes Listing auflösen.
 4. Dividendenrendite: KPI in Sektion 1, Overlay in `TechnicalChart.tsx` (Sektion 10), nur wenn Dividende > 0. Historische Yield = Dividende / Kurs.
 5. Credit-Risiko (5Y-CDS, lange Bond-Yield, Rating) in Sektion 8, optional Stress in Sektion 6. Quelle ist **nicht** frei auf FMP/Yahoo.
 6. Buffett robuster: Retry, `period2` aktuell, letzter Punkt für die Annotation, Fehlertext statt generischer roter Box, Fehler nicht cachen. Globalisierung: Foreign-Revenue nicht hardcoded, optional LLM, Fallback markieren.
@@ -178,7 +176,6 @@ Yahoo bei 402: deutsche Ticker, die heute 502 sind, liefern eine **dünne** Anal
 
 ### (f) Mini-PRs
 
-- **PR 4** Yahoo nur bei `fmpStatus === 402` (und klarem Upstream-Fail), plus Satz im Fehler/Erfolg „Plan-Limit, Yahoo-Kurs/History“. Kein Fundamentals-Ersatz.
 - **PR 6** Gauge-Umschalter auf vorhandene Katalog-P. US-Default. Hinweis bei vielen N/A.
 - **PR 7** Dividenden-Overlay nur mit vorhandener Serie (FMP-Historie oder später Yahoo). Punkt-KPI kann früher, wenn `dividendYield` schon in der Analyse-Response liegt.
 - **PR 8** Chart-Panes erst ohne `RegionRsiPanel.tsx` (#195).
@@ -470,7 +467,6 @@ Jede PR eine Sache, live prüfbar, US-Handlung und #193-Formel nicht nebenbei ä
 | 1 | Peer-Add: Poll sendet Overrides, Reload behält sie | Future_Work | keines | keine neuen |
 | 2 | Trends Last-Good 12 h + UI-Alter, Zonen gleich | Future_2 Punkt 4, Future_3, Future_4, Future_5 | **P ändert sich**, wenn ein stale Wert wieder zählt | `SERPAPI_KEY` |
 | 3 | Gold-Chart MA50 + Cross-Marker, ohne Score | Future_Work Gold, Future_10 §4/§7 | keines | keine |
-| 4 | Yahoo nur bei FMP 402, dünnes Mapping, klarer Text | Future_1 §1–10 | neue Daten für `.DE`, kein Formel-Bruch | `FMP_API_KEY` bleibt; Yahoo ohne Key |
 | 5 | VIX-Yahoo wenn FRED leer; VSTOXX-Yahoo nur als dritte Stufe | Future_2 | **P ändert sich**, wenn Slot heute N/A ist | keine |
 | 6 | Region-Buttons auf Katalog-P, US-Default, US-Handlung bleibt | Future_1 §17–18 | Anzeige, nicht die US-Formel | keine |
 | 7 | Dividenden-KPI/Overlay nur mit echter Serie | Future_1 §11.1 | keines an den Gates | FMP, später Yahoo |
@@ -483,3 +479,24 @@ Jede PR eine Sache, live prüfbar, US-Handlung und #193-Formel nicht nebenbei ä
 Bewusst später, ohne eigenen Platz in 1–3: i18n, Kostolany-Rad, bidirektionale Cache-Sync, Konfliktmatrix, CDS (keine freie Quelle), Segment-Dedup (kein Kriterium), Monte-Carlo-Regler (kein Soll-Parameter), pytrends, Redis, SerpApi-Plan, offizielle Trends-API.
 
 **Top 3 zum Start:** PR 1 Peer-Add-Rest, PR 2 Trends-Cache, PR 3 Gold-MA50 ohne Score.
+
+## Restlücken (Nachtrag 26.11.2026, main `5eec205a`)
+
+Append only. Die Abschnitte darüber bleiben der Stand ihrer letzten Inventur, auch wo sie veraltet sind (Yahoo-Fetcher ist inzwischen da). Herkunft ist die Future-Datei, Dateiname seit diesem PR `fertig_`. „Philip-OK nötig“ steht bei Score oder Layer aus Future_7, Future_8, Future_9 und Future_10.
+
+| Rest | Herkunft | Stand auf `5eec205a` | Philip-OK |
+|---|---|---|---|
+| Credit (CDS, Emittenten-Rating, Stress im CRV) | Future_1, Abschnitt (a) Punkt 5 | Karte und PESTEL aus #368 liegen. CDS und Rating haben keine freie Quelle. Stress im Score/CRV ist nicht verdrahtet | nur wenn der Spread ein Score- oder CRV-Signal wird. Die Karte selbst nicht |
+| φ (Auslandsanteil, nicht fest codiert) | Future_1, F1-36/F1-37 | `buildBuffettSeries` rechnet `foreignShare` und hängt nicht an der Route. Kein LLM-Call für φ | nur für den Score-Slot. Zusatzkennzahl ohne Philip |
+| Rezessions-TA in einer Sektion | Future_1, Abschnitt (a) Punkt 7 | `RecessionTaSection` (`RecessionDashboard.tsx:194`) und `BuffettRatioPanel` (`:196`) bleiben getrennt | nein, solange der Score unangetastet bleibt |
+| 5 Gauges je Region | Future_1, Abschnitt (a) Punkt 8 | EZ/JP zeigen nicht fünf Untergruppen. US-Handlung bleibt | nein für die Anzeige. Gewichte siehe Asien |
+| Asien (nicht nur Japan) | Future_1, regionale Gauges; Detail F1-54 | `RegionGaugeSwitch.tsx:10` weiter „Asien (Japan)“. ^TPX fehlt. Draft #470/#413 nicht gemergt, #413 nicht anfassen | ja, sobald die regionale P sich ändert |
+| SPY-Fundamentals und VSTOXX über Yahoo | Future_2 (VSTOXX als dritte Stufe), Future_1 F1-67/F1-68 (SPY) | VIX-Yahoo #296/#325 ist da. VSTOXX als dritte Stufe und SPY-Fundamentals per Yahoo nicht als geschlossen belegt | ja, wenn ein bisher leerer Slot die Korrektur-P füllt |
+| Redis und Retry-Backoff für Google Trends | Future_3 (Backoff), Future_5 (Cache-Skizze, Redis) | #200 ist In-Memory, 12 h frisch, Last-Good 48 h. Kein Redis, kein Backoff | nein, solange Zonen und Gewicht ×1,7 bleiben |
+| Perzentil statt fester Buffett-/CAPE-Zonen | Future_7, Future_8 | Drafts #219/#220 nicht auf main | Philip-OK nötig |
+| Makro-Layer (Gewichte, OpenRouter ±25 %) | Future_9 | kein Live-Umschalten der P. F9-04 Lager/Nachfrage ist eine andere Karte und liegt (#357) | Philip-OK nötig |
+| Gold-Layer (Gewichte, Policy-Gate, News-Flag in den GIS) | Future_10 | MA50 #201 und AISC-Sektion #398/#399 liegen. Der Layer-Score schreibt den GIS nicht um | Philip-OK nötig |
+| i18n DE/EN | Future_Work | keine `client/src/i18n.ts` | nein |
+| Kostolany-Rad | Future_Work | Sektorrotation ist `fertig_`. Kein Kostolany-Treffer im Panel | nein, solange es nur die Grafik ist |
+| Cache-Sync Analyse / Researcher / Portfolio | Future_Work | #400 gemeinsamer Refresh liegt. Volle bidirektionale Sync nicht | nein |
+| Konfliktmatrix | Future_Work (Fazit-Sektion) | Aktien-Matrix `client/src/components/sections/ConflictMatrixPanel.tsx` (#218/#221) und Asset-Matrix #328 liegen. Der Ist-Satz weiter oben in dieser Datei („Keine Konfliktmatrix-Komponente“) ist der Stand vom 11.10. und damit veraltet. Kein zweiter Bau | nur wenn das Fazit-Rating aus der Matrix neu gerechnet wird |

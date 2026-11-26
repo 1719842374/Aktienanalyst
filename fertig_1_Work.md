@@ -1,3 +1,4 @@
+Status: Fertig (Philip 26.11.2026), Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # Work.md – FMP 402-Fehler bei deutschen Aktien (VOW3.DE) + Yahoo-Finance-Fallback
 
 **Stand:** 09. Oktober 2026  
