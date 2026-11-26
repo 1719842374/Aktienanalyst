@@ -145,4 +145,4 @@ Wenn Moat None bleibt trotz Brand-Keywords → Dämpfung greift.
 5. Keine Ticker-spezifischen Hardcodings.
 6. Begründung im Summary sichtbar.
 
-**Quellen:** analyze-route.ts (`scoreMoat`), shared/bias-fixes.ts (Tech-Moat-Override), WORK_NVO_TECHNICAL_OVERRIDE.md, WORK_SECTION_WEIGHTING_ADAPTIVE.md.
+**Quellen:** analyze-route.ts (`scoreMoat`), shared/bias-fixes.ts (Tech-Moat-Override), fertig_WORK_NVO_TECHNICAL_OVERRIDE.md, WORK_SECTION_WEIGHTING_ADAPTIVE.md.

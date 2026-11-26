@@ -1,3 +1,4 @@
+Status: Fertig (Stabschef 26.11.2026, Beleg SPEC_INVENTUR_SOLL_IST.md @fdb162c4), main fdb162c4, Beleg shared/bias-fixes.ts:147–187 evaluateTechMoatOverride. Soll-Ist siehe SPEC_INVENTUR_SOLL_IST.md
 # WORK – NVO Technical Override Fix
 
 **Stand:** 12.10.2026  
