@@ -696,6 +696,14 @@ async function main() {
   const withFirm = "Wir sprechen heute über NVIDIA und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
   const firmEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: withFirm, entities: [] }] }, new Map([["einstieg", []]]));
   assert.ok(firmEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), firmEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  const tokenOnly = "Wir sprechen heute über [[company]] und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const tokenEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: tokenOnly, entities: [] }] }, new Map([["einstieg", []]]));
+  assert.equal(tokenEmpty.find(draft => draft.id === "einstieg")?.reasons.length, 0, tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  const possessive = "Nvidias Kurs bleibt der Maßstab im neuen Jahr und die Aktie stützt die Bewertung. Der Markt bleibt offen für die Firma.";
+  const possessiveEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: possessive, entities: [] }] }, new Map([["einstieg", []]]));
+  assert.ok(possessiveEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), possessiveEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  const tickerListed = verifyChapter("einstieg", "Der Kürzel NVDA bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["NVDA"]);
+  assert.equal(tickerListed.ok, true, tickerListed.notes.join("|"));
   const noName = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
   const bareEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "zusammenfassung", paragraph: noName, entities: [] }] }, new Map([["zusammenfassung", []]]));
   assert.equal(bareEmpty.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), false, bareEmpty.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
@@ -828,14 +836,14 @@ async function main() {
   const prosePacks: Array<{ ticker: string; analysis: Record<string, unknown>; regulatory?: unknown; de: string[]; en: string[] }> = [
     {
       ticker: "NVO",
-      regulatory: { exposures: [{ country: "United States", title: "Preisregulierung", description: "Die Wirkung bleibt im Rahmen." }] },
+      regulatory: { exposures: [{ country: "USA", title: "Preisregulierung", description: "Die Wirkung bleibt im Rahmen." }] },
       analysis: {
         ...baseFacts,
         ticker: "NVO",
         companyName: "Novo Nordisk",
         podcastCompanySource: "yahoo-chart",
         revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
-        geoSegments: [{ name: "United States", percentage: 55 }, { name: "Europe", percentage: 30 }],
+        geoSegments: [{ name: "USA", percentage: 55 }, { name: "EU", percentage: 30 }],
         catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 8 }, { name: "Wettbewerb im Markt", nettoUpside: 3 }],
         risks: [{ name: "Preisregulierung" }, { name: "Marktstart" }],
         newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
@@ -958,6 +966,11 @@ async function main() {
   const nvoEnOk = (nvo?.en ?? []).filter(text => verifyChapter("einstieg", text, nvoEn, []).ok).length;
   assert.equal(nvoDeOk, 11, proseFail.filter(line => line.startsWith("NVO")).join(" || "));
   assert.equal(nvoEnOk, 9, proseFail.filter(line => line.startsWith("NVO")).join(" || "));
+  const usSentence = "The firm sells in the United States and demand remains the verified view this year. Competition holds the market.";
+  const usListed = verifyChapter("einstieg", usSentence, nvoEn, ["United States"]);
+  assert.equal(usListed.ok, true, usListed.notes.join("|"));
+  const usaListed = verifyChapter("einstieg", usSentence, nvoEn, ["USA"]);
+  assert.equal(usaListed.ok, true, usaListed.notes.join("|"));
   const bend = buildSpeechSheet(buildPodcastFacts(pack("NVO", {
     ...baseFacts,
     ticker: "NVO",
@@ -977,6 +990,26 @@ async function main() {
   assert.equal(bent.ok, true, bent.notes.join("|"));
   const patients = verifyChapter("einstieg", "Die Diabetes-Patienten stützen die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie trägt die Nachfrage.", bend, []);
   assert.equal(patients.ok, true, patients.notes.join("|"));
+  const bare = {
+    ...baseFacts,
+    ticker: "NVO",
+    companyName: "Novo Nordisk",
+    podcastCompanySource: "yahoo-chart",
+    revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+    catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 4 }],
+    risks: [{ name: "Preisregulierung" }],
+    newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
+    growthThesis: "Die Nachfrage trägt die Geschichte der Firma.",
+  };
+  const bareEn = buildSpeechSheet(buildPodcastFacts(pack("NVO", bare), NOON), "en");
+  const bareDe = buildSpeechSheet(buildPodcastFacts(pack("NVO", bare), NOON), "de");
+  const kingdom = verifyChapter("einstieg", "The firm sells in the United Kingdom and demand remains the verified view this year. Competition holds the market.", bareEn, []);
+  assert.equal(kingdom.ok, true, kingdom.notes.join("|"));
+  const states = verifyChapter("einstieg", "Vereinigte Staaten bleiben der größte Markt der Firma im neuen Jahr. Der Kurs stützt die Bewertung.", bareDe, []);
+  assert.equal(states.ok, true, states.notes.join("|"));
+  const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
+  assert.equal(pharma.ok, false, pharma.notes.join("|"));
+  assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));
   const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
     .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
   const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"]).ok).length;
@@ -985,7 +1018,25 @@ async function main() {
     const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [] }] }, new Map([[id, []]]));
     return drafts.some(draft => draft.id === id && draft.reasons.includes("entities"));
   }).length;
-  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Titelprosa ${proseOk}/${proseN}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ voll ${rejected}/25, Blatt ${sheetNameRejected}/25, [] ${emptyListRejected}/25, []-Redo ${emptyListPipeline}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei voll: ${passed.join(" || ") || "keine"}.`);
+  const emptyPath = (pool: ProbePool, sheet: typeof probeDe) => {
+    let total = 0;
+    let fallen = 0;
+    for (const [id, rows] of Object.entries(pool)) {
+      for (const row of rows) {
+        const raw = expandLegacy(row, sheet);
+        total += 1;
+        const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [] }] }, new Map([[id, []]]));
+        const draft = drafts.find(item => item.id === id);
+        if (draft?.reasons.length) fallen += 1;
+      }
+    }
+    return { total, fallen };
+  };
+  const deEmptyPath = emptyPath(dePool, probeDe);
+  const enEmptyPath = emptyPath(enPool, probeEn);
+  assert.ok(deEmptyPath.fallen / deEmptyPath.total <= 0.1, `DE []-Pfad ${deEmptyPath.fallen}/${deEmptyPath.total}`);
+  assert.ok(enEmptyPath.fallen / enEmptyPath.total <= 0.1, `EN []-Pfad ${enEmptyPath.fallen}/${enEmptyPath.total}`);
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. []-Pfad DE ${deEmptyPath.fallen}/${deEmptyPath.total}, EN ${enEmptyPath.fallen}/${enEmptyPath.total}. Titelprosa ${proseOk}/${proseN}, Nah-Basis-Fehltreffer ${proseFail.length}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ voll ${rejected}/25, Blatt ${sheetNameRejected}/25, [] ${emptyListRejected}/25, []-Redo ${emptyListPipeline}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei voll: ${passed.join(" || ") || "keine"}. NVO DE ${nvoDeOk}/11, EN ${nvoEnOk}/9.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

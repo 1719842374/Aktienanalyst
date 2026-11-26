@@ -98,6 +98,8 @@ export interface PodcastFacts {
   protectedNames: string[];
   /** Risiko-, News- und Katalysator-Titel. Das Modell bekommt sie nur als Kontext. */
   payloadTitles: string[];
+  /** News-Titel, getrennt von den anderen Kontexttiteln. */
+  newsTitles: string[];
   /** Namen der Katalysatoren mit Netto-Upside, parallel zu netto_upside_1..3. */
   upsideNames: string[];
   /** Firmennamen der Peer-Vergleichsgruppe. */
@@ -404,6 +406,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     riskNames,
     protectedNames,
     payloadTitles,
+    newsTitles: news.map(item => item.title),
     upsideNames: upsides.map(row => row.name),
     peerNames: (Array.isArray(analysis.peerComparison?.peers) ? analysis.peerComparison.peers : [])
       .map((peer: any) => text(peer?.name) ?? text(peer?.companyName))
@@ -534,14 +537,162 @@ function speakRoundedCrv(n: number): string {
   return spoken ?? "";
 }
 
+/** Geschlossene Menge. Nur Länder und Wirtschaftsräume, mit den gängigen DE/EN-Formen und Kürzeln. */
+const COUNTRY_GROUPS: string[][] = [
+  ["USA", "US", "U.S.", "U.S.A.", "United States", "United States of America", "Vereinigte Staaten", "Amerika", "America"],
+  ["UK", "U.K.", "United Kingdom", "Great Britain", "Britain", "Großbritannien", "Vereinigtes Königreich"],
+  ["EU", "European Union", "Europäische Union", "Europe", "Europa", "Eurozone", "Euro area", "Euroraum"],
+  ["China", "People's Republic of China", "Volksrepublik China", "PRC"],
+  ["Japan"],
+  ["Germany", "Deutschland"],
+  ["Denmark", "Dänemark"],
+  ["France", "Frankreich"],
+  ["Italy", "Italien"],
+  ["Spain", "Spanien"],
+  ["Portugal"],
+  ["Netherlands", "Niederlande", "Holland"],
+  ["Belgium", "Belgien"],
+  ["Luxembourg", "Luxemburg"],
+  ["Austria", "Österreich"],
+  ["Switzerland", "Schweiz"],
+  ["Sweden", "Schweden"],
+  ["Norway", "Norwegen"],
+  ["Finland", "Finnland"],
+  ["Iceland", "Island"],
+  ["Ireland", "Irland"],
+  ["Poland", "Polen"],
+  ["Czechia", "Czech Republic", "Tschechien"],
+  ["Slovakia", "Slowakei"],
+  ["Hungary", "Ungarn"],
+  ["Romania", "Rumänien"],
+  ["Bulgaria", "Bulgarien"],
+  ["Greece", "Griechenland"],
+  ["Croatia", "Kroatien"],
+  ["Slovenia", "Slowenien"],
+  ["Serbia", "Serbien"],
+  ["Bosnia and Herzegovina", "Bosnien und Herzegowina"],
+  ["Montenegro"],
+  ["North Macedonia", "Nordmazedonien"],
+  ["Albania", "Albanien"],
+  ["Kosovo"],
+  ["Ukraine"],
+  ["Belarus"],
+  ["Moldova", "Moldau"],
+  ["Russia", "Russland"],
+  ["Turkey", "Türkiye", "Türkei"],
+  ["Cyprus", "Zypern"],
+  ["Malta"],
+  ["Estonia", "Estland"],
+  ["Latvia", "Lettland"],
+  ["Lithuania", "Litauen"],
+  ["Canada", "Kanada"],
+  ["Mexico", "Mexiko"],
+  ["Brazil", "Brasilien"],
+  ["Argentina", "Argentinien"],
+  ["Chile"],
+  ["Colombia", "Kolumbien"],
+  ["Peru"],
+  ["Venezuela"],
+  ["Ecuador"],
+  ["Bolivia", "Bolivien"],
+  ["Paraguay"],
+  ["Uruguay"],
+  ["Cuba", "Kuba"],
+  ["South Africa", "Südafrika"],
+  ["Nigeria"],
+  ["Egypt", "Ägypten"],
+  ["Kenya", "Kenia"],
+  ["Morocco", "Marokko"],
+  ["Algeria", "Algerien"],
+  ["Tunisia", "Tunesien"],
+  ["Ghana"],
+  ["Ethiopia", "Äthiopien"],
+  ["Israel"],
+  ["Saudi Arabia", "Saudi-Arabien"],
+  ["United Arab Emirates", "Vereinigte Arabische Emirate", "UAE"],
+  ["Qatar", "Katar"],
+  ["Kuwait"],
+  ["Bahrain", "Bahrain"],
+  ["Oman"],
+  ["Iran"],
+  ["Iraq", "Irak"],
+  ["Jordan", "Jordanien"],
+  ["Lebanon", "Libanon"],
+  ["Syria", "Syrien"],
+  ["India", "Indien"],
+  ["Pakistan"],
+  ["Bangladesh", "Bangladesch"],
+  ["Sri Lanka"],
+  ["Indonesia", "Indonesien"],
+  ["Malaysia"],
+  ["Singapore", "Singapur"],
+  ["Thailand"],
+  ["Vietnam", "Vietnam"],
+  ["Philippines", "Philippinen"],
+  ["Taiwan"],
+  ["Hong Kong", "Hongkong"],
+  ["South Korea", "Republic of Korea", "Südkorea"],
+  ["North Korea", "Nordkorea"],
+  ["Australia", "Australien"],
+  ["New Zealand", "Neuseeland"],
+  ["Asia", "Asien"],
+  ["Africa", "Afrika"],
+  ["Middle East", "Naher Osten"],
+  ["Latin America", "Lateinamerika"],
+  ["North America", "Nordamerika"],
+  ["South America", "Südamerika"],
+  ["Oceania", "Ozeanien"],
+  ["Scandinavia", "Skandinavien"],
+  ["ASEAN"],
+];
+
+function placeKey(value: string): string {
+  return value.replace(/\./g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const COUNTRY_INDEX = new Map<string, string[]>();
+for (const group of COUNTRY_GROUPS) {
+  for (const alias of group) {
+    const key = placeKey(alias);
+    if (key && !COUNTRY_INDEX.has(key)) COUNTRY_INDEX.set(key, group);
+  }
+}
+
+export function countryPhrases(): string[] {
+  const out: string[] = [];
+  for (const group of COUNTRY_GROUPS) {
+    for (const alias of group) {
+      if (!out.includes(alias)) out.push(alias);
+    }
+  }
+  return out;
+}
+
+function expandPlace(raw: string): string[] {
+  const noDots = raw.replace(/\./g, "");
+  const keys = new Set<string>();
+  const add = (bit: string) => {
+    const key = bit.replace(/\s+/g, " ").trim().toLowerCase();
+    if (key.length >= 2) keys.add(key);
+  };
+  add(noDots);
+  for (const part of noDots.split(/[/|;]|\(|\)/)) add(part);
+  for (const key of Array.from(keys)) {
+    const group = COUNTRY_INDEX.get(key);
+    if (group) return group;
+  }
+  const trimmed = raw.trim();
+  return trimmed ? [trimmed] : [];
+}
+
 function collectPlaceNames(pack: FullAiPack): string[] {
   const analysis = pack.analysis ?? {};
   const names: string[] = [];
   const push = (value: unknown) => {
     if (typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (trimmed.length < 2 || names.includes(trimmed)) return;
-    names.push(trimmed);
+    for (const alias of expandPlace(value)) {
+      if (!names.includes(alias)) names.push(alias);
+    }
   };
   const regulatory = pack.regulatory as { exposures?: unknown } | null;
   const exposures = regulatory && Array.isArray(regulatory.exposures) ? regulatory.exposures : [];

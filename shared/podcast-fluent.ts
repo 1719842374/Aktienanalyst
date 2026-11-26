@@ -5,7 +5,7 @@
  */
 import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
-import { PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
+import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
 import { roundedParts, speakPercent } from "./podcast-speak";
 
@@ -35,7 +35,7 @@ export interface SpeechSheet {
   realNames: string[];
   /** Großwörter aus Risiko- und News-Titeln. Nur innere Ein-Zeichen-Distanz, kein Exakt-Treffer. */
   nearTitleNames: string[];
-  /** Länder und Regionen aus dem Pack, als ganze Wendung erlaubt. */
+  /** Länder und Wirtschaftsräume, als ganze Wendung. Die geschlossene Tabelle plus Pack-Orte. */
   placeNames: string[];
 }
 
@@ -303,7 +303,7 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     pendingTitles,
     codeLines,
     ...collectPackNames(facts),
-    placeNames: facts.placeNames ?? [],
+    placeNames: mergePlaceNames(facts.placeNames),
   };
 }
 
@@ -329,12 +329,7 @@ function capitalizedTitleWords(title: string): string[] {
 }
 
 function newsTitlesOf(facts: PodcastFacts): string[] {
-  const risks = facts.riskNames.length;
-  const catalysts = facts.measures?.catalystNames.length ?? 0;
-  const segment = facts.measures?.segmentName ? 1 : 0;
-  const end = facts.payloadTitles.length - catalysts - segment;
-  if (end < risks) return [];
-  return facts.payloadTitles.slice(risks, end);
+  return facts.newsTitles ?? [];
 }
 
 function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[]; nearTitleNames: string[] } {
@@ -656,14 +651,32 @@ function internalOneEdit(a: string, b: string): boolean {
   return extra > 0 && extra < left.length - 1;
 }
 
+function placeBits(text: string): string[] {
+  return text.replace(/\./g, "").split(/[^A-Za-zÄÖÜäöüß]+/).filter(bit => bit.length >= 2).map(bit => bit.toLowerCase());
+}
+
+function mergePlaceNames(fromPack: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const name of [...countryPhrases(), ...(fromPack ?? [])]) {
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 function placeCovers(words: string[], index: number, places: string[]): boolean {
-  const cores = words.map(word => tokenCore(word));
+  const tokens: Array<{ bit: string; index: number }> = [];
+  words.forEach((word, wordIndex) => {
+    for (const bit of placeBits(tokenCore(word))) tokens.push({ bit, index: wordIndex });
+  });
   for (const place of places) {
-    const parts = place.split(/[^A-Za-zÄÖÜäöüß]+/).filter(Boolean);
+    const parts = placeBits(place);
     if (!parts.length) continue;
-    for (let start = 0; start + parts.length <= cores.length; start++) {
-      const match = parts.every((part, offset) => cores[start + offset]?.toLowerCase() === part.toLowerCase());
-      if (match && index >= start && index < start + parts.length) return true;
+    for (let start = 0; start + parts.length <= tokens.length; start++) {
+      const match = parts.every((part, offset) => tokens[start + offset]?.bit === part);
+      if (!match) continue;
+      for (let offset = 0; offset < parts.length; offset++) {
+        if (tokens[start + offset]?.index === index) return true;
+      }
     }
   }
   return false;
@@ -678,6 +691,7 @@ function packNameLeak(text: string, sheet: SpeechSheet): string | null {
       const clean = tokenCore(word);
       const lower = clean.toLowerCase();
       if (lower.length < 4 || lexicon.has(lower)) continue;
+      if (allowedPackToken(clean, sheet)) continue;
       const nearTitle = (sheet.nearTitleNames ?? []).some(name => internalOneEdit(lower, name));
       if (!exact.includes(lower) && !nearKnownName(lower, sheet.realNames ?? []) && !nearTitle) continue;
       if (entityMentioned(clean, spoken)) continue;
@@ -696,7 +710,7 @@ function structuralName(text: string, sheet: SpeechSheet): string | null {
     for (let i = 0; i < words.length; i++) {
       const clean = tokenCore(words[i] ?? "");
       if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
-      if (placeCovers(words, i, sheet.placeNames ?? [])) continue;
+      if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
       const allCaps = /^[A-ZÄÖÜ]{2,5}$/.test(clean);
@@ -715,10 +729,31 @@ function entityMentioned(entity: string, text: string): boolean {
   return boundary.test(text);
 }
 
+function allowedPackToken(clean: string, sheet: SpeechSheet): boolean {
+  const lower = clean.replace(/\./g, "").toLowerCase();
+  if (!lower) return false;
+  if ((sheet.realNames ?? []).includes(lower)) return true;
+  return (sheet.placeNames ?? []).some(place => {
+    const parts = placeBits(place);
+    return parts.length === 1 && parts[0] === lower;
+  });
+}
+
+function allowedListedName(entity: string, sheet: SpeechSheet): boolean {
+  const bits = placeBits(entity);
+  if (!bits.length) return false;
+  if (bits.length === 1 && bits[0] && allowedPackToken(bits[0], sheet)) return true;
+  return (sheet.placeNames ?? []).some(place => {
+    const parts = placeBits(place);
+    return parts.length === bits.length && parts.every((part, index) => part === bits[index]);
+  });
+}
+
 function entityHit(entities: string[] | null | undefined, raw: string, spoken: string, sheet: SpeechSheet): string | null {
   if (!entities?.length) return null;
   const allowed = allowedWords(sheet);
   for (const entity of entities) {
+    if (allowedListedName(entity, sheet)) continue;
     const clean = tokenCore(entity);
     if (!entityMentioned(clean, raw) && !entityMentioned(clean, spoken)) continue;
     if (wordAllowed(clean, allowed, sheet.language)) continue;
@@ -1212,12 +1247,28 @@ function namesThatMustBeListed(sheet: SpeechSheet, chapterId: string): string[] 
 
 function mentionsListedName(raw: string, sheet: SpeechSheet, chapterId: string): boolean {
   const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
-  const spoken = applyFactTokens(raw, sheet.facts);
   for (const name of namesThatMustBeListed(sheet, chapterId)) {
     if (name.length < 2 || lexicon.has(name)) continue;
-    if (entityMentioned(name, spoken) || entityMentioned(name, raw)) return true;
+    if (entityMentioned(name, raw) || entityMentioned(`${name}s`, raw)) return true;
   }
   return false;
+}
+
+function tokenInsertedNames(raw: string, sheet: SpeechSheet): string[] {
+  const names: string[] = [];
+  const tokenRe = /\[\[([a-z0-9_]+)\]\]/g;
+  let match: RegExpExecArray | null = tokenRe.exec(raw);
+  while (match) {
+    const id = match[1];
+    if (id === "company" || id === "ticker") {
+      const spoken = sheet.facts.find(fact => fact.id === id)?.spoken ?? "";
+      for (const word of spoken.split(/[^A-Za-zÄÖÜäöüß0-9]+/)) {
+        if (word.length >= 2 && !names.includes(word)) names.push(word);
+      }
+    }
+    match = tokenRe.exec(raw);
+  }
+  return names;
 }
 
 function entityField(
@@ -1264,7 +1315,7 @@ export function seedDrafts(
       });
       continue;
     }
-    const verdict = verifyChapter(def.id, raw, sheet, field.names);
+    const verdict = verifyChapter(def.id, raw, sheet, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet)));
     drafts.push({
       id: def.id,
       attempts: 1,
@@ -1302,7 +1353,7 @@ export function applyRedo(
       };
     }
     const priorNames = prior?.has(draft.id) && Array.isArray(prior.get(draft.id)) ? prior.get(draft.id) : [];
-    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(priorNames, field.names));
+    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(mergeEntityLists(priorNames, field.names), tokenInsertedNames(raw, sheet)));
     return {
       id: draft.id,
       attempts: draft.attempts + 1,
