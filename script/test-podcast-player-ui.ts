@@ -232,7 +232,10 @@ check("Idle: Quellen, Default KI-Analyse, grüner Play, Hinweis",
   && idle.includes(PODCAST_KI_HINT)
   && idle.includes("#1ED760")
   && idle.includes('data-html2canvas-ignore')
-  && idle.includes("min-w-[min(100%,18.5rem)]"));
+  && idle.includes("min-w-[min(100%,18.5rem)]")
+  && idle.includes("flex-auto shrink-0")
+  && !idle.includes("flex-basis")
+  && !idle.includes("flexBasis"));
 check("Sprachschalter DE | EN, Default DE",
   idle.includes('data-testid="podcast-language"')
   && idle.includes('data-testid="button-podcast-lang-de"')
@@ -313,8 +316,21 @@ check("Loading zeigt drei Stufen, aktiv ist das Transkript",
 {
   const toolbarAt = loading.indexOf('data-testid="podcast-toolbar"');
   const toolbar = loading.slice(loading.lastIndexOf("<div", toolbarAt), loading.indexOf(">", toolbarAt));
-  check("Toolbar ist während der Erzeugung gesperrt",
-    toolbar.includes("pointer-events-none") && toolbar.includes("opacity-[0.62]"));
+  const langAt = loading.indexOf('data-testid="podcast-language"');
+  const langSeg = loading.slice(loading.lastIndexOf("<div", langAt), loading.indexOf(">", langAt));
+  const deAt = loading.indexOf('data-testid="button-podcast-lang-de"');
+  const enAt = loading.indexOf('data-testid="button-podcast-lang-en"');
+  const deButton = loading.slice(loading.lastIndexOf("<button", deAt), loading.indexOf(">", deAt));
+  const enButton = loading.slice(loading.lastIndexOf("<button", enAt), loading.indexOf(">", enAt));
+  check("Während der Erzeugung ist nur der Sprach-Container abgedunkelt",
+    langSeg.includes("pointer-events-none")
+    && langSeg.includes("opacity-[0.62]")
+    && !toolbar.includes("pointer-events-none")
+    && !toolbar.includes("opacity-[0.62]")
+    && deButton.includes(" disabled")
+    && enButton.includes(" disabled")
+    && !deButton.includes("opacity")
+    && !enButton.includes("opacity"));
 }
 
 const chapters: PodcastChapterView[] = [
@@ -606,6 +622,22 @@ check("EN-Limit zeigt den Limit-Zustand ohne Retry",
   englishLimit.includes("Daily limit reached.")
   && !englishLimit.includes('data-testid="button-podcast-retry"')
   && !englishLimit.includes('data-testid="podcast-error"'));
+{
+  const deAt = englishLimit.indexOf('data-testid="button-podcast-lang-de"');
+  const enAt = englishLimit.indexOf('data-testid="button-podcast-lang-en"');
+  const deButton = englishLimit.slice(englishLimit.lastIndexOf("<button", deAt), englishLimit.indexOf(">", deAt));
+  const enButton = englishLimit.slice(englishLimit.lastIndexOf("<button", enAt), englishLimit.indexOf(">", enAt));
+  const langAt = englishLimit.indexOf('data-testid="podcast-language"');
+  const langSeg = englishLimit.slice(englishLimit.lastIndexOf("<div", langAt), englishLimit.indexOf(">", langAt));
+  check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
+    enButton.includes("opacity-[0.45]")
+    && enButton.includes("cursor-not-allowed")
+    && enButton.includes("disabled")
+    && !enButton.includes("opacity-50")
+    && !deButton.includes("opacity")
+    && !deButton.includes(" disabled")
+    && !langSeg.includes("opacity-[0.62]"));
+}
 
 assert.equal(failed, 0, `${failed} Prüfungen fehlgeschlagen`);
 console.log(`\n${failed === 0 ? "Alle Prüfungen grün." : failed + " fehlgeschlagen."}`);

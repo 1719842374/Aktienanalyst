@@ -315,16 +315,12 @@ export function PodcastPlayerView({
       data-testid="podcast-player"
       data-html2canvas-ignore=""
       className="flex-auto shrink-0 min-w-[min(100%,18.5rem)] max-w-full"
-      style={{ flexBasis: "min(100%, 18.5rem)" }}
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
         <div
           data-testid="podcast-toolbar"
-          className={cn(
-            "flex w-full flex-wrap items-stretch gap-2 [container-type:inline-size]",
-            state === "loading" && "pointer-events-none opacity-[0.62]",
-          )}
+          className="flex w-full flex-wrap items-stretch gap-2 [container-type:inline-size]"
         >
           <div
             role="radiogroup"
@@ -365,12 +361,16 @@ export function PodcastPlayerView({
             role="radiogroup"
             aria-label="Podcast-Sprache"
             data-testid="podcast-language"
-            className="flex w-[9.75rem] min-w-[6.5rem] flex-[0_0_auto] gap-0.5 rounded-[8px] border border-border/85 bg-muted/40 p-0.5 text-[11px] font-semibold [@container(max-width:22rem)]:w-auto [@container(max-width:22rem)]:max-w-full [@container(max-width:22rem)]:flex-[1_1_100%] max-[430px]:w-auto max-[430px]:max-w-full max-[430px]:flex-[1_1_100%]"
+            className={cn(
+              "flex w-[9.75rem] min-w-[6.5rem] flex-[0_0_auto] gap-0.5 rounded-[8px] border border-border/85 bg-muted/40 p-0.5 text-[11px] font-semibold [@container(max-width:22rem)]:w-auto [@container(max-width:22rem)]:max-w-full [@container(max-width:22rem)]:flex-[1_1_100%] max-[430px]:w-auto max-[430px]:max-w-full max-[430px]:flex-[1_1_100%]",
+              state === "loading" && "pointer-events-none opacity-[0.62]",
+            )}
           >
             {(["de", "en"] as const).map((code) => {
               const hasCache = cachedLanguages[code];
               const limited = limitedLanguages[code];
               const disabled = languageSegmentDisabled({ limited, hasCache, loading: state === "loading" });
+              const limitLocked = limited && !hasCache && state !== "loading";
               const selected = language === code;
               return (
                 <button
@@ -386,7 +386,7 @@ export function PodcastPlayerView({
                   className={cn(
                     "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     selected ? "bg-foreground text-background" : "text-muted-foreground",
-                    disabled && "cursor-not-allowed opacity-50",
+                    limitLocked && "cursor-not-allowed opacity-[0.45]",
                   )}
                   onClick={() => onLanguageChange?.(code)}
                 >
