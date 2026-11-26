@@ -10,7 +10,9 @@ import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "./de-companies";
 import { DE_PRODUCT_NAMES } from "./de-products";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { EN_COMMON_WORDS } from "./en-common";
+import { MULTI_WORD_PLACES } from "./place-names";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
+import { QUANTITY_WORDS } from "./quantity-words";
 import { chaptersForSource } from "./podcast-script";
 import { roundedParts, speakPercent } from "./podcast-speak";
 
@@ -704,6 +706,7 @@ export const ALLOWED_CODE_PATTERNS = ["^Q[1-4]$", "^H[12]$", "^FY\\d{2,4}$", "^(
 
 const ALLOWED_CODE_RES = ALLOWED_CODE_PATTERNS.map(source => new RegExp(source, "i"));
 const EN_COMMON = new Set(EN_COMMON_WORDS);
+const QUANTITY = new Set(QUANTITY_WORDS);
 
 function latinForms(part: string): string[] {
   const lower = withoutPossessive(part).toLowerCase();
@@ -796,6 +799,43 @@ function ordinaryCompound(word: string, depth = 0): boolean {
   return false;
 }
 
+/** Adjektivkopf plus gewöhnlicher Nomenrest. Ein Firmenteil gibt nie frei. */
+function adjectiveCompound(word: string, depth = 0): boolean {
+  const lower = withoutPossessive(word).toLowerCase();
+  if (lower.length < 8 || depth > 4 || companyForm(lower)) return false;
+  for (let endLen = lower.length - 4; endLen >= 4; endLen--) {
+    const end = lower.slice(lower.length - endLen);
+    const left = lower.slice(0, lower.length - endLen);
+    for (const fuge of COMPOUND_FUGEN) {
+      if (fuge && !left.endsWith(fuge)) continue;
+      const head = fuge ? left.slice(0, -fuge.length) : left;
+      if (head.length < 4) continue;
+      if (companyForm(head) || companyForm(end)) continue;
+      if (!adjectiveHeadOk(head)) continue;
+      if (nounOrPlural(end) || ordinaryCompound(end) || (end.length >= 8 && adjectiveCompound(end, depth + 1))) return true;
+    }
+  }
+  return false;
+}
+
+function closedOrdinary(part: string): boolean {
+  const lower = foldUmlaut(withoutPossessive(part).toLowerCase());
+  if (lower.length < 4 || companyForm(lower)) return false;
+  return DE_CLOSED.has(lower) || DE_VERBS.has(lower) || DE_VERBS.has(`${lower}en`);
+}
+
+function adjectiveHeadOk(head: string): boolean {
+  if (closedOrdinary(head)) return true;
+  const endings = ["endem", "enden", "ender", "endes", "ende", "end", "sten", "ster", "ste", "st", "em", "er", "es", "en", "e"];
+  for (const end of endings) {
+    if (head.length - end.length < 4 || !head.endsWith(end)) continue;
+    const stem = head.slice(0, -end.length);
+    if (closedOrdinary(stem)) return true;
+    if (end.startsWith("end") && (DE_VERBS.has(`${stem}en`) || DE_VERBS.has(`${foldUmlaut(stem)}en`))) return true;
+  }
+  return false;
+}
+
 function packBlob(sheet: SpeechSheet): string {
   return `${sheet.facts.map(fact => fact.spoken).join(" ")} ${sheet.context} ${(sheet.packNames ?? []).join(" ")} ${(sheet.realNames ?? []).join(" ")} ${(sheet.placeNames ?? []).join(" ")}`.toLowerCase();
 }
@@ -824,6 +864,8 @@ function clearingHas(form: string): boolean {
   const folded = foldUmlaut(form);
   return DE_LEXICON.has(form) || DE_LEXICON.has(folded)
     || DE_CLOSED.has(form) || DE_CLOSED.has(folded)
+    || DE_VERBS.has(form) || DE_VERBS.has(folded)
+    || QUANTITY.has(form) || QUANTITY.has(folded)
     || nounListed(form)
     || EN_COMMON.has(form) || EN_LEXICON.has(form);
 }
@@ -843,15 +885,66 @@ function lemmaForms(lower: string): string[] {
   }
   if (lower.endsWith("ies") && lower.length > 5) add(`${lower.slice(0, -3)}y`);
   if (lower.endsWith("ly") && lower.length > 4) add(lower.slice(0, -2));
+  inflectionStems(lower, add);
   for (const form of latinForms(lower)) add(form);
   return forms;
+}
+
+function addStemFamily(add: (value: string) => void, stem: string, extraE: boolean): void {
+  if (stem.length < 3) return;
+  add(stem);
+  add(foldUmlaut(stem));
+  const last = stem.slice(-1);
+  if (stem.length >= 4 && stem.endsWith(last + last) && /[bcdfghjklmnpqrstvwxz]/.test(last)) {
+    add(stem.slice(0, -1));
+    add(foldUmlaut(stem.slice(0, -1)));
+  }
+  if (extraE) {
+    add(`${stem}e`);
+    add(foldUmlaut(`${stem}e`));
+  }
+  if (stem.endsWith("i") && stem.length >= 4) add(`${stem.slice(0, -1)}y`);
+}
+
+/** Adjektiv, Partizip, Komparativ, Superlativ und englische Endungen auf die Grundform. */
+function inflectionStems(lower: string, add: (value: string) => void): void {
+  if (lower.endsWith("ing") && lower.length - 3 >= 3) addStemFamily(add, lower.slice(0, -3), true);
+  if (lower.endsWith("ied") && lower.length - 3 >= 3) add(`${lower.slice(0, -3)}y`);
+  else if (lower.endsWith("ed") && lower.length - 2 >= 3) addStemFamily(add, lower.slice(0, -2), true);
+  if (lower.endsWith("iest") && lower.length - 4 >= 3) add(`${lower.slice(0, -4)}y`);
+  else if (lower.endsWith("est") && lower.length - 3 >= 3) addStemFamily(add, lower.slice(0, -3), true);
+  if (lower.endsWith("ier") && lower.length - 3 >= 3) add(`${lower.slice(0, -3)}y`);
+  else if (lower.endsWith("er") && lower.length - 2 >= 3) addStemFamily(add, lower.slice(0, -2), true);
+  const deEnds = ["endem", "enden", "ender", "endes", "ende", "end", "erem", "eren", "erer", "eres", "ere", "stem", "sten", "ster", "stes", "ste", "st"];
+  for (const end of deEnds) {
+    if (lower.length - end.length < 3 || !lower.endsWith(end)) continue;
+    const stem = lower.slice(0, -end.length);
+    add(stem);
+    add(foldUmlaut(stem));
+    if (end.startsWith("end") && stem.length >= 3) {
+      add(`${stem}en`);
+      add(`${foldUmlaut(stem)}en`);
+    }
+  }
+  if (lower.startsWith("ge") && lower.length >= 7) {
+    const body = lower.slice(2);
+    const tails = ["em", "es", "er", "e", ""];
+    for (const tail of tails) {
+      if (tail && (body.length - tail.length < 3 || !body.endsWith(tail))) continue;
+      const core = tail ? body.slice(0, -tail.length) : body;
+      if (core.length >= 4 && core.endsWith("t")) {
+        add(`${core.slice(0, -1)}en`);
+        add(`${foldUmlaut(core.slice(0, -1))}en`);
+      }
+    }
+  }
 }
 
 function knownOrdinary(lower: string): boolean {
   for (const form of lemmaForms(lower)) {
     if (clearingHas(form)) return true;
   }
-  return nounOrPlural(lower) || ordinaryCompound(lower);
+  return nounOrPlural(lower) || ordinaryCompound(lower) || adjectiveCompound(lower);
 }
 
 function noneTokenCleared(token: string, sheet: SpeechSheet, none = false): boolean {
@@ -1080,7 +1173,7 @@ function placeBits(text: string): string[] {
 
 function mergePlaceNames(fromPack: string[] | undefined): string[] {
   const out: string[] = [];
-  for (const name of [...countryPhrases(), ...(fromPack ?? [])]) {
+  for (const name of [...countryPhrases(), ...MULTI_WORD_PLACES, ...(fromPack ?? [])]) {
     if (name && !out.includes(name)) out.push(name);
   }
   return out;
