@@ -1,5 +1,6 @@
 /**
  * Ein callLLMJson je Quelle für das Faktenblatt-Skript.
+ * Absatz, entities und englische Titel stecken in derselben Antwort.
  * Ein kaputtes Kapitel wird höchstens zweimal neu geschrieben, im selben Zeitbudget.
  * Ein kurzer Fehlversuch des ersten Calls wird einmal wiederholt, ohne das Tageslimit ein zweites Mal zu zählen.
  * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme und der Sprache.
@@ -7,7 +8,7 @@
 import type { PodcastChapterReport, PodcastDropCounts, PodcastExtractorStatus, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
 import { PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
-import { applyRedo, applyTitleMap, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, extractorPrompt, fluentPrompt, readExtractor, readParagraphs, readTitleMap, seedDrafts, titlePrompt } from "../shared/podcast-fluent";
+import { applyRedo, applyTitleMap, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, fluentPrompt, readChapterPayload, seedDrafts } from "../shared/podcast-fluent";
 import type { LlmFailureReason } from "./llm-openrouter";
 import type { FullAiPack } from "./stock-podcast-full-ai";
 import { withStageTimeout } from "./stock-podcast-limit";
@@ -57,6 +58,15 @@ export function dropPodcastScripts(ticker: string, day: string): void {
 
 export function peekPodcastScript(cacheKey: string): ScriptCacheEntry | null {
   return scriptCache.get(cacheKey) ?? null;
+}
+
+function extractorStatus(payload: { paragraphs: Map<string, string>; entities: Map<string, string[] | null> }): PodcastExtractorStatus {
+  if (payload.paragraphs.size === 0) return "skipped";
+  let valid = true;
+  payload.paragraphs.forEach((_text, id) => {
+    if (!Array.isArray(payload.entities.get(id))) valid = false;
+  });
+  return valid ? "ok" : "invalid";
 }
 
 function stampVoice(entry: ScriptCacheEntry, voiceId: string): StockPodcastChapter[] {
@@ -139,22 +149,6 @@ export async function renderStockPodcastScript(opts: {
   const sheet = buildSpeechSheet(facts, language);
   const started = Date.now();
   const budget = PODCAST_STAGE_TIMEOUT_MS.script;
-  if (sheet.pendingTitles.length) {
-    const titleLeft = budget - (Date.now() - started);
-    if (titleLeft > 1500) {
-      const titles = titlePrompt(sheet);
-      const titleAc = new AbortController();
-      const translated = await withStageTimeout(opts.llm({
-        prompt: titles.prompt,
-        systemPrompt: titles.systemPrompt,
-        maxTokens: 400,
-        temperature: 0,
-        signal: titleAc.signal,
-      }), Math.min(8000, titleLeft - 1000));
-      if (translated === "timeout") titleAc.abort();
-      else if (translated && translated.data) applyTitleMap(sheet, readTitleMap(translated.data));
-    }
-  }
   const prompt = fluentPrompt(sheet, opts.source);
   const ac = new AbortController();
   const ask = () => opts.llm({
@@ -173,32 +167,10 @@ export async function renderStockPodcastScript(opts: {
     return { ok: false, reason: "timeout" };
   }
   if (raced == null || raced.data == null) return { ok: false, reason: "empty" };
-  const paragraphs = readParagraphs(raced.data);
-  let extractor: PodcastExtractorStatus = "skipped";
-  let entityMap: Map<string, string[]> | null = null;
-  if (paragraphs.size > 0) {
-    const left = budget - (Date.now() - started);
-    if (left < 1500) extractor = "timeout";
-    else {
-      const spec = extractorPrompt(paragraphs);
-      const exAc = new AbortController();
-      const extracted = await withStageTimeout(opts.llm({
-        prompt: spec.prompt,
-        systemPrompt: spec.systemPrompt,
-        maxTokens: 600,
-        temperature: 0,
-        signal: exAc.signal,
-      }), Math.min(8000, left - 500));
-      if (extracted === "timeout") {
-        exAc.abort();
-        extractor = "timeout";
-      } else {
-        entityMap = extracted && extracted.data ? readExtractor(extracted.data) : null;
-        extractor = entityMap ? "ok" : "invalid";
-      }
-    }
-  }
-  let drafts = seedDrafts(sheet, opts.source, raced.data, entityMap);
+  const payload = readChapterPayload(raced.data);
+  if (payload.titles) applyTitleMap(sheet, payload.titles);
+  const extractor = extractorStatus(payload);
+  let drafts = seedDrafts(sheet, opts.source, raced.data, payload.entities);
   let regens = 0;
   while (regens < 2 && brokenDrafts(drafts).length) {
     const left = budget - (Date.now() - started);
@@ -222,7 +194,9 @@ export async function renderStockPodcastScript(opts: {
       drafts = drafts.map(draft => brokenIds.has(draft.id) ? { ...draft, reasons: ["timeout"] } : draft);
       break;
     }
-    drafts = applyRedo(sheet, drafts, edited.data);
+    const redoPayload = readChapterPayload(edited.data);
+    if (redoPayload.titles) applyTitleMap(sheet, redoPayload.titles);
+    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities);
   }
   const assembled = chaptersFromDrafts(sheet, opts.source, drafts);
   const chapters = assembled.chapters;

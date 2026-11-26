@@ -340,11 +340,18 @@ function speakableTitle(
     pending.push({ factId, raw: title, prefix });
     return null;
   }
-  if (language === "en" && looksGermanTitle(title)) {
+  if (language === "en" && !clearlyEnglishTitle(title)) {
     pending.push({ factId, raw: title, prefix });
     return null;
   }
   return title;
+}
+
+function clearlyEnglishTitle(title: string): boolean {
+  if (KEEP_EN_SEGMENT_IN_DE.has(title.toLowerCase())) return true;
+  if (/[äöüß]/i.test(title)) return false;
+  const words = title.split(/[^A-Za-z]+/).filter(word => word.length > 2);
+  return words.length > 0 && words.every(word => EN_LEXICON.has(word.toLowerCase()) || EN_TITLE_WORD.has(word.toLowerCase()));
 }
 
 const EN_TITLE_WORD = new Set(["data", "center", "safety", "industrial", "segment", "marketplaces", "business", "demand", "growth", "revenue", "expansion", "guidance", "margin"]);
@@ -490,43 +497,95 @@ function wordAllowed(word: string, allowed: Set<string>, language: PodcastLangua
   return false;
 }
 
-const ORDINARY = new Set("about accelerators accounts aktuell aktuelle aktuellen ampel anchor angekündigt angenommene angesetzt annual assumption attached beachtet beiden bekommen belegt belegte belegten beside bestimmt betragen betrifft beträgt bezieht bildet bleiben bleibt blickt calculated calendar capital carries catalyst cautious chapter close closed comes company comparison considered counterweight counts dahinter damit danach daneben daran daraus darin dates davon demand deren deshalb diese dieselbe diesen dieser dieses dressed driver drücken earnings einem einen eines eingehalten einstieg entry episode eröffnet faire fairen fairer fasst figure figures fiscal folgt followed force frame front fällt führend gebunden gegen gelten gemeldet genannt genannte gestellt gewachsen given growth größte größten gültig halten heute heutigen hinter holds inside intact inversion jüngste keeps kommt kurze largest latest lautet leaves lesen letzte level liefert liegt liest model moves müssen named names nennen nennt nächste opened opener opening order ordnen owner period picture piece point potential price print quarter reading rechnerische refer reference refers remain remains report reported responsible revenue richtet risks roughly scheduled schwerer schärfer screens segment sehen sells sentence session share short shows signal simple slice source specialist split sprechen stammt stance stand stands starting stayed stays steht stellt still story summary these thesis those today tragen trägt umsatz unter upside using valuation value verbindlich vereinigt verified version vorsichtig vorsichtige vorsichtigen weiter which wiegt window worden wording wurde zeigt zuletzt zusammen zusammenfassen zusammenfassung zweite starke patente kauft genug trotzdem prüfung erster".split(/\s+/));
-const BRAND_SUFFIX = /(?:ung|lich|isch|keit|heit|tion|sion|ness|ment|ing|ed|ly|er|en|es|te|st|em|e|n|s|t)$/i;
+const ORDINARY = new Set("about accelerators accounts abstand aktuell aktuelle aktuellen aktienkurs alles ampel anchor angekündigt angenommene angesetzt annual assumption attached ausgangspunkt beachtet beide beiden beides beitrag beim bekommen belegt belegte belegten befund beside bestimmt betragen betrifft bewertet beträgt bezieht blick bildet bleiben bleibt blickt block both calculated calendar capital carries catalyst cautious chapter close closed comes company comparison considered counterweight counts dahinter damit danach daneben daran daraus darin dates davon demand deren deshalb diese dieselbe diesen dieser dieses dressed driver drücken earnings einem einen eines eingehalten einstieg entry episode eröffnet etwa faire fairen fairer fasst figure figures first fiscal folgt folge followed force frame front fällt führend gebunden gegen gegenpunkte gegenstand gelten gemeldet genannt genannte gesprächs gestellt gewachsen given growth größte größten grundlage gültig halten handel heute heutigen hinter holds impuls inside intact inversion investors it jährsvergleich jahresvergleich jüngste keeps kommt kurze largest latest lautet leaves lesen letzte level liefert liegt liest listeners man marktpreis model moves müssen named names nennen nennt nächste opened opener opening order ordnen owner period picture piece point potential price print quarter reading rechnerische refer reference refers reihenfolge remain remains report reported responsible revenue richtet richtung risks roughly rund schaut scheduled schwerer schärfer screens segment sehen seit sells sentence session share short shows signal simple since slice source spanne specialist split sprechen stammt stance stand stands starting stayed stays steht stellt still story summary tag these thesis those today tragen treiber trägt umsatz unter upside using valuation value verbindlich vereinigt verified version vorsichtig vorsichtige vorsichtigen verfassung vorjahr vorne weiter which wiegt window worden wording wurde zeigt zuletzt zuerst zusammen zusammenfassen zusammenfassung zweite starke patente kauft genug trotzdem prüfung erster against everything after what those".split(/\s+/));
+const NEVER_NAME = new Set(["strong", "capacity", "laufend"]);
 
 function tokenCore(word: string): string {
   return word.replace(/^[^A-Za-zÄÖÜäöüß]+|[^A-Za-zÄÖÜäöüß]+$/g, "");
 }
 
-function germanNounPattern(word: string): boolean {
-  return /^[A-ZÄÖÜ][a-zäöüß-]+$/.test(word);
+function normalWord(clean: string, allowed: Set<string>, language: PodcastLanguage): boolean {
+  const lower = clean.toLowerCase();
+  if (!lower || NEVER_NAME.has(lower) || ORDINARY.has(lower)) return true;
+  if (wordAllowed(clean, allowed, language)) return true;
+  if (language === "de" && DE_AUX.test(lower)) return true;
+  if (language === "en" && EN_AUX.test(lower)) return true;
+  return false;
 }
 
-function unknownName(text: string, sheet: SpeechSheet, entities?: string[] | null): string | null {
-  const allowed = allowedWords(sheet);
-  if (entities) {
-    for (const entity of entities) {
-      const clean = tokenCore(entity);
-      if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
-      return clean;
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i += 1;
+      j += 1;
+      continue;
     }
-    return null;
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length === b.length) {
+      i += 1;
+      j += 1;
+    } else if (a.length > b.length) i += 1;
+    else j += 1;
   }
+  if (i < a.length || j < b.length) edits += 1;
+  return edits === 1;
+}
+
+function knownNames(sheet: SpeechSheet): string[] {
+  const blob = `${sheet.facts.map(fact => fact.spoken).join(" ")} ${sheet.context}`;
+  const names: string[] = [];
+  for (const word of blob.split(/[^A-Za-zÄÖÜäöüß]+/)) {
+    if (word.length >= 5) names.push(word.toLowerCase());
+  }
+  return names;
+}
+
+function nearKnownName(lower: string, names: string[]): boolean {
+  if (lower.length < 5) return false;
+  return names.some(name => withinOneEdit(lower, name));
+}
+
+/** Strukturelle Kandidaten. Ein leeres Extraktor-Ergebnis schaltet diese Prüfung nicht ab. */
+function structuralName(text: string, sheet: SpeechSheet): string | null {
+  const allowed = allowedWords(sheet);
+  const names = knownNames(sheet);
   for (const sentence of podcastSentences(text)) {
     const words = sentence.split(/\s+/).filter(Boolean);
-    for (let i = 1; i < words.length; i++) {
+    for (let i = 0; i < words.length; i++) {
       const clean = tokenCore(words[i] ?? "");
-      if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
+      if (!clean || normalWord(clean, allowed, sheet.language)) continue;
       const lower = clean.toLowerCase();
-      if (sheet.language === "de" && DE_AUX.test(lower)) continue;
-      if (sheet.language === "en" && EN_AUX.test(lower)) continue;
-      if (/[A-ZÄÖÜ].*[A-ZÄÖÜ]|[a-zäöü][A-ZÄÖÜ]|\d/.test(clean)) return clean;
-      if (sheet.language === "en" && /^[A-Z]/.test(clean)) return clean;
-      if (sheet.language === "de" && /^[A-ZÄÖÜ]/.test(clean)) {
-        if (!germanNounPattern(clean)) return clean;
-        continue;
-      }
-      if (/^[a-z][a-z-]{5,}$/.test(lower) && !BRAND_SUFFIX.test(lower) && !ORDINARY.has(lower)) return clean;
+      const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
+      const allCaps = /^[A-ZÄÖÜ]{2,5}$/.test(clean);
+      const enMid = sheet.language === "en" && i > 0 && /^[A-Z]/.test(clean);
+      const deCapital = sheet.language === "de" && /^[A-ZÄÖÜ]/.test(clean);
+      const verbish = sheet.language === "de" ? /(?:te|ten|test|tet|st|t|en)$/i.test(lower) : /(?:ed|es|ing|s)$/i.test(lower);
+      const lowerBrand = /^[a-z][a-z-]{5,}$/.test(lower) && !verbish;
+      if (i === 0 || camelOrDigit || allCaps || enMid || deCapital || lowerBrand || nearKnownName(lower, names)) return clean;
     }
+  }
+  return null;
+}
+
+function folded(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, "");
+}
+
+function entityHit(entities: string[] | null | undefined, raw: string, spoken: string, sheet: SpeechSheet): string | null {
+  if (!entities?.length) return null;
+  const allowed = allowedWords(sheet);
+  const hay = `${folded(raw)} ${folded(spoken)}`;
+  for (const entity of entities) {
+    const clean = tokenCore(entity);
+    const needle = folded(clean);
+    if (needle.length < 2 || !hay.includes(needle)) continue;
+    if (normalWord(clean, allowed, sheet.language)) continue;
+    return clean;
   }
   return null;
 }
@@ -618,29 +677,11 @@ export function quantityOutsideFacts(text: string, facts: SpeechFact[], language
   return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [] }) != null;
 }
 
-function cleanDoubledPrep(text: string): string {
-  const rules: Array<[RegExp, string]> = [
-    [/\bauf den auf den\b/gi, "auf den"],
-    [/\bfür den für den\b/gi, "für den"],
-    [/\bfür den auf den\b/gi, "für den"],
-    [/\bauf den für den\b/gi, "auf den"],
-    [/\bvom auf den\b/gi, "vom"],
-    [/\bvom für den\b/gi, "vom"],
-    [/\bvon vor\b/gi, "vor"],
-    [/\bvon von\b/gi, "von"],
-    [/\bseit von\b/gi, "seit"],
-    [/\bas of as of\b/gi, "as of"],
-    [/\bfor for\b/gi, "for"],
-    [/\bfrom from\b/gi, "from"],
-  ];
-  let out = text;
-  for (const [pattern, replacement] of rules) out = out.replace(pattern, replacement);
-  return out;
+export function applyFactTokens(text: string, facts: SpeechFact[]): string {
+  return text.replace(TOKEN_RE, (all, id: string) => facts.find(fact => fact.id === id)?.spoken ?? all);
 }
 
-export function applyFactTokens(text: string, facts: SpeechFact[]): string {
-  return cleanDoubledPrep(text.replace(TOKEN_RE, (all, id: string) => facts.find(fact => fact.id === id)?.spoken ?? all));
-}
+const DOUBLED_PREP = /\b(auf den auf den|für den für den|für den auf den|auf den für den|vom auf den|vom für den|von vor|von von|seit von|as of as of|for for|from from)\b/i;
 
 const SLOT_UNIT = /\[\[(price|dcf_fair|entry|fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]\s+(Dollar|Prozent|Euro|dollars|percent|dollar)\b/i;
 const ARTICLE_SLOT = /\b(ein|eine|einem|einen|one|a|an)\s+\[\[(fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]/i;
@@ -668,7 +709,11 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   const unit = raw.match(SLOT_UNIT)?.[2] ?? raw.match(ARTICLE_SLOT)?.[1] ?? spoken.match(DOUBLED_UNIT)?.[1] ?? (DATE_ARTICLE.test(raw) ? "Datum" : null);
   if (unit) note("unit", unit);
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
-  const name = spoken ? unknownName(spoken, sheet, entities) : null;
+  const prep = spoken.match(DOUBLED_PREP);
+  if (prep?.[0]) note("prep", prep[0].toLowerCase());
+  const structural = spoken ? structuralName(spoken, sheet) : null;
+  const extra = spoken ? entityHit(entities, raw, spoken, sheet) : null;
+  const name = structural ?? extra;
   if (name) note("name", name);
   const quantity = spoken ? quantityWord(spoken, sheet) : null;
   if (quantity) note("number", quantity);
@@ -696,7 +741,8 @@ function joinSentences(parts: string[]): string {
 }
 
 function hostedName(spoken: string, de: boolean): string {
-  if (/^(der|die|das|ein|eine|the|a|an)\b/i.test(spoken)) return spoken;
+  if (/^(der|die|das|ein|eine|the|a|an|another)\b/i.test(spoken)) return spoken;
+  if (/\b(Katalysator|catalyst)\b/i.test(spoken)) return spoken;
   return de ? `der Katalysator ${spoken}` : `the catalyst ${spoken}`;
 }
 
@@ -726,14 +772,14 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const year = take("gj_year");
     const segment = take("top_segment");
     const share = take("top_segment_share");
-    if (growth && year) parts.push(de ? `Das Umsatzwachstum im Geschäftsjahr ${year} beträgt ${growth} und ist der belegte Jahreswert` : `Revenue growth in fiscal year ${year} is ${growth} and is the verified annual figure`);
-    else if (growth) parts.push(de ? `Das Umsatzwachstum beträgt ${growth} und ist der belegte Jahreswert` : `Revenue growth is ${growth} and is the verified annual figure`);
+    if (growth && year) parts.push(de ? `Das Umsatzwachstum im Geschäftsjahr ${year} beträgt ${growth} und bleibt der Vergleich für die Firma` : `Revenue growth in fiscal year ${year} is ${growth} and remains the comparison for the company`);
+    else if (growth) parts.push(de ? `Das Umsatzwachstum beträgt ${growth} und bleibt der Vergleich für die Firma` : `Revenue growth is ${growth} and remains the comparison for the company`);
     if (segment && share) {
       const named = de ? !/^das größte Segment$/i.test(segment) : !/^the largest segment$/i.test(segment);
       parts.push(de
         ? `${named ? `Das größte Segment ${segment}` : "Das größte Segment"} hat einen Anteil von ${share}`
         : `${named ? `The largest segment ${segment}` : "The largest segment"} accounts for ${share}`);
-    } else if (growth) parts.push(de ? "Dieses Wachstum ist der belegte Jahreswert der Firma" : "This growth is the verified annual figure for the company");
+    }
   } else if (chapterId === "dcf") {
     const fair = take("dcf_fair");
     const entry = take("entry");
@@ -878,8 +924,11 @@ export function fluentPrompt(
     ? redo.map(row => `${row.id}: ${(row.notes && row.notes.length ? row.notes : row.reasons).join("; ")}`).join("\n")
     : "";
   const systemPrompt = sheet.language === "en"
-    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\"}]}"
-    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\"}]}";
+    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}],\"titles\":[{\"raw\":\"...\",\"text\":\"...\"}]}. entities lists every proper name, company, product, person, place and quantity exactly as written. titles translates each catalyst and risk title into English. Proper names stay."
+    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}]}. entities nennt alle Eigennamen, Firmen, Produkte, Personen, Orte und Mengen wörtlich wie im Text.";
+  const titleBlock = sheet.language === "en" && sheet.pendingTitles.length
+    ? `TITEL\n${sheet.pendingTitles.map(item => item.raw).join("\n")}`
+    : "";
   const prompt = [
     sheet.language === "en" ? "Write English." : "Schreibe Deutsch.",
     `Quelle des Laufs: ${source}.`,
@@ -887,6 +936,7 @@ export function fluentPrompt(
     lines.join("\n"),
     "KONTEXT",
     sheet.context || (sheet.language === "en" ? "No further context." : "Kein weiterer Kontext."),
+    titleBlock,
     "KAPITEL",
     wanted.map(def => def.id).join(", "),
     redoLine ? `NEU SCHREIBEN\n${redoLine}` : "",
@@ -915,6 +965,34 @@ export function readParagraphs(data: unknown): Map<string, string> {
     if (id && text) out.set(id, text);
   }
   return out;
+}
+
+export interface ChapterPayload {
+  paragraphs: Map<string, string>;
+  /** null je Kapitel heißt: entities fehlt oder ist ungültig. [] ist ein leeres, gültiges Ergebnis. */
+  entities: Map<string, string[] | null>;
+  /** null heißt: titles fehlt oder ist ungültig. */
+  titles: Array<{ raw: string; text: string }> | null;
+}
+
+export function readChapterPayload(data: unknown): ChapterPayload {
+  const paragraphs = readParagraphs(data);
+  const entities = new Map<string, string[] | null>();
+  const chapters = data && typeof data === "object" && Array.isArray((data as { chapters?: unknown }).chapters)
+    ? (data as { chapters: unknown[] }).chapters
+    : [];
+  for (const row of chapters) {
+    if (!row || typeof row !== "object") continue;
+    const id = typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : "";
+    if (!id) continue;
+    const listed = (row as { entities?: unknown }).entities;
+    entities.set(id, Array.isArray(listed) ? listed.filter((item): item is string => typeof item === "string") : null);
+  }
+  const titles = data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "titles")
+    && Array.isArray((data as { titles?: unknown }).titles)
+    ? readTitleMap(data)
+    : null;
+  return { paragraphs, entities, titles };
 }
 
 const EN_CHAPTER_TITLE: Record<string, string> = {
@@ -980,7 +1058,7 @@ export function readExtractor(data: unknown): Map<string, string[]> | null {
   return seen ? map : null;
 }
 
-export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, modelData: unknown, entities?: Map<string, string[]> | null): FluentDraft[] {
+export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, modelData: unknown, entities?: Map<string, string[] | null> | null): FluentDraft[] {
   const found = readParagraphs(modelData);
   const drafts: FluentDraft[] = [];
   for (const def of chaptersForSource(source)) {
@@ -1003,13 +1081,18 @@ export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, model
   return drafts;
 }
 
-export function applyRedo(sheet: SpeechSheet, drafts: FluentDraft[], modelData: unknown): FluentDraft[] {
+export function applyRedo(
+  sheet: SpeechSheet,
+  drafts: FluentDraft[],
+  modelData: unknown,
+  entities?: Map<string, string[] | null> | null,
+): FluentDraft[] {
   const found = readParagraphs(modelData);
   return drafts.map(draft => {
     if (!draft.reasons.length || draft.reasons[0] === "empty" || draft.reasons[0] === "timeout") return draft;
     const raw = found.get(draft.id) ?? "";
     if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], notes: ["empty"], spoken: "" };
-    const verdict = verifyChapter(draft.id, raw, sheet);
+    const verdict = verifyChapter(draft.id, raw, sheet, entities?.get(draft.id) ?? null);
     return {
       id: draft.id,
       attempts: draft.attempts + 1,

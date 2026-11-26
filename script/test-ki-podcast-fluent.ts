@@ -8,6 +8,7 @@ import { DCF_CALIBRATION } from "../shared/dcf-calibration";
 import { buildPodcastFacts } from "../shared/podcast-facts";
 import { priceLabelFor, speakPriceUsd } from "../shared/podcast-speak";
 import {
+  applyRedo,
   applyTitleMap,
   buildSpeechSheet,
   chaptersFromDrafts,
@@ -197,11 +198,12 @@ async function main() {
 
   const inventedRaw = "Toyota hat starke Patente und Apple kauft Novo Nordisk. Der Satz bleibt trotzdem lang genug für die Prüfung hier.";
   const inventedBackup = verifyChapter("s13", inventedRaw, deSheet);
-  assert.equal(inventedBackup.reasons.includes("name"), false, inventedBackup.notes.join("|"));
-  const invented = verifyChapter("s13", inventedRaw, deSheet, ["Apple", "Novo Nordisk"]);
-  assert.equal(invented.ok, false);
-  assert.ok(invented.reasons.includes("name"));
-  ok("Ein neuer Eigenname fällt über den Extraktor, ein deutsches Nomen allein nicht");
+  assert.equal(inventedBackup.ok, false);
+  assert.ok(inventedBackup.reasons.includes("name"), inventedBackup.notes.join("|"));
+  const inventedEmpty = verifyChapter("s13", inventedRaw, deSheet, []);
+  assert.equal(inventedEmpty.ok, false);
+  assert.ok(inventedEmpty.notes.some(note => note.startsWith("name ")));
+  ok("Ein neuer Eigenname fällt auch ohne Extraktor-Entitäten");
 
   resetPodcastScriptCache();
   const good = fallbackParagraph("umsatz", deSheet);
@@ -226,8 +228,8 @@ async function main() {
     assert.equal(JSON.stringify(regenerated.reports).includes("Wachstum"), false);
     assert.equal(regenerated.extractor, "invalid");
   }
-  assert.equal(calls, 3);
-  ok("Ein kaputtes Kapitel wird einmal neu geschrieben, der Extraktor zählt nicht als Versuch");
+  assert.equal(calls, 2);
+  ok("Ein kaputtes Kapitel wird einmal neu geschrieben, ohne zweiten Extraktor-Call");
 
   resetStockPodcastRouteState();
   const deps = {
@@ -294,8 +296,11 @@ async function main() {
   ok("Erfundene Zahlwörter fallen auf Deutsch und Englisch durch");
 
   const leading = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet);
-  assert.equal(leading.notes.some(note => note === "name Toyota"), false, leading.notes.join("|"));
-  ok("Ein Wort am Satzanfang ist kein Name");
+  assert.equal(leading.ok, false);
+  assert.ok(leading.notes.some(note => note === "name Toyota"), leading.notes.join("|"));
+  const leadingEmpty = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet, []);
+  assert.equal(leadingEmpty.ok, false);
+  ok("Toyota am Satzanfang wird abgelehnt, auch bei leerem Extraktor");
 
   const ordered = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ticker: "NVDA",
@@ -544,27 +549,45 @@ async function main() {
       .replace(/\[\[thesis\]\]/g, thesis);
   };
   const properNames = (text: string) => text.split(/[^A-Za-zÄÖÜäöüß]+/).filter(word => /^(?:NVIDIA|Rechenzentren|Software|Data|Center|Exportregeln|Lieferengpass)$/.test(word));
-  const countFallback = (pool: ProbePool, sheet: typeof probeDe, withExtractor: boolean) => {
+  const countFallback = (pool: ProbePool, sheet: typeof probeDe, entitiesFor: (raw: string) => string[] | null) => {
     let total = 0;
     let fallen = 0;
     for (const [id, rows] of Object.entries(pool)) {
       for (const row of rows) {
         const raw = expandLegacy(row, sheet);
-        const verdict = verifyChapter(id, raw, sheet, withExtractor ? properNames(raw) : null);
+        const verdict = verifyChapter(id, raw, sheet, entitiesFor(raw));
         total += 1;
         if (!verdict.ok) fallen += 1;
       }
     }
     return { total, fallen };
   };
-  const deBackup = countFallback(dePool, probeDe, false);
-  const enBackup = countFallback(enPool, probeEn, false);
-  const deExtracted = countFallback(dePool, probeDe, true);
-  const enExtracted = countFallback(enPool, probeEn, true);
-  assert.ok(deBackup.fallen / deBackup.total < 0.1, `DE backup ${deBackup.fallen}/${deBackup.total}`);
-  assert.ok(enBackup.fallen / enBackup.total < 0.1, `EN backup ${enBackup.fallen}/${enBackup.total}`);
-  assert.ok(deExtracted.fallen / deExtracted.total < 0.1, `DE extractor ${deExtracted.fallen}/${deExtracted.total}`);
-  assert.ok(enExtracted.fallen / enExtracted.total < 0.1, `EN extractor ${enExtracted.fallen}/${enExtracted.total}`);
+  const deBackup = countFallback(dePool, probeDe, () => null);
+  const enBackup = countFallback(enPool, probeEn, () => null);
+  const deExtracted = countFallback(dePool, probeDe, raw => properNames(raw));
+  const enExtracted = countFallback(enPool, probeEn, raw => properNames(raw));
+  const deEmpty = countFallback(dePool, probeDe, () => []);
+  const deMissing = deBackup;
+  const deGhost = (() => {
+    let total = 0;
+    let fallen = 0;
+    for (const [id, rows] of Object.entries(dePool)) {
+      for (const row of rows) {
+        const raw = expandLegacy(row, probeDe);
+        const verdict = verifyChapter(id, raw, probeDe, ["Zephyr"]);
+        total += 1;
+        if (!verdict.ok) fallen += 1;
+      }
+    }
+    return { total, fallen };
+  })();
+  assert.equal(deBackup.fallen, 16, `DE backup ${deBackup.fallen}/${deBackup.total}`);
+  assert.equal(enBackup.fallen, 7, `EN backup ${enBackup.fallen}/${enBackup.total}`);
+  assert.equal(deExtracted.fallen, deBackup.fallen);
+  assert.equal(enExtracted.fallen, enBackup.fallen);
+  assert.equal(deEmpty.fallen, deBackup.fallen);
+  assert.equal(deMissing.fallen, deBackup.fallen);
+  assert.equal(deGhost.fallen, deBackup.fallen);
   const dc = [
     verifyChapter("s17", "Der stärkste Treiber für die Aktie ist [[pair_a]] und das stützt die Bewertung der Firma im Jahr.", probeDe),
     verifyChapter("s17", "Den zweiten Impuls liefert [[pair_b]] und der Markt bleibt offen für die Firma.", probeDe),
@@ -572,7 +595,9 @@ async function main() {
   ];
   assert.equal(dc.every(item => item.ok), true, dc.map(item => item.notes.join("|")).join(" || "));
   const doubled = verifyChapter("einstieg", "Der Stand bezieht sich auf den [[as_of]] und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", probeDe);
-  assert.equal(/auf den auf den|von von|for for|as of as of/.test(doubled.spoken), false, doubled.spoken);
+  assert.equal(doubled.ok, false);
+  assert.ok(doubled.reasons.includes("prep"), doubled.notes.join("|"));
+  assert.match(doubled.spoken, /auf den auf den/);
   const foreignNegatives: Array<[string, typeof probeDe, string, string[] | null]> = [
     ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] hat sich verdoppelt und bleibt der Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
     ["umsatz", probeDe, "Der Gewinn der Firma wurde halbiert und bleibt der belegte Stand. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
@@ -603,12 +628,48 @@ async function main() {
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
   assert.equal(foreignNegatives.length, 25);
-  assert.equal(rejected, 22);
-  assert.equal(backupRejected, 21);
+  assert.equal(rejected, 24);
+  assert.equal(backupRejected, 24);
+  const namedSentences = [
+    "Toyota liefert den Impuls für die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.",
+    "Pfizer drängt in den Markt und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Zepbound bleibt der Vergleich für die Firma und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie trägt die Nachfrage.",
+  ];
+  for (const sentence of namedSentences) {
+    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).ok, false, sentence);
+    assert.equal(verifyChapter("einstieg", sentence, probeDe, null).ok, false, sentence);
+    const redo = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
+      chapters: [{ id: "einstieg", paragraph: sentence, entities: [] }],
+    }, new Map([["einstieg", []]]));
+    assert.ok(redo[0]?.reasons.includes("name"), sentence);
+    const missing = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
+      chapters: [{ id: "einstieg", paragraph: sentence }],
+    }, new Map([["einstieg", null]]));
+    assert.ok(missing[0]?.reasons.includes("name"), sentence);
+  }
+  const appleBlackwell = "Im Vergleich zu Apple bleibt blackwell der zweite Treiber und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie bleibt der Maßstab für die Firma.";
+  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).ok, false);
+  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, null).ok, false);
+  const plain = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
+  assert.equal(verifyChapter("zusammenfassung", plain, probeDe, ["Zephyr"]).ok, true);
+  assert.equal(verifyChapter("umsatz", "Die Nachfrage bleibt laufend der Maßstab für die Firma im neuen Jahr. Der Umsatz stützt die Bewertung und das Wachstum trägt die Aktie.", probeDe, []).ok, true);
+  const enPlain = verifyChapter("umsatz", "Demand stays strong and capacity remains the verified view for the company this year. The signal stays with the firm in the market.", probeEn, []);
+  assert.equal(enPlain.ok, true, enPlain.notes.join("|"));
+  assert.equal(enPlain.reasons.includes("name"), false);
+  const oral = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ...probeAnalysis,
+    catalysts: [{ name: "Orales Wegovy", nettoUpside: 9 }, { name: "Rechenzentren", nettoUpside: 4 }],
+  }), NOON), "en");
+  const oralSpoken = fallbackParagraph("s17", oral);
+  assert.equal(/Orales|Wegovy|Rechenzentren/.test(oralSpoken), false, oralSpoken);
+  assert.equal(/belegte Jahreswert|verified annual figure/.test(fallbackParagraph("umsatz", probeDe) + fallbackParagraph("umsatz", probeEn)), false);
+  assert.match(fluentPrompt(probeEn, "pdf").systemPrompt, /entities/);
+  assert.match(fluentPrompt(probeEn, "pdf").systemPrompt, /titles/);
   const million = buildSpeechSheet(buildPodcastFacts(pack("NVDA", { ...probeAnalysis, currentPrice: 1_500_000 }), NOON), "en");
   assert.match(million.facts.find(fact => fact.id === "price")?.spoken ?? "", /million/);
   assert.equal(/\d/.test(million.facts.find(fact => fact.id === "price")?.spoken ?? "1"), false);
-  ok(`Fremde Prosa DE backup ${deBackup.fallen}/${deBackup.total}, EN backup ${enBackup.fallen}/${enBackup.total}, DE Extraktor ${deExtracted.fallen}/${deExtracted.total}, EN Extraktor ${enExtracted.fallen}/${enExtracted.total}, Negativ Extraktor ${rejected}/25, Backup ${backupRejected}/25`);
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Voll, leer, fehlend und halluziniert liegen auf derselben Quote. Negativ ${rejected}/25 und Backup ${backupRejected}/25. Doppelte Präpositionen werden abgelehnt, nicht bereinigt.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",
