@@ -124,7 +124,8 @@ function main() {
   assert.equal(built.values.dcf_low, null);
   assert.equal(built.values.dcf_high, null);
   assert.match(built.values.fy_yoy ?? "", /Prozent/);
-  assert.equal(built.values.gj_year, "2026");
+  assert.equal(built.values.gj_year, "zweitausendsechsundzwanzig");
+  assert.equal(/\d/.test(built.values.gj_year ?? ""), false);
   const prompt = buildPodcastLlmPrompt("pdf", built);
   assert.equal(prompt.prompt.includes("149"), false);
   assert.equal(prompt.prompt.includes("114"), false);

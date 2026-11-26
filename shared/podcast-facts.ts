@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { currencyWord } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
-import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd, speakQuarterPhrase } from "./podcast-speak";
+import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd, speakQuarterPhrase, speakYear } from "./podcast-speak";
 
 export const PODCAST_PLACEHOLDERS = [
   "ticker", "company", "as_of", "currency_word", "statement_currency_word",
@@ -217,7 +217,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const prior = finite(internals.revenueY1) && internals.revenueY1 > 0 ? internals.revenueY1 : null;
   const fy = prior != null && growth != null ? growth : (internals.revenueY1 === undefined && growth != null && growth !== 0 ? growth : null);
   const year = text(internals.fiscalYear);
-  const gj = year && /^\d{4}$/.test(year) ? year : null;
+  const gj = year && /^\d{4}$/.test(year) ? speakYear(Number(year)) : null;
   const segment = topSegment(analysis);
   const news = recentNews(analysis, asOf.iso);
   const callIso = text(analysis.nextEarningsDate);

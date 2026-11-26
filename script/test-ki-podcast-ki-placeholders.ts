@@ -81,7 +81,8 @@ function main() {
   assert.match(nvdaS17, /sechsundzwanzigsten November/);
   const nvdaUmsatz = nvdaKi.find(c => c.id === "umsatz")?.spoken ?? "";
   assert.match(nvdaUmsatz, /Geschäftsjahr/);
-  assert.match(nvdaUmsatz, /2026/);
+  assert.match(nvdaUmsatz, /zweitausendsechsundzwanzig/);
+  assert.equal(/\d/.test(nvdaUmsatz), false);
   assert.equal(nvdaUmsatz.includes("fy_yoy"), false);
   ok("NVDA ki spricht keine nackten Platzhalter, kein ISO-Datum und das Geschäftsjahr");
 
@@ -111,7 +112,8 @@ function main() {
   assert.match(nvoKi.find(c => c.id === "s14")?.spoken ?? "", /PESTEL/);
   assert.equal(nvoKi.find(c => c.id === "s14")?.spoken.includes("fy_yoy"), false);
   assert.match(nvoKi.find(c => c.id === "earnings")?.spoken ?? "", /liegt nicht vor/);
-  assert.match(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "", /Geschäftsjahr 2026/);
+  assert.match(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "", /Geschäftsjahr zweitausendsechsundzwanzig/);
+  assert.equal(/\d/.test(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "1"), false);
   ok("NVO ki ersetzt fy_yoy, gj_year, call_date und news_age");
 
   const pdfWithValue = assemblePodcastChapters("pdf", nvdaFacts, {

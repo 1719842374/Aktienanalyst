@@ -332,6 +332,20 @@ function modelSentences(data: unknown): Map<string, string[]> {
 
 const CODE_OWNED_CHAPTERS = new Set(["zusammenfassung", "dcf", "umsatz", "earnings", "s17"]);
 
+function valuesOfPlaceholders(sentence: string, facts: PodcastFacts): string[] {
+  PLACEHOLDER_RE.lastIndex = 0;
+  const names = Array.from(sentence.matchAll(PLACEHOLDER_RE)).map(match => match[1] ?? "");
+  return names
+    .map(name => facts.values[name as PodcastPlaceholder])
+    .filter((value): value is string => typeof value === "string" && value.trim().length >= 12);
+}
+
+function repeatsCodeValue(sentence: string, facts: PodcastFacts, chapterId: string, codeValues: string[]): boolean {
+  const spoken = applyPlaceholders(sentence, facts, chapterId, "model");
+  if (!spoken) return true;
+  return codeValues.some(value => spoken.includes(value));
+}
+
 function completeModelSentences(sentences: string[]): string[] {
   return sentences.flatMap(sentence => {
     const complete = keepCompleteSentences(sentence);
@@ -354,9 +368,12 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
   const blocked = modelData != null && scriptContainsForbiddenGrowth(JSON.stringify(modelData));
   const fromModel = blocked ? new Map<string, string[]>() : modelSentences(modelData);
   const chapters = chaptersForSource(source).map(def => {
-    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(s => checkPodcastSentence(s, facts, def.id, "model").ok);
     const fallback = fallbackSentences(def.id, facts);
-    const codeOnly = def.id === "schluss" || def.id === "s17" || model.length === 0;
+    const codeValues = fallback.flatMap(sentence => valuesOfPlaceholders(sentence, facts));
+    const model = completeModelSentences(fromModel.get(def.id) ?? [])
+      .filter(s => checkPodcastSentence(s, facts, def.id, "model").ok)
+      .filter(s => !repeatsCodeValue(s, facts, def.id, codeValues));
+    const codeOnly = def.id === "schluss" || model.length === 0;
     const tagged = codeOnly
       ? fallback.map(text => ({ text, origin: "code" as const }))
       : CODE_OWNED_CHAPTERS.has(def.id)

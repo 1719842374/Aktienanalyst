@@ -63,7 +63,8 @@ function main() {
   ok("Kasus, doppelte Satzzeichen und doppelte Einheit werden bereinigt");
 
   const msft = factsOf(baseAnalysis);
-  assert.equal(msft.values.call_quarter, "Quartal zum 28. Oktober 2026");
+  assert.equal(msft.values.call_quarter, "Quartal zum achtundzwanzigsten Oktober zweitausendsechsundzwanzig");
+  assert.equal(/\d/.test(msft.values.call_quarter ?? ""), false);
   assert.equal(msft.values.call_quarter?.includes("2026-10-28"), false);
   assert.match(msft.nextCallLine ?? "", /für den siebenundzwanzigsten Januar/);
   assert.equal(msft.nextCallLine?.includes("2027-01-27"), false);
@@ -74,8 +75,8 @@ function main() {
       { id: "einstieg", sentences: ["{ticker} steht bei {price} Dollar."] },
       { id: "dcf", sentences: ["Der faire Wert liegt bei {dcf_fair} Dollar."] },
       { id: "earnings", sentences: ["Der letzte Call war am {call_date} zum {call_quarter}."] },
-      { id: "s17", sentences: ["im Katalysatoren: KI-firmenspezifisch -Modus."] },
-      { id: "umsatz", sentences: ["Der Umsatz im Geschäftsjahr beträgt {price} Dollar mit {fy_yoy}."] },
+      { id: "s17", sentences: ["Blackwell-Auslieferungen sind der wichtigste Katalysator.", "im Katalysatoren: KI-firmenspezifisch -Modus."] },
+      { id: "umsatz", sentences: ["Der Umsatz wuchs um {fy_yoy}.", "Der Umsatz im Geschäftsjahr beträgt {price} Dollar mit {fy_yoy}."] },
     ],
   });
   const spoken = (id: string) => doubled.find(c => c.id === id)?.spoken ?? "";
@@ -88,7 +89,8 @@ function main() {
   assert.match(spoken("earnings"), /Ein Earnings-Call-Transkript liegt nicht vor/);
   assert.match(spoken("earnings"), /Der nächste Earnings Call ist für den siebenundzwanzigsten Januar/);
   assert.equal(/war am/.test(spoken("earnings")), false);
-  assert.match(spoken("earnings"), /Quartal zum 28\. Oktober 2026/);
+  assert.match(spoken("earnings"), /Quartal zum achtundzwanzigsten Oktober zweitausendsechsundzwanzig/);
+  assert.equal(/\d/.test(spoken("earnings")), false);
   assert.equal(spoken("umsatz").includes("beträgt Dollar"), false);
   assert.match(spoken("umsatz"), /Umsatzwachstum im Geschäftsjahr/);
   const pdf = assemblePodcastChapters("pdf", msft, {
@@ -104,7 +106,11 @@ function main() {
   assert.equal(/\{entry\}|\{price\}|\{dcf_fair\}/.test(spoken("inversion") + pdfDcf), false);
   const modeHits = spoken("s17").match(/Katalysatoren:/g) ?? [];
   assert.equal(modeHits.length, 1);
+  assert.match(spoken("s17"), /Blackwell-Auslieferungen sind der wichtigste Katalysator/);
   assert.equal(spoken("s17").includes("-Modus"), false);
+  const yoy = msft.values.fy_yoy ?? "";
+  assert.ok(yoy.length >= 12);
+  assert.equal(spoken("umsatz").split(yoy).length - 1, 1);
   ok("MSFT-Ist: keine Doppel-Einheit, kein leeres beträgt Dollar, kein vergangener Zukunftstermin, Modus einmal");
 
   const wrongType = assemblePodcastChapters("pdf", msft, {
@@ -158,8 +164,9 @@ function main() {
   assert.match(nvdaEarnings, /für den vierundzwanzigsten Februar/);
   assert.equal(nvdaEarnings.includes("2027-02-24"), false);
   assert.equal(nvdaEarnings.includes("2026-10-28"), false);
+  assert.equal(/\d/.test(nvdaEarnings), false);
   assert.equal(/fand am/.test(nvdaEarnings), false);
-  ok("NVDA: künftiger Call wird angekündigt, ISO-Quartal wird zum 28. Oktober 2026");
+  ok("NVDA: künftiger Call wird angekündigt, das Quartal ohne Ziffern");
 
   console.log(`ki-podcast insertion: ${n} checks ok`);
 }
