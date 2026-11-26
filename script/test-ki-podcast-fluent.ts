@@ -18,6 +18,8 @@ import {
   fluencyStats,
   fluentPrompt,
   podcastSentences,
+  readChapterPayload,
+  readStructuralNameCalls,
   verifyChapter,
 } from "../shared/podcast-fluent";
 import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
@@ -216,7 +218,7 @@ async function main() {
     llm: async () => {
       calls += 1;
       if (calls === 1) return { data: { chapters: [{ id: "umsatz", paragraph: "Wachstum 114." }] }, modelUsed: "test" };
-      return { data: { chapters: [{ id: "umsatz", paragraph: good, entities: [] }] }, modelUsed: "test" };
+      return { data: { chapters: [{ id: "umsatz", paragraph: good, entities: [], none: true }] }, modelUsed: "test" };
     },
   });
   assert.equal(regenerated.ok, true);
@@ -382,6 +384,7 @@ async function main() {
     const fallen = accepted.reports.filter(row => row.fallback);
     assert.equal(fallen.length, 0, JSON.stringify(fallen));
     assert.ok(accepted.reports.length > 0);
+    assert.equal(accepted.chapters.some(chapter => chapter.spoken.includes("[[")), false);
   }
   ok("Plausible Modellabsätze erzeugen keinen Code-Fallback");
 
@@ -652,7 +655,12 @@ async function main() {
     ["Zepbound bleibt der Vergleich für die Firma und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie trägt die Nachfrage.", "Zepbound"],
   ];
   for (const [sentence, name] of deNames) {
-    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).reasons.includes("name"), true, sentence);
+    if (name === "Zepbound") {
+      const missing = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: sentence, entities: [] }] }, new Map([["einstieg", []]]));
+      assert.ok(missing.some(draft => draft.reasons.includes("entities")), sentence);
+    } else {
+      assert.equal(verifyChapter("einstieg", sentence, probeDe, []).reasons.includes("name"), true, sentence);
+    }
     assert.equal(verifyChapter("einstieg", sentence, probeDe, [name]).ok, false, sentence);
     const redo = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
       chapters: [{ id: "einstieg", paragraph: sentence, entities: [name] }],
@@ -662,15 +670,15 @@ async function main() {
   const enApple = "We look at Apple today and the price stays the verified level for the firm. The figures stay tied to that close.";
   assert.equal(verifyChapter("einstieg", enApple, probeEn, []).ok, false);
   const enStart = "Apple opened the session and the price stays the verified level for the firm. The figures stay tied to that close.";
-  assert.equal(verifyChapter("einstieg", enStart, probeEn, []).reasons.includes("name"), false, enStart);
+  assert.equal(verifyChapter("einstieg", enStart, probeEn, []).reasons.includes("name"), true, enStart);
   assert.equal(verifyChapter("einstieg", enStart, probeEn, ["Apple"]).ok, false);
   const kept = "Toyota bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.";
   const dropped = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Die Aktie stützt die Bewertung.";
   const prior = new Map<string, string[] | null>([["einstieg", ["Toyota"]]]);
   const emptyRedo = new Map<string, string[] | null>([["einstieg", []]]);
   const stillNamed = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name Toyota"], spoken: "" }], {
-    chapters: [{ id: "einstieg", paragraph: kept }],
-  }, emptyRedo, prior);
+    chapters: [{ id: "einstieg", paragraph: kept, entities: [], none: true }],
+  }, emptyRedo, prior, new Set(), new Set(["einstieg"]));
   assert.ok(stillNamed[0]?.reasons.includes("name"), stillNamed[0]?.notes.join("|"));
   const cleared = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name Toyota"], spoken: "" }], {
     chapters: [{ id: "einstieg", paragraph: dropped, entities: [] }],
@@ -701,7 +709,7 @@ async function main() {
   const firmEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: withFirm, entities: [] }] }, new Map([["einstieg", []]]));
   assert.ok(firmEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), firmEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const tokenOnly = "Wir sprechen heute über [[company]] und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
-  const tokenEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: tokenOnly, entities: [] }] }, new Map([["einstieg", []]]));
+  const tokenEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: tokenOnly, entities: [], none: true }] }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
   assert.equal(tokenEmpty.find(draft => draft.id === "einstieg")?.reasons.length, 0, tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const possessive = "Nvidias Kurs bleibt der Maßstab im neuen Jahr und die Aktie stützt die Bewertung. Der Markt bleibt offen für die Firma.";
   const possessiveEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: possessive, entities: [] }] }, new Map([["einstieg", []]]));
@@ -718,7 +726,9 @@ async function main() {
   assert.equal(nvidiaGen.ok, true, nvidiaGen.notes.join("|"));
   const noName = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
   const bareEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "zusammenfassung", paragraph: noName, entities: [] }] }, new Map([["zusammenfassung", []]]));
-  assert.equal(bareEmpty.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), false, bareEmpty.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
+  assert.equal(bareEmpty.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), true, bareEmpty.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
+  const bareNone = seedDrafts(probeDe, "pdf", { chapters: [{ id: "zusammenfassung", paragraph: noName, entities: [], none: true }] }, new Map([["zusammenfassung", []]]), new Set(), new Set(["zusammenfassung"]));
+  assert.equal(bareNone.find(draft => draft.id === "zusammenfassung")?.reasons.includes("entities"), false, bareNone.find(draft => draft.id === "zusammenfassung")?.notes.join("|"));
   const redoEmpty = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["entities"], notes: ["entities fehlt"], spoken: "" }], {
     chapters: [{ id: "einstieg", paragraph: withFirm, entities: [] }],
   }, new Map([["einstieg", []]]), new Map());
@@ -1124,8 +1134,13 @@ async function main() {
     for (const sentence of [atStart(name), inMiddle(name)]) {
       for (const entities of [null, []] as Array<string[] | null>) {
         const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
-        assert.equal(verdict.ok, false, `${name} ${entities === null ? "null" : "[]"} ${verdict.notes.join("|")}`);
-        assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+        if (name === "Zepbound" || name === "Mounjaro" || name === "Lily") {
+          const redo = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: sentence, entities: [] }] }, new Map([["einstieg", []]]));
+          assert.ok(redo.some(draft => draft.reasons.includes("entities")), `${name} redo`);
+        } else {
+          assert.equal(verdict.ok, false, `${name} ${entities === null ? "null" : "[]"} ${verdict.notes.join("|")}`);
+          assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+        }
       }
       const listed = verifyChapter("einstieg", sentence, nvoNames, [name]);
       assert.equal(listed.ok, false, `${name} liste ${listed.notes.join("|")}`);
@@ -1195,9 +1210,51 @@ async function main() {
       }
     }
   }
-  const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
+  readStructuralNameCalls();
+  verifyChapter("einstieg", "Konkurrenz steigt in den nächsten Jahren deutlich, das ist klar zu sehen.", nvoNames, null);
+  verifyChapter("einstieg", "Konkurrenz steigt in den nächsten Jahren deutlich, das ist klar zu sehen.", nvoNames, []);
+  seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: "Konkurrenz steigt in den nächsten Jahren deutlich, das ist klar zu sehen." }] }, new Map());
+  assert.equal(readStructuralNameCalls(), 0);
+  ok("structuralName bleibt bei null, [] und fehlendem Feld ungerufen");
+  const hidden = [
+    "Konkurrenz beobachtet den Markt sehr genau und wartet auf Fehler.",
+    "Konkurrenz steigt in den nächsten Jahren deutlich, das ist klar zu sehen.",
+    "Auch Konkurrenz wächst, weil immer mehr Firmen in diesen Markt drängen.",
+    "Kurzfristig steigt der Kurs, langfristig zählt aber das Geschäft.",
+    "Auch Umsatz steigt im neuen Jahr und der Kurs bleibt der Maßstab für die Firma.",
+    "Politik beobachtet die Preise sehr genau und der Kurs bleibt der Maßstab für die Firma.",
+  ];
+  for (const sentence of hidden) {
+    const verdict = verifyChapter("einstieg", sentence, nvoNames, null);
+    assert.equal(verdict.reasons.includes("name"), false, `${sentence} ${verdict.notes.join("|")}`);
+    assert.equal(verdict.ok, true, `${sentence} ${verdict.notes.join("|")}`);
+  }
+  const reportFrames = (name: string) => [
+    `${name} meldet für das letzte Quartal einen deutlich höheren Gewinn als erwartet.`,
+    `${name} hat im letzten Jahr viel Geld in neue Werke in Europa gesteckt.`,
+    `Im Markt ist ${name} seit Jahren ein starker Gegner für die Firma geworden.`,
+    `Neben der Firma setzt auch ${name} stark auf dieses Geschäft in Europa.`,
+  ];
+  for (const name of ["Allianz", "Linde", "Bayer", "Volkswagen", "Henkel", "Lufthansa"]) {
+    for (const sentence of reportFrames(name)) {
+      const verdict = verifyChapter("einstieg", sentence, nvoNames, null);
+      assert.equal(verdict.ok, false, `${name} ${verdict.notes.join("|")}`);
+      assert.ok(verdict.reasons.includes("name"), sentence);
+    }
+  }
+  const numberPayload = readChapterPayload({ chapters: [{ id: "einstieg", paragraph: "Die Firma nennt Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", entities: [1] }] });
+  const badNumbers = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: "Die Firma nennt Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", entities: [1] }] }, numberPayload.entities, numberPayload.invalidEntities, numberPayload.none);
+  assert.ok(numberPayload.invalidEntities.has("einstieg"));
+  assert.ok(badNumbers.some(draft => draft.reasons.includes("entities")), "Nicht-String");
+  const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
+  assert.equal(genitive.ok, false, genitive.notes.join("|"));
+  assert.ok(genitive.reasons.includes("token"), genitive.notes.join("|"));
+  const pharmaText = "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.";
+  const pharma = verifyChapter("einstieg", pharmaText, bareEn, ["United Pharma"]);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));
   assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));
+  const pharmaRedo = seedDrafts(bareEn, "pdf", { chapters: [{ id: "einstieg", paragraph: pharmaText, entities: [] }] }, new Map([["einstieg", []]]));
+  assert.ok(pharmaRedo.some(draft => draft.reasons.includes("entities")), pharmaRedo.map(draft => draft.notes.join("|")).join(" || "));
   const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
     .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
   const sheetNameRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, ["NVIDIA", "Rechenzentren", "Software", "Data", "Center"]).ok).length;
@@ -1213,7 +1270,7 @@ async function main() {
       for (const row of rows) {
         const raw = expandLegacy(row, sheet);
         total += 1;
-        const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [] }] }, new Map([[id, []]]));
+        const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [], none: true }] }, new Map([[id, []]]), new Set(), new Set([id]));
         const draft = drafts.find(item => item.id === id);
         if (draft?.reasons.length) fallen += 1;
       }

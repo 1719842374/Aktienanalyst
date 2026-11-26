@@ -170,7 +170,7 @@ export async function renderStockPodcastScript(opts: {
   if (raced == null || raced.data == null) return { ok: false, reason: "empty" };
   const payload = readChapterPayload(raced.data);
   if (payload.titles) applyTitleMap(sheet, payload.titles);
-  let drafts = seedDrafts(sheet, opts.source, raced.data, payload.entities, payload.invalidEntities);
+  let drafts = seedDrafts(sheet, opts.source, raced.data, payload.entities, payload.invalidEntities, payload.none);
   let regens = 0;
   while (regens < 2 && brokenDrafts(drafts).length) {
     const left = budget - (Date.now() - started);
@@ -196,7 +196,7 @@ export async function renderStockPodcastScript(opts: {
     }
     const redoPayload = readChapterPayload(edited.data);
     if (redoPayload.titles) applyTitleMap(sheet, redoPayload.titles);
-    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities, payload.entities, redoPayload.invalidEntities);
+    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities, payload.entities, redoPayload.invalidEntities, redoPayload.none);
   }
   const extractor = tallyExtractor(drafts);
   const assembled = chaptersFromDrafts(sheet, opts.source, drafts);

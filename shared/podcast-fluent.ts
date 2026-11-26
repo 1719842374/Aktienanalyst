@@ -6,6 +6,7 @@
 import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
 import { DE_CLOSED_LEMMAS, DE_VERB_LEMMAS } from "./de-closed";
+import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "./de-companies";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
@@ -61,7 +62,7 @@ const TOKEN_RE = /\[\[([a-z0-9_]+)\]\]/g;
 
 const DE_VERB = /\b(ist|sind|liegt|liegen|hat|haben|bleibt|bleiben|stammt|stammen|beträgt|betragen|steht|stehen|kommt|kommen|gilt|gelten|heißt|heisst|gehört|gehören|wird|werden|war|waren|zeigt|zeigen|hält|halten|bezieht|beziehen|fasst|fassen|spricht|sprechen|trägt|tragen|stützt|stützen|wächst|wachsen|nennt|nennen|folgt|folgen|ordnet|ordnen|begrenzt|begrenzen|genannt|angekündigt|gemeldet|wurde|wurden)\b/i;
 const EN_VERB = /\b(is|are|stands|stand|has|have|comes|come|remains|remain|was|were|shows|show|holds|hold|dates|date|refers|refer|stays|stay|look|looks|accounts|account|sums|sum|leads|lead|ranks|rank)\b/i;
-const DE_MARKER = /\b(der|die|das|den|dem|und|ist|liegt|bei|für|im|ein|eine|nicht|sind|bleibt|steht|stammt)\b/i;
+const DE_MARKER = /\b(der|die|das|den|dem|und|ist|liegt|bei|für|im|ein|eine|nicht|sind|bleibt|steht|stammt|weil|dass|diesen)\b/i;
 const EN_MARKER = /\b(the|and|of|to|for|with|from|this|that|is|are|stands|stay|stays)\b/i;
 const DE_LEAK = /\b(der|die|das|den|dem|und|liegt|liegen|nicht|für|eine|einer|ist|sind|geschäftsjahr|prozent|anlageberatung|heute|gestern|beträgt|steht|stammt|faktenblatt|angabe|jüngste)\b/i;
 
@@ -225,6 +226,11 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
   const out: SpeechFact[] = [];
   const companySource = measures?.companySource ?? (values.company ? "analysis.companyName" : "missing");
   addFact(out, "company", values.company, companySource);
+  const peerKeys = ["peer_a", "peer_b", "peer_c"] as const;
+  (facts.peerNames ?? []).slice(0, peerKeys.length).forEach((name, index) => {
+    const key = peerKeys[index];
+    if (key) addFact(out, key, name, "analysis.peerComparison");
+  });
   if (language === "de") {
     addFact(out, "price", values.price, "analysis.currentPrice");
     addFact(out, "as_of", values.as_of, "analysis.dataTimestamp");
@@ -731,87 +737,102 @@ function knownCompound(word: string): boolean {
   return false;
 }
 
-const GERMAN_NOUN_ENDING = /(?:ung|keit|heit|schaft|ion|tät|tum|nis)$/;
-const GERMAN_DETERMINER = new Set(["der", "die", "das", "den", "dem", "des", "ein", "eine", "einer", "einem", "einen", "eines", "kein", "keine", "keiner", "keinem", "keinen", "keines", "dieser", "diese", "dieses", "diesen", "diesem", "jeder", "jede", "jedes", "jeden", "jedem"]);
-const ACTOR_ROLE = new Set(["rivale", "konkurrent", "hersteller", "anbieter", "gegner", "partner", "wettbewerber"]);
-const ACTOR_VERB = new Set(["beobachtet", "beobachten", "steigt", "steigen", "stieg", "stiegen", "arbeitet", "arbeiten", "holt", "holen"]);
-const DE_PREPOSITION = new Set(["gegen", "für", "fuer", "mit", "von", "vom", "aus", "bei", "beim", "nach", "über", "ueber", "unter", "ohne", "durch", "in", "im", "am", "an", "auf", "vor", "zwischen", "seit", "um", "zum", "zur", "ins", "ans"]);
+/** Exakte Freigabe, kein Präfix. CEO und Kunden stehen hier nicht. */
+const STATIC_NAME_ALLOW: Array<[string, string]> = [
+  ["sec", "US-Börsenaufsicht"],
+  ["bafin", "deutsche Finanzaufsicht"],
+  ["fca", "britische Finanzaufsicht"],
+  ["esma", "europäische Wertpapieraufsicht"],
+  ["cftc", "US-Terminaufsicht"],
+  ["finra", "US-Brokeraufsicht"],
+  ["fed", "US-Notenbank, Kurzname"],
+  ["federal reserve", "US-Notenbank"],
+  ["ezb", "europäische Notenbank, Kurzname"],
+  ["ecb", "europäische Notenbank, englischer Kurzname"],
+  ["europäische zentralbank", "europäische Notenbank"],
+  ["europaeische zentralbank", "europäische Notenbank, ohne Umlaut"],
+  ["boe", "Bank of England, Kurzname"],
+  ["boj", "Bank of Japan, Kurzname"],
+  ["snb", "Schweizerische Nationalbank, Kurzname"],
+  ["ira", "US-Gesetz Inflation Reduction Act, Kurzname"],
+  ["dsgvo", "EU-Datenschutzgesetz, Kurzname"],
+  ["gdpr", "EU-Datenschutzgesetz, englischer Kurzname"],
+  ["mifid", "EU-Finanzmarktgesetz, Kurzname"],
+  ["dax", "deutscher Aktienindex"],
+  ["mdax", "deutscher Mid-Cap-Index"],
+  ["sdax", "deutscher Small-Cap-Index"],
+  ["stoxx", "europäischer Indexanbieter"],
+  ["nasdaq", "US-Börse und Index"],
+  ["ftse", "britischer Aktienindex"],
+  ["dow", "US-Aktienindex, Kurzname"],
+  ["nyse", "New Yorker Börse"],
+  ["xetra", "deutsche Börse"],
+  ["usd", "US-Dollar, Währungscode"],
+  ["eur", "Euro, Währungscode"],
+  ["gbp", "Pfund, Währungscode"],
+  ["jpy", "Yen, Währungscode"],
+  ["chf", "Franken, Währungscode"],
+];
 
-function germanNounEnding(word: string): boolean {
-  return GERMAN_NOUN_ENDING.test(withoutPossessive(word).toLowerCase());
+const DE_COMPANY_SET = new Set(DE_COMPANY_NAMES);
+const DE_COMPANY_AMBIGUOUS_SET = new Set(DE_COMPANY_AMBIGUOUS);
+
+let structuralNameCalls = 0;
+
+/** Testzähler. Der Annahmeweg ruft structuralName nicht auf. */
+export function readStructuralNameCalls(): number {
+  const seen = structuralNameCalls;
+  structuralNameCalls = 0;
+  return seen;
 }
 
-function determinerBefore(words: string[], index: number): boolean {
-  if (index === 0) return false;
-  const prev = tokenCore(words[index - 1] ?? "").toLowerCase();
-  return GERMAN_DETERMINER.has(prev);
-}
-
-function adjectiveStems(word: string): string[] {
-  const lower = withoutPossessive(word).toLowerCase();
-  const stems = [lower];
-  for (const suffix of ["em", "en", "er", "es", "e"]) {
-    if (lower.length - suffix.length >= 3 && lower.endsWith(suffix)) stems.push(lower.slice(0, -suffix.length));
+function releasedNames(sheet: SpeechSheet): Set<string> {
+  const out = new Set<string>();
+  for (const [name] of STATIC_NAME_ALLOW) out.add(name);
+  const blobs = [
+    ...(sheet.realNames ?? []),
+    ...(sheet.realPhrases ?? []),
+    ...(sheet.placeNames ?? []),
+    ...(sheet.packNames ?? []),
+    ...(sheet.nearTitleNames ?? []),
+  ];
+  for (const phrase of blobs) {
+    out.add(phrase.toLowerCase());
+    for (const bit of phrase.toLowerCase().split(/[^a-zäöüß0-9]+/)) {
+      if (bit) out.add(bit);
+    }
   }
-  const keys: string[] = [];
-  for (const stem of stems) {
-    keys.push(stem);
-    const folded = foldUmlaut(stem);
-    if (folded !== stem) keys.push(folded);
+  return out;
+}
+
+/** Exakter Firmenkurzname, vor jedem Substantiv-Beweis. Freigegebene Pack-Namen zählen nicht. */
+function companyLexiconHit(text: string, sheet: SpeechSheet): { word: string; ambiguous: boolean } | null {
+  const released = releasedNames(sheet);
+  const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
+  for (const sentence of podcastSentences(text)) {
+    for (const word of sentence.split(/\s+/).filter(Boolean)) {
+      const token = tokenCore(word);
+      const clean = withoutPossessive(token).toLowerCase();
+      if (!clean || !/^[A-ZÄÖÜ0-9]/.test(token) || lexicon.has(clean) || !DE_COMPANY_SET.has(clean) || released.has(clean)) continue;
+      return { word: tokenCore(word), ambiguous: DE_COMPANY_AMBIGUOUS_SET.has(clean) };
+    }
   }
-  return keys;
+  return null;
 }
 
-function knownSentenceStart(word: string): boolean {
-  if (listedNounForm(word)) return true;
-  return adjectiveStems(word).some(stem => DE_LEXICON.has(stem) || DE_CLOSED.has(stem));
-}
-
-function atSentenceStart(words: string[], index: number): boolean {
-  if (index === 0) return true;
-  return /[:.!?]$/.test(words[index - 1] ?? "");
-}
-
-const STEIGEN = new Set(["steigt", "steigen", "stieg", "stiegen"]);
-const BLEIBEN = new Set(["bleibt", "bleiben", "blieb", "blieben"]);
-
-function closedClassWord(word: string): boolean {
-  if (provenContentNoun(word)) return false;
-  return adjectiveStems(word).some(stem => DE_CLOSED.has(stem));
-}
-
-function provenContentNoun(word: string): boolean {
-  return listedNounForm(word) || knownCompound(word) || germanNounEnding(word);
-}
-
-function stockOfName(words: string[], index: number): boolean {
-  if (index < 2) return false;
-  const prev = tokenCore(words[index - 1] ?? "").toLowerCase();
-  const prev2 = tokenCore(words[index - 2] ?? "").toLowerCase();
-  return prev === "von" && (prev2 === "aktie" || prev2 === "aktien");
-}
-
-function remainsCompetitor(words: string[], index: number): boolean {
-  const next = tokenCore(words[index + 1] ?? "").toLowerCase();
-  if (!BLEIBEN.has(next)) return false;
-  for (let later = index + 1; later < words.length; later++) {
-    if (ACTOR_ROLE.has(tokenCore(words[later] ?? "").toLowerCase())) return true;
+/** Englisches Possessiv an einem nicht freigegebenen Namen. Lilly's aus dem Pack bleibt. */
+function possessiveNameHit(text: string, sheet: SpeechSheet): string | null {
+  if (sheet.language !== "en") return null;
+  const released = releasedNames(sheet);
+  for (const sentence of podcastSentences(text)) {
+    for (const word of sentence.split(/\s+/).filter(Boolean)) {
+      if (!/['’]s$/i.test(word)) continue;
+      const bare = withoutPossessive(tokenCore(word));
+      if (!bare || !/^[A-Z]/.test(bare) || released.has(bare.toLowerCase())) continue;
+      return bare;
+    }
   }
-  return false;
-}
-
-/** Rolle, Aktienbesitz oder Prädikat „bleibt … Wettbewerber“. Ein bloßes Verb danach gilt nicht für belegte Substantive und nicht für Adverbien. */
-function actorSlot(words: string[], index: number): boolean {
-  const prev = index > 0 ? tokenCore(words[index - 1] ?? "").toLowerCase() : "";
-  const bare = withoutPossessive(tokenCore(words[index] ?? ""));
-  const next = tokenCore(words[index + 1] ?? "").toLowerCase();
-  if (ACTOR_ROLE.has(prev) || stockOfName(words, index)) return true;
-  if (remainsCompetitor(words, index) && !closedClassWord(bare)) return true;
-  if (closedClassWord(bare) && !provenContentNoun(bare)) return false;
-  if (determinerBefore(words, index) || DE_PREPOSITION.has(prev)) return false;
-  if (prev === "auch" && ACTOR_VERB.has(next)) return true;
-  if (provenContentNoun(bare)) return atSentenceStart(words, index) && STEIGEN.has(next);
-  return ACTOR_VERB.has(next);
+  return null;
 }
 
 function placeBits(text: string): string[] {
@@ -878,8 +899,10 @@ function packNameLeak(text: string, sheet: SpeechSheet): string | null {
   return null;
 }
 
-/** Strukturelle Kandidaten. Ein leeres Extraktor-Ergebnis schaltet diese Prüfung nicht ab. */
+/** Strukturelle Kandidaten. Der Annahmeweg ruft diese Funktion nicht auf. */
 function structuralName(text: string, sheet: SpeechSheet, proveNouns = false): string | null {
+  structuralNameCalls += 1;
+  void proveNouns;
   const allowed = allowedWords(sheet);
   const names = knownNames(sheet);
   for (const sentence of podcastSentences(text)) {
@@ -888,16 +911,6 @@ function structuralName(text: string, sheet: SpeechSheet, proveNouns = false): s
       const clean = tokenCore(words[i] ?? "");
       if (!clean || wordAllowed(withoutPossessive(clean), allowed, sheet.language)) continue;
       if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
-      if (proveNouns && sheet.language === "de" && /^[A-ZÄÖÜ]/.test(withoutPossessive(clean))) {
-        if (actorSlot(words, i)) return clean;
-        const bare = withoutPossessive(clean);
-        if (atSentenceStart(words, i)) {
-          if (knownSentenceStart(bare) || germanNounEnding(bare) || knownCompound(bare)) continue;
-          return clean;
-        }
-        if (listedNounForm(bare) || germanNounEnding(bare) || determinerBefore(words, i) || knownCompound(bare)) continue;
-        return clean;
-      }
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
       const allCaps = /^[A-ZÄÖÜ]{2,5}$/.test(clean);
@@ -1072,6 +1085,7 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   };
   if (!spoken) reasons.push("empty");
   if (/\d/.test(spoken)) note("digit", spoken.match(/\d+/)?.[0] ?? "digit");
+  if (/\[\[[a-z0-9_]+\]\]s\b/i.test(raw)) note("token", "genitive");
   if (/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/.test(spoken) || BARE_PLACEHOLDER.test(spoken)) {
     note("placeholder", spoken.match(/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/)?.[0] ?? "placeholder");
   }
@@ -1084,11 +1098,16 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
-  const proveNouns = entities == null || entities.length === 0;
-  const structural = spoken ? structuralName(spoken, sheet, proveNouns) : null;
+  const company = spoken ? companyLexiconHit(spoken, sheet) : null;
+  if (company) {
+    note("name", company.word);
+    if (company.ambiguous) note("ambiguous", company.word);
+  }
+  const possessive = spoken ? possessiveNameHit(spoken, sheet) : null;
+  if (possessive) note("name", possessive);
   const leaked = spoken ? packNameLeak(spoken, sheet) : null;
   const extra = spoken ? entityHit(entities, raw, spoken, sheet) : null;
-  const name = structural ?? leaked ?? extra;
+  const name = leaked ?? extra;
   if (name) note("name", name);
   const quantity = spoken ? quantityWord(spoken, sheet) : null;
   if (quantity) note("number", quantity);
@@ -1227,6 +1246,7 @@ const HUMAN_DE: Record<string, string> = {
   dcf_fair: "fairer Wert", entry: "Einstieg", crv: "Chance-Risiko-Verhältnis", wacc: "Kapitalkosten",
   g_star: "Wachstum", news_age: "Meldungsalter", call_date: "Call-Termin", call_quarter: "Quartal",
   pair_a: "Katalysator", pair_b: "Katalysator", pair_c: "Katalysator",
+  peer_a: "Vergleichsfirma", peer_b: "Vergleichsfirma", peer_c: "Vergleichsfirma",
   risk_a: "Risiko", risk_b: "Risiko", risk_c: "Risiko", thesis: "These",
 };
 
@@ -1236,7 +1256,8 @@ const HUMAN_EN: Record<string, string> = {
   top_segment_share: "segment share", dcf_fair: "fair value", entry: "entry",
   crv: "chance-risk ratio", wacc: "cost of capital", g_star: "growth", news_age: "report age",
   call_date: "call date", call_quarter: "quarter", pair_a: "catalyst", pair_b: "catalyst",
-  pair_c: "catalyst", risk_a: "risk", risk_b: "risk", risk_c: "risk", thesis: "thesis",
+  pair_c: "catalyst", peer_a: "peer", peer_b: "peer", peer_c: "peer",
+  risk_a: "risk", risk_b: "risk", risk_c: "risk", thesis: "thesis",
 };
 
 export function titleTranslationOk(raw: string, translated: string, language: PodcastLanguage): boolean {
@@ -1298,8 +1319,8 @@ export function fluentPrompt(
     ? redo.map(row => `${row.id}: ${(row.notes && row.notes.length ? row.notes : row.reasons).join("; ")}`).join("\n")
     : "";
   const systemPrompt = sheet.language === "en"
-    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}],\"titles\":[{\"raw\":\"...\",\"text\":\"...\"}]}. entities is required on every chapter and lists every company, product and person name in that paragraph. An empty list is allowed only when the paragraph has none. titles translates each catalyst and risk title into English. Proper names stay."
-    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}]}. entities ist je Kapitel ein Pflichtfeld und nennt alle Firmen-, Produkt- und Personennamen im Absatz. Eine leere Liste ist nur erlaubt, wenn kein solcher Name vorkommt.";
+    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not add an s after a token. The company is only [[company]]. A peer is only [[peer_a]], [[peer_b]] or [[peer_c]], written as of [[peer_a]] or the stock of [[peer_a]]. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities lists every proper name in that paragraph. An empty list is valid only together with none true, and only when the paragraph has no proper name. titles translates each catalyst and risk title into English. Proper names stay."
+    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du hängst kein s an ein Token. Die eigene Firma nur als [[company]]. Eine Vergleichsfirma nur als [[peer_a]], [[peer_b]] oder [[peer_c]], in der Form von [[peer_a]] oder die Aktie von [[peer_a]]. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities nennt alle Eigennamen im Absatz. Eine leere Liste gilt nur zusammen mit none true, und nur wenn kein Eigenname vorkommt.";
   const titleBlock = sheet.language === "en" && sheet.pendingTitles.length
     ? `TITEL\n${sheet.pendingTitles.map(item => item.raw).join("\n")}`
     : "";
@@ -1315,8 +1336,8 @@ export function fluentPrompt(
     wanted.map(def => def.id).join(", "),
     redoLine ? `NEU SCHREIBEN\n${redoLine}` : "",
     sheet.language === "en"
-      ? "Use each token once, as a fixed phrase. Do not repeat dollars, percent, or an article in front of a token. Date tokens are the bare phrase. You choose as of, for, or from. For today or yesterday say from the age token. For a duration say the report is that many days old. Do not put ago before the age token."
-      : "Setze jedes Token einmal als feste Wendung. Wiederhole Dollar oder Prozent nicht und setze keinen Artikel davor. Datumstoken sind die nackte Phrase. Du wählst auf den oder für den. Bei heute oder gestern sagst du von dem Alterstoken. Bei einer Dauer sagst du ist das Alterstoken alt. Sag nicht vor vor dem Alterstoken.",
+      ? "Use each token once, as a fixed phrase. Do not repeat dollars, percent, or an article in front of a token. Do not write the company or a peer as bare words. Use of [[peer_a]] or the stock of [[peer_a]]. Date tokens are the bare phrase. You choose as of, for, or from. For today or yesterday say from the age token. For a duration say the report is that many days old. Do not put ago before the age token."
+      : "Setze jedes Token einmal als feste Wendung. Wiederhole Dollar oder Prozent nicht und setze keinen Artikel davor. Schreibe die Firma und Vergleichsfirmen nicht als nackte Wörter. Sag von [[peer_a]] oder die Aktie von [[peer_a]]. Datumstoken sind die nackte Phrase. Du wählst auf den oder für den. Bei heute oder gestern sagst du von dem Alterstoken. Bei einer Dauer sagst du ist das Alterstoken alt. Sag nicht vor vor dem Alterstoken.",
   ].filter(Boolean).join("\n");
   return { prompt, systemPrompt };
 }
@@ -1343,10 +1364,12 @@ export function readParagraphs(data: unknown): Map<string, string> {
 
 export interface ChapterPayload {
   paragraphs: Map<string, string>;
-  /** null je Kapitel heißt: entities fehlt. [] ist ein leeres, gültiges Ergebnis. */
+  /** null je Kapitel heißt: entities fehlt. [] ohne none ist kein gültiges Ergebnis. */
   entities: Map<string, string[] | null>;
-  /** Kapitel, deren entities-Feld da ist, aber kein Array. */
+  /** Kapitel, deren entities-Feld da ist, aber kein Array aus Zeichenketten. */
   invalidEntities: Set<string>;
+  /** Kapitel mit none true. Nur das schaltet die Namensliste als leer frei. */
+  none: Set<string>;
   /** null heißt: titles fehlt oder ist ungültig. */
   titles: Array<{ raw: string; text: string }> | null;
 }
@@ -1355,30 +1378,32 @@ export function readChapterPayload(data: unknown): ChapterPayload {
   const paragraphs = readParagraphs(data);
   const entities = new Map<string, string[] | null>();
   const invalidEntities = new Set<string>();
+  const none = new Set<string>();
   const chapters = data && typeof data === "object" && Array.isArray((data as { chapters?: unknown }).chapters)
     ? (data as { chapters: unknown[] }).chapters
     : [];
   for (const row of chapters) {
     if (!row || typeof row !== "object") continue;
     const id = typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : "";
-    if (!id || !Object.prototype.hasOwnProperty.call(row, "entities")) continue;
-    const listed = (row as { entities?: unknown }).entities;
-    if (listed == null) {
-      entities.set(id, null);
+    if (!id) continue;
+    if ((row as { none?: unknown }).none === true) none.add(id);
+    if (!Object.prototype.hasOwnProperty.call(row, "entities")) {
+      if (none.has(id)) entities.set(id, []);
       continue;
     }
-    if (!Array.isArray(listed)) {
+    const listed = (row as { entities?: unknown }).entities;
+    if (listed == null || !Array.isArray(listed) || listed.some(item => typeof item !== "string")) {
       entities.set(id, null);
       invalidEntities.add(id);
       continue;
     }
-    entities.set(id, listed.filter((item): item is string => typeof item === "string"));
+    entities.set(id, listed as string[]);
   }
   const titles = data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "titles")
     && Array.isArray((data as { titles?: unknown }).titles)
     ? readTitleMap(data)
     : null;
-  return { paragraphs, entities, invalidEntities, titles };
+  return { paragraphs, entities, invalidEntities, none, titles };
 }
 
 const EN_CHAPTER_TITLE: Record<string, string> = {
@@ -1467,11 +1492,13 @@ function entityField(
   id: string,
   raw: string,
   sheet: SpeechSheet,
+  none = false,
 ): { state: "ok" | "missing" | "invalid"; names: string[] | null } {
   if (invalid?.has(id)) return { state: "invalid", names: null };
   if (!entities?.has(id)) return { state: "missing", names: null };
   const listed = entities.get(id);
   if (!Array.isArray(listed)) return { state: "missing", names: null };
+  if (listed.length === 0 && !none) return { state: "missing", names: null };
   if (listed.length === 0 && mentionsListedName(raw, sheet, id)) return { state: "missing", names: null };
   return { state: "ok", names: listed };
 }
@@ -1482,6 +1509,7 @@ export function seedDrafts(
   modelData: unknown,
   entities?: Map<string, string[] | null> | null,
   invalid?: Set<string>,
+  none?: Set<string>,
 ): FluentDraft[] {
   const found = readParagraphs(modelData);
   const drafts: FluentDraft[] = [];
@@ -1493,7 +1521,7 @@ export function seedDrafts(
       drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], notes: ["empty"], spoken: "" });
       continue;
     }
-    const field = entityField(entities, invalid, def.id, raw, sheet);
+    const field = entityField(entities, invalid, def.id, raw, sheet, none?.has(def.id) === true);
     if (field.state !== "ok") {
       drafts.push({
         id: def.id,
@@ -1525,13 +1553,14 @@ export function applyRedo(
   entities?: Map<string, string[] | null> | null,
   prior?: Map<string, string[] | null> | null,
   invalid?: Set<string>,
+  none?: Set<string>,
 ): FluentDraft[] {
   const found = readParagraphs(modelData);
   return drafts.map(draft => {
     if (!draft.reasons.length || draft.reasons[0] === "empty" || draft.reasons[0] === "timeout") return draft;
     const raw = found.get(draft.id) ?? "";
     if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], notes: ["empty"], spoken: "" };
-    const field = entityField(entities, invalid, draft.id, raw, sheet);
+    const field = entityField(entities, invalid, draft.id, raw, sheet, none?.has(draft.id) === true);
     if (field.state !== "ok") {
       return {
         ...draft,
@@ -1542,8 +1571,9 @@ export function applyRedo(
         entityState: field.state,
       };
     }
-    const priorNames = prior?.has(draft.id) && Array.isArray(prior.get(draft.id)) ? prior.get(draft.id) : [];
-    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(mergeEntityLists(priorNames, field.names), tokenInsertedNames(raw, sheet)));
+    const priorListed = prior?.get(draft.id);
+    const priorNames = Array.isArray(priorListed) ? priorListed : [];
+    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(priorNames, mergeEntityLists(field.names, tokenInsertedNames(raw, sheet))));
     return {
       id: draft.id,
       attempts: draft.attempts + 1,
@@ -1596,4 +1626,61 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
 
 export function brokenDrafts(drafts: FluentDraft[]): FluentDraft[] {
   return drafts.filter(draft => draft.reasons.length > 0 && draft.reasons[0] !== "empty" && draft.reasons[0] !== "timeout");
+}
+
+/** Pack, das Doublecheck je Hold-out-Fall übergibt. */
+export interface HoldoutNamePack {
+  company: string;
+  peers: string[];
+  segments: string[];
+  regions: string[];
+}
+
+function holdoutTokens(value: string): string[] {
+  return value.split(/[^A-Za-zÄÖÜäöüß0-9]+/).map(word => word.toLowerCase()).filter(word => word.length >= 2);
+}
+
+function sheetFromHoldout(pack: HoldoutNamePack, language: PodcastLanguage): SpeechSheet {
+  const phrases = [pack.company, ...pack.peers, ...pack.segments, ...pack.regions];
+  const tokens = phrases.flatMap(holdoutTokens);
+  return {
+    language,
+    facts: [
+      { id: "company", spoken: pack.company, source: "holdout.company" },
+      ...pack.peers.slice(0, 3).map((name, index) => ({ id: `peer_${"abc"[index] ?? "a"}`, spoken: name, source: "holdout.peers" })),
+    ],
+    context: phrases.join("\n"),
+    pendingTitles: [],
+    codeLines: [],
+    packNames: tokens,
+    realNames: [pack.company, ...pack.peers].flatMap(holdoutTokens),
+    realPhrases: [pack.company, ...pack.peers, ...pack.regions],
+    nearTitleNames: [],
+    placeNames: pack.regions,
+  };
+}
+
+/**
+ * Hold-out-Spalten.
+ * list: modelNames, none: none true, empty: [] und damit Redo.
+ */
+export function judgeHoldoutName(input: {
+  pack: HoldoutNamePack;
+  language: PodcastLanguage;
+  chapterId: string;
+  text: string;
+  column: "list" | "none" | "empty";
+  modelNames?: string[];
+}): { ok: boolean; redo: boolean; reasons: string[]; notes: string[] } {
+  const sheet = sheetFromHoldout(input.pack, input.language);
+  if (input.column === "empty") {
+    const drafts = seedDrafts(sheet, "pdf", {
+      chapters: [{ id: input.chapterId, paragraph: input.text, entities: [] }],
+    }, new Map([[input.chapterId, []]]), new Set(), new Set());
+    const draft = drafts.find(row => row.id === input.chapterId);
+    return { ok: false, redo: true, reasons: draft?.reasons ?? ["entities"], notes: draft?.notes ?? ["entities fehlt"] };
+  }
+  const names = input.column === "list" ? (input.modelNames ?? []) : [];
+  const verdict = verifyChapter(input.chapterId, input.text, sheet, names);
+  return { ok: verdict.ok, redo: false, reasons: verdict.reasons, notes: verdict.notes };
 }
