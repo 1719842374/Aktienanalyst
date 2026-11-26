@@ -759,7 +759,7 @@ async function main() {
   assert.ok(firmEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), firmEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const tokenOnly = "Wir sprechen heute über [[company]] und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
   const tokenEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: tokenOnly, entities: [], none: true }] }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
-  assert.ok(tokenEmpty.find(draft => draft.id === "einstieg")?.notes.some(note => note.toLowerCase().includes("nvidia")), tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  assert.equal(tokenEmpty.find(draft => draft.id === "einstieg")?.notes.some(note => note.toLowerCase().includes("nvidia")), false, tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const possessive = "Nvidias Kurs bleibt der Maßstab im neuen Jahr und die Aktie stützt die Bewertung. Der Markt bleibt offen für die Firma.";
   const possessiveEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: possessive, entities: [] }] }, new Map([["einstieg", []]]));
   assert.ok(possessiveEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), possessiveEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
@@ -1327,8 +1327,8 @@ async function main() {
     assert.ok(judged.notes.some(note => note.startsWith("name")), `${name} ${judged.notes.join("|")}`);
   }
   const lillyNone = noneOf("Lilly");
-  assert.equal(lillyNone.ok, false, lillyNone.notes.join("|"));
-  assert.equal(lillyNone.redo, true);
+  assert.equal(lillyNone.ok, true, lillyNone.notes.join("|"));
+  assert.equal(lillyNone.redo, false);
   const ozempicNone = noneOf("Ozempic");
   assert.equal(ozempicNone.ok, true, ozempicNone.notes.join("|"));
   assert.equal(ozempicNone.redo, false);
@@ -1339,8 +1339,7 @@ async function main() {
     text: "Der Kurs bleibt der Maßstab und Novo Nordisk steht im Satz. Die Aktie stützt die Bewertung im neuen Jahr.",
     column: "none",
   });
-  assert.equal(ownFirm.redo, true, ownFirm.notes.join("|"));
-  assert.ok(ownFirm.notes.some(note => /novo|nordisk/i.test(note)), ownFirm.notes.join("|"));
+  assert.equal(ownFirm.notes.some(note => /novo|nordisk/i.test(note)), false, ownFirm.notes.join("|"));
   const wired = seedDrafts(nvoNames, "pdf", {
     chapters: [{ id: "einstieg", paragraph: noneSentence("Zepbound"), entities: [], none: true }],
   }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
@@ -1363,7 +1362,7 @@ async function main() {
   assert.equal(quarterOk.reasons.includes("digit"), false, quarterOk.notes.join("|"));
   const product = verifyChapter("einstieg", "Das Produkt H100 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", deSheet, [], true);
   assert.equal(product.ok, false, product.notes.join("|"));
-  ok("none erreicht den Verifier, der eigene Firmenname wird Redo, Ozempic aus dem Segment bleibt");
+  ok("none erreicht den Verifier, der eigene Firmenname bleibt frei, Ozempic aus dem Segment bleibt");
   for (const row of PODCAST_NAME_COLUMNS) {
     const sheet = row.language === "de" ? probeDe : probeEn;
     const asNull = verifyChapter(row.chapterId, row.text, sheet, null);
@@ -1380,10 +1379,9 @@ async function main() {
     assert.equal(asEmpty.ok, false, `${row.id} [] ${asEmpty.notes.join("|")}`);
     assert.equal(asList.ok, false, `${row.id} list ${asList.notes.join("|")}`);
     assert.equal(asNone.redo, true, `${row.id} none ${asNone.notes.join("|")}`);
-    const company = row.language === "de" ? "NVIDIA" : "NVIDIA";
-    const extraOnly = verifyChapter(row.chapterId, row.text.replace("Toyota", company), sheet, row.listed);
-    assert.equal(extraOnly.ok, false, `${row.id} extra ${extraOnly.notes.join("|")}`);
-    assert.ok(extraOnly.notes.some(note => /Zepbound|Pfizerwerk/i.test(note)), `${row.id} ${extraOnly.notes.join("|")}`);
+    const extraNone = verifyChapter(row.chapterId, row.text.replace(/Toyota/g, "NVIDIA"), sheet, [], true);
+    assert.equal(extraNone.ok, false, `${row.id} extra ${extraNone.notes.join("|")}`);
+    assert.ok(extraNone.notes.some(note => /Zepbound|Pfizerwerk/i.test(note)), `${row.id} ${extraNone.notes.join("|")}`);
   }
   const codeSheet = { ...probeDe, facts: [...probeDe.facts, { id: "code", spoken: "Der Code H100 bleibt genannt", source: "test" }] };
   const shortCode = verifyChapter("einstieg", "Das Kürzel H10 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", codeSheet, null);
@@ -1395,6 +1393,48 @@ async function main() {
   const bareRecord = verifyChapter("einstieg", "The price stays a record for the firm and demand remains the verified view this year. Competition holds the market.", probeEn, null);
   assert.equal(bareRecord.reasons.includes("number"), false, bareRecord.notes.join("|"));
   ok("Alle vier Spalten lehnen fremde Produktnamen ab, H10 bleibt zu, pfizer kleingeschrieben auch");
+  const calmDe = [
+    "Große Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Größere Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Steigende Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Mehr Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Die Märkte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Der Kurs trägt die Märkte und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
+  ];
+  for (const text of calmDe) {
+    for (const entities of [null, []] as const) {
+      const verdict = verifyChapter("einstieg", text, probeDe, entities);
+      assert.equal(verdict.notes.some(note => note.startsWith("name")), false, `${text} ${verdict.notes.join("|")}`);
+    }
+    const asNone = verifyChapter("einstieg", text, probeDe, [], true);
+    assert.equal(asNone.notes.some(note => note.startsWith("name")), false, `${text} ${asNone.notes.join("|")}`);
+  }
+  const calmEn = [
+    "Higher demand remains the verified view for the firm this year. Competition holds the market.",
+    "More demand remains the verified view for the firm this year. Competition holds the market.",
+    "Growing demand remains the verified view for the firm this year. Competition holds the market.",
+  ];
+  for (const text of calmEn) {
+    const verdict = verifyChapter("einstieg", text, probeEn, null);
+    assert.equal(verdict.notes.some(note => note.startsWith("name")), false, `${text} ${verdict.notes.join("|")}`);
+    const asNone = verifyChapter("einstieg", text, probeEn, [], true);
+    assert.equal(asNone.notes.some(note => note.startsWith("name")), false, `${text} ${asNone.notes.join("|")}`);
+  }
+  const compoundDe = "Pfizerwerk stützt die Firma und der Kurs bleibt der Maßstab im neuen Jahr.";
+  const compoundVerdict = verifyChapter("einstieg", compoundDe, probeDe, [], true);
+  assert.equal(compoundVerdict.reasons.includes("language"), false, compoundVerdict.notes.join("|"));
+  assert.ok(compoundVerdict.notes.some(note => note.toLowerCase().includes("pfizerwerk")), compoundVerdict.notes.join("|"));
+  const peerNone = judgeHoldoutName({
+    pack: { company: "NVIDIA", peers: ["Siemens"], segments: [], regions: [] },
+    language: "de",
+    chapterId: "einstieg",
+    text: "Der Kurs bleibt der Maßstab und Siemens steht neben der Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    column: "none",
+  });
+  assert.equal(peerNone.notes.some(note => /siemens/i.test(note)), false, peerNone.notes.join("|"));
+  const bayerNone = verifyChapter("einstieg", "Der Kurs bleibt der Maßstab und Bayer steht im Satz der Firma. Die Aktie stützt die Bewertung im neuen Jahr.", probeDe, [], true);
+  assert.ok(bayerNone.notes.some(note => /bayer/i.test(note)), bayerNone.notes.join("|"));
+  ok("Satzanfang und Plural bleiben frei, Pfizerwerk und Bayer unter none nicht");
   const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
   assert.equal(genitive.ok, false, genitive.notes.join("|"));
   assert.ok(genitive.reasons.includes("token"), genitive.notes.join("|"));

@@ -7,6 +7,7 @@ import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodc
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
 import { DE_CLOSED_LEMMAS, DE_VERB_LEMMAS } from "./de-closed";
 import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "./de-companies";
+import { DE_PRODUCT_NAMES } from "./de-products";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { EN_COMMON_WORDS } from "./en-common";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
@@ -853,23 +854,10 @@ function knownOrdinary(lower: string): boolean {
   return nounOrPlural(lower) || ordinaryCompound(lower);
 }
 
-function ownFirmTokens(sheet: SpeechSheet): Set<string> {
-  const out = new Set<string>();
-  for (const fact of sheet.facts) {
-    if (fact.id !== "company" && !/^peer_[abc]$/.test(fact.id)) continue;
-    for (const word of fact.spoken.toLowerCase().split(/[^a-zäöüß0-9]+/)) {
-      if (word.length >= 2) out.add(word);
-    }
-  }
-  return out;
-}
-
 function noneTokenCleared(token: string, sheet: SpeechSheet, none = false): boolean {
   const clean = withoutPossessive(token).toLowerCase();
   if (!clean) return true;
   const capital = nameShaped(token);
-  const ownFirm = none && ownFirmTokens(sheet).has(clean);
-  if (ownFirm) return false;
   if (!capital) {
     if (clean.length < 5 || DE_COMPANY_AMBIGUOUS_SET.has(clean) || !DE_COMPANY_SET.has(clean)) return true;
     if (knownOrdinary(clean) || releasedNames(sheet).has(clean)) return true;
@@ -964,6 +952,7 @@ const STATIC_NAME_ALLOW: Array<[string, string]> = [
 
 const DE_COMPANY_SET = new Set(DE_COMPANY_NAMES);
 const DE_COMPANY_AMBIGUOUS_SET = new Set(DE_COMPANY_AMBIGUOUS);
+const DE_PRODUCT_SET = new Set(DE_PRODUCT_NAMES);
 
 let structuralNameCalls = 0;
 
@@ -994,9 +983,8 @@ function releasedNames(sheet: SpeechSheet): Set<string> {
 }
 
 /** Exakter Firmenkurzname, vor jedem Substantiv-Beweis. Freigegebene Pack-Namen zählen nicht. */
-function companyLexiconHit(text: string, sheet: SpeechSheet, none = false): { word: string; ambiguous: boolean } | null {
+function companyLexiconHit(text: string, sheet: SpeechSheet): { word: string; ambiguous: boolean } | null {
   const released = releasedNames(sheet);
-  const own = ownFirmTokens(sheet);
   for (const sentence of podcastSentences(text)) {
     for (const word of sentence.split(/\s+/).filter(Boolean)) {
       const token = tokenCore(word);
@@ -1005,8 +993,64 @@ function companyLexiconHit(text: string, sheet: SpeechSheet, none = false): { wo
       const ambiguous = DE_COMPANY_AMBIGUOUS_SET.has(clean);
       const capital = /^[A-ZÄÖÜ0-9]/.test(token);
       if (!capital && (ambiguous || clean.length < 5 || knownOrdinary(clean))) continue;
-      if (released.has(clean) && !(none && own.has(clean))) continue;
+      if (released.has(clean)) continue;
       return { word: tokenCore(word), ambiguous };
+    }
+  }
+  return null;
+}
+
+/** Firmenwort plus gewöhnlicher Rest, analog zur Nomen-Zerlegung. Ein nackter Firmenrest zählt nicht. */
+function companyCompoundWord(word: string, depth = 0): boolean {
+  const lower = withoutPossessive(word).toLowerCase();
+  if (lower.length < 8 || depth > 6 || companyForm(lower)) return false;
+  for (const suffix of COMPOUND_SUFFIXES) {
+    if (!lower.endsWith(suffix) || lower.length - suffix.length < 4) continue;
+    const rest = lower.slice(0, -suffix.length);
+    if (companyForm(rest) || companyCompoundWord(rest, depth + 1)) return true;
+  }
+  for (let endLen = lower.length - 4; endLen >= 4; endLen--) {
+    const end = lower.slice(lower.length - endLen);
+    const left = lower.slice(0, lower.length - endLen);
+    for (const fuge of COMPOUND_FUGEN) {
+      if (fuge && !left.endsWith(fuge)) continue;
+      const head = fuge ? left.slice(0, -fuge.length) : left;
+      if (head.length < 4) continue;
+      const headCo = companyForm(head);
+      const endCo = companyForm(end);
+      if (!headCo && !endCo) continue;
+      if (headCo && endCo) return true;
+      if (headCo && (nounOrPlural(end) || ordinaryCompound(end))) return true;
+      if (endCo && (nounOrPlural(head) || verbStem(head) || ordinaryCompound(head))) return true;
+    }
+  }
+  return false;
+}
+
+function nonePositiveHit(text: string, sheet: SpeechSheet): string | null {
+  const released = releasedNames(sheet);
+  for (const sentence of podcastSentences(text)) {
+    for (const word of sentence.split(/\s+/).filter(Boolean)) {
+      const token = tokenBody(word);
+      const clean = withoutPossessive(token).toLowerCase();
+      if (!clean || released.has(clean)) continue;
+      if (DE_PRODUCT_SET.has(clean)) return token;
+      if (companyCompoundWord(token)) return token;
+    }
+  }
+  return null;
+}
+
+function reportedLexiconHit(entities: string[] | null | undefined, raw: string, spoken: string, sheet: SpeechSheet): string | null {
+  if (!entities?.length) return null;
+  const released = releasedNames(sheet);
+  for (const entity of entities) {
+    for (const word of entity.split(/[^A-Za-zÄÖÜäöüß0-9]+/)) {
+      const clean = word.toLowerCase();
+      if (clean.length < 2 || released.has(clean)) continue;
+      if (!DE_COMPANY_SET.has(clean) && !DE_PRODUCT_SET.has(clean)) continue;
+      if (!entityMentioned(word, raw) && !entityMentioned(word, spoken)) continue;
+      return word;
     }
   }
   return null;
@@ -1312,15 +1356,17 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
-  const company = spoken ? companyLexiconHit(spoken, sheet, none) : null;
+  const company = spoken ? companyLexiconHit(spoken, sheet) : null;
   if (company) {
     note("name", company.word);
     if (company.ambiguous) note("ambiguous", company.word);
   }
-  if (spoken) {
-    const missed = noneNameMiss(spoken, sheet, none);
-    if (missed && !notes.some(item => item === `name ${missed}`)) note("name", missed);
+  if (none && spoken) {
+    const positive = nonePositiveHit(spoken, sheet);
+    if (positive && !notes.some(item => item === `name ${positive}`)) note("name", positive);
   }
+  const reported = spoken ? reportedLexiconHit(entities, raw, spoken, sheet) : null;
+  if (reported && !notes.some(item => item === `name ${reported}`)) note("name", reported);
   const possessive = spoken ? possessiveNameHit(spoken, sheet) : null;
   if (possessive) note("name", possessive);
   const leaked = spoken ? packNameLeak(spoken, sheet) : null;
