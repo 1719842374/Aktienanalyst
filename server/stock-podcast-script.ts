@@ -180,7 +180,7 @@ export async function renderStockPodcastScript(opts: {
       break;
     }
     regens += 1;
-    const redo = fluentPrompt(sheet, opts.source, brokenDrafts(drafts).map(draft => ({ id: draft.id, reasons: draft.reasons })));
+    const redo = fluentPrompt(sheet, opts.source, brokenDrafts(drafts).map(draft => ({ id: draft.id, reasons: draft.reasons, notes: draft.notes })));
     const redoAc = new AbortController();
     const edited = await withStageTimeout(opts.llm({
       prompt: redo.prompt,

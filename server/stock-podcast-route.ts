@@ -23,6 +23,7 @@ import {
   resolveStockPodcastVoice,
 } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts } from "../shared/podcast-facts";
+import { priceLabelFor } from "../shared/podcast-speak";
 import { callLLMJsonOutcome, isLLMAvailable } from "./llm-openrouter";
 import {
   peekPodcastPack,
@@ -145,7 +146,7 @@ function successBody(opts: {
     language: opts.script.language,
     asOf: opts.script.asOf,
     asOfLabel: opts.script.asOfLabel,
-    priceLabel: opts.script.priceLabel,
+    priceLabel: priceLabelFor(opts.script.facts.measures?.price ?? null, opts.script.facts.sig, opts.script.language) ?? opts.script.priceLabel,
     cacheKey: opts.script.cacheKey,
     voice: voice.id,
     voiceLabel: voice.label,

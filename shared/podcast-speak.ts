@@ -79,7 +79,22 @@ function speakUnsigned(v: number): string {
     const thWord = th === 1 ? "eintausend" : `${speakUnsigned(th)}tausend`;
     return rest === 0 ? thWord : `${thWord}${speakUnsigned(rest)}`;
   }
-  return String(v);
+  if (v < 1_000_000_000_000) {
+    const scale = v >= 1_000_000_000 ? 1_000_000_000 : 1_000_000;
+    const unit = scale === 1_000_000_000 ? "Milliarde" : "Million";
+    const units = scale === 1_000_000_000 ? "Milliarden" : "Millionen";
+    const headCount = Math.floor(v / scale);
+    const rest = v % scale;
+    const head = headCount === 1 ? `eine ${unit}` : `${speakUnsigned(headCount)} ${units}`;
+    return rest === 0 ? head : `${head} ${speakUnsigned(rest)}`;
+  }
+  return speakUnsigned(Math.floor(v / 1_000_000_000_000)) + " Billionen";
+}
+
+function withUnit(spoken: string, unit: "Dollar" | "Prozent"): string {
+  if (spoken === "eins") return unit === "Dollar" ? "ein Dollar" : "ein Prozent";
+  if (spoken === "minus eins") return unit === "Dollar" ? "minus ein Dollar" : "minus ein Prozent";
+  return `${spoken} ${unit}`;
 }
 
 /** Dieselbe Rundung wie speakRounded, ohne deutsche Zahlwörter. */
@@ -107,7 +122,7 @@ export function speakPercent(n: number): string | null {
   const frac = Math.round((abs - whole) * 10);
   const head = speakUnsigned(whole);
   const body = frac === 0 ? head : `${head} Komma ${ONES[frac]}`;
-  return `${neg}${body} Prozent`;
+  return withUnit(`${neg}${body}`, "Prozent");
 }
 
 export function speakAmountUsd(n: number): string | null {
@@ -134,7 +149,7 @@ export function speakAmountUsd(n: number): string | null {
 export function speakPriceUsd(n: number, sig = 3): string | null {
   const spoken = speakRounded(n, sig);
   if (!spoken) return null;
-  return `${spoken} Dollar`;
+  return withUnit(spoken, "Dollar");
 }
 
 function ordinalInCase(ordinal: string, gramCase: "nom" | "dat"): string {
@@ -317,6 +332,13 @@ export function speakNormalize(text: string): string | null {
 export function priceLabelDe(n: number | null): string | null {
   if (n == null || !Number.isFinite(n)) return null;
   return n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+}
+
+/** Label zur gerundeten Sprechzahl, in der Sprache des Laufs. */
+export function priceLabelFor(n: number | null, sig: number, language: "de" | "en"): string | null {
+  if (n == null || !Number.isFinite(n) || sig < 1) return null;
+  const rounded = roundSig(n, sig);
+  return rounded.toLocaleString(language === "en" ? "en-US" : "de-DE", { maximumFractionDigits: 2 });
 }
 
 export interface RankedFigures {

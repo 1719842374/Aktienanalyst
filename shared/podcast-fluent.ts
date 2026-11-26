@@ -27,12 +27,21 @@ export interface SpeechSheet {
   context: string;
   /** Titel, die erst nach einer geprüften Übersetzung gesprochen werden. */
   pendingTitles: PendingTitle[];
+  /** Sätze, die der Code setzt und die das Modell nicht als Token sieht. */
+  codeLines: CodeLine[];
+}
+
+export interface CodeLine {
+  chapterId: string;
+  spoken: string;
 }
 
 export interface ChapterVerdict {
   ok: boolean;
   spoken: string;
   reasons: string[];
+  /** Konkretes Wort und Grund für den nächsten Schreibversuch. */
+  notes: string[];
 }
 
 const BARE_PLACEHOLDER = new RegExp(`\\b(?:${PODCAST_PLACEHOLDERS.filter(name => name.includes("_")).join("|")}|crv)\\b`, "i");
@@ -44,9 +53,9 @@ const DE_MARKER = /\b(der|die|das|den|dem|und|ist|liegt|bei|für|im|ein|eine|nic
 const EN_MARKER = /\b(the|and|of|to|for|with|from|this|that|is|are|stands|stay|stays)\b/i;
 const DE_LEAK = /\b(der|die|das|den|dem|und|liegt|liegen|nicht|für|eine|einer|ist|sind|geschäftsjahr|prozent|anlageberatung|heute|gestern|beträgt|steht|stammt|faktenblatt|angabe|jüngste)\b/i;
 
-const DE_LEXICON = new Set(`der die das den dem des ein eine einer einem einen eines eins und oder für von mit auf im in am an bei aus nach vor über unter zwischen ohne als auch noch nur sehr hier dort dann dazu damit dieser diese dieses diesen diesem belegte belegten größten grössten größte grösste jüngste naechste nächste rechnerische faire genannt wir sprechen heute steht bleibt bleiben liegt liegen hat haben ist sind kommt kommen gilt gelten heißt heisst gehört gehören wird werden war waren zeigt zeigen hält halten bezieht beziehen fasst fassen spricht sprechen trägt tragen nennt nennen folgt folgen ordnet ordnen stützt stuetzen stützt wächst waechst begrenzt angekündigt gemeldet wurde wurden danach zuletzt ampel einordnung wert verhältnis komma aktie firma jahr monat januar februar märz maerz april mai juni juli august september oktober november dezember umsatz gewinn marge wachstum kurs bewertung risiko chance katalysator segment markt branche unternehmen gesellschaft anleger nachfrage angebot wettbewerb preis regulierung produktion plattform software zukunft vergleich massstab maßstab hebel rahmen gegenpol spitze liste einschätzung einschaetzung meldung fenster alter stand datum quartal prozent dollar euro potenzial potential anteil aufteilung jahreswert geschäftsjahr geschaeftsjahr einstieg these geschichte hersteller spezialist nachricht bericht periode termin kapitel lauf angabe faktenblatt werte satz absatz überblick ueberblick bild sicht lage trend ausblick ergebnis verlust cashflow rendite dividende bilanz zins kapital kosten ertrag volumen stück kueck kunde käufer kaeufer region land welt europa asien amerika geschäft geschaeft call earnings umsatzwachstum marktwert gegenseite einordnung vollständig vollstaendig zahlen quelle`.split(/\s+/));
+const DE_LEXICON = new Set(`der die das den dem des ein eine einer einem einen eines eins und oder für von mit auf im in am an bei aus nach vor über unter zwischen ohne als auch noch nur sehr hier dort dann dazu damit dieser diese dieses diesen diesem belegte belegten größten grössten größte grösste jüngste naechste nächste rechnerische faire genannt wir heute danach zuletzt ampel einordnung wert verhältnis komma aktie firma jahr monat januar februar märz maerz april mai juni juli august september oktober november dezember umsatz gewinn marge wachstum kurs bewertung risiko chance katalysator segment markt branche unternehmen gesellschaft anleger nachfrage angebot wettbewerb preis regulierung produktion plattform software zukunft vergleich massstab maßstab hebel rahmen gegenpol spitze liste einschätzung einschaetzung meldung fenster alter stand datum quartal prozent dollar euro potenzial potential anteil aufteilung jahreswert geschäftsjahr geschaeftsjahr einstieg these geschichte hersteller spezialist nachricht bericht periode termin kapitel lauf angabe faktenblatt werte satz absatz überblick ueberblick bild sicht lage trend ausblick ergebnis verlust cashflow rendite dividende bilanz zins kapital kosten ertrag volumen stück kueck kunde käufer kaeufer region land welt europa asien amerika geschäft geschaeft call earnings umsatzwachstum marktwert gegenseite einordnung vollständig vollstaendig zahlen quelle`.split(/\s+/));
 
-const EN_LEXICON = new Set(`the a an we this that these those our their its and of in for from with at to by on as after is are was were has have stands stand stays stay comes come looks look refers refer accounts account sums sum holds hold dates date not today price fair value largest next latest verified catalyst catalysts risk risks report reports signal view thesis opening calculated entry period investment advice figures figure revenue growth fiscal year annual segment share potential demand margin quarter date window source chapter episode company market competition platform data center gaming dollars dollar percent point negative zero picture split chance ratio call earnings`.split(/\s+/));
+const EN_LEXICON = new Set(`the a an we this that these those our their its and of in for from with at to by on as after not today date price fair value largest next latest verified catalyst catalysts risk risks report reports signal view thesis opening calculated entry period investment advice figures figure revenue growth fiscal year annual segment share potential demand margin quarter date window source chapter episode company market competition platform data center gaming dollars dollar percent point negative zero picture split chance ratio call earnings`.split(/\s+/));
 
 /** NVIDIA-Segmentnamen, die das Unternehmen selbst englisch führt und die im Deutschen Eigenname bleiben. */
 const KEEP_EN_SEGMENT_IN_DE = new Set(["data center", "gaming"]);
@@ -150,8 +159,10 @@ function speakEnAmpel(raw: string | null): string | null {
 
 function enMoney(n: number | null | undefined, sig: number): string | null {
   if (n == null) return null;
+  const parts = roundedParts(Math.abs(n), sig);
   const words = speakEnNumber(n, sig);
-  return words ? `${words} dollars` : null;
+  if (!words || !parts) return null;
+  return parts.int === 1 && parts.frac === "" ? `${words} dollar` : `${words} dollars`;
 }
 
 function enPercent(n: number | null | undefined): string | null {
@@ -172,6 +183,7 @@ function modelContext(raw: string): string {
 function cleanSpoken(value: string | null | undefined): string | null {
   const text = value?.trim() ?? "";
   if (!text || /\d/.test(text)) return null;
+  if (/^(?:n\/a|n\.a\.|na|-|—)$/i.test(text)) return null;
   return text;
 }
 
@@ -195,7 +207,7 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
   addFact(out, "company", values.company, companySource);
   if (language === "de") {
     addFact(out, "price", values.price, "analysis.currentPrice");
-    addFact(out, "as_of", values.as_of, "analysis.dataTimestamp");
+    addFact(out, "as_of", values.as_of ? `auf den ${values.as_of}` : null, "analysis.dataTimestamp");
     addFact(out, "ampel", values.ampel, "analysis.s17Verdict");
     addFact(out, "fy_yoy", values.fy_yoy, "analysis.revenueGrowth");
     addFact(out, "gj_year", values.gj_year, "analysis.fiscalYear");
@@ -203,16 +215,15 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     addFact(out, "top_segment_share", values.top_segment_share, "analysis.revenueSegments");
     addFact(out, "dcf_fair", values.dcf_fair, "analysis.dcfConservative");
     addFact(out, "entry", values.entry, "analysis.maxEntryCrv3");
-    addFact(out, "crv", crvSentence(values.crv, "de"), "analysis.crv");
     addFact(out, "wacc", values.wacc, "analysis.wacc");
     addFact(out, "g_star", values.g_star, "analysis.gStar");
-    addFact(out, "news_age", values.news_age, "analysis.newsItems");
-    addFact(out, "call_date", values.call_date, "analysis.nextEarningsDate");
+    addFact(out, "news_age", frameNewsAge(values.news_age, "de"), "analysis.newsItems");
+    addFact(out, "call_date", values.call_date ? `für den ${values.call_date}` : null, "analysis.nextEarningsDate");
     addFact(out, "call_quarter", values.call_quarter, "analysis.lastReportedQuarter");
   } else {
     const sig = measures?.sig ?? 3;
     addFact(out, "price", enMoney(measures?.price, sig), "analysis.currentPrice");
-    addFact(out, "as_of", measures ? speakEnDate(measures.asOfIso) : null, "analysis.dataTimestamp");
+    addFact(out, "as_of", measures ? frameEnDate(speakEnDate(measures.asOfIso)) : null, "analysis.dataTimestamp");
     addFact(out, "ampel", speakEnAmpel(measures?.ampel ?? values.ampel), "analysis.s17Verdict");
     addFact(out, "fy_yoy", enPercent(measures?.fyYoy), "analysis.revenueGrowth");
     addFact(out, "gj_year", measures?.fiscalYear != null ? speakEnYear(measures.fiscalYear) : null, "analysis.fiscalYear");
@@ -220,11 +231,10 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     addFact(out, "top_segment_share", enPercent(measures?.segmentShare), "analysis.revenueSegments");
     addFact(out, "dcf_fair", enMoney(measures?.fair, sig), "analysis.dcfConservative");
     addFact(out, "entry", enMoney(measures?.entry, sig), "analysis.maxEntryCrv3");
-    addFact(out, "crv", crvSentence(measures?.crv != null ? speakEnNumber(measures.crv, 3) : null, "en"), "analysis.crv");
     addFact(out, "wacc", enPercent(measures?.wacc), "analysis.wacc");
     addFact(out, "g_star", enPercent(measures?.gStar), "analysis.gStar");
-    addFact(out, "news_age", measures?.newsAgeDays != null ? speakEnAge(measures.newsAgeDays) : null, "analysis.newsItems");
-    addFact(out, "call_date", measures?.callDateIso ? speakEnDate(measures.callDateIso) : null, "analysis.nextEarningsDate");
+    addFact(out, "news_age", measures?.newsAgeDays != null ? frameNewsAge(speakEnAge(measures.newsAgeDays), "en") : null, "analysis.newsItems");
+    addFact(out, "call_date", measures?.callDateIso ? frameEnCall(speakEnDate(measures.callDateIso)) : null, "analysis.nextEarningsDate");
     addFact(out, "call_quarter", speakEnQuarter(measures?.callQuarterRaw ?? null), "analysis.lastReportedQuarter");
   }
   const pendingTitles: PendingTitle[] = [];
@@ -263,14 +273,39 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     if (existing) existing.spoken = title ?? segmentPrefix;
     else addFact(out, "top_segment", title ?? segmentPrefix, "analysis.revenueSegments");
   }
+  const codeLines: CodeLine[] = [];
+  const crvWords = language === "de" ? values.crv : (measures?.crv != null ? speakEnNumber(measures.crv, 3) : null);
+  const crv = crvSentence(crvWords, language);
+  if (crv) codeLines.push({ chapterId: "dcf", spoken: crv });
   const thesis = thesisFact(facts, language);
-  if (thesis) out.push(thesis);
+  if (thesis) {
+    codeLines.push({ chapterId: "these", spoken: thesis.spoken });
+    codeLines.push({
+      chapterId: "these",
+      spoken: language === "de" ? "Diese These ordnet die Aktie der Firma ein." : "This thesis ranks the company in the market.",
+    });
+  }
   return {
     language,
     facts: out,
     context: modelContext(facts.redactedContext),
     pendingTitles,
+    codeLines,
   };
+}
+
+function frameNewsAge(age: string | null, language: PodcastLanguage): string | null {
+  if (!age) return null;
+  if (language === "de") return age === "heute" || age === "gestern" ? `von ${age}` : age;
+  return age === "today" || age === "yesterday" ? `from ${age}` : age;
+}
+
+function frameEnDate(date: string | null): string | null {
+  return date ? `as of ${date}` : null;
+}
+
+function frameEnCall(date: string | null): string | null {
+  return date ? `for ${date}` : null;
 }
 
 function pairPrefix(language: PodcastLanguage, top: boolean): string {
@@ -338,7 +373,7 @@ const CHAPTER_FACT_IDS: Record<string, string[]> = {
   zusammenfassung: ["company", "ampel"],
   these: ["thesis"],
   umsatz: ["fy_yoy", "gj_year", "top_segment", "top_segment_share"],
-  dcf: ["dcf_fair", "entry", "crv", "wacc", "g_star"],
+  dcf: ["dcf_fair", "entry", "wacc", "g_star"],
   s17: ["pair_a", "pair_b", "pair_c"],
   inversion: ["entry", "risk_a", "risk_b", "risk_c"],
   earnings: ["call_quarter", "call_date"],
@@ -366,9 +401,29 @@ export function fluencyStats(text: string): { sentences: number; avg: number; sh
   return { sentences: sentences.length, avg, short: counts.filter(n => n < 4).length };
 }
 
+const DE_AUX = /^(?:ist|sind|war|waren|hat|haben|hatte|hatten|wird|werden|wurde|wurden|kann|konnte|muss|musste|soll|sollte|darf|durfte|will|wollte|mag|möchte)$/i;
+const EN_AUX = /^(?:is|are|was|were|be|been|being|has|have|had|do|does|did|grew|sat|went|came|made|took|saw|said|got|left|kept|held|found|gave)$/i;
+
+function finiteVerb(sentence: string, language: PodcastLanguage): boolean {
+  const nouns = language === "de" ? DE_LEXICON : EN_LEXICON;
+  const words = sentence.split(/\s+/).map(word => word.replace(/^[^A-Za-zÄÖÜäöüß]+|[^A-Za-zÄÖÜäöüß]+$/g, "")).filter(Boolean);
+  for (const word of words) {
+    const lower = word.toLowerCase();
+    if (language === "de") {
+      if (DE_AUX.test(lower)) return true;
+      if (lower.length < 4 || wordAllowed(lower, nouns, "de")) continue;
+      if (/(?:te|ten|test|tet|st|t|en)$/.test(lower)) return true;
+    } else {
+      if (EN_AUX.test(lower)) return true;
+      if (lower.length < 4 || nouns.has(lower)) continue;
+      if (/(?:ed|es|s)$/.test(lower)) return true;
+    }
+  }
+  return false;
+}
+
 function verbsOk(text: string, language: PodcastLanguage): boolean {
-  const pattern = language === "de" ? DE_VERB : EN_VERB;
-  return podcastSentences(text).every(sentence => pattern.test(sentence));
+  return podcastSentences(text).every(sentence => finiteVerb(sentence, language));
 }
 
 function maskFacts(text: string, facts: SpeechFact[]): string {
@@ -404,6 +459,17 @@ function wordAllowed(word: string, allowed: Set<string>, language: PodcastLangua
   const clean = word.toLowerCase();
   if (!clean) return true;
   if (allowed.has(clean)) return true;
+  if (language === "de" && clean.length >= 5) {
+    const stem = clean.replace(/(?:ern|en|er|em|es|e|n|s)$/, "");
+    if (stem.length >= 4 && stem !== clean) {
+      if (allowed.has(stem)) return true;
+      let stemmed = false;
+      allowed.forEach(known => {
+        if (known.length >= 4 && known.startsWith(stem) && known.length - stem.length <= 2) stemmed = true;
+      });
+      if (stemmed) return true;
+    }
+  }
   const parts = clean.split("-").filter(Boolean);
   if (parts.length > 1 && parts.every(part => allowed.has(part))) return true;
   if (language === "de" && clean.length >= 8) {
@@ -416,21 +482,22 @@ function wordAllowed(word: string, allowed: Set<string>, language: PodcastLangua
   return false;
 }
 
-function unknownName(text: string, sheet: SpeechSheet): boolean {
+function unknownName(text: string, sheet: SpeechSheet): string | null {
   const allowed = allowedWords(sheet);
   for (const sentence of podcastSentences(text)) {
     const words = sentence.split(/\s+/).filter(Boolean);
     for (let i = 0; i < words.length; i++) {
       const clean = (words[i] ?? "").replace(/^[^A-Za-zÄÖÜäöüß]+|[^A-Za-zÄÖÜäöüß]+$/g, "");
       if (!clean || !/^[A-ZÄÖÜ]/.test(clean)) continue;
-      if (!wordAllowed(clean, allowed, sheet.language)) return true;
+      if (!wordAllowed(clean, allowed, sheet.language)) return clean;
     }
   }
-  return false;
+  return null;
 }
 
 const DE_NUMBER_ATOMS = ["milliarden", "millionen", "milliarde", "million", "tausend", "hundert", "neunzehn", "achtzehn", "siebzehn", "sechzehn", "fünfzehn", "fuenfzehn", "vierzehn", "dreizehn", "zwölf", "zwoelf", "elf", "neunzig", "achtzig", "siebzig", "sechzig", "fünfzig", "fuenfzig", "vierzig", "dreißig", "dreissig", "zwanzig", "zehn", "neun", "acht", "sieben", "sechs", "fünf", "fuenf", "vier", "drei", "zwei", "null"];
-const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent)\b/i;
+const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved)\b/i;
+const DE_FOLD = /\b(verdoppelt|verdreifacht|halbiert|hälfte|haelfte|drittel|viertel)\b|\b[A-Za-zÄÖÜäöüß]*fach\b/i;
 
 function isGermanQuantity(word: string): boolean {
   const w = word.toLowerCase();
@@ -456,41 +523,73 @@ function isGermanQuantity(word: string): boolean {
   return parts > 0;
 }
 
-export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
+function maskKnownPhrases(text: string, sheet: SpeechSheet): string {
   let masked = text;
-  const phrases = facts.map(fact => fact.spoken).filter(spoken => spoken.length > 2).sort((a, b) => b.length - a.length);
+  const phrases = [...sheet.facts.map(fact => fact.spoken), ...sheet.codeLines.map(line => line.spoken)]
+    .filter(spoken => spoken.length > 2)
+    .sort((a, b) => b.length - a.length);
   for (const phrase of phrases) masked = masked.split(phrase).join(" ");
-  if (language === "en") return EN_NUMBER.test(masked);
-  return masked.split(/[^A-Za-zÄÖÜäöüß]+/).filter(Boolean).some(word => isGermanQuantity(word));
+  return masked;
+}
+
+export function quantityWord(text: string, sheet: SpeechSheet): string | null {
+  const masked = maskKnownPhrases(text, sheet);
+  if (sheet.language === "en") {
+    const hit = EN_NUMBER.exec(masked);
+    return hit?.[0] ?? null;
+  }
+  const fold = DE_FOLD.exec(masked);
+  if (fold?.[0]) return fold[0];
+  return masked.split(/[^A-Za-zÄÖÜäöüß]+/).find(word => isGermanQuantity(word)) ?? null;
+}
+
+export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
+  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [] }) != null;
 }
 
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {
   return text.replace(TOKEN_RE, (all, id: string) => facts.find(fact => fact.id === id)?.spoken ?? all);
 }
 
+const SLOT_UNIT = /\[\[(price|dcf_fair|entry|fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]\s+(Dollar|Prozent|Euro|dollars|percent|dollar)\b/i;
+const ARTICLE_SLOT = /\b(ein|eine|einem|einen|one|a|an)\s+\[\[(fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]/i;
+const DOUBLED_UNIT = /\b(Dollar|Prozent|Euro|dollars|percent)\s+\1\b/i;
+const DATE_ARTICLE = /\b(?:Der|Die|Das|Den|The)\s+\[\[(?:as_of|call_date)\]\]/;
+
 export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet): ChapterVerdict {
   const facts = factsForChapter(sheet, chapterId);
   const spoken = applyFactTokens(raw, sheet.facts).replace(/\s+/g, " ").trim();
   const reasons: string[] = [];
+  const notes: string[] = [];
+  const note = (code: string, word: string) => {
+    reasons.push(code);
+    notes.push(`${code} ${word}`);
+  };
   if (!spoken) reasons.push("empty");
-  if (/\d/.test(spoken)) reasons.push("digit");
-  if (/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/.test(spoken) || BARE_PLACEHOLDER.test(spoken)) reasons.push("placeholder");
-  if (/\blieg(?:t|en)\s+nicht\s+vor\b/i.test(spoken)) reasons.push("absent");
-  if (/\bYTD\b|seit Jahresbeginn/i.test(spoken)) reasons.push("ytd");
-  if (/^\s*[-•]/m.test(raw)) reasons.push("list");
-  const crv = factById(facts, "crv");
-  if (crv && !spoken.includes(crv.spoken)) reasons.push("crv");
-  if (spoken && !languageOk(spoken, sheet.language, facts)) reasons.push("language");
-  if (spoken && unknownName(spoken, sheet)) reasons.push("name");
-  if (spoken && quantityOutsideFacts(spoken, sheet.facts, sheet.language)) reasons.push("number");
+  if (/\d/.test(spoken)) note("digit", spoken.match(/\d+/)?.[0] ?? "digit");
+  if (/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/.test(spoken) || BARE_PLACEHOLDER.test(spoken)) {
+    note("placeholder", spoken.match(/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/)?.[0] ?? "placeholder");
+  }
+  if (/\blieg(?:t|en)\s+nicht\s+vor\b/i.test(spoken)) note("absent", "liegt nicht vor");
+  if (/\bYTD\b|seit Jahresbeginn/i.test(spoken)) note("ytd", "YTD");
+  if (/^\s*[-•]/m.test(raw)) note("list", "list");
+  const unit = raw.match(SLOT_UNIT)?.[2] ?? raw.match(ARTICLE_SLOT)?.[1] ?? spoken.match(DOUBLED_UNIT)?.[1] ?? (DATE_ARTICLE.test(raw) ? "Datum" : null);
+  if (unit) note("unit", unit);
+  if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
+  const name = spoken ? unknownName(spoken, sheet) : null;
+  if (name) note("name", name);
+  const quantity = spoken ? quantityWord(spoken, sheet) : null;
+  if (quantity) note("number", quantity);
   const flu = fluencyStats(spoken);
-  if (!spoken || flu.sentences < 2 || flu.short > 0 || flu.avg < 8 || !verbsOk(spoken, sheet.language)) reasons.push("fragment");
+  if (!spoken || flu.sentences < 2 || flu.short > 0 || flu.avg < 8 || !verbsOk(spoken, sheet.language)) {
+    note("fragment", flu.short > 0 ? "kurz" : "verb");
+  }
   const naked = podcastSentences(spoken).some(sentence => {
     const bare = sentence.replace(/[.!?]+$/g, "").trim();
     return facts.some(fact => fact.spoken.replace(/[.!?]+$/g, "").trim() === bare && fact.spoken.split(/\s+/).length < 6);
   });
-  if (naked) reasons.push("fragment");
-  return { ok: reasons.length === 0, spoken, reasons };
+  if (naked) note("fragment", "label");
+  return { ok: reasons.length === 0, spoken, reasons, notes };
 }
 
 function period(text: string): string {
@@ -514,7 +613,7 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const asOf = take("as_of");
     if (company && price) parts.push(de ? `Wir sprechen heute über ${company}, und der Kurs steht bei ${price}` : `We look at ${company} today and the price stands at ${price}`);
     else if (price) parts.push(de ? `Der Kurs steht bei ${price} und ist der belegte Marktwert der Aktie` : `The price stands at ${price} and is the verified market value`);
-    if (asOf) parts.push(de ? `Der Stand bezieht sich auf den ${asOf}` : `The figures refer to ${asOf}`);
+    if (asOf) parts.push(de ? `Der Stand bezieht sich ${asOf}` : `The figures are dated ${asOf}`);
     else if (price) parts.push(de ? "Dieser Kurs ist der belegte Marktwert der Aktie" : "This price is the verified market value of the company");
   } else if (chapterId === "zusammenfassung") {
     const ampel = take("ampel");
@@ -544,10 +643,8 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
   } else if (chapterId === "dcf") {
     const fair = take("dcf_fair");
     const entry = take("entry");
-    const crv = take("crv");
     if (fair) parts.push(de ? `Der faire Wert liegt bei ${fair} und stammt aus der belegten Bewertung` : `The fair value stands at ${fair} and comes from the verified valuation`);
     if (entry) parts.push(de ? `Der rechnerische Einstieg liegt bei ${entry}` : `The calculated entry stands at ${entry}`);
-    if (crv) parts.push(crv);
     if (parts.length < 2) parts.push(de ? "Diese Bewertung ordnet die Aktie der Firma ein" : "This valuation ranks the company in the market");
   } else if (chapterId === "s17") {
     const first = take("pair_a");
@@ -558,24 +655,43 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
   } else if (chapterId === "inversion") {
     const risks = ["risk_a", "risk_b", "risk_c"].map(take).filter((name): name is string => !!name);
     const entry = take("entry");
-    if (risks.length) parts.push(de ? `Die Gegenseite nennt ${risks.join(" und ")} und begrenzt die Chance der Firma` : `The risks are ${risks.join(" and ")} and limit the chance of the company`);
+    if (risks.length === 1) {
+      const risk = risks[0] ?? "";
+      const category = de ? risk === "das genannte Risiko" : risk === "the named risk";
+      parts.push(category
+        ? (de ? "Die Gegenseite begrenzt die Chance der Firma" : "The named risk limits the chance of the company")
+        : (de ? `Das genannte Risiko ist ${risk} und begrenzt die Chance der Firma` : `The named risk is ${risk} and limits the chance of the company`));
+    } else if (risks.length > 1) {
+      parts.push(de
+        ? `Die Risiken sind ${risks.join(" und ")} und begrenzen die Chance der Firma`
+        : `The risks are ${risks.join(" and ")} and limit the chance of the company`);
+    }
     if (entry) parts.push(de ? `Der rechnerische Einstieg liegt bei ${entry}` : `The calculated entry stands at ${entry}`);
     else if (risks.length) parts.push(de ? "Dieses Risiko bleibt der Gegenpol zur belegten Chance" : "This risk limits the verified chance of the company");
   } else if (chapterId === "earnings") {
     const quarter = take("call_quarter");
     const date = take("call_date");
     if (quarter) parts.push(de ? `Zuletzt gemeldet wurde das ${quarter}` : `The latest reported period is ${quarter}`);
-    if (date) parts.push(de ? `Der nächste Earnings Call ist für den ${date} angekündigt` : `The next earnings call is set for ${date}`);
+    if (date) parts.push(de ? `Der nächste Earnings Call ist ${date} angekündigt` : `The next earnings call is set ${date}`);
     if (parts.length < 2 && parts.length > 0) parts.push(de ? "Dieser Termin ist der belegte Stand des Calls" : "This date is the verified timing of the call");
   } else if (chapterId === "news" || chapterId === "news-llm") {
     const age = take("news_age");
     if (age) {
-      parts.push(de ? `Die jüngste Meldung stammt von ${age} und liegt im betrachteten Fenster` : `The latest report dates from ${age} and stays inside the window we considered`);
+      parts.push(de ? `Die jüngste Meldung stammt ${age} und liegt im betrachteten Fenster` : `The latest report dates ${age} and stays inside the window we considered`);
       parts.push(de ? "Dieses Alter ist der belegte Stand der Meldung" : "This age is the verified timing of the report");
     }
   }
-  if (!parts.length) return "";
-  return joinSentences(parts);
+  const body = parts.length ? joinSentences(parts) : "";
+  return appendCodeLines(body, sheet, chapterId);
+}
+
+function appendCodeLines(text: string, sheet: SpeechSheet, chapterId: string): string {
+  let out = text.trim();
+  for (const line of sheet.codeLines) {
+    if (line.chapterId !== chapterId || out.includes(line.spoken)) continue;
+    out = `${out} ${line.spoken}`.trim();
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function schlussParagraph(language: PodcastLanguage): string {
@@ -661,7 +777,7 @@ export function titlePrompt(sheet: SpeechSheet): { prompt: string; systemPrompt:
 export function fluentPrompt(
   sheet: SpeechSheet,
   source: StockPodcastSource,
-  redo?: Array<{ id: string; reasons: string[] }>,
+  redo?: Array<{ id: string; reasons: string[]; notes?: string[] }>,
 ): { prompt: string; systemPrompt: string } {
   const chapters = chaptersForSource(source).filter(def => def.id !== "schluss" && factsForChapter(sheet, def.id).length > 0);
   const wanted = redo?.length ? chapters.filter(def => redo.some(row => row.id === def.id)) : chapters;
@@ -670,7 +786,7 @@ export function fluentPrompt(
     return `[[${fact.id}]] = ${fact.spoken} (${label})`;
   });
   const redoLine = redo?.length
-    ? redo.map(row => `${row.id}: ${row.reasons.join(", ")}`).join("\n")
+    ? redo.map(row => `${row.id}: ${(row.notes && row.notes.length ? row.notes : row.reasons).join("; ")}`).join("\n")
     : "";
   const systemPrompt = sheet.language === "en"
     ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\"}]}"
@@ -686,8 +802,8 @@ export function fluentPrompt(
     wanted.map(def => def.id).join(", "),
     redoLine ? `NEU SCHREIBEN\n${redoLine}` : "",
     sheet.language === "en"
-      ? "Use the tokens in whole sentences. The chance-risk token, when listed, must appear as its own sentence."
-      : "Setze die Token in ganze Sätze. Das Chance-Risiko-Token steht, wenn es gelistet ist, als eigener Satz.",
+      ? "Use each token once, as a fixed phrase. Do not repeat dollars, percent, or an article in front of a token. Date tokens already include as of or for."
+      : "Setze jedes Token einmal als feste Wendung. Wiederhole Dollar oder Prozent nicht und setze keinen Artikel davor. Datums-Token enthalten schon auf den oder für den.",
   ].filter(Boolean).join("\n");
   return { prompt, systemPrompt };
 }
@@ -730,6 +846,7 @@ export interface FluentDraft {
   id: string;
   attempts: number;
   reasons: string[];
+  notes: string[];
   spoken: string;
 }
 
@@ -741,7 +858,7 @@ export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, model
     if (!factsForChapter(sheet, def.id).length) continue;
     const raw = found.get(def.id) ?? "";
     if (!raw) {
-      drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], spoken: "" });
+      drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], notes: ["empty"], spoken: "" });
       continue;
     }
     const verdict = verifyChapter(def.id, raw, sheet);
@@ -749,7 +866,8 @@ export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, model
       id: def.id,
       attempts: 1,
       reasons: verdict.ok ? [] : verdict.reasons,
-      spoken: verdict.ok ? verdict.spoken : raw,
+      notes: verdict.ok ? [] : verdict.notes,
+      spoken: verdict.ok ? appendCodeLines(verdict.spoken, sheet, def.id) : raw,
     });
   }
   return drafts;
@@ -760,13 +878,14 @@ export function applyRedo(sheet: SpeechSheet, drafts: FluentDraft[], modelData: 
   return drafts.map(draft => {
     if (!draft.reasons.length || draft.reasons[0] === "empty" || draft.reasons[0] === "timeout") return draft;
     const raw = found.get(draft.id) ?? "";
-    if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], spoken: "" };
+    if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], notes: ["empty"], spoken: "" };
     const verdict = verifyChapter(draft.id, raw, sheet);
     return {
       id: draft.id,
       attempts: draft.attempts + 1,
       reasons: verdict.ok ? [] : verdict.reasons,
-      spoken: verdict.ok ? verdict.spoken : raw,
+      notes: verdict.ok ? [] : verdict.notes,
+      spoken: verdict.ok ? appendCodeLines(verdict.spoken, sheet, draft.id) : raw,
     };
   });
 }
@@ -787,7 +906,13 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
       continue;
     }
     const draft = drafts.find(row => row.id === def.id);
-    if (!draft) continue;
+    const codeSpoken = appendCodeLines("", sheet, def.id);
+    if (!draft) {
+      if (!codeSpoken) continue;
+      chapters.push(chapterShell(def, codeSpoken, false));
+      reports.push({ id: def.id, attempts: 1, fallback: null });
+      continue;
+    }
     if (!draft.reasons.length) {
       chapters.push(chapterShell(def, draft.spoken, true));
       reports.push({ id: def.id, attempts: draft.attempts, fallback: null });

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { DCF_CALIBRATION } from "../shared/dcf-calibration";
 import { buildPodcastFacts } from "../shared/podcast-facts";
+import { priceLabelFor, speakPriceUsd } from "../shared/podcast-speak";
 import {
   applyTitleMap,
   buildSpeechSheet,
@@ -141,7 +142,8 @@ async function main() {
   assert.ok(deSheet.facts.every(fact => fact.source && fact.spoken && !/\d/.test(fact.spoken)));
   assert.equal(deSheet.facts.find(fact => fact.id === "price")?.source, "analysis.currentPrice");
   assert.equal(deSheet.facts.find(fact => fact.id === "company")?.source, "yahoo-chart");
-  assert.ok(deSheet.facts.some(fact => fact.id === "crv" && fact.spoken.startsWith("Das Chance-Risiko-Verhältnis liegt bei ")));
+  assert.ok(deSheet.codeLines.some(line => line.chapterId === "dcf" && line.spoken.startsWith("Das Chance-Risiko-Verhältnis liegt bei ")));
+  assert.equal(deSheet.facts.some(fact => fact.id === "crv" || fact.id === "thesis"), false);
   assert.equal(deSheet.facts.some(fact => fact.id === "missing"), false);
   const prompt = fluentPrompt(deSheet, "pdf");
   assert.equal(/\d/.test(prompt.prompt.replace(/\bs17\b/g, "")), false, prompt.prompt);
@@ -151,12 +153,12 @@ async function main() {
   for (const def of chaptersForSource("pdf")) {
     if (def.id === "schluss") continue;
     const paragraph = fallbackParagraph(def.id, deSheet);
-    if (!factsForChapter(deSheet, def.id).length) {
+    if (!factsForChapter(deSheet, def.id).length && !deSheet.codeLines.some(line => line.chapterId === def.id)) {
       assert.equal(paragraph, "");
       continue;
     }
     const verdict = verifyChapter(def.id, paragraph, deSheet);
-    assert.equal(verdict.ok, true, `${def.id} ${verdict.reasons.join(",")} ${paragraph}`);
+    assert.equal(verdict.ok, true, `${def.id} ${verdict.notes.join("|")} ${paragraph}`);
     const stats = fluencyStats(paragraph);
     assert.ok(stats.sentences >= 2 && stats.avg >= 8 && stats.short === 0, def.id);
   }
@@ -170,7 +172,8 @@ async function main() {
   assert.match(enUmsatz, /one hundred fourteen percent/);
   assert.match(enUmsatz, /two thousand twenty six/);
   assert.equal(/\b(liegt|Geschäftsjahr|Prozent|Anlageberatung|heute|gestern|Faktenblatt)\b/.test(enUmsatz), false, enUmsatz);
-  assert.equal(verifyChapter("umsatz", enUmsatz, enSheet).ok, true, enUmsatz);
+  const enUmsatzVerdict = verifyChapter("umsatz", enUmsatz, enSheet);
+  assert.equal(enUmsatzVerdict.ok, true, `${enUmsatzVerdict.notes.join("|")} ${enUmsatz}`);
   ok("Englisch spricht Zahl, Datum und Prozent und lässt keine deutschen Reste stehen");
 
   const deNvda = spokenOf(nvda, "de");
@@ -380,6 +383,102 @@ async function main() {
 
   assert.equal(/\b(Rechenzentren|Exportregeln|Hybridantrieb|Automobil|Wechselkurs)\b/.test(enNvda + enToyota), false, enNvda + enToyota);
   ok("Der englische Text behält keine deutschen Rohtitel");
+
+  const gatePack = nvdaPack();
+  (gatePack.analysis as any).nextEarningsDate = "2027-02-10";
+  const gateDe = buildSpeechSheet(buildPodcastFacts(gatePack, NOON), "de");
+  const gateEn = buildSpeechSheet(buildPodcastFacts(gatePack, NOON), "en");
+  const deTail = [
+    "Die Katalysatoren stützen die Firma im neuen Jahr.",
+    "Der Markt öffnet die Lage und die Nachfrage trägt die Firma.",
+    "Die Aktie bleibt der Maßstab und das Wachstum stützt die Bewertung.",
+    "Wir sehen die Firma und der Kurs bleibt der Maßstab für den Markt.",
+    "Die Bewertung ordnet die Aktie und die Nachfrage trägt die Geschichte.",
+    "Der Vergleich bleibt fair und die Firma hält die Lage im Jahr.",
+  ];
+  const enTail = [
+    "The market opened the year for the company and the firm. Demand grew with the firm in the verified market.",
+    "The price sits near the verified level in the market this year. Demand grew with the company in the market.",
+    "The firm moved ahead in the market this year with demand. The market grew with the company in the year.",
+    "Demand grew in the market this year with the firm. The company opened the next chapter for the market.",
+    "The market moved ahead with the company in the year. The firm grew with the verified demand in the market.",
+    "The company sits in the market this year with demand. Demand opened the year for the firm in the market.",
+  ];
+  const chapterIds = ["einstieg", "zusammenfassung", "these", "umsatz", "dcf", "s17", "inversion", "earnings", "news"];
+  let deFail = 0;
+  let enFail = 0;
+  let deN = 0;
+  let enN = 0;
+  for (const id of chapterIds) {
+    const deBase = fallbackParagraph(id, gateDe);
+    const enBase = fallbackParagraph(id, gateEn);
+    for (let i = 0; i < 6; i++) {
+      deN += 1;
+      enN += 1;
+      const deText = `${deBase} ${deTail[i]}`;
+      const enText = `${enBase} ${enTail[i]}`;
+      if (!verifyChapter(id, deText, gateDe).ok) deFail += 1;
+      if (!verifyChapter(id, enText, gateEn).ok) enFail += 1;
+    }
+  }
+  assert.equal(deN, 54);
+  assert.equal(enN, 54);
+  assert.ok(deFail / deN < 0.1, `DE Fallback ${deFail}/${deN}`);
+  assert.ok(enFail / enN < 0.1, `EN Fallback ${enFail}/${enN}`);
+  ok(`Gute Absätze bleiben unter zehn Prozent Fallback, DE ${deFail}/${deN}, EN ${enFail}/${enN}`);
+
+  const negatives = [
+    verifyChapter("zusammenfassung", "Der Umsatz wächst um zwanzig Prozent und die Firma bleibt der Maßstab. Die Aktie stützt die Bewertung im neuen Jahr.", gateDe),
+    verifyChapter("zusammenfassung", "Revenue doubled and the company opened the year in the market. Demand grew with the verified view.", gateEn),
+    verifyChapter("einstieg", "Toyota bleibt der Maßstab und die Firma stützt die Aktie im Jahr. Der Umsatz trägt die Bewertung.", gateDe),
+    verifyChapter("einstieg", `Der Kurs steht bei [[price]] Dollar und die Firma bleibt der Maßstab im Jahr. Die Aktie stützt die Bewertung.`, gateDe),
+    verifyChapter("einstieg", "Der [[as_of]] bleibt der Stand und die Firma trägt die Aktie im Jahr. Der Umsatz stützt die Bewertung.", gateDe),
+  ];
+  assert.equal(negatives.every(item => item.ok === false), true, negatives.map(item => item.notes.join("|")).join(" || "));
+  const redo = fluentPrompt(gateDe, "pdf", [{ id: "einstieg", reasons: negatives[2]!.reasons, notes: negatives[2]!.notes }]);
+  assert.match(redo.prompt, /name Toyota/);
+  ok("Negativsätze fallen vollständig, das Rewrite nennt das Wort");
+
+  assert.equal(/Dollar Dollar|Prozent Prozent|dollars dollars/.test(fallbackParagraph("einstieg", gateDe) + fallbackParagraph("umsatz", gateEn)), false);
+  assert.match(gateDe.facts.find(fact => fact.id === "as_of")?.spoken ?? "", /^auf den /);
+  assert.match(gateEn.facts.find(fact => fact.id === "as_of")?.spoken ?? "", /^as of /);
+  assert.equal(fluentPrompt(gateDe, "pdf").prompt.includes("[[crv]]"), false);
+  assert.match(fallbackParagraph("dcf", gateDe), /Das Chance-Risiko-Verhältnis liegt bei /);
+  assert.match(fallbackParagraph("dcf", gateEn), /The chance-risk ratio stands at /);
+  const aged = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ...gatePack.analysis,
+    newsItems: [{ title: "Hinweis", pubDate: "2026-11-21T08:00:00.000Z" }],
+  }), NOON), "de");
+  assert.match(aged.facts.find(fact => fact.id === "news_age")?.spoken ?? "", /^vor /);
+  assert.equal(/von vor/.test(fallbackParagraph("news", aged)), false);
+  const past = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ...gatePack.analysis,
+    nextEarningsDate: "2020-01-01",
+  }), NOON), "de");
+  assert.equal(past.facts.some(fact => fact.id === "call_date"), false);
+  const blank = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ...gatePack.analysis,
+    s17Verdict: "n/a",
+    companyName: "n/a",
+  }), NOON), "de");
+  assert.equal(blank.facts.some(fact => fact.id === "ampel" || fact.spoken === "n/a" || fact.spoken === "-"), false);
+  assert.equal(speakPriceUsd(1, 3), "ein Dollar");
+  assert.match(speakPriceUsd(1.5, 3) ?? "", /eins Komma/);
+  assert.match(speakPriceUsd(1.5, 3) ?? "", /Dollar/);
+  assert.equal((speakPriceUsd(1.5, 3) ?? "").match(/Dollar/g)?.length, 1);
+  const oneEn = buildSpeechSheet(buildPodcastFacts(pack("NVDA", { ...gatePack.analysis, currentPrice: 1 }), NOON), "en");
+  assert.equal(oneEn.facts.find(fact => fact.id === "price")?.spoken, "one dollar");
+  assert.match(speakPriceUsd(1_500_000, 3) ?? "", /Million/);
+  assert.equal(/\d/.test(speakPriceUsd(1_500_000, 3) ?? ""), false);
+  assert.equal(priceLabelFor(149.3, 3, "en"), "149");
+  assert.equal(priceLabelFor(149.3, 3, "de"), "149");
+  assert.equal(priceLabelFor(1_500_000, 3, "en")?.includes(","), true);
+  const article = verifyChapter("umsatz", "Das Wachstum ist ein [[fy_yoy]] und die Firma bleibt der Maßstab im Jahr. Die Aktie stützt die Bewertung.", gateDe);
+  assert.equal(article.ok, false);
+  assert.ok(article.reasons.includes("unit"));
+  assert.match(fallbackParagraph("inversion", gateEn), /The named risk is|The named risk limits/);
+  assert.equal(/risks are Exportregeln/.test(fallbackParagraph("inversion", gateEn)), false);
+  ok("Befunde 1 bis 9 gelten auf Deutsch und Englisch");
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

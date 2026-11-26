@@ -352,7 +352,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     ttm_period_end: null,
     top_segment: segment?.name ?? null,
     top_segment_share: segment?.share != null ? speakPercent(segment.share) : null,
-    call_date: nextCallSpoken,
+    call_date: nextCallIsFuture ? nextCallSpoken : null,
     call_quarter: callQuarter,
     catalyst_mode: mode,
     news_1: null,
