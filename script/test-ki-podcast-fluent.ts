@@ -17,6 +17,7 @@ import {
   seedDrafts,
   fluencyStats,
   fluentPrompt,
+  judgeHoldoutName,
   podcastSentences,
   readChapterPayload,
   readStructuralNameCalls,
@@ -27,8 +28,8 @@ import { chaptersForSource, PDF_PODCAST_CHAPTERS } from "../shared/podcast-scrip
 import { dePool, enPool, type ProbePool } from "./fixtures/podcast-inverter-pools";
 import { PODCAST_NEGATIVES_25 } from "./fixtures/podcast-negatives-25";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
-import { renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
-import { handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
+import { peekPodcastScript, renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
+import { handleStockPodcastAudio, handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
 import { podcastDailyCount } from "../server/stock-podcast-limit";
 import { synthesizePodcastAudio, type PodcastAudioFetch } from "../server/stock-podcast-audio";
 
@@ -385,9 +386,34 @@ async function main() {
     const fallen = accepted.reports.filter(row => row.fallback);
     assert.equal(fallen.length, 0, JSON.stringify(fallen));
     assert.ok(accepted.reports.length > 0);
-    assert.equal(accepted.chapters.some(chapter => chapter.spoken.includes("[[")), false);
+    const marker = /\[\[|\]\]|\{[a-z0-9_]+\}/;
+    assert.equal(accepted.chapters.some(chapter => marker.test(chapter.spoken)), false);
+    const cached = peekPodcastScript(accepted.cacheKey);
+    assert.ok(cached);
+    assert.equal(cached.chapters.some(chapter => marker.test(chapter.spoken)), false);
+    const spokenInputs: string[] = [];
+    const audio = await handleStockPodcastAudio({
+      chapterId: cached.chapters[0]?.id,
+      ticker: "NVDA",
+      source: "pdf",
+      cacheKey: accepted.cacheKey,
+      language: "de",
+      voice: "de-DE-Mia:MAI-Voice-2.1",
+    }, {
+      audioEnv: { openrouterKey: "test-openrouter-key", xaiKey: "" },
+      fetchAudio: async (_url, init) => {
+        const body = JSON.parse(init.body) as { input?: unknown; text?: unknown };
+        if (typeof body.input === "string") spokenInputs.push(body.input);
+        if (typeof body.text === "string") spokenInputs.push(body.text);
+        return { ok: true, status: 200, bytes: async () => Uint8Array.from([0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) };
+      },
+    });
+    assert.equal(audio.ok, true);
+    assert.ok(spokenInputs.length > 0);
+    assert.equal(spokenInputs.some(text => marker.test(text)), false, spokenInputs.join("\n"));
   }
   ok("Plausible Modellabsätze erzeugen keinen Code-Fallback");
+  ok("Cache und TTS-Eingabe enthalten weder [[ noch einen Marker");
 
   assert.equal(resolveStockPodcastVoice("de-DE-Harper:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
   assert.equal(resolveStockPodcastVoice("de-DE-Grant:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
@@ -1222,10 +1248,32 @@ async function main() {
       assert.ok(verdict.reasons.includes("name"), sentence);
     }
   }
-  const numberPayload = readChapterPayload({ chapters: [{ id: "einstieg", paragraph: "Die Firma nennt Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", entities: [1] }] });
-  const badNumbers = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: "Die Firma nennt Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", entities: [1] }] }, numberPayload.entities, numberPayload.invalidEntities, numberPayload.none);
+  const numberText = "Die Firma nennt Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const numberPayload = readChapterPayload({ chapters: [{ id: "einstieg", paragraph: numberText, entities: [1] }] });
+  const badNumbers = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: numberText, entities: [1] }] }, numberPayload.entities, numberPayload.invalidEntities, numberPayload.none);
   assert.ok(numberPayload.invalidEntities.has("einstieg"));
-  assert.ok(badNumbers.some(draft => draft.reasons.includes("entities")), "Nicht-String");
+  assert.equal(numberPayload.entities.get("einstieg"), null);
+  assert.ok(badNumbers.some(draft => draft.reasons.includes("entities") && draft.notes.includes("entities fehlt")), "Nicht-String");
+  const mixedPayload = readChapterPayload({ chapters: [{ id: "einstieg", paragraph: numberText, entities: [1, "Toyota"] }] });
+  const mixedDrafts = seedDrafts(nvoNames, "pdf", { chapters: [{ id: "einstieg", paragraph: numberText, entities: [1, "Toyota"] }] }, mixedPayload.entities, mixedPayload.invalidEntities, mixedPayload.none);
+  assert.equal(mixedPayload.entities.get("einstieg"), null);
+  assert.ok(mixedPayload.invalidEntities.has("einstieg"));
+  assert.equal(JSON.stringify(mixedPayload.entities.get("einstieg")).includes("Toyota"), false);
+  assert.ok(mixedDrafts.some(draft => draft.id === "einstieg" && draft.reasons.includes("entities") && draft.entityState !== "ok"));
+  ok("Ein Nicht-String macht das ganze entities-Feld ungültig, Toyota bleibt nicht stehen, und es wird ein Redo");
+  const holdoutPack = { company: "NVIDIA", peers: ["AMD"], segments: ["Data Center"], regions: ["United States"] };
+  const holdoutText = "Der Kurs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const holdoutEmpty = judgeHoldoutName({ pack: holdoutPack, language: "de", chapterId: "einstieg", text: holdoutText, column: "empty" });
+  assert.equal(holdoutEmpty.redo, true);
+  assert.deepEqual(holdoutEmpty.reasons, ["entities"]);
+  assert.deepEqual(holdoutEmpty.notes, ["entities fehlt"]);
+  const holdoutS17 = judgeHoldoutName({ pack: holdoutPack, language: "de", chapterId: "s17", text: "An der Spitze steht der Treiber und die Liste bleibt der belegte Stand der Firma. Der Markt bleibt offen.", column: "empty" });
+  assert.equal(holdoutS17.redo, holdoutS17.reasons.includes("entities"));
+  assert.ok(holdoutS17.reasons.includes("entities"));
+  const holdoutSkipped = judgeHoldoutName({ pack: holdoutPack, language: "de", chapterId: "s13", text: holdoutText, column: "empty" });
+  assert.equal(holdoutSkipped.redo, false);
+  assert.deepEqual(holdoutSkipped.reasons, []);
+  ok("Die leere Hold-out-Spalte nimmt den Redo nur aus dem Entwurf, ohne festes redo");
   const genitive = verifyChapter("einstieg", "Wir sprechen über [[company]]s und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", nvoNames, ["Novo Nordisk"]);
   assert.equal(genitive.ok, false, genitive.notes.join("|"));
   assert.ok(genitive.reasons.includes("token"), genitive.notes.join("|"));

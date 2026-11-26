@@ -1640,15 +1640,20 @@ function holdoutTokens(value: string): string[] {
   return value.split(/[^A-Za-zÄÖÜäöüß0-9]+/).map(word => word.toLowerCase()).filter(word => word.length >= 2);
 }
 
-function sheetFromHoldout(pack: HoldoutNamePack, language: PodcastLanguage): SpeechSheet {
+function sheetFromHoldout(pack: HoldoutNamePack, language: PodcastLanguage, chapterId: string): SpeechSheet {
   const phrases = [pack.company, ...pack.peers, ...pack.segments, ...pack.regions];
   const tokens = phrases.flatMap(holdoutTokens);
+  const slot = language === "de" ? "der belegte stand der firma im jahr" : "the verified view of the firm this year";
+  const facts: SpeechFact[] = [
+    { id: "company", spoken: pack.company, source: "holdout.company" },
+    ...pack.peers.slice(0, 3).map((name, index) => ({ id: `peer_${"abc"[index] ?? "a"}`, spoken: name, source: "holdout.peers" })),
+  ];
+  for (const id of CHAPTER_FACT_IDS[chapterId] ?? []) {
+    if (!facts.some(fact => fact.id === id)) facts.push({ id, spoken: slot, source: "holdout.slot" });
+  }
   return {
     language,
-    facts: [
-      { id: "company", spoken: pack.company, source: "holdout.company" },
-      ...pack.peers.slice(0, 3).map((name, index) => ({ id: `peer_${"abc"[index] ?? "a"}`, spoken: name, source: "holdout.peers" })),
-    ],
+    facts,
     context: phrases.join("\n"),
     pendingTitles: [],
     codeLines: [],
@@ -1662,7 +1667,8 @@ function sheetFromHoldout(pack: HoldoutNamePack, language: PodcastLanguage): Spe
 
 /**
  * Hold-out-Spalten.
- * list: modelNames, none: none true, empty: [] und damit Redo.
+ * list: modelNames. none: none true. empty: [] geht durch entityField und seedDrafts.
+ * redo ist wahr, wenn die Gründe des Entwurfs „entities“ enthalten. Kein festes redo.
  */
 export function judgeHoldoutName(input: {
   pack: HoldoutNamePack;
@@ -1672,13 +1678,16 @@ export function judgeHoldoutName(input: {
   column: "list" | "none" | "empty";
   modelNames?: string[];
 }): { ok: boolean; redo: boolean; reasons: string[]; notes: string[] } {
-  const sheet = sheetFromHoldout(input.pack, input.language);
+  const sheet = sheetFromHoldout(input.pack, input.language, input.chapterId);
   if (input.column === "empty") {
-    const drafts = seedDrafts(sheet, "pdf", {
+    const source: StockPodcastSource = chaptersForSource("pdf").some(def => def.id === input.chapterId) ? "pdf" : "ki";
+    const drafts = seedDrafts(sheet, source, {
       chapters: [{ id: input.chapterId, paragraph: input.text, entities: [] }],
     }, new Map([[input.chapterId, []]]), new Set(), new Set());
     const draft = drafts.find(row => row.id === input.chapterId);
-    return { ok: false, redo: true, reasons: draft?.reasons ?? ["entities"], notes: draft?.notes ?? ["entities fehlt"] };
+    const reasons = draft?.reasons ?? [];
+    const notes = draft?.notes ?? [];
+    return { ok: reasons.length === 0, redo: reasons.includes("entities"), reasons, notes };
   }
   const names = input.column === "list" ? (input.modelNames ?? []) : [];
   const verdict = verifyChapter(input.chapterId, input.text, sheet, names);
