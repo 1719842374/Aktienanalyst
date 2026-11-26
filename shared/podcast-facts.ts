@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { currencyWord } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
-import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd } from "./podcast-speak";
+import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakPercent, speakPriceUsd, speakQuarterPhrase } from "./podcast-speak";
 
 export const PODCAST_PLACEHOLDERS = [
   "ticker", "company", "as_of", "currency_word", "statement_currency_word",
@@ -20,6 +20,52 @@ export const PODCAST_PLACEHOLDERS = [
 export type PodcastPlaceholder = (typeof PODCAST_PLACEHOLDERS)[number];
 export type PodcastFactValues = Record<PodcastPlaceholder, string | null>;
 
+/** money und percent bringen die Einheit schon mit. date und Kurswerte spricht nur der Code. */
+export type PlaceholderKind = "money" | "percent" | "date" | "name" | "text";
+
+export const PLACEHOLDER_KIND: Record<PodcastPlaceholder, PlaceholderKind> = {
+  ticker: "name",
+  company: "name",
+  as_of: "date",
+  currency_word: "name",
+  statement_currency_word: "name",
+  price: "money",
+  score: "text",
+  ampel: "name",
+  wacc: "percent",
+  g_star: "percent",
+  dcf_fair: "money",
+  dcf_low: "money",
+  dcf_high: "money",
+  entry: "money",
+  crv: "text",
+  quarter_yoy: "percent",
+  quarter_period_end: "date",
+  ttm_revenue: "money",
+  ttm_period_end: "date",
+  top_segment: "name",
+  top_segment_share: "percent",
+  call_date: "date",
+  call_quarter: "name",
+  catalyst_mode: "text",
+  news_1: "name",
+  news_2: "name",
+  news_3: "name",
+  news_age: "text",
+  fy_yoy: "percent",
+  gj_year: "name",
+};
+
+const MODEL_FORBIDDEN = new Set<PodcastPlaceholder>([
+  "price", "dcf_fair", "dcf_low", "dcf_high", "entry", "ttm_revenue",
+  "as_of", "call_date", "quarter_period_end", "ttm_period_end",
+  "call_quarter", "catalyst_mode", "currency_word", "statement_currency_word",
+]);
+
+export function placeholderForbiddenInModel(name: PodcastPlaceholder): boolean {
+  return MODEL_FORBIDDEN.has(name);
+}
+
 export interface PodcastFacts {
   values: PodcastFactValues;
   tokens: string[];
@@ -31,6 +77,7 @@ export interface PodcastFacts {
   peerBanner: string | null;
   sectorFlag: string | null;
   callEstimated: boolean;
+  nextCallLine: string | null;
   segmentPeriodMissing: boolean;
   earningsState: "missing" | "stale" | "ready";
   earningsNote: string | null;
@@ -133,8 +180,18 @@ function spokenCatalystMode(analysis: any): string {
   const when = new Date(raw);
   if (Number.isNaN(when.getTime())) return "Katalysatoren: KI-firmenspezifisch";
   const day = isoDay(raw, when);
-  const spoken = speakIsoDate(day.iso);
-  return spoken ? `Katalysatoren: KI-firmenspezifisch, Stand ${spoken}` : "Katalysatoren: KI-firmenspezifisch";
+  const spoken = speakIsoDate(day.iso, "dat");
+  return spoken ? `Katalysatoren: KI-firmenspezifisch, Stand vom ${spoken}` : "Katalysatoren: KI-firmenspezifisch";
+}
+
+function plainSectorFlag(flag: string | null): string | null {
+  if (!flag) return null;
+  if (/GrowthEvidence|Peer-Gap fehlt|Sektor-Referenz nicht belastbar/i.test(flag)) {
+    return "Die Sektor-Referenz ist nicht belastbar.";
+  }
+  const cleaned = flag.replace(/^[A-Za-z][A-Za-z0-9]*:\s*/, "").trim();
+  if (!cleaned || /GrowthEvidence/i.test(cleaned)) return null;
+  return /[.!?]$/.test(cleaned) ? cleaned : `${cleaned}.`;
 }
 
 export function hashPodcastFacts(values: PodcastFactValues): string {
@@ -164,25 +221,33 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const segment = topSegment(analysis);
   const news = recentNews(analysis, asOf.iso);
   const callIso = text(analysis.nextEarningsDate);
-  const callSpoken = callIso ? speakIsoDate(callIso.slice(0, 10)) : null;
+  const nextDay = callIso ? callIso.slice(0, 10) : null;
+  const todayKey = isoDay(now.toISOString(), now).iso;
+  const nextCallIsFuture = nextDay != null && nextDay > todayKey;
+  const nextCallSpoken = nextDay ? speakIsoDate(nextDay, "dat") : null;
   const reportedQuarter = text(analysis.lastReportedQuarter);
   const brief = pack.earningsBrief;
   let earningsState: PodcastFacts["earningsState"] = "missing";
   let earningsNote: string | null = "Ein Earnings-Call-Transkript liegt nicht vor.";
-  let callQuarter: string | null = null;
+  let callQuarter: string | null = speakQuarterPhrase(reportedQuarter ?? "") ;
   if (brief && brief.status === "ok" && brief.quarter && brief.year) {
-    callQuarter = `Q${brief.quarter} GJ${brief.year}`;
+    callQuarter = speakQuarterPhrase(`Q${brief.quarter} GJ${brief.year}`);
     const reportedQ = quarterOf(reportedQuarter);
     const briefIndex = brief.year * 4 + brief.quarter;
     const reportedIndex = reportedQ ? reportedQ.year * 4 + reportedQ.q : null;
     if (reportedIndex != null && briefIndex < reportedIndex) {
       earningsState = "stale";
-      earningsNote = `Das Transkript stammt aus ${callQuarter} und ist älter als das zuletzt gemeldete Quartal.`;
+      earningsNote = callQuarter
+        ? `Das Transkript stammt aus ${callQuarter} und ist älter als das zuletzt gemeldete Quartal.`
+        : "Das Transkript ist älter als das zuletzt gemeldete Quartal.";
     } else {
       earningsState = "ready";
       earningsNote = null;
     }
   }
+  const nextCallLine = nextCallIsFuture && nextCallSpoken
+    ? `Der nächste Earnings Call ist für den ${nextCallSpoken} angekündigt.`
+    : null;
   const source = analysis.catalystsSource === "llm" || analysis.llmMode === true ? "llm" : "generic";
   const mode = spokenCatalystMode(analysis);
   const risks = Array.isArray(analysis.risks) ? analysis.risks : [];
@@ -200,7 +265,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const values: PodcastFactValues = {
     ticker: pack.ticker,
     company: text(analysis.companyName) ?? pack.ticker,
-    as_of: speakIsoDate(asOf.iso),
+    as_of: speakIsoDate(asOf.iso, "dat"),
     currency_word: moneyWord,
     statement_currency_word: moneyWord,
     price: priceN == null ? null : speakPriceUsd(priceN, sig),
@@ -219,8 +284,8 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     ttm_period_end: null,
     top_segment: segment?.name ?? null,
     top_segment_share: segment?.share != null ? speakPercent(segment.share) : null,
-    call_date: callSpoken,
-    call_quarter: callQuarter ?? reportedQuarter,
+    call_date: nextCallSpoken,
+    call_quarter: callQuarter,
     catalyst_mode: mode,
     news_1: news[0]?.title ?? null,
     news_2: news[1]?.title ?? null,
@@ -231,7 +296,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   };
   const peerBanner = text(analysis.peerSet?.banner);
   const flags = Array.isArray(pack.thesisStrength?.flags) ? pack.thesisStrength.flags.map((f: any) => String(f)) : [];
-  const sectorFlag = flags.find((f: string) => /Sektor-Referenz nicht belastbar/.test(f)) ?? null;
+  const sectorFlag = plainSectorFlag(flags.find((f: string) => /Sektor-Referenz nicht belastbar|GrowthEvidence|Peer-Gap fehlt/.test(f)) ?? null);
   const porter = analysis.moatAssessment?.porterForces ?? analysis.porterForces;
   const hasPorter = Array.isArray(porter) ? porter.length > 0 : !!porter;
   const hasPestel = (Array.isArray(pack.pestelLlm) && pack.pestelLlm.length > 0) || !!analysis.pestelAnalysis;
@@ -246,6 +311,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     peerBanner,
     sectorFlag,
     callEstimated: analysis.nextEarningsIsEstimate === true,
+    nextCallLine,
     segmentPeriodMissing: !!segment && !segment.fiscalYear,
     earningsState,
     earningsNote,

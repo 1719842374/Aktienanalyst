@@ -131,7 +131,12 @@ export function speakPriceUsd(n: number, sig = 3): string | null {
   return `${spoken} Dollar`;
 }
 
-export function speakIsoDate(iso: string): string | null {
+function ordinalInCase(ordinal: string, gramCase: "nom" | "dat"): string {
+  if (gramCase === "nom") return ordinal;
+  return ordinal.replace(/er$/, "en");
+}
+
+export function speakIsoDate(iso: string, gramCase: "nom" | "dat" = "nom"): string | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
   if (!m) return null;
   const year = Number(m[1]);
@@ -144,7 +149,20 @@ export function speakIsoDate(iso: string): string | null {
   const yearWord = year >= 2000 && year < 2100
     ? (year === 2000 ? "zweitausend" : `zweitausend${speakUnsigned(year - 2000)}`)
     : speakUnsigned(year);
-  return `${ordinal} ${monthName} ${yearWord}`;
+  return `${ordinalInCase(ordinal, gramCase)} ${monthName} ${yearWord}`;
+}
+
+/** Fiskalquartal oder „Quartal zum 28. Oktober 2026“. Roh-ISO wird nicht zurückgegeben. */
+export function speakQuarterPhrase(raw: string): string | null {
+  const fiscal = /Q\s*([1-4])\b(?:\s*(?:FY|GJ)\s*((?:19|20)\d{2}))?/i.exec(raw);
+  if (fiscal?.[2]) return `Quartal ${fiscal[1]} im Geschäftsjahr ${fiscal[2]}`;
+  if (fiscal) return `Quartal ${fiscal[1]}`;
+  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (!iso) return null;
+  const monthName = MONTHS[Number(iso[2]) - 1];
+  const day = Number(iso[3]);
+  if (!monthName || day < 1 || day > 31) return null;
+  return `Quartal zum ${day}. ${monthName} ${iso[1]}`;
 }
 
 export function priceLabelDe(n: number | null): string | null {

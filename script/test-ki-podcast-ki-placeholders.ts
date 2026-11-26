@@ -78,7 +78,7 @@ function main() {
   assert.equal(/Diese Meld(?!ung)/.test(nvdaNews), false);
   const nvdaS17 = nvdaKi.find(c => c.id === "s17")?.spoken ?? "";
   assert.equal(nvdaS17.includes("2026-11-26T"), false);
-  assert.match(nvdaS17, /sechsundzwanzigster November/);
+  assert.match(nvdaS17, /sechsundzwanzigsten November/);
   const nvdaUmsatz = nvdaKi.find(c => c.id === "umsatz")?.spoken ?? "";
   assert.match(nvdaUmsatz, /Geschäftsjahr/);
   assert.match(nvdaUmsatz, /2026/);

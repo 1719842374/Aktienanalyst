@@ -5,7 +5,7 @@
  */
 import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { PODCAST_DISCLAIMER } from "./podcast-types";
-import { PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
+import { PLACEHOLDER_KIND, PODCAST_PLACEHOLDERS, placeholderForbiddenInModel, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
 import { keepCompleteSentences } from "./podcast-speak";
 
 const PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
@@ -122,7 +122,47 @@ export function spokenLeaksPlaceholder(text: string): boolean {
   return /\{[a-z0-9_]+\}/i.test(text) || SNAKE_PLACEHOLDER.test(text);
 }
 
-export function checkPodcastSentence(sentence: string, facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">, chapterId = ""): { ok: true } | { ok: false; reason: string } {
+const UNIT_BESIDE = /(?:Dollar|Prozent|Euro|US-Dollar|Milliarden|Millionen)\s+\{([a-z0-9_]+)\}|\{([a-z0-9_]+)\}\s+(?:Dollar|Prozent|Euro|US-Dollar|Milliarden|Millionen)/gi;
+
+function unitBesideTypedPlaceholder(sentence: string): boolean {
+  UNIT_BESIDE.lastIndex = 0;
+  const matches = Array.from(sentence.matchAll(UNIT_BESIDE));
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const name = (match?.[1] || match?.[2]) as PodcastPlaceholder;
+    const kind = PLACEHOLDER_KIND[name];
+    if (kind === "money" || kind === "percent") return true;
+  }
+  return false;
+}
+
+function percentUsedAsRevenue(sentence: string): boolean {
+  if (/wachstum/i.test(sentence)) return false;
+  if (!/umsatz/i.test(sentence) || !/beträgt/i.test(sentence)) return false;
+  return /\{(?:fy_yoy|wacc|g_star|top_segment_share|quarter_yoy|crv)\}/.test(sentence);
+}
+
+function nameUsedAsAmount(sentence: string): boolean {
+  return /(?:stieg|steigt|steigen|auf)\s+\{top_segment\}/i.test(sentence);
+}
+
+export function polishSpoken(text: string): string {
+  let out = text.replace(/\s+/g, " ").trim();
+  let prev = "";
+  while (out !== prev) {
+    prev = out;
+    out = out.replace(/\b(Dollar|Prozent|Euro|Milliarden|Millionen)\s+\1\b/gi, "$1");
+  }
+  out = out.replace(/!+\./g, "!").replace(/\?+\./g, "?").replace(/\.{2,}/g, ".").replace(/!{2,}/g, "!");
+  return out.trim();
+}
+
+export function checkPodcastSentence(
+  sentence: string,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">,
+  chapterId = "",
+  origin: "model" | "code" = "model",
+): { ok: true } | { ok: false; reason: string } {
   const raw = sentence.trim();
   if (!raw) return { ok: false, reason: "leer" };
   if (scriptContainsForbiddenGrowth(raw)) return { ok: false, reason: "YTD" };
@@ -130,13 +170,21 @@ export function checkPodcastSentence(sentence: string, facts: Pick<PodcastFacts,
   if (chapterId === "s17" && facts.catalystGeneric && /firmenspezifisch|unternehmensspezifisch/i.test(raw)) {
     return { ok: false, reason: "generische Katalysatoren" };
   }
+  PLACEHOLDER_RE.lastIndex = 0;
   const names = Array.from(raw.matchAll(PLACEHOLDER_RE)).map(m => m[1] ?? "");
   for (const name of names) {
     if (!ALLOWED.has(name)) return { ok: false, reason: `unbekannter Platzhalter ${name}` };
-    const value = facts.values[name as PodcastPlaceholder];
+    const key = name as PodcastPlaceholder;
+    const value = facts.values[key];
     if (value == null || value.trim() === "") return { ok: false, reason: `Platzhalter ohne Wert ${name}` };
+    if (origin === "model" && placeholderForbiddenInModel(key)) return { ok: false, reason: `Platzhalter ${name} nur im Code-Satz` };
   }
+  if (origin === "model" && (unitBesideTypedPlaceholder(raw) || percentUsedAsRevenue(raw) || nameUsedAsAmount(raw))) {
+    return { ok: false, reason: "Platzhalter passt nicht zum Satz" };
+  }
+  if (origin === "model" && /GrowthEvidence|Katalysatoren:/i.test(raw)) return { ok: false, reason: "interne Zeile" };
   if (hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
+  if (origin === "code") return { ok: true };
   let rest = raw.replace(PLACEHOLDER_RE, " ");
   if (/[{}]/.test(rest)) return { ok: false, reason: "ungültige Klammer" };
   rest = stripTokens(rest, facts.tokens);
@@ -146,9 +194,27 @@ export function checkPodcastSentence(sentence: string, facts: Pick<PodcastFacts,
   return { ok: true };
 }
 
-export function applyPlaceholders(sentence: string, facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">, chapterId = ""): string | null {
-  if (!checkPodcastSentence(sentence, facts, chapterId).ok) return null;
-  return sentence.replace(PLACEHOLDER_RE, (_, name: string) => facts.values[name as PodcastPlaceholder] ?? "").replace(/\s+/g, " ").trim();
+export function applyPlaceholders(
+  sentence: string,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric">,
+  chapterId = "",
+  origin: "model" | "code" = "model",
+): string | null {
+  if (!checkPodcastSentence(sentence, facts, chapterId, origin).ok) return null;
+  let missing = false;
+  PLACEHOLDER_RE.lastIndex = 0;
+  const filled = sentence.replace(PLACEHOLDER_RE, (_, name: string) => {
+    const value = facts.values[name as PodcastPlaceholder];
+    if (value == null || value.trim() === "") {
+      missing = true;
+      return "";
+    }
+    return value;
+  });
+  if (missing) return null;
+  const polished = polishSpoken(filled);
+  if (!polished || spokenLeaksPlaceholder(polished) || /\d{4}-\d{2}-\d{2}/.test(polished)) return null;
+  return polished;
 }
 
 export function balanceProContra(pro: string, contra: string): { pro: string; contra: string } {
@@ -167,16 +233,16 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
   const v = facts.values;
   const out: string[] = [];
   const add = (sentence: string) => {
-    if (checkPodcastSentence(sentence, facts, id).ok) out.push(sentence);
+    if (checkPodcastSentence(sentence, facts, id, "code").ok) out.push(sentence);
   };
   switch (id) {
     case "einstieg":
-      add("{ticker}, {company}. Stand {as_of}.");
+      add("{ticker}, {company}. Stand vom {as_of}.");
       if (v.ampel) add("Die Ampel steht auf {ampel}.");
       else out.push("Die Ampel liegt nicht vor.");
       break;
     case "zusammenfassung":
-      if (facts.proSeed) out.push(facts.proSeed);
+      if (v.price) add("Der Kurs steht bei {price}.");
       else out.push("Der Kurs liegt nicht vor.");
       break;
     case "these":
@@ -211,17 +277,23 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
       if (facts.sectorFlag) out.push(facts.sectorFlag);
       break;
     case "s17":
-      add("Der Modus lautet {catalyst_mode}.");
+      if (v.catalyst_mode) out.push(/[.!?]$/.test(v.catalyst_mode) ? v.catalyst_mode : `${v.catalyst_mode}.`);
+      else out.push("Die Katalysatoren liegen nicht vor.");
       break;
     case "inversion":
-      if (facts.contraSeed && facts.contraSeed !== facts.proSeed) out.push(facts.contraSeed);
+      if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
+      else out.push("Der rechnerische Einstieg liegt nicht vor.");
       out.push(facts.riskNames.length ? `Die Inversion nennt ${facts.riskNames.join(" und ")}.` : "Die Inversion liegt nicht vor.");
       break;
     case "earnings":
       if (facts.earningsState === "ready" && v.call_quarter) add("Der letzte vorliegende Call ist {call_quarter}.");
-      else if (facts.earningsNote) out.push(facts.earningsNote);
-      else out.push("Ein Earnings-Call-Transkript liegt nicht vor.");
-      if (facts.callEstimated) out.push("Der nächste Termin ist geschätzt.");
+      else if (facts.earningsState === "stale" && facts.earningsNote) out.push(facts.earningsNote);
+      else {
+        out.push("Ein Earnings-Call-Transkript liegt nicht vor.");
+        if (v.call_quarter) out.push(`Zuletzt gemeldet wurde das ${v.call_quarter}.`);
+      }
+      if (facts.nextCallLine) out.push(facts.nextCallLine);
+      else if (facts.callEstimated) out.push("Der nächste Termin ist geschätzt.");
       break;
     case "news":
       if (v.news_1) add("Die jüngste Meldung ist {news_1}.");
@@ -270,40 +342,40 @@ function completeModelSentences(sentences: string[]): string[] {
 
 function scrubSpoken(text: string): string {
   const parts = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
-  const kept = parts.map(part => (spokenLeaksPlaceholder(part) ? "liegt nicht vor." : part));
-  return kept.join(" ").trim();
+  const kept = parts.map(part => {
+    if (/GrowthEvidence/i.test(part)) return "Die Sektor-Referenz ist nicht belastbar.";
+    if (spokenLeaksPlaceholder(part) || /\d{4}-\d{2}-\d{2}/.test(part)) return "Die Angabe liegt nicht vor.";
+    return polishSpoken(part);
+  });
+  return polishSpoken(kept.join(" ")).trim();
 }
 
 export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] {
   const blocked = modelData != null && scriptContainsForbiddenGrowth(JSON.stringify(modelData));
   const fromModel = blocked ? new Map<string, string[]>() : modelSentences(modelData);
   const chapters = chaptersForSource(source).map(def => {
-    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(s => checkPodcastSentence(s, facts, def.id).ok);
+    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(s => checkPodcastSentence(s, facts, def.id, "model").ok);
     const fallback = fallbackSentences(def.id, facts);
-    const chosen = def.id === "schluss" || model.length === 0
-      ? fallback
+    const codeOnly = def.id === "schluss" || def.id === "s17" || model.length === 0;
+    const tagged = codeOnly
+      ? fallback.map(text => ({ text, origin: "code" as const }))
       : CODE_OWNED_CHAPTERS.has(def.id)
-        ? [...fallback, ...model]
-        : model;
-    const spokenParts = chosen
-      .map(s => applyPlaceholders(s, facts, def.id))
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map(s => (spokenLeaksPlaceholder(s) ? "liegt nicht vor." : s));
-    let spoken = scrubSpoken(spokenParts.join(" ").trim()) || "Das Kapitel liegt nicht vor.";
+        ? [...fallback.map(text => ({ text, origin: "code" as const })), ...model.map(text => ({ text, origin: "model" as const }))]
+        : model.map(text => ({ text, origin: "model" as const }));
+    const spokenParts = tagged
+      .map(part => applyPlaceholders(part.text, facts, def.id, part.origin))
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+    let spoken = scrubSpoken(spokenParts.join(" ").trim()) || "Die Angabe liegt nicht vor.";
     if (def.id === "umsatz" && !/Geschäftsjahr/.test(spoken)) {
-      const fiscal = applyPlaceholders(fallbackSentences("umsatz", facts)[0] ?? "", facts, "umsatz");
-      if (fiscal) spoken = `${fiscal} ${spoken}`.trim();
-    }
-    if (def.id === "s17" && facts.values.catalyst_mode && !spoken.includes(facts.values.catalyst_mode)) {
-      const mode = applyPlaceholders("Der Modus lautet {catalyst_mode}.", facts, "s17");
-      if (mode) spoken = `${spoken} ${mode}`.trim();
+      const fiscal = applyPlaceholders(fallbackSentences("umsatz", facts)[0] ?? "", facts, "umsatz", "code");
+      if (fiscal) spoken = scrubSpoken(`${fiscal} ${spoken}`);
     }
     if (def.id === "schluss" && !spoken.includes(PODCAST_DISCLAIMER)) spoken = `${spoken} ${PODCAST_DISCLAIMER}`.trim();
     return {
       id: def.id,
       title: def.title,
       label: def.title,
-      template: chosen.join(" "),
+      template: tagged.map(part => part.text).join(" "),
       spoken,
       durationSec: durationSec(spoken),
       llmOwned: def.llmOwned,
@@ -315,7 +387,7 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     const contra = chapters.find(c => c.id === "inversion");
     if (pro && contra) {
       const balanced = balanceProContra(pro.spoken, contra.spoken);
-      pro.spoken = balanced.pro || "Ein Pro-Punkt liegt nicht vor.";
+      pro.spoken = balanced.pro || "Der Kurs liegt nicht vor.";
       contra.spoken = balanced.contra;
       pro.durationSec = durationSec(pro.spoken);
       contra.durationSec = durationSec(contra.spoken);

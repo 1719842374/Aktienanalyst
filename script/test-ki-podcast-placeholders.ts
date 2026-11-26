@@ -27,6 +27,7 @@ function shell(partial: Partial<PodcastFacts> & Pick<PodcastFacts, "values">): P
     peerBanner: null,
     sectorFlag: null,
     callEstimated: false,
+    nextCallLine: null,
     segmentPeriodMissing: false,
     earningsState: "missing",
     earningsNote: "Ein Earnings-Call-Transkript liegt nicht vor.",
