@@ -1,0 +1,106 @@
+/**
+ * Vertrag des Aktien-Podcasts für den UI-PR.
+ * Der Markt-Podcast (shared/podcast-transcript.ts) bleibt ein anderer Cache.
+ */
+
+export const STOCK_PODCAST_ERROR_CODES = ["NO_API_KEY", "LLM_UNAVAILABLE", "RATE_LIMITED", "KI_MODE_OFF"] as const;
+export type StockPodcastErrorCode = (typeof STOCK_PODCAST_ERROR_CODES)[number];
+
+export type StockPodcastSource = "pdf" | "ki";
+
+export type StockPodcastStage = "analyze" | "script" | "audio";
+
+/** Eine frische Erzeugung je Quelle und Tag. Ein dritter Neu-Lauf ist 429. Cache-Treffer zählen nicht. */
+export const PODCAST_DAILY_MAX = 2;
+
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v4";
+
+export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
+
+export const PODCAST_STAGE_TIMEOUT_MS = {
+  analyze: 180_000,
+  supplement: 90_000,
+  script: 30_000,
+  audio: 45_000,
+} as const;
+
+/** Belegt: https://openrouter.ai/docs/guides/overview/multimodal/tts und https://openrouter.ai/microsoft/mai-voice-2.1 */
+export const OPENROUTER_TTS_MODEL = "microsoft/mai-voice-2.1";
+export const OPENROUTER_TTS_URL = "https://openrouter.ai/api/v1/audio/speech";
+
+export const XAI_TTS_URL = "https://api.x.ai/v1/tts";
+
+export const OPENROUTER_PODCAST_VOICES = [
+  { id: "de-DE-Mia:MAI-Voice-2.1", label: "Mia" },
+  { id: "de-DE-Klaus:MAI-Voice-2.1", label: "Klaus" },
+  { id: "de-DE-Harper:MAI-Voice-2.1", label: "Harper" },
+  { id: "de-DE-Grant:MAI-Voice-2.1", label: "Grant" },
+] as const;
+
+export const XAI_PODCAST_VOICES = [
+  { id: "eve", label: "Eve" },
+  { id: "leo", label: "Leo" },
+  { id: "ara", label: "Ara" },
+] as const;
+
+export const DEFAULT_PODCAST_VOICE_ID = OPENROUTER_PODCAST_VOICES[0].id;
+
+export interface StockPodcastVoice {
+  id: string;
+  label: string;
+  provider: "openrouter" | "xai";
+}
+
+export function listStockPodcastVoices(): StockPodcastVoice[] {
+  return [
+    ...OPENROUTER_PODCAST_VOICES.map(v => ({ id: v.id, label: v.label, provider: "openrouter" as const })),
+    ...XAI_PODCAST_VOICES.map(v => ({ id: v.id, label: v.label, provider: "xai" as const })),
+  ];
+}
+
+export function resolveStockPodcastVoice(voiceId: string | undefined): StockPodcastVoice {
+  const wanted = (voiceId ?? "").trim();
+  const found = listStockPodcastVoices().find(v => v.id === wanted);
+  if (found) return found;
+  const def = OPENROUTER_PODCAST_VOICES[0];
+  return { id: def.id, label: def.label, provider: "openrouter" };
+}
+
+export interface StockPodcastChapter {
+  id: string;
+  title: string;
+  label: string;
+  template: string;
+  spoken: string;
+  durationSec: number;
+  llmOwned: boolean;
+  audioUrl: string | null;
+}
+
+export interface StockPodcastScriptResponse {
+  ok: true;
+  ticker: string;
+  source: StockPodcastSource;
+  asOf: string;
+  asOfLabel: string;
+  priceLabel: string | null;
+  cacheKey: string;
+  voice: string;
+  voiceLabel: string;
+  chapters: StockPodcastChapter[];
+  cached: boolean;
+  packCached: boolean;
+  promptVersion: string;
+  disclaimer: string;
+}
+
+export interface StockPodcastErrorResponse {
+  ok: false;
+  errorCode: StockPodcastErrorCode;
+  error: string;
+  stage: StockPodcastStage;
+  ticker?: string;
+  source?: StockPodcastSource;
+}
+
+export type StockPodcastResponse = StockPodcastScriptResponse | StockPodcastErrorResponse;

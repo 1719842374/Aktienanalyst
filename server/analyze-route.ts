@@ -192,6 +192,38 @@ interface CachedAnalysis {
 const analysisCache = new Map<string, CachedAnalysis>();
 const CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
 
+/**
+ * Der Aktien-Podcast braucht einen frischen Analyze-Lauf mit useLLM, darf den
+ * 20-Minuten-Cache und den Disk-Cache der sichtbaren Analyse aber nicht
+ * beschreiben oder verwerfen. Das Symbol steht nur auf dem synthetischen
+ * Request von runAnalyzeIsolated, nicht im JSON-Body und nicht im Schema.
+ */
+export const PODCAST_ANALYZE_ISOLATE = Symbol.for("aktienanalyst.podcastAnalyzeIsolate");
+
+export function requestSkipsAnalyzeUiCache(req: object): boolean {
+  return Boolean((req as Record<symbol, unknown>)[PODCAST_ANALYZE_ISOLATE]);
+}
+
+let analyzeHttpHandler: ((req: Request, res: Response) => Promise<unknown>) | null = null;
+
+export async function runAnalyzeIsolated(ticker: string): Promise<{ status: number; body: any }> {
+  if (!analyzeHttpHandler) {
+    return { status: 503, body: { error: "Analyze-Route nicht registriert", errorCode: "LLM_UNAVAILABLE" } };
+  }
+  const req = {
+    body: { ticker, useLLM: true, force: true },
+    [PODCAST_ANALYZE_ISOLATE]: true,
+  } as unknown as Request;
+  let status = 200;
+  let payload: any = null;
+  const res = {
+    status(code: number) { status = code; return this; },
+    json(body: any) { payload = body; return this; },
+  } as unknown as Response;
+  await analyzeHttpHandler(req, res);
+  return { status, body: payload };
+}
+
 // ─── RSI + MA helpers ─────────────────────────────────────────────────────────
 function calculateRSI(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
@@ -503,7 +535,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
   });
 
   // ── /api/analyze ────────────────────────────────────────────────────────────
-  app.post("/api/analyze", async (req: Request, res: Response) => {
+  const handleAnalyzePost = async (req: Request, res: Response) => {
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -540,12 +572,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // die mit LLY angereicherte Version).
       const cacheKey = buildAnalyzeCacheKey(upperTicker, useLLM, peerAddList, peerRemoveList);
       // force=true: L1 (20 min) und L2 (7 Tage, gleicher cacheKey) verwerfen, dann voller Lauf.
-      if (forceRefresh) {
+      const isolateFromUiCache = requestSkipsAnalyzeUiCache(req);
+      if (forceRefresh && !isolateFromUiCache) {
         analysisCache.delete(cacheKey);
         diskCacheDelete(cacheKey);
         console.log(`[ANALYZE] Force refresh — dropped L1+L2 for ${cacheKey}`);
       }
-      if (!forceRefresh) {
+      if (!forceRefresh && !isolateFromUiCache) {
         const cached = analysisCache.get(cacheKey);
         const cacheHit = !!(cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM));
         if (hasPeerOverrides || cached) {
@@ -1555,7 +1588,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           // gibt Peer-Gap dann mit. Beide Aufrufer teilen sich jetzt dieselbe
           // Helper-Funktion (generateThesisWithFingerprintCache) fuer
           // Segment-Ableitung, GB-Summe, Fingerprint-Vergleich und Cache-Hit.
-          const prevCached = analysisCache.get(cacheKey)?.result;
+          const prevCached = requestSkipsAnalyzeUiCache(req) ? undefined : analysisCache.get(cacheKey)?.result;
           const thesisResult = await generateThesisWithFingerprintCache({
             ticker: upperTicker, companyName, description, sector: effectiveSector, industry,
             revenueGrowth, fcfMargin, grossMargin, operatingMargin, forwardPE, evEbitda,
@@ -2261,7 +2294,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.warn(`[ANALYZE] fiscalOverlay-Berechnung fehlgeschlagen fuer ${upperTicker}: ${fiscalOverlayErr?.message?.substring(0, 120)}`);
       }
 
-      analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
+      if (!requestSkipsAnalyzeUiCache(req)) {
+        analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
+      }
 
       console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length}, ohlcv=${ohlcvPoints.length})`);
 
@@ -2418,7 +2453,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           cappedBySeverity: snapshot.cappedBySeverity,
           crv: snapshot.crv,
         });
-        persistScoringSnapshot({ ...snapshot, signal });
+        if (!requestSkipsAnalyzeUiCache(req)) persistScoringSnapshot({ ...snapshot, signal });
       } catch (snapErr: any) {
         console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
       }
@@ -2427,14 +2462,28 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         applyBiasFix(analysis);
         attachExecSummary(analysis);
       }
+      if (requestSkipsAnalyzeUiCache(req)) {
+        const trustedFx = !reportedCurrency || reportedCurrency === "USD"
+          ? 1
+          : (fetchFXRate(reportedCurrency) ?? null);
+        (analysis as any)._podcastInternals = {
+          revenueY1: revenueY1 > 0 ? revenueY1 : null,
+          fiscalYear: /^\d{4}$/.test(latestFiscalYear) ? latestFiscalYear : null,
+          fxRateToUsd: trustedFx,
+          reportedCurrency: reportedCurrency || "USD",
+        };
+      }
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
-      diskCacheSet(cacheKey, analysis);
+      // Der Podcast-Lauf schreibt weder L1 noch L2, damit die sichtbare Analyse ihren Cache behält.
+      if (!requestSkipsAnalyzeUiCache(req)) diskCacheSet(cacheKey, analysis);
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });
     }
-  });
+  };
+  analyzeHttpHandler = handleAnalyzePost;
+  app.post("/api/analyze", (req, res) => handleAnalyzePost(req, res));
 
   // ── /api/catalyst-enrich ──────────────────────────────────────────────
   // Frontend (CatalystsSection.tsx) sends only { ticker, useLLM, force } and

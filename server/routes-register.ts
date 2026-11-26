@@ -67,6 +67,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/podcast/brief — Key Driver und Skript, kein Score.
   const { registerPodcastRoute } = await import("./podcast-route");
   registerPodcastRoute(app);
+  // POST /api/podcast/script — Aktien-Podcast je Ticker. Die Markt-Route bleibt unverändert.
+  const { registerStockPodcastRoute } = await import("./stock-podcast-route");
+  registerStockPodcastRoute(app);
   const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");
   registerPodcastTranscriptRoute(app);
   const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
