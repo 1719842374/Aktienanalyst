@@ -828,12 +828,29 @@ export function readParagraphs(data: unknown): Map<string, string> {
   return out;
 }
 
-function chapterShell(def: { id: string; title: string; llmOwned: boolean }, spoken: string, llmOwned: boolean): StockPodcastChapter {
+const EN_CHAPTER_TITLE: Record<string, string> = {
+  einstieg: "Opening",
+  zusammenfassung: "Executive Summary",
+  these: "Thesis",
+  umsatz: "Revenue",
+  s13: "Moat and Porter",
+  s14: "PESTEL",
+  dcf: "Valuation",
+  s17: "Catalysts",
+  inversion: "Inversion",
+  earnings: "Earnings Call",
+  news: "News",
+  "news-llm": "News link",
+  schluss: "Closing",
+};
+
+function chapterShell(def: { id: string; title: string; llmOwned: boolean }, spoken: string, llmOwned: boolean, language: PodcastLanguage): StockPodcastChapter {
+  const title = language === "en" ? (EN_CHAPTER_TITLE[def.id] ?? def.title) : def.title;
   const words = spoken.split(/\s+/).filter(Boolean).length;
   return {
     id: def.id,
-    title: def.title,
-    label: def.title,
+    title,
+    label: title,
     template: spoken,
     spoken,
     durationSec: Math.max(8, Math.round(words / 2.4)),
@@ -901,7 +918,7 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
   for (const def of chaptersForSource(source)) {
     if (def.id === "schluss") {
       const spoken = schlussParagraph(sheet.language);
-      chapters.push(chapterShell(def, spoken, false));
+      chapters.push(chapterShell(def, spoken, false, sheet.language));
       reports.push({ id: def.id, attempts: 1, fallback: null });
       continue;
     }
@@ -909,12 +926,12 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
     const codeSpoken = appendCodeLines("", sheet, def.id);
     if (!draft) {
       if (!codeSpoken) continue;
-      chapters.push(chapterShell(def, codeSpoken, false));
+      chapters.push(chapterShell(def, codeSpoken, false, sheet.language));
       reports.push({ id: def.id, attempts: 1, fallback: null });
       continue;
     }
     if (!draft.reasons.length) {
-      chapters.push(chapterShell(def, draft.spoken, true));
+      chapters.push(chapterShell(def, draft.spoken, true, sheet.language));
       reports.push({ id: def.id, attempts: draft.attempts, fallback: null });
       continue;
     }
@@ -923,7 +940,7 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
     const reason = draft.reasons[0] ?? "verifier";
     dropped.total += 1;
     dropped.byReason[reason] = (dropped.byReason[reason] ?? 0) + 1;
-    chapters.push(chapterShell(def, spoken, false));
+    chapters.push(chapterShell(def, spoken, false, sheet.language));
     reports.push({ id: def.id, attempts: draft.attempts, fallback: reason });
   }
   return { chapters, dropped, reports };

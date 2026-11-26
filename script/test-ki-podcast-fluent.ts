@@ -10,6 +10,7 @@ import { priceLabelFor, speakPriceUsd } from "../shared/podcast-speak";
 import {
   applyTitleMap,
   buildSpeechSheet,
+  chaptersFromDrafts,
   fallbackParagraph,
   factsForChapter,
   fluencyStats,
@@ -18,7 +19,7 @@ import {
   verifyChapter,
 } from "../shared/podcast-fluent";
 import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
-import { chaptersForSource } from "../shared/podcast-script";
+import { chaptersForSource, PDF_PODCAST_CHAPTERS } from "../shared/podcast-script";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 import { renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
 import { handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
@@ -479,6 +480,28 @@ async function main() {
   assert.match(fallbackParagraph("inversion", gateEn), /The named risk is|The named risk limits/);
   assert.equal(/risks are Exportregeln/.test(fallbackParagraph("inversion", gateEn)), false);
   ok("Befunde 1 bis 9 gelten auf Deutsch und Englisch");
+
+  const deTitles = chaptersFromDrafts(gateDe, "pdf", []).chapters;
+  const enTitles = chaptersFromDrafts(gateEn, "pdf", [
+    { id: "einstieg", attempts: 1, reasons: [], notes: [], spoken: fallbackParagraph("einstieg", gateEn) },
+  ]).chapters;
+  assert.equal(deTitles.find(c => c.id === "schluss")?.title, "Schluss");
+  assert.equal(deTitles.find(c => c.id === "these")?.title, "These");
+  assert.equal(enTitles.find(c => c.id === "einstieg")?.title, "Opening");
+  assert.equal(enTitles.find(c => c.id === "einstieg")?.label, "Opening");
+  assert.equal(enTitles.find(c => c.id === "schluss")?.title, "Closing");
+  assert.equal(enTitles.find(c => c.id === "schluss")?.label, "Closing");
+  const enKi = chaptersFromDrafts(gateEn, "ki", [
+    { id: "news-llm", attempts: 1, reasons: [], notes: [], spoken: "The latest report dates from yesterday and stays inside the window we considered. This age is the verified timing of the report." },
+    { id: "umsatz", attempts: 1, reasons: [], notes: [], spoken: fallbackParagraph("umsatz", gateEn) },
+    { id: "s17", attempts: 1, reasons: [], notes: [], spoken: fallbackParagraph("s17", gateEn) },
+  ]).chapters;
+  assert.equal(enKi.find(c => c.id === "news-llm")?.title, "News link");
+  assert.equal(enKi.find(c => c.id === "umsatz")?.title, "Revenue");
+  assert.equal(enKi.find(c => c.id === "s17")?.title, "Catalysts");
+  assert.equal(enKi.find(c => c.id === "schluss")?.title, "Closing");
+  assert.equal(PDF_PODCAST_CHAPTERS.find(c => c.id === "einstieg")?.title, "Einstieg");
+  ok("Englische Läufe tragen englische Kapiteltitel, die deutschen Titel bleiben");
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",
