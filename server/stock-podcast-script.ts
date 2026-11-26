@@ -7,7 +7,7 @@
 import type { PodcastChapterReport, PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
 import { PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
-import { applyRedo, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, fluentPrompt, seedDrafts } from "../shared/podcast-fluent";
+import { applyRedo, applyTitleMap, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, fluentPrompt, readTitleMap, seedDrafts, titlePrompt } from "../shared/podcast-fluent";
 import type { LlmFailureReason } from "./llm-openrouter";
 import type { FullAiPack } from "./stock-podcast-full-ai";
 import { withStageTimeout } from "./stock-podcast-limit";
@@ -134,9 +134,25 @@ export async function renderStockPodcastScript(opts: {
     };
   }
   const sheet = buildSpeechSheet(facts, language);
-  const prompt = fluentPrompt(sheet, opts.source);
   const started = Date.now();
   const budget = PODCAST_STAGE_TIMEOUT_MS.script;
+  if (sheet.pendingTitles.length) {
+    const titleLeft = budget - (Date.now() - started);
+    if (titleLeft > 1500) {
+      const titles = titlePrompt(sheet);
+      const titleAc = new AbortController();
+      const translated = await withStageTimeout(opts.llm({
+        prompt: titles.prompt,
+        systemPrompt: titles.systemPrompt,
+        maxTokens: 400,
+        temperature: 0,
+        signal: titleAc.signal,
+      }), Math.min(8000, titleLeft - 1000));
+      if (translated === "timeout") titleAc.abort();
+      else if (translated && translated.data) applyTitleMap(sheet, readTitleMap(translated.data));
+    }
+  }
+  const prompt = fluentPrompt(sheet, opts.source);
   const ac = new AbortController();
   const ask = () => opts.llm({
     prompt: prompt.prompt,

@@ -7,6 +7,7 @@ import { writeFileSync } from "node:fs";
 import { DCF_CALIBRATION } from "../shared/dcf-calibration";
 import { buildPodcastFacts } from "../shared/podcast-facts";
 import {
+  applyTitleMap,
   buildSpeechSheet,
   fallbackParagraph,
   factsForChapter,
@@ -15,7 +16,7 @@ import {
   podcastSentences,
   verifyChapter,
 } from "../shared/podcast-fluent";
-import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "../shared/podcast-types";
+import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
 import { chaptersForSource } from "../shared/podcast-script";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 import { renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
@@ -124,6 +125,7 @@ function assertFluent(text: string, label: string): void {
   assert.ok(stats.avg >= 8, `${label} Schnitt ${stats.avg}`);
   assert.equal(stats.short, 0);
   for (const bad of FAIL) assert.equal(text.includes(bad), false, bad);
+  assert.equal(/bleibt an (?:die|diese) Quelle gebunden|Damit ist der belegte|stays tied to (?:that|the) source|That is the verified/.test(text), false, text);
   assert.equal(/\bYTD\b/.test(text), false);
   assert.equal(/\d/.test(text), false, text);
 }
@@ -266,6 +268,118 @@ async function main() {
   assert.equal(seen[0]?.body.model, "microsoft/mai-voice-2.1");
   assert.equal(seen[1]?.body.language, "en");
   ok("Englisch bleibt auf mai-voice-2.1, xAI übernimmt die Sprache nur mit gesetztem Key");
+
+  const nouns = "Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt. Der Umsatz stützt die Bewertung und das Wachstum trägt die Nachfrage.";
+  const nounVerdict = verifyChapter("zusammenfassung", nouns, deSheet);
+  assert.equal(nounVerdict.ok, true, nounVerdict.reasons.join(",") + " " + nouns);
+  const january = verifyChapter("zusammenfassung", "Der Januar bleibt der Monat für die Firma und die Aktie. Der Umsatz stützt die Bewertung im neuen Jahr.", deSheet);
+  assert.equal(january.ok, true, january.reasons.join(","));
+  ok("Ein korrekter deutscher Absatz mit normalen Substantiven besteht");
+
+  const deNumber = verifyChapter("zusammenfassung", "Der Umsatz wächst um zwanzig Prozent und das bleibt der Vergleich für die Firma. Die Aktie hält diesen Kurs im neuen Jahr.", deSheet);
+  assert.equal(deNumber.ok, false);
+  assert.ok(deNumber.reasons.includes("number"));
+  const enNumber = verifyChapter("zusammenfassung", "Revenue grows by about twenty percent and the company holds that line in the market. The signal stays the verified view for the firm.", enSheet);
+  assert.equal(enNumber.ok, false);
+  assert.ok(enNumber.reasons.includes("number"));
+  ok("Erfundene Zahlwörter fallen auf Deutsch und Englisch durch");
+
+  const leading = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet);
+  assert.equal(leading.ok, false);
+  assert.ok(leading.reasons.includes("name"));
+  ok("Ein Name am Satzanfang wird erkannt");
+
+  const ordered = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ticker: "NVDA",
+    companyName: "NVIDIA",
+    currency: "USD",
+    currentPrice: 100,
+    catalysts: [
+      { name: "Software", nettoUpside: 4 },
+      { name: "Blackwell", nettoUpside: 10.6 },
+    ],
+    _podcastInternals: { fxRateToUsd: 1, reportedCurrency: "USD" },
+  }), NOON), "de");
+  const pairA = ordered.facts.find(fact => fact.id === "pair_a")?.spoken ?? "";
+  const pairB = ordered.facts.find(fact => fact.id === "pair_b")?.spoken ?? "";
+  assert.match(pairA, /Blackwell/);
+  assert.match(pairA, /zehn Komma sechs Prozent/);
+  assert.equal(/vier Prozent/.test(pairA), false);
+  assert.match(pairB, /Software/);
+  assert.match(pairB, /vier Prozent/);
+  assert.equal(ordered.facts.some(fact => fact.id === "upside_a" || fact.id === "catalyst_a"), false);
+  const s17 = fallbackParagraph("s17", ordered);
+  assert.ok(s17.indexOf("Blackwell") < s17.indexOf("Software"), s17);
+  ok("Katalysator und Upside sind ein Paar, der größte steht zuerst");
+
+  const titled = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ticker: "NVDA",
+    companyName: "NVIDIA",
+    currency: "USD",
+    currentPrice: 100,
+    revenueSegments: [{ name: "Data Center", percentage: 80, fiscalYear: "2026" }],
+    catalysts: [{ name: "Rubin-Plattform", nettoUpside: 9 }],
+    risks: [{ name: "Wettbewerb durch Lilly" }, { name: "APAC-" }],
+    _podcastInternals: { revenueY1: 1, fiscalYear: "2026", fxRateToUsd: 1, reportedCurrency: "USD" },
+  }), NOON), "en");
+  const rawEn = titled.facts.map(fact => fact.spoken).join(" ");
+  assert.match(rawEn, /Data Center/);
+  assert.equal(/Rubin-Plattform|Wettbewerb|APAC-/.test(rawEn), false, rawEn);
+  applyTitleMap(titled, [
+    { raw: "Rubin-Plattform", text: "Rubin platform" },
+    { raw: "Wettbewerb durch Lilly", text: "competition from Lilly" },
+    { raw: "APAC-", text: "Asia Pacific" },
+  ]);
+  const translated = titled.facts.map(fact => fact.spoken).join(" ");
+  assert.match(translated, /Rubin platform/);
+  assert.match(translated, /competition from Lilly/);
+  assert.equal(/Rubin-Plattform|Wettbewerb|APAC-|Asia Pacific/.test(translated), false, translated);
+  applyTitleMap(titled, [{ raw: "Rubin-Plattform", text: "about twenty platforms" }]);
+  assert.equal(/about twenty/.test(titled.facts.find(fact => fact.id === "pair_a")?.spoken ?? ""), false);
+  ok("Rohtitel werden übersetzt oder weggelassen, Data Center bleibt Eigenname");
+
+  const deKeep = buildSpeechSheet(buildPodcastFacts(nvda, NOON), "de");
+  assert.match(deKeep.facts.find(fact => fact.id === "top_segment")?.spoken ?? "", /Data Center/);
+  const absent = verifyChapter("news", "Die These liegt nicht vor und die Aktie bleibt im neuen Jahr der Maßstab für den Markt. Der Umsatz stützt die Bewertung im neuen Jahr.", deSheet);
+  assert.equal(absent.ok, false);
+  assert.ok(absent.reasons.includes("absent"));
+  const live = spokenOf(nvda, "de");
+  assert.equal(/liegt nicht vor|von das Unternehmen|APAC-|Das erste Risiko/.test(live), false);
+  ok("Die alten Fehlstrings fallen auf dem Live-Pfad");
+
+  resetPodcastScriptCache();
+  const plausible = buildSpeechSheet(buildPodcastFacts(nvda, NOON), "de");
+  const modelChapters = chaptersForSource("pdf")
+    .filter(def => def.id !== "schluss" && factsForChapter(plausible, def.id).length)
+    .map(def => ({ id: def.id, paragraph: fallbackParagraph(def.id, plausible) }));
+  for (const row of modelChapters) {
+    const verdict = verifyChapter(row.id, row.paragraph, plausible);
+    assert.equal(verdict.ok, true, `${row.id} ${verdict.reasons.join(",")} ${row.paragraph}`);
+  }
+  const accepted = await renderStockPodcastScript({
+    pack: nvda,
+    source: "pdf",
+    language: "de",
+    now: NOON,
+    llm: async () => ({ data: { chapters: modelChapters }, modelUsed: "test" }),
+  });
+  assert.equal(accepted.ok, true);
+  if (accepted.ok) {
+    const fallen = accepted.reports.filter(row => row.fallback);
+    assert.equal(fallen.length, 0, JSON.stringify(fallen));
+    assert.ok(accepted.reports.length > 0);
+  }
+  ok("Plausible Modellabsätze erzeugen keinen Code-Fallback");
+
+  assert.equal(resolveStockPodcastVoice("de-DE-Harper:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
+  assert.equal(resolveStockPodcastVoice("de-DE-Grant:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
+  assert.equal(resolveStockPodcastVoice("de-DE-Mia:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
+  assert.equal(resolveStockPodcastVoice("de-DE-Klaus:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
+  assert.equal(resolveStockPodcastVoice("de-DE-Mia:MAI-Voice-2.1", "de").id, "de-DE-Mia:MAI-Voice-2.1");
+  ok("Eine deutsche Stimme mit language en nutzt die englische Stimme derselben Rolle");
+
+  assert.equal(/\b(Rechenzentren|Exportregeln|Hybridantrieb|Automobil|Wechselkurs)\b/.test(enNvda + enToyota), false, enNvda + enToyota);
+  ok("Der englische Text behält keine deutschen Rohtitel");
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

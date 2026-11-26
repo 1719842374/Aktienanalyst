@@ -22,7 +22,7 @@ export type StockPodcastStage = "analyze" | "script" | "audio";
  */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v15";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v16";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
 export const PODCAST_DISCLAIMER_EN = "This is not investment advice.";
@@ -81,14 +81,24 @@ export function listStockPodcastVoices(): StockPodcastVoice[] {
   ];
 }
 
+function englishVoiceForGerman(voiceId: string): StockPodcastVoice {
+  if (/grant/i.test(voiceId) || /klaus/i.test(voiceId)) {
+    const grant = OPENROUTER_PODCAST_VOICES_EN[1];
+    return { id: grant.id, label: grant.label, provider: "openrouter" };
+  }
+  const harper = OPENROUTER_PODCAST_VOICES_EN[0];
+  return { id: harper.id, label: harper.label, provider: "openrouter" };
+}
+
 export function resolveStockPodcastVoice(voiceId: string | undefined, language: PodcastLanguage = "de"): StockPodcastVoice {
   const wanted = (voiceId ?? "").trim();
   const found = listStockPodcastVoices().find(v => v.id === wanted);
-  if (found) return found;
   if (language === "en") {
-    const en = OPENROUTER_PODCAST_VOICES_EN[0];
-    return { id: en.id, label: en.label, provider: "openrouter" };
+    if (found?.provider === "xai") return found;
+    if (found && found.id.startsWith("en-")) return found;
+    return englishVoiceForGerman(found?.id ?? wanted);
   }
+  if (found) return found;
   const def = OPENROUTER_PODCAST_VOICES[0];
   return { id: def.id, label: def.label, provider: "openrouter" };
 }
