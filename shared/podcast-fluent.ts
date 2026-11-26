@@ -29,6 +29,8 @@ export interface SpeechSheet {
   pendingTitles: PendingTitle[];
   /** Sätze, die der Code setzt und die das Modell nicht als Token sieht. */
   codeLines: CodeLine[];
+  /** Eigennamen aus dem Pack: Firma, Peers, Segmente, Katalysatoren, Risiken, News. */
+  packNames: string[];
 }
 
 export interface CodeLine {
@@ -294,7 +296,30 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     context: modelContext(facts.redactedContext),
     pendingTitles,
     codeLines,
+    packNames: collectPackNames(facts),
   };
+}
+
+function collectPackNames(facts: PodcastFacts): string[] {
+  const raw = [
+    facts.values.company,
+    ...facts.payloadTitles,
+    ...facts.upsideNames,
+    ...facts.riskNames,
+    ...facts.protectedNames,
+    facts.measures?.segmentName ?? null,
+    ...(facts.measures?.catalystNames ?? []),
+    ...(facts.measures?.riskNames ?? []),
+    ...(facts.peerNames ?? []),
+  ];
+  const names: string[] = [];
+  for (const item of raw) {
+    if (!item) continue;
+    for (const word of item.split(/[^A-Za-zÄÖÜäöüß]+/)) {
+      if (word.length >= 4) names.push(word.toLowerCase());
+    }
+  }
+  return names;
 }
 
 /** Nackte Altersphrase. Die Präposition setzt der Satz, nicht der Token. */
@@ -536,9 +561,35 @@ function knownNames(sheet: SpeechSheet): string[] {
   return names;
 }
 
+function inflectionOnly(a: string, b: string): boolean {
+  const short = a.length < b.length ? a : b;
+  const long = a.length < b.length ? b : a;
+  if (long.length === short.length || !long.startsWith(short)) return false;
+  return /^(?:e|n|en|er|es|s|ed|ing)$/.test(long.slice(short.length));
+}
+
 function nearKnownName(lower: string, names: string[]): boolean {
-  if (lower.length < 5) return false;
-  return names.some(name => withinOneEdit(lower, name));
+  if (lower.length < 4) return false;
+  return names.some(name => name.length >= 4 && !inflectionOnly(lower, name) && withinOneEdit(lower, name));
+}
+
+function packNameLeak(text: string, sheet: SpeechSheet): string | null {
+  const lexicon = sheet.language === "de" ? DE_LEXICON : EN_LEXICON;
+  const names = sheet.packNames ?? [];
+  const spoken = [...sheet.facts.map(fact => fact.spoken), ...sheet.codeLines.map(line => line.spoken)].join(" ");
+  for (const sentence of podcastSentences(text)) {
+    for (const word of sentence.split(/\s+/).filter(Boolean)) {
+      const clean = tokenCore(word);
+      const lower = clean.toLowerCase();
+      if (lower.length < 4 || lexicon.has(lower)) continue;
+      const exact = names.includes(lower);
+      const near = names.some(name => name.length >= 4 && !inflectionOnly(lower, name) && withinOneEdit(lower, name));
+      if (!exact && !near) continue;
+      if (entityMentioned(clean, spoken)) continue;
+      return clean;
+    }
+  }
+  return null;
 }
 
 /** Strukturelle Kandidaten. Ein leeres Extraktor-Ergebnis schaltet diese Prüfung nicht ab. */
@@ -593,7 +644,7 @@ function mergeEntityLists(first: string[] | null | undefined, redo: string[] | n
 }
 
 const DE_NUMBER_ATOMS = ["milliarden", "millionen", "milliarde", "million", "tausend", "hundert", "neunzehn", "achtzehn", "siebzehn", "sechzehn", "fünfzehn", "fuenfzehn", "vierzehn", "dreizehn", "zwölf", "zwoelf", "elf", "neunzig", "achtzig", "siebzig", "sechzig", "fünfzig", "fuenfzig", "vierzig", "dreißig", "dreissig", "zwanzig", "zehn", "neun", "acht", "sieben", "sechs", "fünf", "fuenf", "vier", "drei", "zwei", "null"];
-const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved|twice|half|twofold|double|triple|dozen|highest|record|couple|quarter)\b/i;
+const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved|twice|half|twofold|double|triple|dozen|highest|record|couple|quarter|rose)\b/i;
 const DE_FOLD = /\b(verdoppelt|verdreifacht|halbiert|hälfte|haelfte|drittel|viertel|rekord|höchster|höchste|höchsten|höchstem)\b|\b[A-Za-zÄÖÜäöüß]*fach\b|höchste[rnms]?\s+seit/i;
 
 function isGermanQuantity(word: string): boolean {
@@ -676,7 +727,7 @@ export function quantityWord(text: string, sheet: SpeechSheet): string | null {
 }
 
 export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
-  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [] }) != null;
+  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [] }) != null;
 }
 
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {
@@ -714,8 +765,9 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
   const structural = spoken ? structuralName(spoken, sheet) : null;
+  const leaked = spoken ? packNameLeak(spoken, sheet) : null;
   const extra = spoken ? entityHit(entities, raw, spoken, sheet) : null;
-  const name = structural ?? extra;
+  const name = structural ?? leaked ?? extra;
   if (name) note("name", name);
   const quantity = spoken ? quantityWord(spoken, sheet) : null;
   if (quantity) note("number", quantity);
@@ -769,7 +821,7 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const asOf = take("as_of");
     if (company && price) parts.push(de ? `Wir sprechen heute über ${company}, und der Kurs steht bei ${price}` : `We look at ${company} today and the price stands at ${price}`);
     else if (price) parts.push(de ? `Der Kurs steht bei ${price} und ist der belegte Marktwert der Aktie` : `The price stands at ${price} and is the verified market value`);
-    if (asOf) parts.push(de ? `Der Stand bezieht sich auf den ${asOf}` : `The figures are dated as of ${asOf}`);
+    if (asOf) parts.push(de ? `Der Stand bezieht sich auf den ${asOf}` : `The figures are as of ${asOf}`);
     else if (price) parts.push(de ? "Dieser Kurs ist der belegte Marktwert der Aktie" : "This price is the verified market value of the company");
   } else if (chapterId === "zusammenfassung") {
     const ampel = take("ampel");
@@ -925,8 +977,8 @@ export function fluentPrompt(
     ? redo.map(row => `${row.id}: ${(row.notes && row.notes.length ? row.notes : row.reasons).join("; ")}`).join("\n")
     : "";
   const systemPrompt = sheet.language === "en"
-    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}],\"titles\":[{\"raw\":\"...\",\"text\":\"...\"}]}. entities lists every proper name, company, product, person, place and quantity exactly as written. titles translates each catalyst and risk title into English. Proper names stay."
-    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}]}. entities nennt alle Eigennamen, Firmen, Produkte, Personen, Orte und Mengen wörtlich wie im Text.";
+    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}],\"titles\":[{\"raw\":\"...\",\"text\":\"...\"}]}. entities is required on every chapter and lists every company, product and person name in that paragraph. An empty list is allowed only when the paragraph has none. titles translates each catalyst and risk title into English. Proper names stay."
+    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"]}]}. entities ist je Kapitel ein Pflichtfeld und nennt alle Firmen-, Produkt- und Personennamen im Absatz. Eine leere Liste ist nur erlaubt, wenn kein solcher Name vorkommt.";
   const titleBlock = sheet.language === "en" && sheet.pendingTitles.length
     ? `TITEL\n${sheet.pendingTitles.map(item => item.raw).join("\n")}`
     : "";
@@ -942,8 +994,8 @@ export function fluentPrompt(
     wanted.map(def => def.id).join(", "),
     redoLine ? `NEU SCHREIBEN\n${redoLine}` : "",
     sheet.language === "en"
-      ? "Use each token once, as a fixed phrase. Do not repeat dollars, percent, or an article in front of a token. Date and age tokens are the bare phrase. You choose as of, for, from, or ago."
-      : "Setze jedes Token einmal als feste Wendung. Wiederhole Dollar oder Prozent nicht und setze keinen Artikel davor. Datums- und Alterstoken sind die nackte Phrase. Du wählst auf den, für den, von oder vor.",
+      ? "Use each token once, as a fixed phrase. Do not repeat dollars, percent, or an article in front of a token. Date tokens are the bare phrase. You choose as of, for, or from. For today or yesterday say from the age token. For a duration say the report is that many days old. Do not put ago before the age token."
+      : "Setze jedes Token einmal als feste Wendung. Wiederhole Dollar oder Prozent nicht und setze keinen Artikel davor. Datumstoken sind die nackte Phrase. Du wählst auf den oder für den. Bei heute oder gestern sagst du von dem Alterstoken. Bei einer Dauer sagst du ist das Alterstoken alt. Sag nicht vor vor dem Alterstoken.",
   ].filter(Boolean).join("\n");
   return { prompt, systemPrompt };
 }
@@ -970,8 +1022,10 @@ export function readParagraphs(data: unknown): Map<string, string> {
 
 export interface ChapterPayload {
   paragraphs: Map<string, string>;
-  /** null je Kapitel heißt: entities fehlt oder ist ungültig. [] ist ein leeres, gültiges Ergebnis. */
+  /** null je Kapitel heißt: entities fehlt. [] ist ein leeres, gültiges Ergebnis. */
   entities: Map<string, string[] | null>;
+  /** Kapitel, deren entities-Feld da ist, aber kein Array. */
+  invalidEntities: Set<string>;
   /** null heißt: titles fehlt oder ist ungültig. */
   titles: Array<{ raw: string; text: string }> | null;
 }
@@ -979,21 +1033,31 @@ export interface ChapterPayload {
 export function readChapterPayload(data: unknown): ChapterPayload {
   const paragraphs = readParagraphs(data);
   const entities = new Map<string, string[] | null>();
+  const invalidEntities = new Set<string>();
   const chapters = data && typeof data === "object" && Array.isArray((data as { chapters?: unknown }).chapters)
     ? (data as { chapters: unknown[] }).chapters
     : [];
   for (const row of chapters) {
     if (!row || typeof row !== "object") continue;
     const id = typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : "";
-    if (!id) continue;
+    if (!id || !Object.prototype.hasOwnProperty.call(row, "entities")) continue;
     const listed = (row as { entities?: unknown }).entities;
-    entities.set(id, Array.isArray(listed) ? listed.filter((item): item is string => typeof item === "string") : null);
+    if (listed == null) {
+      entities.set(id, null);
+      continue;
+    }
+    if (!Array.isArray(listed)) {
+      entities.set(id, null);
+      invalidEntities.add(id);
+      continue;
+    }
+    entities.set(id, listed.filter((item): item is string => typeof item === "string"));
   }
   const titles = data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "titles")
     && Array.isArray((data as { titles?: unknown }).titles)
     ? readTitleMap(data)
     : null;
-  return { paragraphs, entities, titles };
+  return { paragraphs, entities, invalidEntities, titles };
 }
 
 const EN_CHAPTER_TITLE: Record<string, string> = {
@@ -1033,25 +1097,28 @@ export interface FluentDraft {
   reasons: string[];
   notes: string[];
   spoken: string;
+  entityState?: "ok" | "missing" | "invalid";
 }
 
-export function readExtractor(data: unknown): Map<string, string[]> | null {
-  if (!data || typeof data !== "object" || !Array.isArray((data as { chapters?: unknown }).chapters)) return null;
-  const chapters = (data as { chapters: unknown[] }).chapters;
-  const map = new Map<string, string[]>();
-  let seen = false;
-  for (const row of chapters) {
-    if (!row || typeof row !== "object") continue;
-    const id = typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : "";
-    const entities = (row as { entities?: unknown }).entities;
-    if (!id || !Array.isArray(entities)) continue;
-    seen = true;
-    map.set(id, entities.filter((item): item is string => typeof item === "string"));
-  }
-  return seen ? map : null;
+function entityField(
+  entities: Map<string, string[] | null> | null | undefined,
+  invalid: Set<string> | undefined,
+  id: string,
+): { state: "ok" | "missing" | "invalid"; names: string[] | null } {
+  if (invalid?.has(id)) return { state: "invalid", names: null };
+  if (!entities?.has(id)) return { state: "missing", names: null };
+  const listed = entities.get(id);
+  if (!Array.isArray(listed)) return { state: "missing", names: null };
+  return { state: "ok", names: listed };
 }
 
-export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, modelData: unknown, entities?: Map<string, string[] | null> | null): FluentDraft[] {
+export function seedDrafts(
+  sheet: SpeechSheet,
+  source: StockPodcastSource,
+  modelData: unknown,
+  entities?: Map<string, string[] | null> | null,
+  invalid?: Set<string>,
+): FluentDraft[] {
   const found = readParagraphs(modelData);
   const drafts: FluentDraft[] = [];
   for (const def of chaptersForSource(source)) {
@@ -1062,13 +1129,26 @@ export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, model
       drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], notes: ["empty"], spoken: "" });
       continue;
     }
-    const verdict = verifyChapter(def.id, raw, sheet, entities ? (entities.get(def.id) ?? []) : null);
+    const field = entityField(entities, invalid, def.id);
+    if (field.state !== "ok") {
+      drafts.push({
+        id: def.id,
+        attempts: 1,
+        reasons: ["entities"],
+        notes: ["entities fehlt"],
+        spoken: raw,
+        entityState: field.state,
+      });
+      continue;
+    }
+    const verdict = verifyChapter(def.id, raw, sheet, field.names);
     drafts.push({
       id: def.id,
       attempts: 1,
       reasons: verdict.ok ? [] : verdict.reasons,
       notes: verdict.ok ? [] : verdict.notes,
       spoken: verdict.ok ? appendCodeLines(verdict.spoken, sheet, def.id) : raw,
+      entityState: "ok",
     });
   }
   return drafts;
@@ -1080,19 +1160,33 @@ export function applyRedo(
   modelData: unknown,
   entities?: Map<string, string[] | null> | null,
   prior?: Map<string, string[] | null> | null,
+  invalid?: Set<string>,
 ): FluentDraft[] {
   const found = readParagraphs(modelData);
   return drafts.map(draft => {
     if (!draft.reasons.length || draft.reasons[0] === "empty" || draft.reasons[0] === "timeout") return draft;
     const raw = found.get(draft.id) ?? "";
     if (!raw) return { ...draft, attempts: draft.attempts + 1, reasons: ["empty"], notes: ["empty"], spoken: "" };
-    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(prior?.get(draft.id), entities?.get(draft.id)));
+    const field = entityField(entities, invalid, draft.id);
+    if (field.state !== "ok") {
+      return {
+        ...draft,
+        attempts: draft.attempts + 1,
+        reasons: ["entities"],
+        notes: ["entities fehlt"],
+        spoken: raw,
+        entityState: field.state,
+      };
+    }
+    const priorNames = prior?.has(draft.id) && Array.isArray(prior.get(draft.id)) ? prior.get(draft.id) : [];
+    const verdict = verifyChapter(draft.id, raw, sheet, mergeEntityLists(priorNames, field.names));
     return {
       id: draft.id,
       attempts: draft.attempts + 1,
       reasons: verdict.ok ? [] : verdict.reasons,
       notes: verdict.ok ? [] : verdict.notes,
       spoken: verdict.ok ? appendCodeLines(verdict.spoken, sheet, draft.id) : raw,
+      entityState: "ok",
     };
   });
 }

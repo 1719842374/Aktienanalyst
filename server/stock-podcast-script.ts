@@ -5,7 +5,7 @@
  * Ein kurzer Fehlversuch des ersten Calls wird einmal wiederholt, ohne das Tageslimit ein zweites Mal zu zählen.
  * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme und der Sprache.
  */
-import type { PodcastChapterReport, PodcastDropCounts, PodcastExtractorStatus, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
+import type { PodcastChapterReport, PodcastDropCounts, PodcastExtractorCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
 import { PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
 import { applyRedo, applyTitleMap, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, fluentPrompt, readChapterPayload, seedDrafts } from "../shared/podcast-fluent";
@@ -36,7 +36,7 @@ interface ScriptCacheEntry {
   dropped: PodcastDropCounts;
   language: PodcastLanguage;
   reports: PodcastChapterReport[];
-  extractor: PodcastExtractorStatus;
+  extractor: PodcastExtractorCounts;
 }
 
 const scriptCache = new Map<string, ScriptCacheEntry>();
@@ -60,13 +60,14 @@ export function peekPodcastScript(cacheKey: string): ScriptCacheEntry | null {
   return scriptCache.get(cacheKey) ?? null;
 }
 
-function extractorStatus(payload: { paragraphs: Map<string, string>; entities: Map<string, string[] | null> }): PodcastExtractorStatus {
-  if (payload.paragraphs.size === 0) return "skipped";
-  let valid = true;
-  payload.paragraphs.forEach((_text, id) => {
-    if (!Array.isArray(payload.entities.get(id))) valid = false;
-  });
-  return valid ? "ok" : "invalid";
+function tallyExtractor(drafts: Array<{ entityState?: "ok" | "missing" | "invalid" }>): PodcastExtractorCounts {
+  const counts = { ok: 0, missing: 0, invalid: 0 };
+  for (const draft of drafts) {
+    if (draft.entityState === "ok") counts.ok += 1;
+    else if (draft.entityState === "missing") counts.missing += 1;
+    else if (draft.entityState === "invalid") counts.invalid += 1;
+  }
+  return counts;
 }
 
 function stampVoice(entry: ScriptCacheEntry, voiceId: string): StockPodcastChapter[] {
@@ -119,7 +120,7 @@ export async function renderStockPodcastScript(opts: {
   facts: PodcastFacts;
   language: PodcastLanguage;
   reports: PodcastChapterReport[];
-  extractor: PodcastExtractorStatus;
+  extractor: PodcastExtractorCounts;
 } | { ok: false; reason: "timeout" | "empty" }> {
   const language = opts.language ?? "de";
   const voice = resolveStockPodcastVoice(opts.voiceId, language);
@@ -169,8 +170,7 @@ export async function renderStockPodcastScript(opts: {
   if (raced == null || raced.data == null) return { ok: false, reason: "empty" };
   const payload = readChapterPayload(raced.data);
   if (payload.titles) applyTitleMap(sheet, payload.titles);
-  const extractor = extractorStatus(payload);
-  let drafts = seedDrafts(sheet, opts.source, raced.data, payload.entities);
+  let drafts = seedDrafts(sheet, opts.source, raced.data, payload.entities, payload.invalidEntities);
   let regens = 0;
   while (regens < 2 && brokenDrafts(drafts).length) {
     const left = budget - (Date.now() - started);
@@ -196,8 +196,9 @@ export async function renderStockPodcastScript(opts: {
     }
     const redoPayload = readChapterPayload(edited.data);
     if (redoPayload.titles) applyTitleMap(sheet, redoPayload.titles);
-    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities, payload.entities);
+    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities, payload.entities, redoPayload.invalidEntities);
   }
+  const extractor = tallyExtractor(drafts);
   const assembled = chaptersFromDrafts(sheet, opts.source, drafts);
   const chapters = assembled.chapters;
   const disclaimer = language === "en" ? PODCAST_DISCLAIMER_EN : PODCAST_DISCLAIMER;

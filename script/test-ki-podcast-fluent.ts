@@ -14,6 +14,7 @@ import {
   chaptersFromDrafts,
   fallbackParagraph,
   factsForChapter,
+  seedDrafts,
   fluencyStats,
   fluentPrompt,
   podcastSentences,
@@ -215,7 +216,7 @@ async function main() {
     llm: async () => {
       calls += 1;
       if (calls === 1) return { data: { chapters: [{ id: "umsatz", paragraph: "Wachstum 114." }] }, modelUsed: "test" };
-      return { data: { chapters: [{ id: "umsatz", paragraph: good }] }, modelUsed: "test" };
+      return { data: { chapters: [{ id: "umsatz", paragraph: good, entities: [] }] }, modelUsed: "test" };
     },
   });
   assert.equal(regenerated.ok, true);
@@ -225,7 +226,7 @@ async function main() {
     assert.equal(report?.fallback, null);
     assert.equal(/\d/.test(regenerated.chapters.find(c => c.id === "umsatz")?.spoken ?? ""), false);
     assert.equal(JSON.stringify(regenerated.reports).includes("Wachstum"), false);
-    assert.equal(regenerated.extractor, "invalid");
+    assert.deepEqual(regenerated.extractor, { ok: 1, missing: 0, invalid: 0 });
   }
   assert.equal(calls, 2);
   ok("Ein kaputtes Kapitel wird einmal neu geschrieben, ohne zweiten Extraktor-Call");
@@ -364,7 +365,7 @@ async function main() {
   const plausible = buildSpeechSheet(buildPodcastFacts(nvda, NOON), "de");
   const modelChapters = chaptersForSource("pdf")
     .filter(def => def.id !== "schluss" && factsForChapter(plausible, def.id).length)
-    .map(def => ({ id: def.id, paragraph: fallbackParagraph(def.id, plausible) }));
+    .map(def => ({ id: def.id, paragraph: fallbackParagraph(def.id, plausible), entities: [] as string[] }));
   for (const row of modelChapters) {
     const verdict = verifyChapter(row.id, row.paragraph, plausible);
     assert.equal(verdict.ok, true, `${row.id} ${verdict.reasons.join(",")} ${row.paragraph}`);
@@ -454,7 +455,8 @@ async function main() {
   assert.equal(/^auf den /.test(gateDe.facts.find(fact => fact.id === "as_of")?.spoken ?? ""), false);
   assert.match(fallbackParagraph("einstieg", gateDe), /auf den /);
   assert.equal(/^as of /.test(gateEn.facts.find(fact => fact.id === "as_of")?.spoken ?? ""), false);
-  assert.match(fallbackParagraph("einstieg", gateEn), /as of /);
+  assert.match(fallbackParagraph("einstieg", gateEn), /The figures are as of /);
+  assert.equal(/dated as of/.test(fallbackParagraph("einstieg", gateEn)), false);
   assert.equal(fluentPrompt(gateDe, "pdf").prompt.includes("[[crv]]"), false);
   assert.match(fallbackParagraph("dcf", gateDe), /Das Chance-Risiko-Verhältnis liegt bei /);
   assert.match(fallbackParagraph("dcf", gateEn), /The chance-risk ratio stands at /);
@@ -463,7 +465,12 @@ async function main() {
     newsItems: [{ title: "Hinweis", pubDate: "2026-11-21T08:00:00.000Z" }],
   }), NOON), "de");
   assert.equal(/^vor /.test(aged.facts.find(fact => fact.id === "news_age")?.spoken ?? ""), false);
-  assert.match(fallbackParagraph("news", aged), /ist .+ alt/);
+  assert.match(fallbackParagraph("news", aged), /ist .+ Tage alt/);
+  const ageSentence = verifyChapter("news", "Die jüngste Meldung ist [[news_age]] alt und liegt im betrachteten Fenster der Firma. Der Kurs stützt die Bewertung.", aged);
+  assert.equal(ageSentence.ok, true, ageSentence.notes.join("|"));
+  assert.match(ageSentence.spoken, /ist fünf Tage alt/);
+  assert.equal(/Du wählst auf den, für den, von oder vor/.test(fluentPrompt(aged, "pdf").prompt), false);
+  assert.match(fluentPrompt(aged, "pdf").prompt, /ist das Alterstoken alt/);
   assert.equal(/von vor/.test(fallbackParagraph("news", aged)), false);
   const past = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ...gatePack.analysis,
@@ -671,6 +678,18 @@ async function main() {
   assert.equal(geld.reasons.includes("name"), false, geld.notes.join("|"));
   const geWord = verifyChapter("zusammenfassung", "Die GE bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["GE"]);
   assert.equal(geWord.ok, false);
+  const rose = verifyChapter("umsatz", "Revenue rose in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", probeEn, []);
+  assert.equal(rose.ok, false);
+  assert.ok(rose.reasons.includes("number"), rose.notes.join("|"));
+  const blackPack = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
+    ...probeAnalysis,
+    newsItems: [{ title: "Blackwell", pubDate: "2026-11-25T08:00:00.000Z" }],
+    risks: [{ name: "Lilly" }],
+  }), NOON), "de");
+  const blackLeak = verifyChapter("einstieg", "Die Firma nennt blackwell und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", blackPack, []);
+  assert.equal(blackLeak.ok, false, blackLeak.notes.join("|"));
+  const lily = verifyChapter("inversion", "Die Firma sieht Lily und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", blackPack, []);
+  assert.equal(lily.ok, false, lily.notes.join("|"));
   const appleBlackwell = "Im Vergleich zu Apple bleibt blackwell der zweite Treiber und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie bleibt der Maßstab für die Firma.";
   assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).reasons.includes("name"), false);
   assert.equal(verifyChapter("s17", appleBlackwell, probeDe, ["Apple", "blackwell"]).ok, false);
@@ -773,7 +792,14 @@ async function main() {
   const nameRejected = nameBattery.filter(([text, id, sheet, entities]) => !verifyChapter(id, text, sheet, entities).ok).length;
   assert.equal(nameBattery.length, 25);
   assert.ok(nameRejected >= 24, `Namen ${nameRejected}/25`);
-  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativliste ${rejected}/25, Backup ${backupRejected}/25, Namensatz ${nameRejected}/25.`);
+  const missingId = foreignNegatives.filter(([id, sheet, raw]) => {
+    const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw }] }, new Map());
+    return drafts.some(draft => draft.id === id && draft.reasons.includes("entities"));
+  }).length;
+  assert.ok(missingId >= 24, `fehlende ID ${missingId}/25`);
+  const passed = foreignNegatives.filter(([id, sheet, raw, entities]) => verifyChapter(id, raw, sheet, entities).ok)
+    .map(([id, , raw]) => `${id}: ${raw.slice(0, 80)}`);
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativ mit Angabe ${rejected}/25, Backup ${backupRejected}/25, fehlende ID ${missingId}/25, Namensatz ${nameRejected}/25. Durch bei Angabe: ${passed.join(" || ") || "keine"}.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

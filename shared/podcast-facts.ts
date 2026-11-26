@@ -100,6 +100,8 @@ export interface PodcastFacts {
   payloadTitles: string[];
   /** Namen der Katalysatoren mit Netto-Upside, parallel zu netto_upside_1..3. */
   upsideNames: string[];
+  /** Firmennamen der Peer-Vergleichsgruppe. */
+  peerNames: string[];
   /** Numerischer Börsenkürzel, der nie gesprochen wird. */
   silentTicker: string | null;
   /** Fiskalquartal oder der Hinweis, dass nur das zuletzt gemeldete Quartal vorliegt. */
@@ -401,6 +403,9 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     protectedNames,
     payloadTitles,
     upsideNames: upsides.map(row => row.name),
+    peerNames: (Array.isArray(analysis.peerComparison?.peers) ? analysis.peerComparison.peers : [])
+      .map((peer: any) => text(peer?.name) ?? text(peer?.companyName))
+      .filter((name: string | null): name is string => !!name),
     silentTicker,
     reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,

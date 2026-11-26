@@ -136,8 +136,12 @@ export interface PodcastChapterReport {
   fallback: string | null;
 }
 
-/** Extractor je Skript, ohne die erkannten Wörter. */
-export type PodcastExtractorStatus = "ok" | "timeout" | "invalid" | "skipped";
+/** Kapitel je Erzeugung, deren entities-Feld ok, fehlend oder ungültig war. Ohne die Wörter. */
+export interface PodcastExtractorCounts {
+  ok: number;
+  missing: number;
+  invalid: number;
+}
 
 /** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
 export interface StockPodcastStageTimings {
@@ -145,7 +149,7 @@ export interface StockPodcastStageTimings {
   script: StockPodcastStageTiming & {
     dropped: PodcastDropCounts;
     chapters?: PodcastChapterReport[];
-    extractor?: PodcastExtractorStatus;
+    extractor?: PodcastExtractorCounts;
   };
   audio: { timeoutMs: number };
 }

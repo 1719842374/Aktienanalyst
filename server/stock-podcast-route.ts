@@ -15,7 +15,7 @@ import {
   PODCAST_STAGE_TIMEOUT_MS,
   type PodcastChapterReport,
   type PodcastDropCounts,
-  type PodcastExtractorStatus,
+  type PodcastExtractorCounts,
   type PodcastLanguage,
   type StockPodcastErrorCode,
   type StockPodcastScriptResponse,
@@ -118,7 +118,7 @@ function stageTimings(
   scriptMs: number,
   dropped: PodcastDropCounts = emptyDropCounts(),
   reports?: PodcastChapterReport[],
-  extractor?: PodcastExtractorStatus,
+  extractor?: PodcastExtractorCounts,
 ): StockPodcastStageTimings {
   return {
     analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
