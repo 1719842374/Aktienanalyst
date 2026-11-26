@@ -222,7 +222,7 @@ export async function handleStockPodcastScript(
           voiceLabel: voice.label,
           cached: true,
           modelUsed: scriptHit.entry.modelUsed,
-          dropped: scriptHit.entry.dropped ?? 0,
+          dropped: scriptHit.entry.dropped ?? emptyDropCounts(),
           facts,
         },
       }),

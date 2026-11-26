@@ -71,8 +71,7 @@ function main() {
   });
   for (const chapter of nvdaKi) assertNoLeak(`NVDA ${chapter.id}`, chapter.spoken);
   const nvdaEarnings = nvdaKi.find(c => c.id === "earnings")?.spoken ?? "";
-  assert.match(nvdaEarnings, /liegt nicht vor/);
-  assert.equal(nvdaEarnings.includes("call_date"), false);
+  assert.equal(/call_date|liegt nicht vor/.test(nvdaEarnings), false);
   const nvdaNews = nvdaKi.find(c => c.id === "news-llm")?.spoken ?? "";
   assert.match(nvdaNews, /Diese Meldung ist relevant/);
   assert.equal(/Diese Meld(?!ung)/.test(nvdaNews), false);
@@ -110,7 +109,7 @@ function main() {
   });
   for (const chapter of nvoKi) assertNoLeak(`NVO ${chapter.id}`, chapter.spoken);
   assert.equal(/fy_yoy|Einordnung vor/.test(nvoKi.find(c => c.id === "s14")?.spoken ?? ""), false);
-  assert.match(nvoKi.find(c => c.id === "earnings")?.spoken ?? "", /liegt nicht vor/);
+  assert.equal(/call_date|liegt nicht vor/.test(nvoKi.find(c => c.id === "earnings")?.spoken ?? ""), false);
   assert.match(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "", /Geschäftsjahr zweitausendsechsundzwanzig/);
   assert.equal(/\d/.test(nvoKi.find(c => c.id === "umsatz")?.spoken ?? "1"), false);
   ok("NVO ki ersetzt fy_yoy, gj_year, call_date und news_age");
@@ -130,10 +129,10 @@ function main() {
     analysis: { ticker: "NVDA", companyName: "NVIDIA", currency: "USD" },
   });
   const emptyPdf = assemblePodcastChapters("pdf", buildPodcastFacts(empty), null);
-  assert.match(emptyPdf.find(c => c.id === "dcf")?.spoken ?? "", /liegt nicht vor/);
-  assert.match(emptyPdf.find(c => c.id === "zusammenfassung")?.spoken ?? "", /liegt nicht vor/);
+  assert.equal(/liegt nicht vor/.test(emptyPdf.map(c => c.spoken).join(" ")), false);
+  assert.equal(emptyPdf.find(c => c.id === "dcf"), undefined);
   assertNoLeak("leer", emptyPdf.map(c => c.spoken).join(" "));
-  ok("Fehlende DCF- und Kurswerte heißen liegt nicht vor");
+  ok("Fehlende DCF- und Kurswerte erzeugen keinen Füllsatz");
 
   assert.equal(keepCompleteSentences("Diese Meldung ist relevant. Diese Meld"), "Diese Meldung ist relevant.");
   assert.equal(keepCompleteSentences("Diese Meld"), "");

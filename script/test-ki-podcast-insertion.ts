@@ -86,7 +86,7 @@ function main() {
     assert.equal(/\d{4}-\d{2}-\d{2}/.test(chapter.spoken), false, chapter.spoken);
     assert.equal(chapter.spoken.includes("GrowthEvidence"), false);
   }
-  assert.match(spoken("earnings"), /Ein Earnings-Call-Transkript liegt nicht vor/);
+  assert.equal(/liegt nicht vor/.test(spoken("earnings")), false);
   assert.match(spoken("earnings"), /Der nächste Earnings Call ist für den siebenundzwanzigsten Januar/);
   assert.equal(/war am/.test(spoken("earnings")), false);
   assert.equal(/Das zuletzt gemeldete Quartal liegt vor|Quartal zum|Oktober/.test(spoken("earnings")), false);
@@ -124,7 +124,8 @@ function main() {
   assert.equal(/Gesamtumsatz beträgt/.test(umsatz), false);
   const news = wrongType.find(c => c.id === "news")?.spoken ?? "";
   assert.equal(/stieg um/.test(news), false);
-  assert.match(wrongType.find(c => c.id === "umsatz")?.spoken ?? "", /Cloud|Hauptumsatzträger|Umsatzträger/);
+  assert.match(wrongType.find(c => c.id === "umsatz")?.spoken ?? "", /Das größte Segment/);
+  assert.equal(/Cloud/.test(wrongType.find(c => c.id === "umsatz")?.spoken ?? ""), false);
   ok("Prozent-Platzhalter wird nicht als Umsatzbetrag gesprochen, Segmentname nicht als Zielwert");
 
   const emptyMoney = {
@@ -138,8 +139,7 @@ function main() {
   });
   assert.equal(emptyChapters.find(c => c.id === "umsatz")?.spoken.includes("beträgt Dollar"), false);
   const emptyPdf = assemblePodcastChapters("pdf", emptyMoney, null);
-  assert.match(emptyPdf.find(c => c.id === "dcf")?.spoken ?? "", /Der faire Wert liegt nicht vor/);
-  assert.match(emptyPdf.find(c => c.id === "zusammenfassung")?.spoken ?? "", /Der Kurs liegt nicht vor/);
+  assert.equal(/liegt nicht vor/.test(emptyPdf.map(c => c.spoken).join(" ")), false);
   ok("Leerer Geld-Platzhalter wird nicht eingesetzt");
 
   const flagged = factsOf(baseAnalysis, {

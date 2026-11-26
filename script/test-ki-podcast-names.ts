@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { buildPodcastFacts } from "../shared/podcast-facts";
-import { assemblePodcastChapters, buildPodcastLlmPrompt, checkPodcastSentence } from "../shared/podcast-script";
+import { assemblePodcastChapters, buildPodcastLlmPrompt, checkPodcastSentence, mergeProofread, tidySurface } from "../shared/podcast-script";
 import { speakNormalize } from "../shared/podcast-speak";
 import { resolvePodcastCompanyName, type FullAiPack } from "../server/stock-podcast-full-ai";
 import { clearYahooCache, noteYahooChartCompanyName } from "../server/yahoo-fetcher";
@@ -323,11 +323,12 @@ async function main() {
   const liveSpoken = live.map(c => c.spoken).join(" ");
   assert.equal(live.find(c => c.id === "these"), undefined, liveSpoken);
   assert.equal(/Die Ampel liegt nicht vor|Die Angabe liegt nicht vor|NVDA, das Unternehmen|von das|von von|das Unternehmen konkurriert|das Unternehmen genießt|Stahlzölle|grünen Stahl|Stahlindustrie|Hauptkatalyse|Phase-3|&|Expansion \+|Lexus|Mirai Gen|bZ4X|Omniverse|Hydrogen|US Core Business/.test(liveSpoken), false, liveSpoken);
-  assert.match(liveSpoken, /Phase drei und Marktstart/);
+  assert.equal(/Phase drei und Marktstart|GLP-eins|Expansion/.test(liveSpoken), false, liveSpoken);
+  assert.match(liveSpoken, /Der erste Katalysator/);
   assert.match(liveSpoken, /Der zweite Katalysator/);
-  assert.match(liveSpoken, /GLP-eins/);
+  assert.match(liveSpoken, /Der dritte Katalysator/);
   assert.equal(/Das erste Risiko/.test(liveSpoken), false, liveSpoken);
-  assert.match(liveSpoken, /Der Mirai-Nachfolger/);
+  assert.equal(/Der Mirai-Nachfolger/.test(liveSpoken), false, liveSpoken);
   assert.match(liveSpoken, /zweitausendfünfundzwanzig/);
   assert.ok(live.dropped.total > 0);
   assert.ok((live.dropped.byReason.Rohtext ?? 0) > 0);
@@ -424,6 +425,71 @@ async function main() {
   assert.match(nvoLabelSpoken, /GLP-eins Tablette Wegovy/);
   assert.equal(/Phase-3|GLP-1/.test(nvoLabelSpoken), false, nvoLabelSpoken);
   ok("CagriSema in Phase-3 und GLP-1 Tablette Wegovy bleiben als Label");
+
+  const quietNews = assemblePodcastChapters("ki", listed("7203.T", "Toyota Motor Corporation"), null);
+  assert.equal(quietNews.find(c => c.id === "news-llm"), undefined);
+  assert.equal(/eigene News-Anknüpfung liegt nicht vor/.test(quietNews.map(c => c.spoken).join(" ")), false);
+  const quietInv = assemblePodcastChapters("pdf", listed("7203.T", "Toyota Motor Corporation"), null);
+  assert.equal(/rechnerische Einstieg liegt nicht vor|Periode des Segments liegt nicht vor/.test(quietInv.map(c => c.spoken).join(" ")), false);
+  ok("Sätze der Form liegt nicht vor entfallen, der feste News-Satz bleibt die Ausnahme");
+
+  const mixed = listed("EBAY", "eBay", {
+    catalysts: [
+      { name: "APAC expansion", nettoUpside: 4 },
+      { name: "Marketplaces", nettoUpside: 6 },
+    ],
+    revenueSegments: [{ name: "Marketplaces", revenue: 10, percentage: 80, fiscalYear: "2026" }],
+  });
+  const mixedSpoken = assemblePodcastChapters("ki", mixed, {
+    labels: { "Katalysator 1": "APAC-", "Katalysator 2": "Marktplatzgeschäft", "Segment 1": "Marketplaces" },
+  }).map(c => c.spoken).join(" ");
+  assert.equal(/APAC-|Marktplatzgeschäft|Marketplaces/.test(mixedSpoken), false, mixedSpoken);
+  assert.match(mixedSpoken, /Der erste Katalysator/);
+  assert.match(mixedSpoken, /Der zweite Katalysator/);
+  assert.match(mixedSpoken, /Das größte Segment/);
+  const blackwell = listed("NVDA", "NVIDIA", {
+    catalysts: [
+      { name: "Software", nettoUpside: 4 },
+      { name: "Blackwell ramp", nettoUpside: 10.6 },
+    ],
+  });
+  const blackwellChapters = assemblePodcastChapters("ki", blackwell, {
+    labels: { "Katalysator 1": "Softwareumsatz", "Katalysator 2": "Blackwell-Hochlauf" },
+  });
+  const blackwellSpoken = blackwellChapters.map(c => c.spoken).join(" ");
+  assert.match(blackwellSpoken, /Blackwell-Hochlauf: Der Netto-Upside liegt bei/);
+  assert.equal(blackwellChapters.dropped.byReason["Label englisch"] ?? 0, 0);
+  const rawSegments = ["GLP-1 Diabetes (Ozempic/Rybelsus)", "Safety & Industrial Segment", "Data Center"];
+  for (const name of rawSegments) {
+    const spoken = assemblePodcastChapters("pdf", listed("TEST", "Firma", {
+      revenueSegments: [{ name, revenue: 10, percentage: 40, fiscalYear: "2026" }],
+    }), { labels: { "Segment 1": name } }).map(c => c.spoken).join(" ");
+    assert.equal(spoken.includes(name), false, spoken);
+    assert.match(spoken, /Das größte Segment/);
+  }
+  ok("Abgeschnittene Labels schalten das ganze Kapitel auf Ordinale, Blackwell-Hochlauf bleibt");
+
+  assert.equal(tidySurface("eBay's Marktplatz und eBay’s Gebühren."), "eBays Marktplatz und eBays Gebühren.");
+  assert.equal(tidySurface("Schlüsselkatalysa\u00ADtoren"), "Schlüsselkatalysatoren");
+  const source = { chapters: [{ id: "s13", sentences: ["US-Zölle auf japanische Stahl und {fy_yoy}."] }] };
+  const proofKept = mergeProofread(source, { sentences: [{ id: "s13:0", text: "US-Zölle auf japanischen Stahl und {fy_yoy} bleiben." }] });
+  const droppedEdit = mergeProofread(source, { sentences: [{ id: "s13:0", text: "US-Zölle auf japanischen Stahl." }] });
+  assert.match(JSON.stringify(proofKept), /japanischen Stahl und \{fy_yoy\}/);
+  assert.match(JSON.stringify(droppedEdit), /japanische Stahl und \{fy_yoy\}/);
+  ok("Lektorat behält die Platzhalter, Apostroph-s und weiche Trennstriche fallen deterministisch");
+
+  const summary = assemblePodcastChapters("pdf", listed("NVO", "Novo Nordisk", {
+    growthThesis: "Abnehmmittel tragen das Wachstum.",
+    s17Verdict: "Grün",
+    revenueSegments: [{ name: "Diabetes", revenue: 8, percentage: 70, fiscalYear: "2026" }],
+  }), { labels: { "Segment 1": "Diabetesmittel" } }).find(c => c.id === "zusammenfassung")?.spoken ?? "";
+  assert.match(summary, /Der Kurs steht bei/);
+  assert.match(summary, /Ampel steht auf/);
+  assert.match(summary, /Abnehmmittel tragen das Wachstum/);
+  assert.match(summary, /Diabetesmittel hat einen Anteil/);
+  const context = buildPodcastLlmPrompt("ki", listed("NVDA", "NVIDIA", { growthThesis: "Die Nachfrage bleibt hoch." })).prompt;
+  assert.equal(/fcfMargin|growthThesis|nettoUpside|moatImpact/.test(context), false, context);
+  ok("Zusammenfassung nennt These, Ampel und Segment, der Kontext nennt keine Feldnamen");
 
   console.log(`ki-podcast names: ${n} checks ok`);
 }

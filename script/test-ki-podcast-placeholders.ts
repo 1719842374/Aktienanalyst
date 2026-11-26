@@ -33,6 +33,7 @@ function shell(partial: Partial<PodcastFacts> & Pick<PodcastFacts, "values">): P
     earningsNote: "Ein Earnings-Call-Transkript liegt nicht vor.",
     catalystGeneric: partial.catalystGeneric ?? true,
     hasThesis: false,
+    thesisText: null,
     hasPorter: true,
     hasPestel: true,
     riskNames: ["Konzentration"],
@@ -136,7 +137,7 @@ function main() {
   assert.equal(prompt.prompt.includes("149"), false);
   assert.equal(prompt.prompt.includes("114"), false);
   const chapters = assemblePodcastChapters("pdf", built, {
-    labels: { "Risiko 1": "Konzentration" },
+    labels: { "Risiko 1": "Die Konzentration auf wenige Abnehmer bleibt der Gegenpol" },
     chapters: [{ id: "einstieg", sentences: [allowed] }],
   });
   const umsatz = chapters.find(c => c.id === "umsatz");
@@ -175,7 +176,7 @@ function main() {
   } as FullAiPack);
   assert.equal(noPrior.values.fy_yoy, null);
   const noPriorChapters = assemblePodcastChapters("pdf", noPrior, null);
-  assert.match(noPriorChapters.find(c => c.id === "umsatz")?.spoken ?? "", /liegt nicht vor/);
+  assert.equal(/liegt nicht vor/.test(noPriorChapters.find(c => c.id === "umsatz")?.spoken ?? ""), false);
   ok("Fehlender Vorjahresumsatz wird nicht als null Prozent gesprochen");
 
   console.log(`ki-podcast placeholders: ${n} checks ok`);

@@ -126,7 +126,7 @@ async function main() {
     assert.equal(first.body.cached, false);
     assert.equal(first.body.source, "pdf");
     assert.equal(first.body.voice, "de-DE-Mia:MAI-Voice-2.1");
-    assert.ok(first.body.chapters.some(c => c.id === "inversion"));
+    assert.equal(first.body.chapters.some(c => /liegt nicht vor/.test(c.spoken)), false);
     assert.ok(first.body.chapters.some(c => c.spoken.includes("Dies ist keine Anlageberatung.")));
     assert.ok(first.body.chapters.some(c => /Geschäftsjahr/.test(c.spoken)));
     assert.equal(first.body.chapters.some(c => /YTD|seit Jahresbeginn/.test(c.spoken)), false);
@@ -147,7 +147,8 @@ async function main() {
   if (other.body.ok) {
     assert.equal(other.body.packCached, true);
     assert.equal(other.body.cached, false);
-    assert.ok(other.body.chapters.some(c => c.id === "news-llm" && c.llmOwned));
+    assert.equal(other.body.chapters.some(c => /liegt nicht vor/.test(c.spoken)), false);
+    assert.ok(other.body.chapters.some(c => c.id === "s17"));
   }
   assert.equal(analyzeCalls, 1);
   assert.equal(llmCalls, 2);
@@ -192,6 +193,35 @@ async function main() {
   if (!failed.body.ok) assert.equal(failed.body.errorCode, "LLM_UNAVAILABLE");
   assert.equal(podcastDailyCount("AAPL", noonMadridWinter), 0);
   ok("Fehlgeschlagener Lauf verbraucht das Tageslimit nicht");
+
+  let tries = 0;
+  const retry = await handleStockPodcastScript({ ticker: "IBM", source: "pdf" }, {
+    now: () => noonMadridWinter,
+    llmAvailable: () => true,
+    llm: async () => {
+      tries += 1;
+      if (tries === 1) return null;
+      return { data: { chapters: [] }, modelUsed: "test" };
+    },
+    fullAi: (ticker: string) => runFullAiAnalysis(ticker, {
+      now: noonMadridWinter,
+      deps: {
+        llmAvailable: () => true,
+        now: () => noonMadridWinter,
+        analyze: async () => ({ status: 200, body: { ...analysisBody(), ticker: "IBM", companyName: "International Business Machines" } }),
+        pestel: async () => null,
+        management: async () => null,
+        interpret: async () => null,
+        earnings: async () => ({ symbol: "IBM", status: "n/a" as const, reason: "n/a", year: null, quarter: null, date: null, summary: null, excerpt: null, excerptTruncated: false, source: null }),
+        regulatory: async () => null,
+        thesis: () => null,
+      },
+    }),
+  });
+  assert.equal(retry.http, 200);
+  assert.equal(tries, 2);
+  assert.equal(podcastDailyCount("IBM", noonMadridWinter), 1);
+  ok("Ein kurzer Fehlversuch wird einmal wiederholt und zählt das Tageslimit nur einmal");
 
   console.log(`ki-podcast cache/limit: ${n} checks ok`);
 }

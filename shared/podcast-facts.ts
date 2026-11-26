@@ -89,6 +89,8 @@ export interface PodcastFacts {
   earningsNote: string | null;
   catalystGeneric: boolean;
   hasThesis: boolean;
+  /** These aus dem Pack, ohne Ziffern-Schwärzung. Der Linter prüft sie danach. */
+  thesisText: string | null;
   hasPorter: boolean;
   hasPestel: boolean;
   riskNames: string[];
@@ -288,7 +290,6 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const silentTicker = isNumericTicker(rawTicker) ? rawTicker : null;
   const namedCompany = companyFromAnalysis(analysis, rawTicker);
   const segmentAndProjects = [
-    segment?.name ?? null,
     ...(Array.isArray(analysis.keyProjects) ? analysis.keyProjects.map((p: any) => text(p)) : []),
   ].filter((t): t is string => !!t);
   const protectedNames = [
@@ -340,7 +341,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     netto_upside_3: upsides[2] ? speakPercent(upsides[2].upside) : null,
   };
   const catalystNames: string[] = catalysts.map((c: any) => text(c?.name)).filter((t: string | null): t is string => !!t);
-  const payloadTitles = [...riskNames, ...news.map(item => item.title), ...catalystNames];
+  const payloadTitles = [...riskNames, ...news.map(item => item.title), ...catalystNames, ...(segment?.name ? [segment.name] : [])];
   const spokenRisks = riskNames
     .map(name => speakNormalize(name))
     .filter((name): name is string => !!name);
@@ -367,6 +368,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     earningsNote,
     catalystGeneric: source !== "llm",
     hasThesis: !!text(analysis.growthThesis),
+    thesisText: text(analysis.growthThesis),
     hasPorter,
     hasPestel,
     riskNames,
@@ -420,6 +422,36 @@ function catalystUpsides(analysis: any): Array<{ name: string; upside: number }>
   return out;
 }
 
+const GERMAN_FIELD: Record<string, string> = {
+  fazit: "Fazit",
+  summary: "Zusammenfassung",
+  reasoning: "Begründung",
+  description: "Beschreibung",
+  impact: "Wirkung",
+  note: "Hinweis",
+  text: "Text",
+  comment: "Kommentar",
+  title: "Titel",
+  name: "Name",
+};
+
+/** Nur Fließtext. camelCase-Feldnamen aus dem Pack kommen nicht in den Prompt. */
+function proseLines(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") {
+    const clean = clip(value, 220);
+    return clean ? [clean] : [];
+  }
+  if (value == null || typeof value === "number" || typeof value === "boolean" || depth > 3) return [];
+  if (Array.isArray(value)) return value.flatMap(item => proseLines(item, depth + 1)).slice(0, 6);
+  if (typeof value !== "object") return [];
+  const out: string[] = [];
+  for (const [key, inner] of Object.entries(value)) {
+    const label = GERMAN_FIELD[key] ?? null;
+    for (const line of proseLines(inner, depth + 1)) out.push(label ? `${label}: ${line}` : line);
+  }
+  return out.slice(0, 8);
+}
+
 function speakRoundedCrv(n: number): string {
   const spoken = speakPriceUsd(n, 3)?.replace(/ Dollar$/, "");
   return spoken ?? "";
@@ -456,25 +488,29 @@ function buildContext(
   if (Array.isArray(forces)) {
     for (const force of forces.slice(0, 5)) {
       const summary = text(force?.summary) ?? text(force?.reasoning);
-      if (summary) lines.push(`Porter ${text(force?.force) ?? ""}: ${clip(summary, 220)}`);
+      if (summary) lines.push(`Wettbewerbskraft: ${clip(summary, 220)}`);
     }
   }
   if (Array.isArray(pack.pestelLlm)) {
     for (const dim of pack.pestelLlm) {
-      if (dim?.summary) lines.push(`PESTEL ${dim.dimension}: ${clip(dim.summary, 220)}`);
+      if (dim?.summary) lines.push(`Umfeld ${dim.dimension}: ${clip(dim.summary, 220)}`);
     }
   }
   const policy = pack.policyContext ?? analysis.policyContext;
   if (policy && typeof policy === "object") {
-    for (const key of ["usa", "europa", "asien", "moatImpact"] as const) {
+    const policyLabels: Record<string, string> = {
+      usa: "Politik USA",
+      europa: "Politik Europa",
+      asien: "Politik Asien",
+      moatImpact: "Wirkung auf den Burggraben",
+    };
+    for (const key of Object.keys(policyLabels)) {
       const bit = text(policy[key]);
-      if (bit) lines.push(`Politik ${key}: ${clip(bit, 220)}`);
+      if (bit) lines.push(`${policyLabels[key]}: ${clip(bit, 220)}`);
     }
   }
-  if (pack.managementInterpret?.data) {
-    lines.push(`Management: ${clip(JSON.stringify(pack.managementInterpret.data), 400)}`);
-  }
-  if (pack.regulatory) lines.push(`Regulatory: ${clip(JSON.stringify(pack.regulatory), 400)}`);
+  for (const line of proseLines(pack.managementInterpret?.data)) lines.push(`Management: ${line}`);
+  for (const line of proseLines(pack.regulatory)) lines.push(`Regulierung: ${line}`);
   if (pack.earningsBrief?.status === "ok" && pack.earningsBrief.excerpt) {
     lines.push(`Earnings-Auszug: ${clip(pack.earningsBrief.excerpt, 700)}`);
   }
@@ -491,6 +527,10 @@ function buildContext(
   upsides.forEach((row, index) => {
     lines.push(`Katalysator ${index + 1}, Wert nur als {netto_upside_${index + 1}}, Name nur als Kontext, Label-Schlüssel „Katalysator ${index + 1}“: ${clip(row.name, 120)}`);
   });
+  const segmentName = topSegment(analysis)?.name;
+  if (segmentName) {
+    lines.push(`Segment 1, Anteil nur als {top_segment_share}, Name nur als Kontext, Label-Schlüssel „Segment 1“: ${clip(segmentName, 120)}`);
+  }
   const available = (Object.keys(values) as PodcastPlaceholder[]).filter(k => values[k] != null && !placeholderForbiddenInModel(k));
   lines.push(`Platzhalter mit Wert: ${available.map(name => `{${name}}`).join(", ") || "keine"}`);
   return lines.join("\n");

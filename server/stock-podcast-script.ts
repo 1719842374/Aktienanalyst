@@ -1,11 +1,12 @@
 /**
- * Genau ein callLLMJson je Quelle. Kein zweiter Versuch.
+ * Ein callLLMJson je Quelle für das Skript, plus ein Lektorat im selben Zeitbudget.
+ * Ein kurzer Fehlversuch wird einmal wiederholt, ohne das Tageslimit ein zweites Mal zu zählen.
  * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme.
  */
 import type { PodcastDropCounts, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
 import { PODCAST_DISCLAIMER, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
-import { assemblePodcastChapters, buildPodcastLlmPrompt } from "../shared/podcast-script";
+import { assemblePodcastChapters, buildPodcastLlmPrompt, mergeProofread, proofreadPrompt } from "../shared/podcast-script";
 import type { FullAiPack } from "./stock-podcast-full-ai";
 import { withStageTimeout } from "./stock-podcast-limit";
 
@@ -121,21 +122,37 @@ export async function renderStockPodcastScript(opts: {
     };
   }
   const prompt = buildPodcastLlmPrompt(opts.source, facts);
+  const started = Date.now();
+  const budget = PODCAST_STAGE_TIMEOUT_MS.script;
   const ac = new AbortController();
-  const call = opts.llm({
+  const ask = () => opts.llm({
     prompt: prompt.prompt,
     systemPrompt: prompt.systemPrompt,
     maxTokens: 1500,
     temperature: 0.2,
     signal: ac.signal,
   });
-  const raced = await withStageTimeout(call, PODCAST_STAGE_TIMEOUT_MS.script);
+  let raced = await withStageTimeout(ask(), budget);
+  const fastMiss = raced == null && Date.now() - started < 8000;
+  if (fastMiss) raced = await withStageTimeout(ask(), budget - (Date.now() - started));
   if (raced === "timeout") {
     ac.abort();
     return { ok: false, reason: "timeout" };
   }
   if (raced == null) return { ok: false, reason: "empty" };
-  const modelData = raced.data ?? null;
+  let modelData = raced.data ?? null;
+  const proof = proofreadPrompt(modelData);
+  const left = budget - (Date.now() - started);
+  if (proof && left > 2000) {
+    const edited = await withStageTimeout(opts.llm({
+      prompt: proof.prompt,
+      systemPrompt: proof.systemPrompt,
+      maxTokens: 1500,
+      temperature: 0,
+      signal: ac.signal,
+    }), left);
+    if (edited && edited !== "timeout") modelData = mergeProofread(modelData, edited.data ?? null);
+  }
   const assembled = assemblePodcastChapters(opts.source, facts, modelData);
   const chapters = assembled.map(chapter => ({
     ...chapter,

@@ -173,7 +173,7 @@ function copiesPayloadTitle(sentence: string, titles: readonly string[]): boolea
 
 const ENGLISH_STOP = new Set(["the", "and", "of", "for", "across", "with", "from", "into", "over", "under", "after", "before", "between", "without", "within", "through", "during", "while", "where", "when", "which", "that", "this", "these", "those", "their", "its", "are", "was", "were", "been", "being", "have", "has", "had", "will", "would", "can", "could", "should", "may", "might", "not", "but", "or", "if", "than", "then", "also", "more", "most", "other", "such", "only", "just", "about", "per", "via", "versus", "vs", "to", "in", "on", "at", "by", "as", "an", "be", "is", "it", "we", "our", "you", "your"]);
 
-const ENGLISH_LABEL_WORD = new Set(["demand", "expansion", "enterprise", "monetization", "recovery", "stalls", "permanently", "hydrogen", "fuel", "cell", "margin", "business", "core", "market", "growth", "revenue", "guidance", "omniverse"]);
+const ENGLISH_LABEL_WORD = new Set(["demand", "expansion", "enterprise", "monetization", "recovery", "stalls", "permanently", "hydrogen", "fuel", "cell", "margin", "business", "core", "market", "growth", "revenue", "guidance", "omniverse", "backlash", "safety"]);
 
 function contentWords(text: string): string[] {
   return text.toLowerCase().split(/[^a-z]+/).filter(word => word.length > 2);
@@ -251,7 +251,8 @@ export function checkPodcastSentence(
   if (origin === "model" && /GrowthEvidence|Katalysatoren:/i.test(raw)) return { ok: false, reason: "interne Zeile" };
   if (origin === "model" && hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
   if (origin === "model" && metricWithoutPlaceholder(raw)) return { ok: false, reason: "Kennzahl ohne Platzhalter" };
-  if (origin === "model" && INTERNAL_NAME.test(stripTokens(raw.replace(PLACEHOLDER_RE, " "), facts.protectedNames ?? []))) {
+  if (origin === "model" && isAbsentFiller(raw)) return { ok: false, reason: "leere Abwesenheit" };
+  if (origin === "model" && INTERNAL_NAME.test(stripTokens(tidySurface(raw).replace(PLACEHOLDER_RE, " "), facts.protectedNames ?? []))) {
     return { ok: false, reason: "interner Bezeichner" };
   }
   if (origin === "model" && /\{news_age\}\s+alt\b|weniger als einem Tag|einem Tag alt|einen Tag alt/i.test(raw)) {
@@ -367,6 +368,16 @@ function dedupeSentences(text: string): string {
   return kept.join(" ");
 }
 
+export function tidySurface(text: string): string {
+  return text
+    .replace(/[\u00AD\u200B\u200C\u200D\uFEFF]/g, "")
+    .replace(/([A-Za-z0-9ÄÖÜäöüß])['’]s\b/g, "$1s");
+}
+
+function isAbsentFiller(sentence: string): boolean {
+  return /\blieg(?:t|en)\s+nicht\s+vor\b/i.test(sentence);
+}
+
 function withoutEmptyPresence(sentence: string): boolean {
   if (/liegt nicht vor/.test(sentence)) return true;
   return !/liegt (?:eine |ein )?[A-Za-zÄÖÜäöüß-]+ vor\.?$/.test(sentence);
@@ -397,10 +408,31 @@ function labelIsEnglish(text: string): boolean {
   return words.length >= 3 && hits >= 2 && hits * 2 >= words.length;
 }
 
-function acceptSpokenLabel(raw: string | undefined): string | null {
-  const spoken = speakKnownTerms((raw ?? "").trim());
-  if (!spoken || /[&+%()]/.test(spoken) || spokenStillRaw(spoken) || labelIsEnglish(spoken)) return null;
-  return /^[a-zäöü]/.test(spoken) ? `${spoken[0]!.toUpperCase()}${spoken.slice(1)}` : spoken;
+function cleanedLabel(raw: string | undefined): { label: string | null; reason: string | null } {
+  const spoken = tidySurface(speakKnownTerms((raw ?? "").trim()));
+  if (!spoken) return { label: null, reason: raw ? "Label leer" : null };
+  if (/[-:]\s*$/.test(spoken) || spoken.includes(":")) return { label: null, reason: "Label abgeschnitten" };
+  if (/[&+%()]/.test(spoken)) return { label: null, reason: "Label Zeichen" };
+  if (spokenStillRaw(spoken)) return { label: null, reason: "Label Ziffer" };
+  if (labelIsEnglish(spoken)) return { label: null, reason: "Label englisch" };
+  const label = /^[a-zäöü]/.test(spoken) ? `${spoken[0]!.toUpperCase()}${spoken.slice(1)}` : spoken;
+  return { label, reason: null };
+}
+
+function groupLabels(keys: string[], ordinals: string[], labels: Record<string, string>, note: (reason: string) => void, sources: string[] = []): string[] {
+  const parsed = keys.map((key, index) => {
+    const result = cleanedLabel(labels[key]);
+    const source = sources[index]?.trim().toLowerCase();
+    if (result.label && source && result.label.trim().toLowerCase() === source) {
+      return { label: null, reason: "Label Rohtext" };
+    }
+    return result;
+  });
+  if (parsed.some(item => !item.label)) {
+    for (const item of parsed) if (item.reason) note(item.reason);
+    return ordinals;
+  }
+  return parsed.map(item => item.label ?? "");
 }
 
 function readSpokenLabels(data: unknown): Record<string, string> {
@@ -408,12 +440,12 @@ function readSpokenLabels(data: unknown): Record<string, string> {
   if (!labels || typeof labels !== "object" || Array.isArray(labels)) return {};
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(labels)) {
-    if (typeof value === "string" && /^(?:Katalysator|Risiko) \d+$/.test(key)) out[key] = value;
+    if (typeof value === "string" && /^(?:Katalysator|Risiko|Segment) \d+$/.test(key)) out[key] = value;
   }
   return out;
 }
 
-function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<string, string> = {}): string[] {
+function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<string, string> = {}, note: (reason: string) => void = () => undefined): string[] {
   const v = facts.values;
   const out: string[] = [];
   const add = (sentence: string) => {
@@ -431,7 +463,15 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
     }
     case "zusammenfassung":
       if (v.price) add("Der Kurs steht bei {price}.");
-      else out.push("Der Kurs liegt nicht vor.");
+      if (v.ampel) add("Die Ampel steht auf {ampel}.");
+      if (facts.thesisText) {
+        const line = /[.!?]$/.test(facts.thesisText.trim()) ? facts.thesisText.trim() : `${facts.thesisText.trim()}.`;
+        if (!isAbsentFiller(line)) out.push(line);
+      }
+      if (v.top_segment_share) {
+        const [segmentLabel] = groupLabels(["Segment 1"], ["Das größte Segment"], labels, note, [v.top_segment ?? ""]);
+        add(`${segmentLabel} hat einen Anteil von {top_segment_share}.`);
+      }
       break;
     case "these":
       break;
@@ -439,15 +479,15 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       if (v.fy_yoy && v.gj_year) add("Das Umsatzwachstum im Geschäftsjahr {gj_year} beträgt {fy_yoy}.");
       else if (v.fy_yoy) add("Das Umsatzwachstum im Geschäftsjahr beträgt {fy_yoy}.");
       else out.push("Das Umsatzwachstum im Geschäftsjahr liegt nicht vor.");
-      if (v.top_segment && v.top_segment_share) add("Der größte genannte Umsatzträger ist {top_segment} mit einem Anteil von {top_segment_share}.");
-      else out.push("Der Hauptumsatzträger liegt nicht vor.");
-      if (facts.segmentPeriodMissing) out.push("Die Periode des Segments liegt nicht vor.");
+      if (v.top_segment_share) {
+        const [segmentLabel] = groupLabels(["Segment 1"], ["Das größte Segment"], labels, note, [v.top_segment ?? ""]);
+        add(`${segmentLabel} hat einen Anteil von {top_segment_share}.`);
+      }
       break;
     case "s13":
       if (!facts.hasPorter) out.push("Moat und Porter liegen nicht vor.");
       break;
     case "s14":
-      if (!facts.hasPestel) out.push("PESTEL liegt nicht vor.");
       if (v.fcf_margin) add("Die FCF-Marge liegt bei {fcf_margin}.");
       break;
     case "dcf":
@@ -467,27 +507,33 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
     case "s17":
       if (v.catalyst_mode) out.push(/[.!?]$/.test(v.catalyst_mode) ? v.catalyst_mode : `${v.catalyst_mode}.`);
       else out.push("Die Katalysatoren liegen nicht vor.");
-      (facts.upsideNames ?? []).forEach((_name, index) => {
-        const key = (["netto_upside_1", "netto_upside_2", "netto_upside_3"] as const)[index];
-        const label = acceptSpokenLabel(labels[`Katalysator ${index + 1}`]) ?? CATALYST_ORDINALS[index] ?? "Der Katalysator";
-        if (key && v[key]) add(`${label}: Der Netto-Upside liegt bei {${key}}.`);
-      });
+      {
+        const count = (facts.upsideNames ?? []).length;
+        const keys = Array.from({ length: count }, (_item, index) => `Katalysator ${index + 1}`);
+        const ordinals = keys.map((_key, index) => CATALYST_ORDINALS[index] ?? "Der Katalysator");
+        const chosen = groupLabels(keys, ordinals, labels, note, facts.upsideNames ?? []);
+        chosen.forEach((label, index) => {
+          const key = (["netto_upside_1", "netto_upside_2", "netto_upside_3"] as const)[index];
+          if (key && v[key]) add(`${label}: Der Netto-Upside liegt bei {${key}}.`);
+        });
+      }
       break;
     case "inversion":
       if (v.entry && facts.rankOk) add("Der rechnerische Einstieg liegt bei {entry}.");
       else if (!v.entry) out.push("Der rechnerische Einstieg liegt nicht vor.");
-      facts.riskNames.forEach((_name, index) => {
-        const label = acceptSpokenLabel(labels[`Risiko ${index + 1}`]);
-        if (label) out.push(`${label}.`);
-      });
+      {
+        const parsed = facts.riskNames.map((_name, index) => cleanedLabel(labels[`Risiko ${index + 1}`]));
+        if (parsed.length > 0 && parsed.every(item => item.label)) {
+          for (const item of parsed) out.push(`${item.label}.`);
+        } else {
+          for (const item of parsed) if (item.reason) note(item.reason);
+        }
+      }
       break;
     case "earnings":
       if (facts.earningsState === "ready" && v.call_quarter) add("Der letzte vorliegende Call ist {call_quarter}.");
       else if (facts.earningsState === "stale" && facts.earningsNote) out.push(facts.earningsNote);
-      else {
-        out.push("Ein Earnings-Call-Transkript liegt nicht vor.");
-        if (facts.reportedQuarterLine) out.push(facts.reportedQuarterLine);
-      }
+      else if (facts.reportedQuarterLine) out.push(facts.reportedQuarterLine);
       if (facts.nextCallLine) out.push(facts.nextCallLine);
       else if (facts.callEstimated) out.push("Der nächste Termin ist geschätzt.");
       break;
@@ -497,7 +543,6 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       break;
     case "news-llm":
       if (v.news_age) add("Die jüngste Meldung stammt von {news_age}.");
-      else out.push("Eine eigene News-Anknüpfung liegt nicht vor.");
       break;
     case "schluss":
       out.push(PODCAST_DISCLAIMER);
@@ -505,7 +550,7 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
     default:
       out.push("Das Kapitel liegt nicht vor.");
   }
-  return out.filter(s => s.trim().length > 0 && withoutEmptyPresence(s.trim()));
+  return out.filter(s => s.trim().length > 0 && withoutEmptyPresence(s.trim()) && !isAbsentFiller(s));
 }
 
 function modelSentences(data: unknown): Map<string, string[]> {
@@ -597,7 +642,7 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     dropped.total += 1;
     dropped.byReason[reason] = (dropped.byReason[reason] ?? 0) + 1;
   };
-  const planned = chaptersForSource(source).map(def => ({ def, fallback: fallbackSentences(def.id, facts, labels) }));
+  const planned = chaptersForSource(source).map(def => ({ def, fallback: fallbackSentences(def.id, facts, labels, note) }));
   const valuesByChapter = new Map(planned.map(item => [
     item.def.id,
     item.fallback.flatMap(sentence => valuesOfPlaceholders(sentence, facts)),
@@ -607,7 +652,7 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     const foreignValues = Array.from(valuesByChapter.entries())
       .filter(([id]) => id !== def.id)
       .flatMap(([, values]) => values);
-    const model = completeModelSentences(fromModel.get(def.id) ?? []).filter(sentence => {
+    const model = completeModelSentences(fromModel.get(def.id) ?? []).map(tidySurface).filter(sentence => {
       const verdict = checkPodcastSentence(sentence, facts, def.id, "model");
       if (!verdict.ok) {
         note(verdict.reason);
@@ -651,7 +696,7 @@ export function assemblePodcastChapters(source: StockPodcastSource, facts: Podca
     const contra = chapters.find(c => c.id === "inversion");
     if (pro && contra) {
       const balanced = balanceProContra(pro.spoken, contra.spoken);
-      pro.spoken = balanced.pro || "Der Kurs liegt nicht vor.";
+      pro.spoken = balanced.pro;
       contra.spoken = balanced.contra;
       pro.durationSec = durationSec(pro.spoken);
       contra.durationSec = durationSec(contra.spoken);
@@ -675,6 +720,7 @@ function hideNames(text: string, names: readonly string[]): string {
 function lintReason(sentence: string, names: readonly string[]): string | null {
   const text = sentence.trim();
   if (!text) return "leer";
+  if (isAbsentFiller(text)) return "leere Abwesenheit";
   if (/von von/i.test(text)) return "von von";
   if (/von das\b/i.test(text)) return "von das";
   const uncovered = stripAllowedNumberTokens(hideNames(text, names));
@@ -715,7 +761,7 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
   const systemPrompt = [
     "Du schreibst ein deutsches Podcast-Transkript als JSON.",
     "Antworte nur mit {\"chapters\":[{\"id\":string,\"sentences\":string[]}],\"labels\":{\"<Schlüssel>\":string}}.",
-    "labels ist ein Objekt. Schlüssel sind genau die im Kontext genannten „Katalysator 1“ bis „Katalysator n“ und „Risiko 1“ bis „Risiko n“. Der Wert ist ein deutsches Kurzlabel. Keine Ziffer außer einem Produktnamen wie H100. Keine Zeichen & + % ( ). GLP-1 schreibst du als GLP-eins, Phase-3 als Phase drei. Schreibe Katalysator, nicht Katalyse. Ein Label nie nach Position zuordnen.",
+    "labels ist ein Objekt. Schlüssel sind genau „Katalysator 1“ bis „Katalysator n“, „Risiko 1“ bis „Risiko n“ und „Segment 1“. Der Wert ist ein deutsches Kurzlabel ohne Doppelpunkt und ohne Bindestrich am Ende. Keine Ziffer außer einem Produktnamen wie H100. Keine Zeichen & + % ( ). GLP-1 schreibst du als GLP-eins, Phase-3 als Phase drei. Schreibe Katalysator, nicht Katalyse.",
     "Keine Ziffer, kein Zahlwort mit Einheit, kein YTD, kein seit Jahresbeginn.",
     "Zahlen nur als Platzhalter in geschweiften Klammern, zum Beispiel {fy_yoy}. Den Namen ohne Klammern nie schreiben. Fehlt ein Platzhalter in der Liste, nutze ihn nicht.",
     "Eine Kennzahl nennst du nur zusammen mit ihrem Platzhalter: Umsatzwachstum mit {fy_yoy}, die FCF-Marge mit {fcf_margin}, den Netto-Upside mit {netto_upside_1}. Ohne diesen Platzhalter nennst du die Kennzahl nicht.",
@@ -737,6 +783,72 @@ export function buildPodcastLlmPrompt(source: StockPodcastSource, facts: Podcast
     "Das Schlusskapitel bleibt kurz. Der Disclaimer wird vom Code angehängt.",
   ].join("\n");
   return { systemPrompt, prompt };
+}
+
+function placeholderSeq(text: string): string {
+  return Array.from(text.matchAll(/\{([a-z0-9_]+)\}/g)).map(match => match[1] ?? "").join("|");
+}
+
+/** Lektorat nur übernehmen, wenn die Platzhalter in Menge und Reihenfolge gleich bleiben. */
+export function mergeProofread(modelData: unknown, proof: unknown): unknown {
+  if (!modelData || typeof modelData !== "object") return modelData;
+  const rows = proof && typeof proof === "object" && Array.isArray((proof as { sentences?: unknown }).sentences)
+    ? (proof as { sentences: unknown[] }).sentences
+    : null;
+  if (!rows) return modelData;
+  const byId = new Map<string, string>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const id = (row as { id?: unknown }).id;
+    const text = (row as { text?: unknown }).text;
+    if (typeof id === "string" && typeof text === "string") byId.set(id, text);
+  }
+  const chapters = (modelData as { chapters?: unknown }).chapters;
+  if (!Array.isArray(chapters)) return modelData;
+  return {
+    ...(modelData as object),
+    chapters: chapters.map(chapter => {
+      if (!chapter || typeof chapter !== "object") return chapter;
+      const id = (chapter as { id?: unknown }).id;
+      const sentences = (chapter as { sentences?: unknown }).sentences;
+      if (typeof id !== "string" || !Array.isArray(sentences)) return chapter;
+      return {
+        ...(chapter as object),
+        sentences: sentences.map((sentence, index) => {
+          if (typeof sentence !== "string") return sentence;
+          const next = byId.get(`${id}:${index}`);
+          if (!next || placeholderSeq(sentence) !== placeholderSeq(next)) return sentence;
+          return next;
+        }),
+      };
+    }),
+  };
+}
+
+export function proofreadPrompt(modelData: unknown): { systemPrompt: string; prompt: string } | null {
+  const chapters = modelData && typeof modelData === "object" ? (modelData as { chapters?: unknown }).chapters : null;
+  if (!Array.isArray(chapters)) return null;
+  const lines: string[] = [];
+  for (const chapter of chapters) {
+    if (!chapter || typeof chapter !== "object") continue;
+    const id = (chapter as { id?: unknown }).id;
+    const sentences = (chapter as { sentences?: unknown }).sentences;
+    if (typeof id !== "string" || !Array.isArray(sentences)) continue;
+    sentences.forEach((sentence, index) => {
+      if (typeof sentence === "string" && sentence.trim()) lines.push(`${id}:${index}\t${tidySurface(sentence)}`);
+    });
+  }
+  if (!lines.length) return null;
+  return {
+    systemPrompt: [
+      "Du lektorierst deutsche Podcast-Sätze.",
+      "Antworte nur mit {\"sentences\":[{\"id\":string,\"text\":string}]}.",
+      "Korrigiere nur Grammatik, Rechtschreibung und Denglisch.",
+      "Platzhalter in geschweiften Klammern bleiben Zeichen für Zeichen und in derselben Reihenfolge.",
+      "Füge keine Fakten, Zahlen oder Sätze hinzu und lass keinen Eingabesatz weg.",
+    ].join(" "),
+    prompt: lines.join("\n"),
+  };
 }
 
 export function spokenHasDigits(chapters: StockPodcastChapter[]): boolean {
