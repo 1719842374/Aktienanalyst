@@ -107,7 +107,7 @@ export function speakRounded(n: number, sig: number): string | null {
   if (!Number.isFinite(n)) return null;
   const neg = n < 0 ? "minus " : "";
   const { int, frac } = partsFromPrecision(n, sig);
-  const head = speakUnsigned(int);
+  const head = int === 1 && frac ? "ein" : speakUnsigned(int);
   if (!frac) return `${neg}${head}`;
   const tail = frac.split("").map(d => ONES[Number(d)] ?? d).join(" ");
   return `${neg}${head} Komma ${tail}`;
@@ -120,7 +120,7 @@ export function speakPercent(n: number): string | null {
   const abs = Math.abs(rounded);
   const whole = Math.trunc(abs);
   const frac = Math.round((abs - whole) * 10);
-  const head = speakUnsigned(whole);
+  const head = whole === 1 && frac !== 0 ? "ein" : speakUnsigned(whole);
   const body = frac === 0 ? head : `${head} Komma ${ONES[frac]}`;
   return withUnit(`${neg}${body}`, "Prozent");
 }

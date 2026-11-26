@@ -85,7 +85,15 @@ function speakEnInt(n: number): string {
     const head = `${speakEnInt(thousand)} thousand`;
     return rest ? `${head} ${speakEnInt(rest)}` : head;
   }
-  return "";
+  if (v < 1_000_000_000_000) {
+    const scale = v >= 1_000_000_000 ? 1_000_000_000 : 1_000_000;
+    const unit = scale === 1_000_000_000 ? "billion" : "million";
+    const headCount = Math.floor(v / scale);
+    const rest = v % scale;
+    const head = `${speakEnInt(headCount)} ${unit}`;
+    return rest ? `${head} ${speakEnInt(rest)}` : head;
+  }
+  return `${speakEnInt(Math.floor(v / 1_000_000_000_000))} trillion`;
 }
 
 function speakEnYear(year: number): string {
@@ -261,9 +269,10 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
   (measures?.riskNames ?? facts.riskNames).slice(0, 3).forEach((name, index) => {
     const key = slot[index];
     if (!key) return;
-    const prefix = language === "de" ? "das genannte Risiko" : "the named risk";
+    const prefix = riskPrefix(language, index);
     const title = speakableTitle(name, language, pendingTitles, `risk_${key}`, prefix);
-    addFact(out, `risk_${key}`, title ?? prefix, "analysis.risks");
+    if (title) addFact(out, `risk_${key}`, title, "analysis.risks");
+    else if (pendingTitles.some(item => item.factId === `risk_${key}`)) addFact(out, `risk_${key}`, prefix, "analysis.risks");
   });
   const segmentPrefix = language === "de" ? "das größte Segment" : "the largest segment";
   const segmentName = measures?.segmentName ?? values.top_segment;
@@ -278,13 +287,7 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
   const crv = crvSentence(crvWords, language);
   if (crv) codeLines.push({ chapterId: "dcf", spoken: crv });
   const thesis = thesisFact(facts, language);
-  if (thesis) {
-    codeLines.push({ chapterId: "these", spoken: thesis.spoken });
-    codeLines.push({
-      chapterId: "these",
-      spoken: language === "de" ? "Diese These ordnet die Aktie der Firma ein." : "This thesis ranks the company in the market.",
-    });
-  }
+  if (thesis) codeLines.push({ chapterId: "these", spoken: thesis.spoken });
   return {
     language,
     facts: out,
@@ -309,8 +312,13 @@ function frameEnCall(date: string | null): string | null {
 }
 
 function pairPrefix(language: PodcastLanguage, top: boolean): string {
-  if (language === "de") return top ? "der größte Katalysator" : "der folgende Katalysator";
-  return top ? "the largest catalyst" : "the next catalyst";
+  if (language === "de") return top ? "der größte Katalysator" : "ein weiterer Katalysator";
+  return top ? "the largest catalyst" : "another catalyst";
+}
+
+function riskPrefix(language: PodcastLanguage, index: number): string {
+  if (language === "de") return index === 0 ? "das genannte Risiko" : index === 1 ? "ein weiteres Risiko" : "ein drittes Risiko";
+  return index === 0 ? "a verified risk" : index === 1 ? "a second verified risk" : "a third verified risk";
 }
 
 function pairTail(language: PodcastLanguage, pct: string): string {
@@ -401,8 +409,8 @@ export function fluencyStats(text: string): { sentences: number; avg: number; sh
   return { sentences: sentences.length, avg, short: counts.filter(n => n < 4).length };
 }
 
-const DE_AUX = /^(?:ist|sind|war|waren|hat|haben|hatte|hatten|wird|werden|wurde|wurden|kann|konnte|muss|musste|soll|sollte|darf|durfte|will|wollte|mag|möchte)$/i;
-const EN_AUX = /^(?:is|are|was|were|be|been|being|has|have|had|do|does|did|grew|sat|went|came|made|took|saw|said|got|left|kept|held|found|gave)$/i;
+const DE_AUX = /^(?:ist|sind|war|waren|hat|haben|hatte|hatten|wird|werden|wurde|wurden|kann|konnte|muss|musste|soll|sollte|darf|durfte|will|wollte|mag|möchte|wuchs|lag|gab|kam|nahm|blieb|ging|lief|trug|hielt|sah|stieg|fiel)$/i;
+const EN_AUX = /^(?:is|are|was|were|be|been|being|has|have|had|do|does|did|grew|sat|went|came|made|took|saw|said|got|left|kept|held|found|gave|stay|come|look|meet|hold|set)$/i;
 
 function finiteVerb(sentence: string, language: PodcastLanguage): boolean {
   const nouns = language === "de" ? DE_LEXICON : EN_LEXICON;
@@ -482,22 +490,50 @@ function wordAllowed(word: string, allowed: Set<string>, language: PodcastLangua
   return false;
 }
 
-function unknownName(text: string, sheet: SpeechSheet): string | null {
+const ORDINARY = new Set("about accelerators accounts aktuell aktuelle aktuellen ampel anchor angekündigt angenommene angesetzt annual assumption attached beachtet beiden bekommen belegt belegte belegten beside bestimmt betragen betrifft beträgt bezieht bildet bleiben bleibt blickt calculated calendar capital carries catalyst cautious chapter close closed comes company comparison considered counterweight counts dahinter damit danach daneben daran daraus darin dates davon demand deren deshalb diese dieselbe diesen dieser dieses dressed driver drücken earnings einem einen eines eingehalten einstieg entry episode eröffnet faire fairen fairer fasst figure figures fiscal folgt followed force frame front fällt führend gebunden gegen gelten gemeldet genannt genannte gestellt gewachsen given growth größte größten gültig halten heute heutigen hinter holds inside intact inversion jüngste keeps kommt kurze largest latest lautet leaves lesen letzte level liefert liegt liest model moves müssen named names nennen nennt nächste opened opener opening order ordnen owner period picture piece point potential price print quarter reading rechnerische refer reference refers remain remains report reported responsible revenue richtet risks roughly scheduled schwerer schärfer screens segment sehen sells sentence session share short shows signal simple slice source specialist split sprechen stammt stance stand stands starting stayed stays steht stellt still story summary these thesis those today tragen trägt umsatz unter upside using valuation value verbindlich vereinigt verified version vorsichtig vorsichtige vorsichtigen weiter which wiegt window worden wording wurde zeigt zuletzt zusammen zusammenfassen zusammenfassung zweite starke patente kauft genug trotzdem prüfung erster".split(/\s+/));
+const BRAND_SUFFIX = /(?:ung|lich|isch|keit|heit|tion|sion|ness|ment|ing|ed|ly|er|en|es|te|st|em|e|n|s|t)$/i;
+
+function tokenCore(word: string): string {
+  return word.replace(/^[^A-Za-zÄÖÜäöüß]+|[^A-Za-zÄÖÜäöüß]+$/g, "");
+}
+
+function germanNounPattern(word: string): boolean {
+  return /^[A-ZÄÖÜ][a-zäöüß-]+$/.test(word);
+}
+
+function unknownName(text: string, sheet: SpeechSheet, entities?: string[] | null): string | null {
   const allowed = allowedWords(sheet);
+  if (entities) {
+    for (const entity of entities) {
+      const clean = tokenCore(entity);
+      if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
+      return clean;
+    }
+    return null;
+  }
   for (const sentence of podcastSentences(text)) {
     const words = sentence.split(/\s+/).filter(Boolean);
-    for (let i = 0; i < words.length; i++) {
-      const clean = (words[i] ?? "").replace(/^[^A-Za-zÄÖÜäöüß]+|[^A-Za-zÄÖÜäöüß]+$/g, "");
-      if (!clean || !/^[A-ZÄÖÜ]/.test(clean)) continue;
-      if (!wordAllowed(clean, allowed, sheet.language)) return clean;
+    for (let i = 1; i < words.length; i++) {
+      const clean = tokenCore(words[i] ?? "");
+      if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
+      const lower = clean.toLowerCase();
+      if (sheet.language === "de" && DE_AUX.test(lower)) continue;
+      if (sheet.language === "en" && EN_AUX.test(lower)) continue;
+      if (/[A-ZÄÖÜ].*[A-ZÄÖÜ]|[a-zäöü][A-ZÄÖÜ]|\d/.test(clean)) return clean;
+      if (sheet.language === "en" && /^[A-Z]/.test(clean)) return clean;
+      if (sheet.language === "de" && /^[A-ZÄÖÜ]/.test(clean)) {
+        if (!germanNounPattern(clean)) return clean;
+        continue;
+      }
+      if (/^[a-z][a-z-]{5,}$/.test(lower) && !BRAND_SUFFIX.test(lower) && !ORDINARY.has(lower)) return clean;
     }
   }
   return null;
 }
 
 const DE_NUMBER_ATOMS = ["milliarden", "millionen", "milliarde", "million", "tausend", "hundert", "neunzehn", "achtzehn", "siebzehn", "sechzehn", "fünfzehn", "fuenfzehn", "vierzehn", "dreizehn", "zwölf", "zwoelf", "elf", "neunzig", "achtzig", "siebzig", "sechzig", "fünfzig", "fuenfzig", "vierzig", "dreißig", "dreissig", "zwanzig", "zehn", "neun", "acht", "sieben", "sechs", "fünf", "fuenf", "vier", "drei", "zwei", "null"];
-const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved)\b/i;
-const DE_FOLD = /\b(verdoppelt|verdreifacht|halbiert|hälfte|haelfte|drittel|viertel)\b|\b[A-Za-zÄÖÜäöüß]*fach\b/i;
+const EN_NUMBER = /\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|percent|doubled|tripled|halved|twice|half|twofold|double|triple|dozen|highest|record|couple|quarter)\b/i;
+const DE_FOLD = /\b(verdoppelt|verdreifacht|halbiert|hälfte|haelfte|drittel|viertel|rekord|höchster|höchste|höchsten|höchstem)\b|\b[A-Za-zÄÖÜäöüß]*fach\b|höchste[rnms]?\s+seit/i;
 
 function isGermanQuantity(word: string): boolean {
   const w = word.toLowerCase();
@@ -523,12 +559,47 @@ function isGermanQuantity(word: string): boolean {
   return parts > 0;
 }
 
+function isQuantityToken(word: string, language: PodcastLanguage): boolean {
+  const clean = word.replace(/[^A-Za-zÄÖÜäöüß]/g, "");
+  if (!clean) return false;
+  if (language === "en") return EN_NUMBER.test(clean) || /^(?:percent|dollars|dollar|point|negative)$/i.test(clean);
+  return isGermanQuantity(clean) || DE_FOLD.test(clean) || /^(?:prozent|dollar|komma|minus)$/i.test(clean);
+}
+
+function numberSubphrases(spoken: string, language: PodcastLanguage): string[] {
+  const words = spoken.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let start = -1;
+  for (let i = 0; i <= words.length; i++) {
+    const hit = i < words.length && isQuantityToken(words[i] ?? "", language);
+    if (hit && start < 0) start = i;
+    if (!hit && start >= 0) {
+      if (i - start >= 2) {
+        const raw = words.slice(start, i).join(" ");
+        const clean = raw.replace(/[.,;:!?]+/g, "").replace(/\s+/g, " ").trim();
+        out.push(raw);
+        if (clean !== raw) out.push(clean);
+      }
+      start = -1;
+    }
+  }
+  return out;
+}
+
 function maskKnownPhrases(text: string, sheet: SpeechSheet): string {
   let masked = text;
   const phrases = [...sheet.facts.map(fact => fact.spoken), ...sheet.codeLines.map(line => line.spoken)]
     .filter(spoken => spoken.length > 2)
     .sort((a, b) => b.length - a.length);
-  for (const phrase of phrases) masked = masked.split(phrase).join(" ");
+  const parts: string[] = [];
+  for (const phrase of phrases) {
+    parts.push(phrase);
+    const bare = phrase.replace(/^(?:auf den|für den|as of|for|von|from)\s+/i, "");
+    if (bare !== phrase) parts.push(bare);
+    for (const sub of numberSubphrases(phrase, sheet.language)) parts.push(sub);
+  }
+  parts.sort((a, b) => b.length - a.length);
+  for (const phrase of parts) masked = masked.split(phrase).join(" ");
   return masked;
 }
 
@@ -547,8 +618,28 @@ export function quantityOutsideFacts(text: string, facts: SpeechFact[], language
   return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [] }) != null;
 }
 
+function cleanDoubledPrep(text: string): string {
+  const rules: Array<[RegExp, string]> = [
+    [/\bauf den auf den\b/gi, "auf den"],
+    [/\bfür den für den\b/gi, "für den"],
+    [/\bfür den auf den\b/gi, "für den"],
+    [/\bauf den für den\b/gi, "auf den"],
+    [/\bvom auf den\b/gi, "vom"],
+    [/\bvom für den\b/gi, "vom"],
+    [/\bvon vor\b/gi, "vor"],
+    [/\bvon von\b/gi, "von"],
+    [/\bseit von\b/gi, "seit"],
+    [/\bas of as of\b/gi, "as of"],
+    [/\bfor for\b/gi, "for"],
+    [/\bfrom from\b/gi, "from"],
+  ];
+  let out = text;
+  for (const [pattern, replacement] of rules) out = out.replace(pattern, replacement);
+  return out;
+}
+
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {
-  return text.replace(TOKEN_RE, (all, id: string) => facts.find(fact => fact.id === id)?.spoken ?? all);
+  return cleanDoubledPrep(text.replace(TOKEN_RE, (all, id: string) => facts.find(fact => fact.id === id)?.spoken ?? all));
 }
 
 const SLOT_UNIT = /\[\[(price|dcf_fair|entry|fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]\s+(Dollar|Prozent|Euro|dollars|percent|dollar)\b/i;
@@ -556,7 +647,7 @@ const ARTICLE_SLOT = /\b(ein|eine|einem|einen|one|a|an)\s+\[\[(fy_yoy|wacc|g_sta
 const DOUBLED_UNIT = /\b(Dollar|Prozent|Euro|dollars|percent)\s+\1\b/i;
 const DATE_ARTICLE = /\b(?:Der|Die|Das|Den|The)\s+\[\[(?:as_of|call_date)\]\]/;
 
-export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet): ChapterVerdict {
+export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet, entities?: string[] | null): ChapterVerdict {
   const facts = factsForChapter(sheet, chapterId);
   const spoken = applyFactTokens(raw, sheet.facts).replace(/\s+/g, " ").trim();
   const reasons: string[] = [];
@@ -570,20 +661,22 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/.test(spoken) || BARE_PLACEHOLDER.test(spoken)) {
     note("placeholder", spoken.match(/\[\[[a-z0-9_]+\]\]|\{[a-z0-9_]+\}/)?.[0] ?? "placeholder");
   }
+  if (/\bn\/a\b|\bn\.a\.\b/i.test(spoken)) note("na", "n/a");
   if (/\blieg(?:t|en)\s+nicht\s+vor\b/i.test(spoken)) note("absent", "liegt nicht vor");
   if (/\bYTD\b|seit Jahresbeginn/i.test(spoken)) note("ytd", "YTD");
   if (/^\s*[-•]/m.test(raw)) note("list", "list");
   const unit = raw.match(SLOT_UNIT)?.[2] ?? raw.match(ARTICLE_SLOT)?.[1] ?? spoken.match(DOUBLED_UNIT)?.[1] ?? (DATE_ARTICLE.test(raw) ? "Datum" : null);
   if (unit) note("unit", unit);
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
-  const name = spoken ? unknownName(spoken, sheet) : null;
+  const name = spoken ? unknownName(spoken, sheet, entities) : null;
   if (name) note("name", name);
   const quantity = spoken ? quantityWord(spoken, sheet) : null;
   if (quantity) note("number", quantity);
   const flu = fluencyStats(spoken);
-  if (!spoken || flu.sentences < 2 || flu.short > 0 || flu.avg < 8 || !verbsOk(spoken, sheet.language)) {
-    note("fragment", flu.short > 0 ? "kurz" : "verb");
-  }
+  const lengthBad = !spoken || flu.sentences < 1 || flu.short > 0 || flu.avg < 8;
+  const verbBad = !spoken || !verbsOk(spoken, sheet.language);
+  if (lengthBad) note("fragment", "length");
+  else if (verbBad) note("fragment", "verb");
   const naked = podcastSentences(spoken).some(sentence => {
     const bare = sentence.replace(/[.!?]+$/g, "").trim();
     return facts.some(fact => fact.spoken.replace(/[.!?]+$/g, "").trim() === bare && fact.spoken.split(/\s+/).length < 6);
@@ -600,6 +693,11 @@ function period(text: string): string {
 
 function joinSentences(parts: string[]): string {
   return parts.map(period).filter(Boolean).join(" ");
+}
+
+function hostedName(spoken: string, de: boolean): string {
+  if (/^(der|die|das|ein|eine|the|a|an)\b/i.test(spoken)) return spoken;
+  return de ? `der Katalysator ${spoken}` : `the catalyst ${spoken}`;
 }
 
 export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string {
@@ -620,13 +718,9 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const company = take("company");
     if (ampel && company) parts.push(de ? `Die Ampel für ${company} steht auf ${ampel} und fasst die belegte Einschätzung zusammen` : `The signal for ${company} stands at ${ampel} and sums up the verified view`);
     else if (ampel) parts.push(de ? `Die Ampel steht auf ${ampel} und fasst die belegte Einschätzung zusammen` : `The signal stands at ${ampel} and sums up the verified view`);
-    if (ampel) parts.push(de ? "Diese Einschätzung ordnet die Aktie der Firma ein" : "This signal ranks the company in the market");
   } else if (chapterId === "these") {
     const thesis = take("thesis");
-    if (thesis) {
-      parts.push(thesis);
-      parts.push(de ? "Diese These ordnet die Aktie der Firma ein" : "This thesis ranks the company in the market");
-    }
+    if (thesis) parts.push(thesis);
   } else if (chapterId === "umsatz") {
     const growth = take("fy_yoy");
     const year = take("gj_year");
@@ -645,41 +739,36 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const entry = take("entry");
     if (fair) parts.push(de ? `Der faire Wert liegt bei ${fair} und stammt aus der belegten Bewertung` : `The fair value stands at ${fair} and comes from the verified valuation`);
     if (entry) parts.push(de ? `Der rechnerische Einstieg liegt bei ${entry}` : `The calculated entry stands at ${entry}`);
-    if (parts.length < 2) parts.push(de ? "Diese Bewertung ordnet die Aktie der Firma ein" : "This valuation ranks the company in the market");
   } else if (chapterId === "s17") {
     const first = take("pair_a");
     const second = take("pair_b");
-    if (first) parts.push(de ? `An der Spitze steht ${first}` : `At the top stands ${first}`);
-    if (second) parts.push(de ? `Danach folgt ${second}` : `After that comes ${second}`);
-    else if (first) parts.push(de ? "Dieser Katalysator steht an der Spitze der belegten Liste" : "This catalyst leads the verified list for the company");
+    if (first) parts.push(de ? `An der Spitze steht ${hostedName(first, true)}` : `At the top stands ${hostedName(first, false)}`);
+    if (second) parts.push(de ? `Danach folgt ${hostedName(second, true)}` : `After that comes ${hostedName(second, false)}`);
   } else if (chapterId === "inversion") {
     const risks = ["risk_a", "risk_b", "risk_c"].map(take).filter((name): name is string => !!name);
     const entry = take("entry");
-    if (risks.length === 1) {
-      const risk = risks[0] ?? "";
-      const category = de ? risk === "das genannte Risiko" : risk === "the named risk";
-      parts.push(category
-        ? (de ? "Die Gegenseite begrenzt die Chance der Firma" : "The named risk limits the chance of the company")
-        : (de ? `Das genannte Risiko ist ${risk} und begrenzt die Chance der Firma` : `The named risk is ${risk} and limits the chance of the company`));
-    } else if (risks.length > 1) {
+    const placeholder = de ? /^das genannte Risiko$|^ein weiteres Risiko$|^ein drittes Risiko$/ : /^a (?:second |third )?verified risk$/;
+    const named = risks.filter(risk => !placeholder.test(risk));
+    if (named.length === 1) {
       parts.push(de
-        ? `Die Risiken sind ${risks.join(" und ")} und begrenzen die Chance der Firma`
-        : `The risks are ${risks.join(" and ")} and limit the chance of the company`);
+        ? `Das genannte Risiko ist ${named[0]} und begrenzt die Chance der Firma`
+        : `The risk is ${named[0]} and limits the chance of the company`);
+    } else if (named.length > 1) {
+      parts.push(de
+        ? `Die Risiken sind ${named.join(" und ")} und begrenzen die Chance der Firma`
+        : `The risks are ${named.join(" and ")} and limit the chance of the company`);
+    } else if (risks.length) {
+      parts.push(de ? "Die Gegenseite begrenzt die Chance der Firma" : "The other side limits the chance of the company");
     }
     if (entry) parts.push(de ? `Der rechnerische Einstieg liegt bei ${entry}` : `The calculated entry stands at ${entry}`);
-    else if (risks.length) parts.push(de ? "Dieses Risiko bleibt der Gegenpol zur belegten Chance" : "This risk limits the verified chance of the company");
   } else if (chapterId === "earnings") {
     const quarter = take("call_quarter");
     const date = take("call_date");
     if (quarter) parts.push(de ? `Zuletzt gemeldet wurde das ${quarter}` : `The latest reported period is ${quarter}`);
     if (date) parts.push(de ? `Der nächste Earnings Call ist ${date} angekündigt` : `The next earnings call is set ${date}`);
-    if (parts.length < 2 && parts.length > 0) parts.push(de ? "Dieser Termin ist der belegte Stand des Calls" : "This date is the verified timing of the call");
   } else if (chapterId === "news" || chapterId === "news-llm") {
     const age = take("news_age");
-    if (age) {
-      parts.push(de ? `Die jüngste Meldung stammt ${age} und liegt im betrachteten Fenster` : `The latest report dates ${age} and stays inside the window we considered`);
-      parts.push(de ? "Dieses Alter ist der belegte Stand der Meldung" : "This age is the verified timing of the report");
-    }
+    if (age) parts.push(de ? `Die jüngste Meldung stammt ${age} und liegt im betrachteten Fenster` : `The latest report dates ${age} and stays inside the window we considered`);
   }
   const body = parts.length ? joinSentences(parts) : "";
   return appendCodeLines(body, sheet, chapterId);
@@ -867,7 +956,31 @@ export interface FluentDraft {
   spoken: string;
 }
 
-export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, modelData: unknown): FluentDraft[] {
+export function extractorPrompt(paragraphs: Map<string, string>): { prompt: string; systemPrompt: string } {
+  const body = Array.from(paragraphs.entries()).map(([id, text]) => `${id}: ${text}`).join("\n");
+  return {
+    systemPrompt: "Liste je Kapitel alle Eigennamen, Firmen, Produkte, Personen, Orte, Organisationen und Zahlen oder Mengenangaben, wörtlich wie im Text. Antworte nur als JSON {\"chapters\":[{\"id\":\"...\",\"entities\":[\"...\"]}]}.",
+    prompt: body,
+  };
+}
+
+export function readExtractor(data: unknown): Map<string, string[]> | null {
+  if (!data || typeof data !== "object" || !Array.isArray((data as { chapters?: unknown }).chapters)) return null;
+  const chapters = (data as { chapters: unknown[] }).chapters;
+  const map = new Map<string, string[]>();
+  let seen = false;
+  for (const row of chapters) {
+    if (!row || typeof row !== "object") continue;
+    const id = typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : "";
+    const entities = (row as { entities?: unknown }).entities;
+    if (!id || !Array.isArray(entities)) continue;
+    seen = true;
+    map.set(id, entities.filter((item): item is string => typeof item === "string"));
+  }
+  return seen ? map : null;
+}
+
+export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, modelData: unknown, entities?: Map<string, string[]> | null): FluentDraft[] {
   const found = readParagraphs(modelData);
   const drafts: FluentDraft[] = [];
   for (const def of chaptersForSource(source)) {
@@ -878,7 +991,7 @@ export function seedDrafts(sheet: SpeechSheet, source: StockPodcastSource, model
       drafts.push({ id: def.id, attempts: 1, reasons: ["empty"], notes: ["empty"], spoken: "" });
       continue;
     }
-    const verdict = verifyChapter(def.id, raw, sheet);
+    const verdict = verifyChapter(def.id, raw, sheet, entities ? (entities.get(def.id) ?? []) : null);
     drafts.push({
       id: def.id,
       attempts: 1,

@@ -15,6 +15,7 @@ import {
   PODCAST_STAGE_TIMEOUT_MS,
   type PodcastChapterReport,
   type PodcastDropCounts,
+  type PodcastExtractorStatus,
   type PodcastLanguage,
   type StockPodcastErrorCode,
   type StockPodcastScriptResponse,
@@ -117,6 +118,7 @@ function stageTimings(
   scriptMs: number,
   dropped: PodcastDropCounts = emptyDropCounts(),
   reports?: PodcastChapterReport[],
+  extractor?: PodcastExtractorStatus,
 ): StockPodcastStageTimings {
   return {
     analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
@@ -125,6 +127,7 @@ function stageTimings(
       timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script,
       dropped,
       ...(reports ? { chapters: reports } : {}),
+      ...(extractor ? { extractor } : {}),
     },
     audio: { timeoutMs: PODCAST_STAGE_TIMEOUT_MS.audio },
   };
@@ -227,7 +230,7 @@ export async function handleStockPodcastScript(
         source,
         pack,
         packCached,
-        stages: stageTimings(analyzeMs, Date.now() - scriptStarted, scriptHit.entry.dropped, scriptHit.entry.reports),
+        stages: stageTimings(analyzeMs, Date.now() - scriptStarted, scriptHit.entry.dropped, scriptHit.entry.reports, scriptHit.entry.extractor),
         script: {
           ok: true,
           cacheKey: scriptHit.entry.cacheKey,
@@ -243,6 +246,7 @@ export async function handleStockPodcastScript(
           facts,
           language,
           reports: scriptHit.entry.reports ?? [],
+          extractor: scriptHit.entry.extractor,
         },
       }),
     };
@@ -264,7 +268,7 @@ export async function handleStockPodcastScript(
       body: errorBody("LLM_UNAVAILABLE", "KI-Podcast n/a — LLM nicht erreichbar.", "script", ticker, source),
     };
   }
-  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted, rendered.dropped, rendered.reports), script: rendered }) };
+  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted, rendered.dropped, rendered.reports, rendered.extractor), script: rendered }) };
 }
 
 export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandlerDeps): void {

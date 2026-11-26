@@ -49,8 +49,8 @@ export const OPENROUTER_PODCAST_VOICES = [
 
 /**
  * Dieselbe OpenRouter-Stimme microsoft/mai-voice-2.1. Die Locale der Stimme
- * setzt die Sprache: en-US-Harper und en-US-Grant sind die englischen Pendants
- * zu den deutschen Harper/Grant-Stimmen.
+ * setzt die Sprache. Harper und Grant behalten die Rolle.
+ * Mia und Klaus werden der englische Default Harper, wie mapVoiceAcrossLanguage.
  * Belegt: https://openrouter.ai/microsoft/mai-voice-2.1 und
  * https://openrouter.ai/docs/guides/overview/multimodal/tts
  */
@@ -82,7 +82,7 @@ export function listStockPodcastVoices(): StockPodcastVoice[] {
 }
 
 function englishVoiceForGerman(voiceId: string): StockPodcastVoice {
-  if (/grant/i.test(voiceId) || /klaus/i.test(voiceId)) {
+  if (/grant/i.test(voiceId)) {
     const grant = OPENROUTER_PODCAST_VOICES_EN[1];
     return { id: grant.id, label: grant.label, provider: "openrouter" };
   }
@@ -136,10 +136,17 @@ export interface PodcastChapterReport {
   fallback: string | null;
 }
 
+/** Extractor je Skript, ohne die erkannten Wörter. */
+export type PodcastExtractorStatus = "ok" | "timeout" | "invalid" | "skipped";
+
 /** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
 export interface StockPodcastStageTimings {
   analyze: StockPodcastStageTiming;
-  script: StockPodcastStageTiming & { dropped: PodcastDropCounts; chapters?: PodcastChapterReport[] };
+  script: StockPodcastStageTiming & {
+    dropped: PodcastDropCounts;
+    chapters?: PodcastChapterReport[];
+    extractor?: PodcastExtractorStatus;
+  };
   audio: { timeoutMs: number };
 }
 

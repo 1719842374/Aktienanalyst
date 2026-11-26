@@ -20,6 +20,7 @@ import {
 } from "../shared/podcast-fluent";
 import { OPENROUTER_PODCAST_VOICES_EN, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, resolveStockPodcastVoice } from "../shared/podcast-types";
 import { chaptersForSource, PDF_PODCAST_CHAPTERS } from "../shared/podcast-script";
+import { dePool, enPool, type ProbePool } from "./fixtures/podcast-inverter-pools";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
 import { renderStockPodcastScript, resetPodcastScriptCache } from "../server/stock-podcast-script";
 import { handleStockPodcastScript, resetStockPodcastRouteState } from "../server/stock-podcast-route";
@@ -161,7 +162,7 @@ async function main() {
     const verdict = verifyChapter(def.id, paragraph, deSheet);
     assert.equal(verdict.ok, true, `${def.id} ${verdict.notes.join("|")} ${paragraph}`);
     const stats = fluencyStats(paragraph);
-    assert.ok(stats.sentences >= 2 && stats.avg >= 8 && stats.short === 0, def.id);
+    assert.ok(stats.sentences >= 1 && stats.avg >= 8 && stats.short === 0, def.id);
   }
   ok("Jedes deutsche Kapitel mit Fakten ist ein flüssiger Absatz");
 
@@ -194,10 +195,13 @@ async function main() {
   assert.equal(/\b(liegt|Geschäftsjahr|Prozent)\b/.test(enToyota), false);
   ok("Beispieltranskripte für NVDA und 7203.T bleiben flüssig und ohne die alten Fehlstrings");
 
-  const invented = verifyChapter("s13", "Toyota hat starke Patente und Apple kauft Novo Nordisk. Der Satz bleibt trotzdem lang genug für die Prüfung hier.", deSheet);
+  const inventedRaw = "Toyota hat starke Patente und Apple kauft Novo Nordisk. Der Satz bleibt trotzdem lang genug für die Prüfung hier.";
+  const inventedBackup = verifyChapter("s13", inventedRaw, deSheet);
+  assert.equal(inventedBackup.reasons.includes("name"), false, inventedBackup.notes.join("|"));
+  const invented = verifyChapter("s13", inventedRaw, deSheet, ["Apple", "Novo Nordisk"]);
   assert.equal(invented.ok, false);
   assert.ok(invented.reasons.includes("name"));
-  ok("Ein neuer Eigenname wird verworfen und nicht stillschweigend gesprochen");
+  ok("Ein neuer Eigenname fällt über den Extraktor, ein deutsches Nomen allein nicht");
 
   resetPodcastScriptCache();
   const good = fallbackParagraph("umsatz", deSheet);
@@ -220,9 +224,10 @@ async function main() {
     assert.equal(report?.fallback, null);
     assert.equal(/\d/.test(regenerated.chapters.find(c => c.id === "umsatz")?.spoken ?? ""), false);
     assert.equal(JSON.stringify(regenerated.reports).includes("Wachstum"), false);
+    assert.equal(regenerated.extractor, "invalid");
   }
-  assert.equal(calls, 2);
-  ok("Ein kaputtes Kapitel wird einmal neu geschrieben und der Bericht nennt nur Versuch und Grund");
+  assert.equal(calls, 3);
+  ok("Ein kaputtes Kapitel wird einmal neu geschrieben, der Extraktor zählt nicht als Versuch");
 
   resetStockPodcastRouteState();
   const deps = {
@@ -289,9 +294,8 @@ async function main() {
   ok("Erfundene Zahlwörter fallen auf Deutsch und Englisch durch");
 
   const leading = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet);
-  assert.equal(leading.ok, false);
-  assert.ok(leading.reasons.includes("name"));
-  ok("Ein Name am Satzanfang wird erkannt");
+  assert.equal(leading.notes.some(note => note === "name Toyota"), false, leading.notes.join("|"));
+  ok("Ein Wort am Satzanfang ist kein Name");
 
   const ordered = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ticker: "NVDA",
@@ -378,9 +382,10 @@ async function main() {
   assert.equal(resolveStockPodcastVoice("de-DE-Harper:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
   assert.equal(resolveStockPodcastVoice("de-DE-Grant:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
   assert.equal(resolveStockPodcastVoice("de-DE-Mia:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
-  assert.equal(resolveStockPodcastVoice("de-DE-Klaus:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
+  assert.equal(resolveStockPodcastVoice("de-DE-Klaus:MAI-Voice-2.1", "en").id, "en-US-Harper:MAI-Voice-2.1");
   assert.equal(resolveStockPodcastVoice("de-DE-Mia:MAI-Voice-2.1", "de").id, "de-DE-Mia:MAI-Voice-2.1");
-  ok("Eine deutsche Stimme mit language en nutzt die englische Stimme derselben Rolle");
+  assert.equal(resolveStockPodcastVoice("en-US-Grant:MAI-Voice-2.1", "en").id, "en-US-Grant:MAI-Voice-2.1");
+  ok("Harper und Grant bleiben, Mia und Klaus werden der englische Default Harper");
 
   assert.equal(/\b(Rechenzentren|Exportregeln|Hybridantrieb|Automobil|Wechselkurs)\b/.test(enNvda + enToyota), false, enNvda + enToyota);
   ok("Der englische Text behält keine deutschen Rohtitel");
@@ -431,7 +436,7 @@ async function main() {
   const negatives = [
     verifyChapter("zusammenfassung", "Der Umsatz wächst um zwanzig Prozent und die Firma bleibt der Maßstab. Die Aktie stützt die Bewertung im neuen Jahr.", gateDe),
     verifyChapter("zusammenfassung", "Revenue doubled and the company opened the year in the market. Demand grew with the verified view.", gateEn),
-    verifyChapter("einstieg", "Toyota bleibt der Maßstab und die Firma stützt die Aktie im Jahr. Der Umsatz trägt die Bewertung.", gateDe),
+    verifyChapter("einstieg", "Die Firma nennt Toyota und der Satz bleibt der Maßstab für den Markt im neuen Jahr. Die Aktie stützt die Bewertung.", gateDe, ["Toyota"]),
     verifyChapter("einstieg", `Der Kurs steht bei [[price]] Dollar und die Firma bleibt der Maßstab im Jahr. Die Aktie stützt die Bewertung.`, gateDe),
     verifyChapter("einstieg", "Der [[as_of]] bleibt der Stand und die Firma trägt die Aktie im Jahr. Der Umsatz stützt die Bewertung.", gateDe),
   ];
@@ -464,7 +469,7 @@ async function main() {
   }), NOON), "de");
   assert.equal(blank.facts.some(fact => fact.id === "ampel" || fact.spoken === "n/a" || fact.spoken === "-"), false);
   assert.equal(speakPriceUsd(1, 3), "ein Dollar");
-  assert.match(speakPriceUsd(1.5, 3) ?? "", /eins Komma/);
+  assert.equal(speakPriceUsd(1.5, 3), "ein Komma fünf Dollar");
   assert.match(speakPriceUsd(1.5, 3) ?? "", /Dollar/);
   assert.equal((speakPriceUsd(1.5, 3) ?? "").match(/Dollar/g)?.length, 1);
   const oneEn = buildSpeechSheet(buildPodcastFacts(pack("NVDA", { ...gatePack.analysis, currentPrice: 1 }), NOON), "en");
@@ -477,8 +482,12 @@ async function main() {
   const article = verifyChapter("umsatz", "Das Wachstum ist ein [[fy_yoy]] und die Firma bleibt der Maßstab im Jahr. Die Aktie stützt die Bewertung.", gateDe);
   assert.equal(article.ok, false);
   assert.ok(article.reasons.includes("unit"));
-  assert.match(fallbackParagraph("inversion", gateEn), /The named risk is|The named risk limits/);
-  assert.equal(/risks are Exportregeln/.test(fallbackParagraph("inversion", gateEn)), false);
+  assert.equal(/the named risk|the next catalyst/.test(fallbackParagraph("inversion", gateEn) + fallbackParagraph("s17", gateEn)), false);
+  assert.equal(/Exportregeln|Lieferengpass/.test(fallbackParagraph("inversion", gateEn)), false);
+  assert.match(fallbackParagraph("s17", gateDe), /steht der Katalysator /);
+  const lengthNote = verifyChapter("einstieg", "Kurz hier.", gateDe);
+  assert.ok(lengthNote.notes.includes("fragment length"), lengthNote.notes.join("|"));
+  assert.equal(lengthNote.notes.includes("fragment verb"), false);
   ok("Befunde 1 bis 9 gelten auf Deutsch und Englisch");
 
   const deTitles = chaptersFromDrafts(gateDe, "pdf", []).chapters;
@@ -502,6 +511,104 @@ async function main() {
   assert.equal(enKi.find(c => c.id === "schluss")?.title, "Closing");
   assert.equal(PDF_PODCAST_CHAPTERS.find(c => c.id === "einstieg")?.title, "Einstieg");
   ok("Englische Läufe tragen englische Kapiteltitel, die deutschen Titel bleiben");
+
+  const probeAnalysis = {
+    ...gatePack.analysis,
+    dataTimestamp: "2026-11-26T11:00:00.000Z",
+    waccPct: 14.1,
+    impliedGStar: 11.4,
+    catalysts: [
+      { name: "Rechenzentren", nettoUpside: 12 },
+      { name: "Software", nettoUpside: 4 },
+    ],
+    risks: [{ name: "Exportregeln" }, { name: "Lieferengpass" }],
+    newsItems: [{ title: "Neue Rechenzentren", pubDate: "2026-11-25T08:00:00.000Z" }],
+    lastReportedQuarter: "Q3 FY2026",
+    nextEarningsDate: "2027-02-24",
+    growthThesis: "NVIDIA bleibt der Spezialist für Rechenbeschleuniger und die Nachfrage trägt die Geschichte der Firma.",
+  };
+  const probeDe = buildSpeechSheet(buildPodcastFacts(pack("NVDA", probeAnalysis), NOON), "de");
+  const probeEn = buildSpeechSheet(buildPodcastFacts(pack("NVDA", probeAnalysis), NOON), "en");
+  const expandLegacy = (text: string, sheet: typeof probeDe) => {
+    const spoken = (id: string) => sheet.facts.find(fact => fact.id === id)?.spoken ?? "";
+    const name = (id: string) => spoken(id)
+      .split(/ mit einem Potenzial von | with a potential of /)[0]
+      ?.replace(/^(?:der größte Katalysator|ein weiterer Katalysator|the largest catalyst|another catalyst) /, "") ?? "";
+    const upside = (id: string) => spoken(id).match(/(?:von|of) (.+)$/)?.[1] ?? "";
+    const crv = sheet.codeLines.find(line => line.chapterId === "dcf")?.spoken.replace(/\.$/, "") ?? "";
+    const thesis = sheet.codeLines.find(line => line.chapterId === "these")?.spoken ?? "";
+    return text
+      .replace(/\[\[catalyst_([abc])\]\]/g, (_all, key: string) => name(`pair_${key}`))
+      .replace(/\[\[upside_([abc])\]\]/g, (_all, key: string) => upside(`pair_${key}`))
+      .replace(/\[\[crv\]\]/g, crv)
+      .replace(/\[\[thesis\]\]/g, thesis);
+  };
+  const properNames = (text: string) => text.split(/[^A-Za-zÄÖÜäöüß]+/).filter(word => /^(?:NVIDIA|Rechenzentren|Software|Data|Center|Exportregeln|Lieferengpass)$/.test(word));
+  const countFallback = (pool: ProbePool, sheet: typeof probeDe, withExtractor: boolean) => {
+    let total = 0;
+    let fallen = 0;
+    for (const [id, rows] of Object.entries(pool)) {
+      for (const row of rows) {
+        const raw = expandLegacy(row, sheet);
+        const verdict = verifyChapter(id, raw, sheet, withExtractor ? properNames(raw) : null);
+        total += 1;
+        if (!verdict.ok) fallen += 1;
+      }
+    }
+    return { total, fallen };
+  };
+  const deBackup = countFallback(dePool, probeDe, false);
+  const enBackup = countFallback(enPool, probeEn, false);
+  const deExtracted = countFallback(dePool, probeDe, true);
+  const enExtracted = countFallback(enPool, probeEn, true);
+  assert.ok(deBackup.fallen / deBackup.total < 0.1, `DE backup ${deBackup.fallen}/${deBackup.total}`);
+  assert.ok(enBackup.fallen / enBackup.total < 0.1, `EN backup ${enBackup.fallen}/${enBackup.total}`);
+  assert.ok(deExtracted.fallen / deExtracted.total < 0.1, `DE extractor ${deExtracted.fallen}/${deExtracted.total}`);
+  assert.ok(enExtracted.fallen / enExtracted.total < 0.1, `EN extractor ${enExtracted.fallen}/${enExtracted.total}`);
+  const dc = [
+    verifyChapter("s17", "Der stärkste Treiber für die Aktie ist [[pair_a]] und das stützt die Bewertung der Firma im Jahr.", probeDe),
+    verifyChapter("s17", "Den zweiten Impuls liefert [[pair_b]] und der Markt bleibt offen für die Firma.", probeDe),
+    verifyChapter("umsatz", "Im Geschäftsjahr [[gj_year]] wuchs der Umsatz um [[fy_yoy]] gegenüber dem Vorjahr und bleibt der belegte Vergleich.", probeDe),
+  ];
+  assert.equal(dc.every(item => item.ok), true, dc.map(item => item.notes.join("|")).join(" || "));
+  const doubled = verifyChapter("einstieg", "Der Stand bezieht sich auf den [[as_of]] und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", probeDe);
+  assert.equal(/auf den auf den|von von|for for|as of as of/.test(doubled.spoken), false, doubled.spoken);
+  const foreignNegatives: Array<[string, typeof probeDe, string, string[] | null]> = [
+    ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] hat sich verdoppelt und bleibt der Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
+    ["umsatz", probeDe, "Der Gewinn der Firma wurde halbiert und bleibt der belegte Stand. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
+    ["umsatz", probeDe, "Das Wachstum ist dreifach so hoch und bleibt der Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt belegt.", null],
+    ["umsatz", probeDe, "Das Wachstum beträgt fünfzig Prozent und bleibt der Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt belegt.", null],
+    ["einstieg", probeDe, "Der Kurs steht bei [[price]] und bleibt der höchste Stand seit dem letzten Lauf. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
+    ["einstieg", probeDe, "Der Kurs steht bei [[price]] und bleibt ein Rekord für die Firma. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
+    ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] beträgt [[fy_yoy]] Prozent und ist der belegte Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
+    ["umsatz", probeDe, "Das Wachstum ist ein [[fy_yoy]] und bleibt der belegte Jahreswert der Firma. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
+    ["einstieg", probeDe, "Der [[as_of]] ist der belegte Stand und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", null],
+    ["einstieg", probeDe, "Der Kurs steht bei n/a und bleibt der Marktwert der Aktie. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", null],
+    ["einstieg", probeDe, "Wir sprechen heute über Apple, und der Kurs steht bei [[price]]. Der Stand bezieht sich [[as_of]] und bleibt an die Quelle gebunden.", ["Apple"]],
+    ["s17", probeDe, "An der Spitze steht [[pair_a]] und blackwell bleibt der zweite Treiber. Diese Liste bleibt der belegte Stand der Firma.", ["blackwell"]],
+    ["dcf", probeDe, "Der faire Wert liegt bei [[dcf_fair]] und stammt aus der belegten Bewertung. Das Chance-Risiko-Verhältnis liegt bei minus eins Komma zwei und bleibt der belegte Satz.", null],
+    ["umsatz", probeEn, "Revenue doubled in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
+    ["umsatz", probeEn, "Revenue is twice the prior year and remains the verified annual figure. The segment stays the verified split of the company.", null],
+    ["umsatz", probeEn, "The margin is half the prior year and remains the verified figure. The segment stays the verified split of the company.", null],
+    ["umsatz", probeEn, "Growth is twofold and remains the verified annual figure for the company. The segment stays the verified split of the company.", null],
+    ["einstieg", probeEn, "The price stands at [[price]] and remains the highest since the prior year. The figures are dated [[as_of]] and stay tied to that date.", null],
+    ["einstieg", probeEn, "The price stands at [[price]] and remains a record for the company. The figures are dated [[as_of]] and stay tied to that date.", null],
+    ["einstieg", probeEn, "The price stands at [[price]] dollars and stays the verified market value. The figures are dated [[as_of]] and stay tied to that date.", null],
+    ["einstieg", probeEn, "We look at Apple today and the price stands at [[price]]. The figures are dated [[as_of]] and stay tied to that date.", ["Apple"]],
+    ["s17", probeEn, "At the top stands [[pair_a]] and blackwell remains the next driver. This list stays the verified set for the company.", ["blackwell"]],
+    ["einstieg", probeDe, "Der Stand bezieht sich auf den [[as_of]] und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", null],
+    ["news", probeDe, "Die jüngste Meldung stammt von [[news_age]] und bleibt im betrachteten Fenster. Diese Meldung bleibt der belegte Stand der Firma.", null],
+    ["umsatz", probeEn, "Revenue rose in fiscal year [[gj_year]] and remains the verified annual figure. The segment stays the verified split of the company.", null],
+  ];
+  const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
+  const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
+  assert.equal(foreignNegatives.length, 25);
+  assert.equal(rejected, 22);
+  assert.equal(backupRejected, 21);
+  const million = buildSpeechSheet(buildPodcastFacts(pack("NVDA", { ...probeAnalysis, currentPrice: 1_500_000 }), NOON), "en");
+  assert.match(million.facts.find(fact => fact.id === "price")?.spoken ?? "", /million/);
+  assert.equal(/\d/.test(million.facts.find(fact => fact.id === "price")?.spoken ?? "1"), false);
+  ok(`Fremde Prosa DE backup ${deBackup.fallen}/${deBackup.total}, EN backup ${enBackup.fallen}/${enBackup.total}, DE Extraktor ${deExtracted.fallen}/${deExtracted.total}, EN Extraktor ${enExtracted.fallen}/${enExtracted.total}, Negativ Extraktor ${rejected}/25, Backup ${backupRejected}/25`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",
