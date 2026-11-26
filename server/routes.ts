@@ -554,6 +554,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 18. GET /api/chat/earnings-brief/:symbol — letzter Earnings Call für den KI-Chat. Kein Score.
   const { registerChatEarningsRoute } = await import("./chat-earnings-route");
   registerChatEarningsRoute(app);
+  // 18b. GET /api/chat/income-statement/:symbol — GuV-Posten (SEC XBRL, FMP als zweite Quelle) für den KI-Chat. Kein Score.
+  const { registerChatIncomeRoute } = await import("./chat-income-route");
+  registerChatIncomeRoute(app);
 
   // 19. Chat-Verlauf im Prozess-Speicher, pro Session. Kein Supabase, kein Score.
   const { registerChatHistoryRoute } = await import("./chat-history-route");

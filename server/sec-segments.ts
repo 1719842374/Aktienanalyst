@@ -40,7 +40,7 @@
 
 import { callLLMJson } from "./llm-openrouter";
 
-const SEC_USER_AGENT = "StockAnalystPro contact@stockanalyst-pro.app";
+export const SEC_USER_AGENT = "StockAnalystPro contact@stockanalyst-pro.app";
 const TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json";
 
 export interface SecRevenueSegment {
