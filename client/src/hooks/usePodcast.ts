@@ -21,8 +21,8 @@
  *   cacheKey, voice, voiceLabel, chapters[{id,title,label,template,spoken,durationSec,llmOwned,audioUrl}],
  *   cached, packCached, promptVersion, disclaimer.
  * Fehler StockPodcastErrorResponse: ok false, errorCode, error, stage.
- * GET /api/podcast/audio/:chapterId?ticker&source&voice&cacheKey — sonst 400.
- * Dieselbe Query wie stockPodcastAudioPath.
+ * GET /api/podcast/audio/:chapterId?ticker&source&voice&cacheKey&language — sonst 400.
+ * Dieselbe Query wie stockPodcastAudioPath, language inklusive.
  *
  * Kein zweiter Analyze-Lauf. Die sichtbare Dashboard-UI bleibt unverändert.
  * Erzeugung nur aus dem Click-Handler, nie beim Mount.
@@ -130,6 +130,37 @@ export function voiceFitsLanguage(language: PodcastLanguage, voiceId: string): b
   return voicesForLanguage(language).some((voice) => voice.id === voiceId);
 }
 
+const PODCAST_XAI_VOICES = new Set(["eve", "leo", "ara"]);
+
+/** Harper und Grant wechseln die Locale. xAI und Browser bleiben. Alles andere wird die Default-Stimme. */
+export function mapVoiceAcrossLanguage(voiceId: string, target: PodcastLanguage): string {
+  if (voiceId === PODCAST_BROWSER_VOICE || PODCAST_XAI_VOICES.has(voiceId)) return voiceId;
+  if (/harper/i.test(voiceId)) {
+    return target === "en" ? "en-US-Harper:MAI-Voice-2.1" : "de-DE-Harper:MAI-Voice-2.1";
+  }
+  if (/grant/i.test(voiceId)) {
+    return target === "en" ? "en-US-Grant:MAI-Voice-2.1" : "de-DE-Grant:MAI-Voice-2.1";
+  }
+  return defaultVoiceForLanguage(target);
+}
+
+/** Stand, Cache-Key und Stufe nach einem Aktienwechsel ohne Cache. Dieselben Werte wie resetForTicker. */
+export function tickerIdleResetFields(fallback: { asOf: string; price: string }): {
+  standAsOf: string;
+  standPrice: string;
+  cacheKey: string;
+  stage: "analyze";
+  activeChapterId: null;
+} {
+  return {
+    standAsOf: fallback.asOf,
+    standPrice: fallback.price,
+    cacheKey: "",
+    stage: "analyze",
+    activeChapterId: null,
+  };
+}
+
 export function readPodcastLanguage(storage: { getItem(key: string): string | null } | null): PodcastLanguage {
   const raw = storage?.getItem(PODCAST_LANGUAGE_STORAGE_KEY);
   return raw === "en" ? "en" : "de";
@@ -185,7 +216,7 @@ export const PODCAST_VOICE_GROUPS: { id: PodcastVoiceOption["group"]; label: str
   { id: "browser", label: "Browser" },
 ];
 
-export type PodcastErrorCode = "NO_API_KEY" | "LLM_UNAVAILABLE" | "RATE_LIMITED" | "KI_MODE_OFF";
+export type PodcastErrorCode = "NO_API_KEY" | "LLM_UNAVAILABLE" | "RATE_LIMITED" | "KI_MODE_OFF" | "BAD_REQUEST";
 
 /** Spiegel von StockPodcastScriptResponse. `src` am Kapitel ist nur die abspielbare Blob-URL. */
 export interface PodcastScriptRequest {
@@ -285,15 +316,99 @@ export function formatPodcastPrice(price: number): string {
   return price.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 }
 
-export function formatStandLine(asOf: string, price: string, source: PodcastSource, voiceName: string): string {
+export function formatStandLine(
+  asOf: string,
+  price: string,
+  source: PodcastSource,
+  voiceName: string,
+  language: PodcastLanguage = "de",
+): string {
+  if (language === "en") {
+    return `As of ${asOf}, price ${price} · ${podcastSourceLabel(source)} · Voice ${voiceName}`;
+  }
   return `Stand ${asOf}, Kurs ${price} · ${podcastSourceLabel(source)} · Stimme ${voiceName}`;
+}
+
+/** Player-Labels folgen der Audiosprache. Quellen-Namen und die übrige Seite bleiben Deutsch. */
+export function podcastUiCopy(language: PodcastLanguage): {
+  play: string;
+  pause: string;
+  regenerate: string;
+  limitTitle: string;
+  retry: string;
+  transcript: string;
+  llmUnavailable: string;
+  missing: string;
+  idleTitle: string;
+  idleHint: string;
+  generateAria: string;
+  analyzeLabel: string;
+  analyzeDetail: string;
+  scriptLabel: string;
+  scriptDetail: string;
+  audioLabel: string;
+  audioDetail: string;
+  noKey: string;
+  noKeyDetail: string;
+} {
+  switch (language) {
+    case "en":
+      return {
+        play: "Play",
+        pause: "Pause",
+        regenerate: "Regenerate",
+        limitTitle: "Daily limit reached.",
+        retry: "Try again",
+        transcript: "Show transcript",
+        llmUnavailable: "AI podcast n/a — LLM unavailable.",
+        missing: "not available",
+        idleTitle: "Generate AI podcast",
+        idleHint: "Play starts a fresh AI analysis of every section (current figures), then the transcript and audio via OpenRouter. The dashboard view stays unchanged.",
+        generateAria: "Generate AI podcast for",
+        analyzeLabel: "Analysis running …",
+        analyzeDetail: "Fresh figures + AI for every section",
+        scriptLabel: "Transcript is being written …",
+        scriptDetail: "OpenRouter interprets the analysis",
+        audioLabel: "Audio is being generated …",
+        audioDetail: "OpenRouter TTS, xAI fallback",
+        noKey: "AI is unavailable: no OpenRouter key is configured on this server. No answer is generated.",
+        noKeyDetail: "The podcast transcript needs OPENROUTER_API_KEY. The PDF export stays unchanged.",
+      };
+    case "de":
+      return {
+        play: "Wiedergabe",
+        pause: "Pause",
+        regenerate: "Neu erzeugen",
+        limitTitle: "Tageslimit erreicht.",
+        retry: "Erneut versuchen",
+        transcript: "Transkript anzeigen",
+        llmUnavailable: "KI-Podcast n/a — LLM nicht erreichbar.",
+        missing: "liegt nicht vor",
+        idleTitle: "KI-Podcast erzeugen",
+        idleHint: PODCAST_KI_HINT,
+        generateAria: "KI-Podcast für",
+        analyzeLabel: PODCAST_LOADING_COPY.analyze.label,
+        analyzeDetail: PODCAST_LOADING_COPY.analyze.detail,
+        scriptLabel: PODCAST_LOADING_COPY.script.label,
+        scriptDetail: PODCAST_LOADING_COPY.script.detail,
+        audioLabel: PODCAST_LOADING_COPY.audio.label,
+        audioDetail: PODCAST_LOADING_COPY.audio.detail,
+        noKey: OPENROUTER_NO_KEY_MESSAGE,
+        noKeyDetail: PODCAST_NO_KEY_DETAIL,
+      };
+    default: {
+      const unreachable: never = language;
+      return unreachable;
+    }
+  }
 }
 
 export function podcastIdleSubtitle(source: PodcastSource, ticker: string): string {
   return `Nur auf Klick · frische Analyse · ${podcastSourceLabel(source)} · ${ticker}`;
 }
 
-export function podcastLimitDetail(ticker: string): string {
+export function podcastLimitDetail(ticker: string, language: PodcastLanguage = "de"): string {
+  if (language === "en") return `Not available again today for ${ticker}. Cached episodes stay playable.`;
   return `Für ${ticker} heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.`;
 }
 
@@ -553,8 +668,18 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, []);
 
   const revokeBlobs = useCallback(() => {
-    for (const url of blobRef.current) URL.revokeObjectURL(url);
-    blobRef.current = [];
+    const kept = new Set<string>();
+    scriptCacheRef.current.forEach((slot) => {
+      slot.chapters.forEach((chapter) => {
+        if (chapter.src?.startsWith("blob:")) kept.add(chapter.src);
+      });
+    });
+    const next: string[] = [];
+    for (const url of blobRef.current) {
+      if (kept.has(url)) next.push(url);
+      else URL.revokeObjectURL(url);
+    }
+    blobRef.current = next;
   }, []);
 
   const stopOutput = useCallback(() => {
@@ -562,6 +687,24 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     audioRef.current?.pause();
     if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
   }, [audioRef, clearSpeechTimer]);
+
+  const resetForTicker = useCallback(() => {
+    reqRef.current += 1;
+    stopOutput();
+    revokeBlobs();
+    chaptersRef.current = [];
+    currentSecRef.current = 0;
+    setChapters([]);
+    setCurrentSec(0);
+    setState("idle");
+    setError(null);
+    const cleared = tickerIdleResetFields({ asOf: asOfFallback.current, price: priceFallback.current });
+    activeIdRef.current = cleared.activeChapterId;
+    cacheKeyRef.current = cleared.cacheKey;
+    setStage(cleared.stage);
+    setStandAsOf(cleared.standAsOf);
+    setStandPrice(cleared.standPrice);
+  }, [revokeBlobs, stopOutput]);
 
   useEffect(() => {
     return () => {
@@ -601,10 +744,11 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     if (!chapter) return;
     activeIdRef.current = chapter.id;
     const utterance = new SpeechSynthesisUtterance(chapter.spoken || chapter.label);
-    utterance.lang = "de-DE";
+    const speechLang = languageRef.current === "en" ? "en-US" : "de-DE";
+    utterance.lang = speechLang;
     utterance.rate = speedRef.current;
-    const german = window.speechSynthesis.getVoices().find((voice) => /^de([-_]|$)/i.test(voice.lang));
-    if (german) utterance.voice = german;
+    const spokenVoice = window.speechSynthesis.getVoices().find((voice) => voice.lang.toLowerCase().startsWith(speechLang.toLowerCase()));
+    if (spokenVoice) utterance.voice = spokenVoice;
     const origin = performance.now();
     applyClock(span.start);
     speechTimer.current = window.setInterval(() => {
@@ -710,18 +854,35 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     else speakFrom(origin);
   }, [playAudioAt, speakFrom]);
 
-  const loadAudio = useCallback(async (list: PodcastChapterView[], voice: string, cacheKey: string, requestId: number) => {
+  const markLanguageLimit = useCallback((source: PodcastSource) => {
+    limitRef.current.set(podcastLimitKey(ticker, languageRef.current), true);
+    const key = podcastScriptCacheKey(ticker, source, languageRef.current);
+    const remembered = scriptCacheRef.current.get(key);
+    scriptCacheRef.current.set(key, {
+      chapters: remembered?.chapters ?? chaptersRef.current,
+      cacheKey: remembered?.cacheKey ?? cacheKeyRef.current,
+      asOf: remembered?.asOf ?? "",
+      priceLabel: remembered?.priceLabel ?? priceFallback.current,
+      limited: true,
+    });
+    setCacheEpoch((value) => value + 1);
+    setError({ kind: "limit" });
+    setState("limit");
+    stateRef.current = "limit";
+  }, [ticker]);
+
+  const loadAudio = useCallback(async (list: PodcastChapterView[], voice: string, cacheKey: string, requestId: number): Promise<"limit" | "ok"> => {
     revokeBlobs();
     if (!isServerVoice(voice)) {
       modeRef.current = "speech";
       const cleared = list.map((chapter) => ({ ...chapter, src: null }));
       chaptersRef.current = cleared;
       setChapters(cleared);
-      return;
+      return "ok";
     }
     const resolved: PodcastChapterView[] = [];
     for (const chapter of list) {
-      if (requestId !== reqRef.current) return;
+      if (requestId !== reqRef.current) return "ok";
       let src: string | null = null;
       const remote = chapter.audioUrl && isDirectAudioUrl(chapter.audioUrl) ? chapter.audioUrl : null;
       if (remote) {
@@ -737,7 +898,11 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
         });
         try {
           const res = await apiRequest("GET", path, undefined, PODCAST_AUDIO_TIMEOUT_MS);
-          if (requestId !== reqRef.current) return;
+          if (requestId !== reqRef.current) return "ok";
+          if (res.status === 429) {
+            markLanguageLimit(sourceRef.current);
+            return "limit";
+          }
           const contentType = res.headers.get("content-type") || "";
           if (res.ok && !contentType.includes("json") && !contentType.includes("html")) {
             const blob = await res.blob();
@@ -752,12 +917,13 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       }
       resolved.push({ ...chapter, src });
     }
-    if (requestId !== reqRef.current) return;
+    if (requestId !== reqRef.current) return "ok";
     const playable = resolved.some((chapter) => chapter.src);
     modeRef.current = playable ? "audio" : "speech";
     chaptersRef.current = resolved;
     setChapters(resolved);
-  }, [revokeBlobs, ticker]);
+    return "ok";
+  }, [markLanguageLimit, revokeBlobs, ticker]);
 
   useEffect(() => {
     const slot = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, sourceRef.current, languageRef.current));
@@ -775,13 +941,15 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       void loadAudio(chapters, voiceRef.current, slot.cacheKey, reqRef.current);
       return;
     }
-    chaptersRef.current = [];
-    setChapters([]);
-    setCurrentSec(0);
-    setError(limited ? { kind: "limit" } : null);
-    setState(limited ? "limit" : "idle");
-    stateRef.current = limited ? "limit" : "idle";
-  }, [ticker, loadAudio]);
+    resetForTicker();
+    if (limited) {
+      setError({ kind: "limit" });
+      setState("limit");
+      stateRef.current = "limit";
+    } else {
+      stateRef.current = "idle";
+    }
+  }, [ticker, loadAudio, resetForTicker]);
 
   const adoptScript = useCallback((parsed: ParsedPodcastScript) => {
     cacheKeyRef.current = parsed.cacheKey;
@@ -839,6 +1007,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
           limited: true,
         });
         setCacheEpoch((value) => value + 1);
+        setError({ kind: "limit" });
         setState("limit");
         stateRef.current = "limit";
         return;
@@ -861,8 +1030,14 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       setCacheEpoch((value) => value + 1);
       setStage("audio");
       const playbackVoice = voiceRef.current === PODCAST_BROWSER_VOICE ? PODCAST_BROWSER_VOICE : (parsed.voice ?? voiceRef.current);
-      await loadAudio(parsed.chapters, playbackVoice, parsed.cacheKey, requestId);
-      if (requestId !== reqRef.current) return;
+      const audio = await loadAudio(parsed.chapters, playbackVoice, parsed.cacheKey, requestId);
+      if (requestId !== reqRef.current || audio === "limit") return;
+      const slotKey = podcastScriptCacheKey(ticker, nextSource, parsed.language ?? languageRef.current);
+      const stored = scriptCacheRef.current.get(slotKey);
+      if (stored) {
+        scriptCacheRef.current.set(slotKey, { ...stored, chapters: chaptersRef.current });
+        setCacheEpoch((value) => value + 1);
+      }
       play();
     } catch {
       if (requestId !== reqRef.current) return;
@@ -883,8 +1058,8 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     stateRef.current = "loading";
     setStage("audio");
     stopOutput();
-    await loadAudio(chaptersRef.current, nextVoice, cacheKeyRef.current, requestId);
-    if (requestId !== reqRef.current) return;
+    const audio = await loadAudio(chaptersRef.current, nextVoice, cacheKeyRef.current, requestId);
+    if (requestId !== reqRef.current || audio === "limit") return;
     play();
   }, [loadAudio, play, stopOutput]);
 
@@ -972,17 +1147,16 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     const hasCache = (slot?.chapters.length ?? 0) > 0;
     const limited = limitRef.current.get(podcastLimitKey(ticker, next)) === true;
     if (languageSegmentDisabled({ limited, hasCache, loading: false })) return;
-    const nextVoice = voiceFitsLanguage(next, voiceByLanguageRef.current[next])
-      ? voiceByLanguageRef.current[next]
-      : defaultVoiceForLanguage(next);
+    const nextVoice = mapVoiceAcrossLanguage(voiceRef.current, next);
     voiceByLanguageRef.current[next] = nextVoice;
     languageRef.current = next;
     setLanguage(next);
     voiceRef.current = nextVoice;
     setVoiceId(nextVoice);
     writePodcastLanguage(browserStorage(), next);
+    stopOutput();
     if (decideLanguageSwitch(hasCache) === "play" && slot) {
-      const chapters = slot.chapters.map((chapter) => ({ ...chapter, src: null }));
+      const chapters = slot.chapters;
       chaptersRef.current = chapters;
       setChapters(chapters);
       cacheKeyRef.current = slot.cacheKey;
@@ -991,13 +1165,10 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       setStandAsOf(formatPodcastAsOf(slot.asOf, asOfFallback.current));
       setStandPrice(slot.priceLabel || priceFallback.current);
       setError(null);
+      modeRef.current = chapters.some((chapter) => chapter.src) && isServerVoice(nextVoice) ? "audio" : "speech";
       setState("paused");
       stateRef.current = "paused";
-      const requestId = ++reqRef.current;
-      void loadAudio(chapters, nextVoice, slot.cacheKey, requestId).then(() => {
-        if (requestId !== reqRef.current) return;
-        play();
-      });
+      play();
       return;
     }
     stopOutput();
@@ -1008,7 +1179,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     setError(null);
     setState("idle");
     stateRef.current = "idle";
-  }, [loadAudio, play, stopOutput, ticker]);
+  }, [play, stopOutput, ticker]);
 
   const generate = useCallback(() => {
     void run(sourceRef.current, false);

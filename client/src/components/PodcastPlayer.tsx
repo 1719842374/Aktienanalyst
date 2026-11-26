@@ -9,12 +9,7 @@ import { createPortal } from "react-dom";
 import { Check, SkipBack, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { OPENROUTER_NO_KEY_MESSAGE } from "@shared/openrouter-no-key";
 import {
-  PODCAST_KI_HINT,
-  PODCAST_LLM_UNAVAILABLE,
-  PODCAST_LOADING_COPY,
-  PODCAST_NO_KEY_DETAIL,
   PODCAST_VOICE_GROUPS,
   PODCAST_VOICES,
   languageSegmentDisabled,
@@ -22,9 +17,9 @@ import {
   formatClock,
   formatSpeedLabel,
   formatStandLine,
-  podcastIdleSubtitle,
   podcastLimitDetail,
   podcastSourceLabel,
+  podcastUiCopy,
   usePodcast,
   voiceNameFor,
   type PodcastChapterView,
@@ -81,16 +76,17 @@ function SecondsGlyph({ direction }: { direction: "back" | "forward" }) {
   );
 }
 
-function errorCopy(error: PodcastFailure): { title: string; detail?: string } {
+function errorCopy(error: PodcastFailure, language: PodcastLanguage): { title: string; detail?: string } {
+  const copy = podcastUiCopy(language);
   switch (error.kind) {
     case "no_key":
-      return { title: OPENROUTER_NO_KEY_MESSAGE, detail: PODCAST_NO_KEY_DETAIL };
+      return { title: copy.noKey, detail: copy.noKeyDetail };
     case "llm":
-      return { title: PODCAST_LLM_UNAVAILABLE };
+      return { title: copy.llmUnavailable };
     case "message":
       return { title: error.text };
     case "limit":
-      return { title: "Tageslimit erreicht." };
+      return { title: copy.limitTitle };
     default: {
       const unreachable: never = error;
       return unreachable;
@@ -256,6 +252,7 @@ export function PodcastPlayerView({
   const playing = state === "playing";
   const showTransport = chapters.length > 0 && state !== "idle" && state !== "loading";
   const voiceName = voiceNameFor(voiceId);
+  const copy = podcastUiCopy(language);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -377,7 +374,7 @@ export function PodcastPlayerView({
                   aria-checked={selected}
                   aria-disabled={disabled}
                   disabled={disabled}
-                  title={limited ? "Tageslimit erreicht." : undefined}
+                  title={limited ? podcastUiCopy(code).limitTitle : undefined}
                   data-testid={`button-podcast-lang-${code}`}
                   aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
                   className={cn(
@@ -401,7 +398,7 @@ export function PodcastPlayerView({
               <button
                 type="button"
                 data-testid="button-podcast-generate"
-                aria-label={`KI-Podcast für ${ticker} erzeugen`}
+                aria-label={language === "en" ? `${copy.generateAria} ${ticker}` : `KI-Podcast für ${ticker} erzeugen`}
                 onClick={onGenerate}
                 className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 style={{ backgroundColor: "#1ED760" }}
@@ -409,11 +406,13 @@ export function PodcastPlayerView({
                 <PlayGlyph className="h-5 w-5" />
               </button>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">KI-Podcast erzeugen</div>
-                <div className="text-[11px] text-muted-foreground">{podcastIdleSubtitle(source, ticker)}</div>
+                <div className="text-sm font-semibold text-foreground">{copy.idleTitle}</div>
+                <div className="text-[11px] text-muted-foreground">{language === "en"
+                  ? `Only on click · fresh analysis · ${podcastSourceLabel(source)} · ${ticker}`
+                  : `Nur auf Klick · frische Analyse · ${podcastSourceLabel(source)} · ${ticker}`}</div>
               </div>
             </div>
-            <p data-testid="podcast-ki-hint" className="text-[11px] leading-snug text-muted-foreground">{PODCAST_KI_HINT}</p>
+            <p data-testid="podcast-ki-hint" className="text-[11px] leading-snug text-muted-foreground">{copy.idleHint}</p>
           </div>
         )}
 
@@ -428,8 +427,8 @@ export function PodcastPlayerView({
                 <span className="h-5 w-5 animate-spin rounded-full border-2 border-black/25 border-t-black" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">{PODCAST_LOADING_COPY[stage].label}</div>
-                <div className="text-[11px] text-muted-foreground">{PODCAST_LOADING_COPY[stage].detail}</div>
+                <div className="text-sm font-semibold text-foreground">{stage === "analyze" ? copy.analyzeLabel : stage === "script" ? copy.scriptLabel : copy.audioLabel}</div>
+                <div className="text-[11px] text-muted-foreground">{stage === "analyze" ? copy.analyzeDetail : stage === "script" ? copy.scriptDetail : copy.audioDetail}</div>
               </div>
             </div>
             <ol data-testid="podcast-loading-steps" className="flex flex-col gap-0.5 text-[11px]">
@@ -444,7 +443,7 @@ export function PodcastPlayerView({
                     data-testid={`podcast-loading-step-${step}`}
                     className={active ? "font-bold text-[#1ED760]" : done ? "text-foreground" : "text-muted-foreground"}
                   >
-                    {PODCAST_LOADING_COPY[step].label}
+                    {step === "analyze" ? copy.analyzeLabel : step === "script" ? copy.scriptLabel : copy.audioLabel}
                   </li>
                 );
               })}
@@ -454,20 +453,20 @@ export function PodcastPlayerView({
 
         {state === "error" && error && error.kind !== "limit" && (
           <div data-testid="podcast-error" role="alert" className="rounded-md border border-destructive/40 px-3 py-2">
-            <p className="text-sm font-semibold text-foreground">{errorCopy(error).title}</p>
-            {errorCopy(error).detail ? (
-              <p className="mt-1 text-[11px] text-muted-foreground">{errorCopy(error).detail}</p>
+            <p className="text-sm font-semibold text-foreground">{errorCopy(error, language).title}</p>
+            {errorCopy(error, language).detail ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">{errorCopy(error, language).detail}</p>
             ) : null}
             <Button type="button" variant="outline" size="sm" className="mt-2" data-testid="button-podcast-retry" onClick={onRetry}>
-              Erneut versuchen
+              {copy.retry}
             </Button>
           </div>
         )}
 
         {state === "limit" && (
           <div data-testid="podcast-rate-limit" role="status" className="rounded-md border border-border px-3 py-2">
-            <p className="text-sm font-semibold text-foreground">Tageslimit erreicht.</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{podcastLimitDetail(ticker)}</p>
+            <p className="text-sm font-semibold text-foreground">{copy.limitTitle}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{podcastLimitDetail(ticker, language)}</p>
           </div>
         )}
 
@@ -509,7 +508,7 @@ export function PodcastPlayerView({
                 <button
                   type="button"
                   data-testid={playing ? "button-podcast-pause" : "button-podcast-play"}
-                  aria-label={playing ? "Pause" : "Wiedergabe"}
+                  aria-label={playing ? copy.pause : copy.play}
                   onClick={onTogglePlay}
                   className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-white dark:text-black"
                 >
@@ -554,10 +553,10 @@ export function PodcastPlayerView({
               </div>
             </div>
             <p data-testid="podcast-stand" className="text-[10px] text-muted-foreground">
-              {formatStandLine(standAsOf || "liegt nicht vor", standPrice || "liegt nicht vor", source, voiceName)}
+              {formatStandLine(standAsOf || copy.missing, standPrice || copy.missing, source, voiceName, language)}
             </p>
             <details data-testid="podcast-transcript" className="text-xs">
-              <summary className="cursor-pointer text-muted-foreground">Transkript anzeigen</summary>
+              <summary className="cursor-pointer text-muted-foreground">{copy.transcript}</summary>
               <div className="mt-2 space-y-2">
                 {chapters.map((chapter) => (
                   <div key={chapter.id}>
@@ -575,10 +574,10 @@ export function PodcastPlayerView({
                 className="self-start"
                 data-testid="button-podcast-regenerate"
                 disabled={limitedLanguages[language]}
-                title={limitedLanguages[language] ? "Tageslimit erreicht." : undefined}
+                title={limitedLanguages[language] ? copy.limitTitle : undefined}
                 onClick={onRegenerate}
               >
-                Neu erzeugen
+                {copy.regenerate}
               </Button>
             )}
           </div>

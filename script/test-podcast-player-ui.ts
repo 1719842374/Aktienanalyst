@@ -18,6 +18,9 @@ import {
   PODCAST_EN_DEFAULT_VOICE,
   PODCAST_LANGUAGE_STORAGE_KEY,
   buildPodcastScriptRequest,
+  mapVoiceAcrossLanguage,
+  tickerIdleResetFields,
+  podcastUiCopy,
   decideLanguageSwitch,
   defaultVoiceForLanguage,
   languageSegmentDisabled,
@@ -432,7 +435,7 @@ check("Hook startet nicht /api/analyze und nicht den Markt-Podcast",
   !hookSrc.includes("/api/analyze") && !hookSrc.includes("/api/podcast/brief") && hookSrc.includes('"/api/podcast/script"'));
 check("Klick auf eine Quelle startet den Lauf mit regenerate false", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 180).includes("run(next, false)"));
 check("Neu erzeugen ruft den Lauf mit regenerate true auf", hookSrc.includes("void run(sourceRef.current, true)"));
-check("Hook schickt kein fresh", !hookSrc.includes("fresh"));
+check("Hook schickt kein fresh-Feld", !hookSrc.includes("fresh:"));
 check("Sprachwechsel ruft keinen Lauf auf", (() => {
   const start = hookSrc.indexOf("const selectLanguage");
   const end = hookSrc.indexOf("const generate", start);
@@ -451,6 +454,26 @@ check("Sprachwechsel ruft keinen Lauf auf", (() => {
   check("Ungültiger Speicherwert fällt auf DE", readPodcastLanguage({ getItem: () => "fr" }) === "de");
 }
 check("Wechsel ohne Cache bleibt Idle, mit Cache wird gespielt", decideLanguageSwitch(false) === "idle" && decideLanguageSwitch(true) === "play");
+check("Harper und Grant wechseln die Locale, xAI und Browser bleiben, Mia wird die Default-Stimme",
+  mapVoiceAcrossLanguage("de-DE-Grant:MAI-Voice-2.1", "en") === "en-US-Grant:MAI-Voice-2.1"
+  && mapVoiceAcrossLanguage("en-US-Grant:MAI-Voice-2.1", "de") === "de-DE-Grant:MAI-Voice-2.1"
+  && mapVoiceAcrossLanguage("de-DE-Harper:MAI-Voice-2.1", "en") === "en-US-Harper:MAI-Voice-2.1"
+  && mapVoiceAcrossLanguage("en-US-Harper:MAI-Voice-2.1", "de") === "de-DE-Harper:MAI-Voice-2.1"
+  && mapVoiceAcrossLanguage("eve", "en") === "eve"
+  && mapVoiceAcrossLanguage("browser", "de") === "browser"
+  && mapVoiceAcrossLanguage("de-DE-Mia:MAI-Voice-2.1", "en") === "en-US-Harper:MAI-Voice-2.1"
+  && mapVoiceAcrossLanguage("de-DE-Klaus:MAI-Voice-2.1", "en") === "en-US-Harper:MAI-Voice-2.1");
+{
+  const after = tickerIdleResetFields({ asOf: "02.02.2026", price: "20" });
+  check("Ticker-Wechsel A→B ohne Cache setzt Stand, Cache-Key und Stufe auf B",
+    after.standAsOf === "02.02.2026"
+    && after.standPrice === "20"
+    && after.cacheKey === ""
+    && after.stage === "analyze"
+    && after.activeChapterId === null);
+}
+check("429 bleibt das Limit, auch wenn der Text nach einem LLM-Fehler aussieht",
+  classifyPodcastFailure(429, { ok: false, errorCode: "LLM_UNAVAILABLE", error: "KI-Podcast n/a — LLM nicht erreichbar.", stage: "script" })?.kind === "limit");
 check("Tageslimit sperrt nur die Sprache ohne Cache",
   languageSegmentDisabled({ limited: true, hasCache: false, loading: false }) === true
   && languageSegmentDisabled({ limited: true, hasCache: true, loading: false }) === false
@@ -462,6 +485,54 @@ const dashboard = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
 const pdfExport = readFileSync("server/pdf-export.ts", "utf8");
 const exportPdf = readFileSync("client/src/lib/exportPdf.ts", "utf8");
 check("Player hängt nur an der Executive Summary", !dashboard.includes("PodcastPlayer") && !pdfExport.includes("PodcastPlayer") && !exportPdf.includes("ignoreElements"));
+const english = renderToStaticMarkup(React.createElement(PodcastPlayerView, {
+  ticker: "NVDA",
+  source: "ki",
+  voiceId: "en-US-Harper:MAI-Voice-2.1",
+  state: "paused",
+  stage: "audio",
+  error: null,
+  chapters: [{ id: "s17", label: "Catalysts", spoken: "The catalyst is verified.", durationSec: 40, audioUrl: null, src: null }],
+  activeChapterId: "s17",
+  currentSec: 4,
+  totalSec: 40,
+  speed: 1,
+  standAsOf: "26.11.2026",
+  standPrice: "149.3",
+  language: "en",
+  ...viewActions,
+}));
+const enCopy = podcastUiCopy("en");
+check("EN-Player übersetzt die Leiste, der Kapiteltitel bleibt die Response",
+  english.includes(enCopy.regenerate)
+  && english.includes(enCopy.transcript)
+  && english.includes("As of 26.11.2026, price 149.3 · KI-Analyse · Voice Harper")
+  && english.includes("Catalysts")
+  && english.includes("PDF-basiert")
+  && !english.includes("Neu erzeugen")
+  && !english.includes("Transkript anzeigen"));
+const englishLimit = renderToStaticMarkup(React.createElement(PodcastPlayerView, {
+  ticker: "NVDA",
+  source: "ki",
+  voiceId: "en-US-Harper:MAI-Voice-2.1",
+  state: "limit",
+  stage: "analyze",
+  error: { kind: "limit" },
+  chapters: [],
+  activeChapterId: null,
+  currentSec: 0,
+  totalSec: 0,
+  speed: 1,
+  standAsOf: "",
+  standPrice: "",
+  language: "en",
+  limitedLanguages: { de: false, en: true },
+  ...viewActions,
+}));
+check("EN-Limit zeigt den Limit-Zustand ohne Retry",
+  englishLimit.includes("Daily limit reached.")
+  && !englishLimit.includes('data-testid="button-podcast-retry"')
+  && !englishLimit.includes('data-testid="podcast-error"'));
 
 assert.equal(failed, 0, `${failed} Prüfungen fehlgeschlagen`);
 console.log(`\n${failed === 0 ? "Alle Prüfungen grün." : failed + " fehlgeschlagen."}`);
