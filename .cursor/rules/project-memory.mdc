@@ -1,0 +1,21 @@
+---
+alwaysApply: true
+---
+
+# Projektgedächtnis
+
+Vor jeder Arbeit am Repo zuerst lesen:
+
+- `docs/memory/00 Start.md`
+- `docs/memory/Regeln/` (einschließlich Hard Limits)
+- `docs/memory/Repo/Stand.md`
+
+Nach einem Merge oder einer Entscheidung die passende Notiz in `docs/memory/` aktualisieren und dabei `docs/memory/Pflege.md` befolgen.
+
+## Hard Limits
+
+- Nie direkt auf `main` pushen
+- Kein Force-Push
+- `analyze-route.ts` und `researcher.ts` nicht anfassen
+- Keine Score-, Rating-, Entry- oder Peer-Änderungen ohne Philip
+- Design-Fragen immer erst an Philip
