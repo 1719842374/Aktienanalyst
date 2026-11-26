@@ -33,6 +33,8 @@ export interface SpeechSheet {
   packNames: string[];
   /** Nur Firma, Peers und geschützte Namen. Nur diese haben eine Ein-Zeichen-Distanz. */
   realNames: string[];
+  /** Dieselben Quellen als ganze Wendung. Nur exakt, kein Teilwort. */
+  realPhrases: string[];
   /** Großwörter aus Risiko- und News-Titeln. Nur innere Ein-Zeichen-Distanz, kein Exakt-Treffer. */
   nearTitleNames: string[];
   /** Länder und Wirtschaftsräume, als ganze Wendung. Die geschlossene Tabelle plus Pack-Orte. */
@@ -332,10 +334,13 @@ function newsTitlesOf(facts: PodcastFacts): string[] {
   return facts.newsTitles ?? [];
 }
 
-function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[]; nearTitleNames: string[] } {
+function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[]; realPhrases: string[]; nearTitleNames: string[] } {
   const realNames: string[] = [];
+  const realPhrases: string[] = [];
   const pushReal = (item: string | null | undefined) => {
     if (!item) return;
+    const phrase = item.trim();
+    if (phrase && !realPhrases.includes(phrase)) realPhrases.push(phrase);
     for (const word of item.split(/[^A-Za-zÄÖÜäöüß0-9]+/)) {
       if (word.length < 2) continue;
       const lower = word.toLowerCase();
@@ -366,7 +371,7 @@ function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames
       if (!nearTitleNames.includes(lower)) nearTitleNames.push(lower);
     }
   }
-  return { packNames, realNames, nearTitleNames };
+  return { packNames, realNames, realPhrases, nearTitleNames };
 }
 
 /** Nackte Altersphrase. Die Präposition setzt der Satz, nicht der Token. */
@@ -739,14 +744,16 @@ function allowedPackToken(clean: string, sheet: SpeechSheet): boolean {
   });
 }
 
+function samePhrase(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((bit, index) => bit === right[index]);
+}
+
 function allowedListedName(entity: string, sheet: SpeechSheet): boolean {
   const bits = placeBits(entity);
   if (!bits.length) return false;
-  if (bits.every(bit => allowedPackToken(bit, sheet))) return true;
-  return (sheet.placeNames ?? []).some(place => {
-    const parts = placeBits(place);
-    return parts.length === bits.length && parts.every((part, index) => part === bits[index]);
-  });
+  if (bits.length === 1 && bits[0] && allowedPackToken(bits[0], sheet)) return true;
+  const phrases = [...(sheet.realPhrases ?? []), ...(sheet.placeNames ?? [])];
+  return phrases.some(phrase => samePhrase(placeBits(phrase), bits));
 }
 
 function entityHit(entities: string[] | null | undefined, raw: string, spoken: string, sheet: SpeechSheet): string | null {
@@ -858,7 +865,7 @@ export function quantityWord(text: string, sheet: SpeechSheet): string | null {
 }
 
 export function quantityOutsideFacts(text: string, facts: SpeechFact[], language: PodcastLanguage): boolean {
-  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [], realNames: [], nearTitleNames: [], placeNames: [] }) != null;
+  return quantityWord(text, { language, facts, context: "", pendingTitles: [], codeLines: [], packNames: [], realNames: [], realPhrases: [], nearTitleNames: [], placeNames: [] }) != null;
 }
 
 export function applyFactTokens(text: string, facts: SpeechFact[]): string {

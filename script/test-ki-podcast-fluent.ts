@@ -1017,6 +1017,32 @@ async function main() {
   assert.equal(states.ok, true, states.notes.join("|"));
   const nordiskGen = verifyChapter("einstieg", "Novo Nordisks Kurs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung und der Markt bleibt offen.", bareDe, ["Novo Nordisk"]);
   assert.equal(nordiskGen.ok, true, nordiskGen.notes.join("|"));
+  const nordiskLiteral = verifyChapter("einstieg", "Wir sprechen heute über Novo Nordisk und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", bareDe, ["Novo Nordisk"]);
+  assert.equal(nordiskLiteral.ok, true, nordiskLiteral.notes.join("|"));
+  const lillyBody = pack("LLY", {
+    ...baseFacts,
+    ticker: "LLY",
+    companyName: "Eli Lilly",
+    podcastCompanySource: "yahoo-chart",
+    revenueSegments: [{ name: "Diabetes", percentage: 60, fiscalYear: "2026" }],
+    catalysts: [{ name: "Zulassung", nettoUpside: 5 }],
+    risks: [{ name: "Preisregulierung" }],
+    newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
+    growthThesis: "Die Nachfrage trägt die Geschichte der Firma.",
+  });
+  const lillyDe = buildSpeechSheet(buildPodcastFacts(lillyBody, NOON), "de");
+  const lillyLiteral = verifyChapter("einstieg", "Wir sprechen heute über Eli Lilly und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", lillyDe, ["Eli Lilly"]);
+  assert.equal(lillyLiteral.ok, true, lillyLiteral.notes.join("|"));
+  const partials: Array<[string, string]> = [
+    ["Der Vergleich China Mobile bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "China Mobile"],
+    ["Der Vergleich Nvidia Labs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "Nvidia Labs"],
+    ["Der Vergleich NVDA Capital bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "NVDA Capital"],
+  ];
+  for (const [sentence, name] of partials) {
+    const verdict = verifyChapter("einstieg", sentence, probeDe, [name]);
+    assert.equal(verdict.ok, false, `${name} ${verdict.notes.join("|")}`);
+    assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+  }
   const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));
   assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));
