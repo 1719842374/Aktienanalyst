@@ -6,7 +6,7 @@
 import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { PODCAST_DISCLAIMER } from "./podcast-types";
 import { PLACEHOLDER_KIND, PODCAST_PLACEHOLDERS, placeholderForbiddenInModel, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
-import { keepCompleteSentences, speakNormalize, spokenStillRaw } from "./podcast-speak";
+import { guardSpan, keepCompleteSentences, NAME_GUARD, speakNormalize, spokenStillRaw, unguard } from "./podcast-speak";
 
 const PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
 const ALLOWED = new Set<string>(PODCAST_PLACEHOLDERS);
@@ -94,13 +94,14 @@ function hasNumberUnit(text: string): boolean {
 function stripPatterns(text: string): string {
   return text
     .replace(/S&P 500/g, " ")
+    .replace(/\bMicrosoft 365\b/g, " ")
     .replace(/\bS\d{1,2}\b/g, " ")
     .replace(/\bQ[1-4]\b/g, " ")
     .replace(/\b(?:GJ|FY)\d{4}\b/g, " ")
     .replace(/\b(?:19|20)\d{2}\b/g, " ")
     .replace(/\b\d+-nm\b/g, " ")
-    .replace(/\bH100\b/g, " ")
-    .replace(/\bB200\b/g, " ");
+    .replace(/\b[A-Za-z]{1,6}\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,4}[A-Za-z]{1,4}\b(?!\s+(?:Seats|Sitze|Sitz|Dollar|Euro|Prozent|Stück|Stueck|Einheiten|Nutzer|User|Aktien|Shares|Barrel|Tonnen)\b)/g, " ");
 }
 
 function stripTokens(text: string, tokens: string[]): string {
@@ -175,16 +176,32 @@ function copiesPayloadTitle(sentence: string, titles: readonly string[]): boolea
   return false;
 }
 
-const GERMAN_MARKER = new Set(["der", "die", "das", "ist", "sind", "liegt", "stammt", "und", "für", "fuer", "mit", "vom", "ein", "eine", "im", "am", "auf", "nicht", "bei", "den", "dem", "des", "wird", "wurde", "bleibt", "nennt"]);
-const ENGLISH_MARKER = new Set(["for", "the", "of", "and", "with", "prediction", "rejection", "under", "miss", "delays", "weight", "loss", "efficacy", "seats", "faces", "plan", "trail", "from"]);
+const GERMAN_MARKER = new Set(["der", "die", "das", "ist", "sind", "liegt", "stammt", "und", "für", "fuer", "mit", "vom", "ein", "eine", "im", "am", "auf", "nicht", "bei", "den", "dem", "des", "wird", "wurde", "bleibt", "nennt", "nur", "wir", "schauen"]);
 
 /** Englischer Payload-Titel ohne deutschen Satz. Der Code-Satz „Risiko:“ ist davon ausgenommen. */
 function looksLikeEnglishTitle(sentence: string): boolean {
   const spoken = speakNormalize(sentence) ?? sentence;
-  const words = spoken.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 1);
-  if (words.some(word => GERMAN_MARKER.has(word))) return false;
-  const english = words.filter(word => ENGLISH_MARKER.has(word)).length;
-  return english >= 1 && words.length >= 3;
+  const words = spoken.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 2);
+  if (words.some(word => GERMAN_MARKER.has(word) || /[äöüß]/.test(word))) return false;
+  return words.length >= 2;
+}
+
+const PROTECTED_PLACEHOLDERS = new Set(["ticker", "company", "top_segment"]);
+
+function guardNames(text: string, names: readonly string[]): string {
+  const sorted = Array.from(new Set(names.map(name => name.trim()).filter(name => name.length >= 2)))
+    .sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const name of sorted) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(^|[^A-Za-z0-9ÄÖÜäöüß])(${escaped})(?![A-Za-z0-9ÄÖÜäöüß])`, "g");
+    const parts = out.split(NAME_GUARD);
+    for (let i = 0; i < parts.length; i += 2) {
+      parts[i] = (parts[i] ?? "").replace(re, (_full, prefix: string, match: string) => `${prefix}${guardSpan(match)}`);
+    }
+    out = parts.join(NAME_GUARD);
+  }
+  return out;
 }
 
 export function polishSpoken(text: string): string {
@@ -200,7 +217,7 @@ export function polishSpoken(text: string): string {
 
 export function checkPodcastSentence(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): { ok: true } | { ok: false; reason: string } {
@@ -226,7 +243,9 @@ export function checkPodcastSentence(
   if (origin === "model" && /GrowthEvidence|Katalysatoren:/i.test(raw)) return { ok: false, reason: "interne Zeile" };
   if (hasBarePlaceholder(raw)) return { ok: false, reason: "nackter Platzhalter" };
   if (origin === "model" && metricWithoutPlaceholder(raw)) return { ok: false, reason: "Kennzahl ohne Platzhalter" };
-  if (origin === "model" && INTERNAL_NAME.test(raw)) return { ok: false, reason: "interner Bezeichner" };
+  if (origin === "model" && INTERNAL_NAME.test(stripTokens(raw.replace(PLACEHOLDER_RE, " "), facts.protectedNames ?? []))) {
+    return { ok: false, reason: "interner Bezeichner" };
+  }
   if (origin === "model" && /\{news_age\}\s+alt\b|weniger als einem Tag|einem Tag alt|einen Tag alt/i.test(raw)) {
     return { ok: false, reason: "Alter ist schon eine Wendung" };
   }
@@ -249,7 +268,7 @@ export function checkPodcastSentence(
 
 export function applyPlaceholders(
   sentence: string,
-  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles">,
+  facts: Pick<PodcastFacts, "values" | "tokens" | "catalystGeneric" | "payloadTitles" | "protectedNames">,
   chapterId = "",
   origin: "model" | "code" = "model",
 ): string | null {
@@ -262,11 +281,13 @@ export function applyPlaceholders(
       missing = true;
       return "";
     }
+    if (PROTECTED_PLACEHOLDERS.has(name)) return guardSpan(value);
     return value;
   });
   if (missing) return null;
-  const polished = polishSpoken(filled);
-  if (!polished || spokenLeaksPlaceholder(polished)) return null;
+  const guarded = guardNames(filled, facts.protectedNames ?? []);
+  const polished = polishSpoken(guarded);
+  if (!polished || spokenLeaksPlaceholder(unguard(polished))) return null;
   return speakNormalize(polished);
 }
 
@@ -290,7 +311,10 @@ function fallbackSentences(id: string, facts: PodcastFacts): string[] {
   };
   switch (id) {
     case "einstieg":
-      add("{ticker}, {company}. Stand vom {as_of}.");
+      if (v.ticker && v.company) add("{ticker}, {company}. Stand vom {as_of}.");
+      else if (v.company) add("{company}. Stand vom {as_of}.");
+      else if (v.ticker) add("{ticker}. Stand vom {as_of}.");
+      else out.push("Der Name liegt nicht vor.");
       if (v.price) add("Der Kurs steht bei {price}.");
       if (v.ampel) add("Die Ampel steht auf {ampel}.");
       else out.push("Die Ampel liegt nicht vor.");
@@ -393,7 +417,7 @@ function modelSentences(data: unknown): Map<string, string[]> {
   return map;
 }
 
-const CODE_OWNED_CHAPTERS = new Set(["zusammenfassung", "dcf", "umsatz", "earnings", "s17"]);
+const CODE_OWNED_CHAPTERS = new Set(["einstieg", "zusammenfassung", "dcf", "umsatz", "earnings", "s17"]);
 
 function valuesOfPlaceholders(sentence: string, facts: PodcastFacts): string[] {
   PLACEHOLDER_RE.lastIndex = 0;

@@ -36,6 +36,7 @@ function shell(partial: Partial<PodcastFacts> & Pick<PodcastFacts, "values">): P
     hasPorter: true,
     hasPestel: true,
     riskNames: ["Konzentration"],
+    protectedNames: partial.protectedNames ?? ["NVDA", "NVIDIA", "H100"],
     payloadTitles: [],
     reportedQuarterLine: null,
     proSeed: "Ein Pro-Punkt liegt nicht vor.",

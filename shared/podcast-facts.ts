@@ -92,6 +92,8 @@ export interface PodcastFacts {
   hasPorter: boolean;
   hasPestel: boolean;
   riskNames: string[];
+  /** Ticker, Firma, Segment, Katalysator- und Produktnamen. Beim Einsetzen geschützt. */
+  protectedNames: string[];
   /** Risiko- und News-Titel. Das Modell bekommt sie nur als Kontext, nicht als Satz. */
   payloadTitles: string[];
   /** Fiskalquartal oder der Hinweis, dass nur das zuletzt gemeldete Quartal vorliegt. */
@@ -269,18 +271,29 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const upsides = catalystUpsides(analysis);
   const fcfMargin = finite(analysis.fcfMargin) && analysis.fcfMargin !== 0 ? analysis.fcfMargin : null;
   const catalysts = Array.isArray(analysis.catalysts) ? analysis.catalysts : [];
-  const tokens = [
-    text(analysis.ticker) ?? pack.ticker,
-    text(analysis.companyName),
+  const rawTicker = text(analysis.ticker) ?? pack.ticker;
+  const rawCompany = text(analysis.companyName);
+  const speakTicker = !/^\d{3,}(?:\.[A-Za-z]{1,4})?$/.test(rawTicker);
+  const productNames = [
     ...catalysts.map((c: any) => text(c?.name)),
     segment?.name ?? null,
     ...(Array.isArray(analysis.keyProjects) ? analysis.keyProjects.map((p: any) => text(p)) : []),
+  ].filter((t): t is string => !!t);
+  const protectedNames = [
+    speakTicker ? rawTicker : null,
+    rawCompany,
+    ...productNames,
+  ].filter((t): t is string => !!t);
+  const tokens = [
+    rawTicker,
+    rawCompany,
+    ...productNames,
     ...riskNames,
   ].filter((t): t is string => !!t);
   const moneyWord = reported === "USD" || fx != null ? "Dollar" : currencyWord(reported);
   const values: PodcastFactValues = {
-    ticker: pack.ticker,
-    company: text(analysis.companyName) ?? pack.ticker,
+    ticker: speakTicker ? rawTicker : null,
+    company: rawCompany ?? (speakTicker ? rawTicker : null),
     as_of: speakIsoDate(asOf.iso, "dat"),
     currency_word: moneyWord,
     statement_currency_word: moneyWord,
@@ -344,6 +357,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     hasPorter,
     hasPestel,
     riskNames,
+    protectedNames,
     payloadTitles,
     reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,

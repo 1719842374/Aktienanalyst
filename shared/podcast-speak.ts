@@ -172,11 +172,33 @@ export function speakNewsAge(days: number): string {
   return `vor ${speakUnsigned(Math.trunc(days))} Tagen`;
 }
 
-const CAMEL_CASE = /\b[a-zäöüß][a-zäöüß0-9]*[A-Z][A-Za-z0-9]*\b/;
+/** Trennt einen eingesetzten Eigennamen vom Normalisierer. */
+export const NAME_GUARD = "\u0001";
 
-/** true, wenn der Endtext noch Ziffern, <, >, % oder camelCase enthält. */
+export function guardSpan(value: string): string {
+  if (!value || value.includes(NAME_GUARD)) return value;
+  return `${NAME_GUARD}${value}${NAME_GUARD}`;
+}
+
+export function unguard(text: string): string {
+  return text.split(NAME_GUARD).join("");
+}
+
+/** true, wenn der Endtext außerhalb erlaubter Produkt-Tokens noch Ziffern, <, > oder % enthält. camelCase gilt nur für den Modell-Rohtext. */
 export function spokenStillRaw(text: string): boolean {
-  return /\d/.test(text) || /[<>%]/.test(text) || CAMEL_CASE.test(text);
+  const rest = exemptSpokenTokens(unguard(text));
+  return /\d/.test(rest) || /[<>%]/.test(rest);
+}
+
+function exemptSpokenTokens(text: string): string {
+  return text
+    .replace(/S&P 500/g, " ")
+    .replace(/\bMicrosoft 365\b/g, " ")
+    .replace(/\b(?:GJ|FY)\d{4}\b/g, " ")
+    .replace(/\bS\d{1,2}\b/g, " ")
+    .replace(/\b\d+-nm\b/g, " ")
+    .replace(/\b[A-Za-z]{1,6}\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,4}[A-Za-z]{1,4}\b/g, " ");
 }
 
 function speakCount(raw: string): string | null {
@@ -187,13 +209,49 @@ function speakCount(raw: string): string | null {
   return spoken;
 }
 
-/**
- * Letzter Schritt für jeden gesprochenen Satz, Code und Modell.
- * Zahlen, Jahre, Prozent, <, >, K, M und Mrd sowie Bindestrich-Zahlen werden Worte.
- * Bleibt danach Rohtext stehen, ist der Satz unbrauchbar.
- */
-export function speakNormalize(text: string): string | null {
-  let out = text.normalize("NFKC");
+const QTY_AFTER = String.raw`(?=\s+(?:Seats|Sitze|Sitz|Dollar|Euro|Prozent|Stück|Stueck|Einheiten|Nutzer|User|Aktien|Shares|Barrel|Tonnen)\b)`;
+
+function speakUnit(num: string, unit: string): string | null {
+  const spoken = speakCount(num);
+  if (!spoken) return null;
+  const key = unit.toLowerCase();
+  const word = key === "mrd" ? "Milliarden" : key === "k" ? "Tausend" : "Millionen";
+  return `${spoken} ${word}`;
+}
+
+function maskLiterals(text: string): { text: string; kept: string[] } {
+  const kept: string[] = [];
+  const patterns = [
+    /S&P 500/g,
+    /\bMicrosoft 365\b/g,
+    /\b(?:GJ|FY)\d{4}\b/g,
+    /\b\d+-nm\b/g,
+    /\b[A-Za-z]{1,6}\d{2,4}\b/g,
+    /\bS\d{1,2}\b/g,
+  ];
+  let out = text;
+  for (const pattern of patterns) {
+    out = out.replace(pattern, (match) => {
+      kept.push(match);
+      return `\u0002${"x".repeat(kept.length)}\u0002`;
+    });
+  }
+  return { text: out, kept };
+}
+
+function restoreLiterals(text: string, kept: string[]): string {
+  let out = text;
+  for (let i = kept.length; i >= 1; i--) {
+    out = out.replace(`\u0002${"x".repeat(i)}\u0002`, kept[i - 1] ?? "");
+  }
+  return out;
+}
+
+/** Zahlen außerhalb geschützter Spans. Ein Eigenname zwischen den Wächtern bleibt stehen. */
+function normalizeFragment(text: string): string | null {
+  if (!text.trim()) return text;
+  const masked = maskLiterals(text.normalize("NFKC"));
+  let out = masked.text;
   const swap = (pattern: RegExp, to: (num: string, extra?: string) => string | null) => {
     out = out.replace(pattern, (full: string, num: string, extra?: string) => to(num, extra) ?? full);
   };
@@ -206,13 +264,8 @@ export function speakNormalize(text: string): string | null {
     return spoken ? `über ${spoken}` : null;
   });
   swap(/(\d+(?:[.,]\d+)?)\s*%/g, num => speakPercent(Number(num.replace(",", "."))));
-  swap(/(\d+(?:[.,]\d+)?)\s*(Mrd|Mio|M|K)\b/gi, (num, unit) => {
-    const spoken = speakCount(num);
-    if (!spoken || !unit) return null;
-    const key = unit.toLowerCase();
-    const word = key === "mrd" ? "Milliarden" : key === "k" ? "Tausend" : "Millionen";
-    return `${spoken} ${word}`;
-  });
+  swap(new RegExp(String.raw`(\d+(?:[.,]\d+)?)\s+(Mrd|Mio|M|K)\b`, "gi"), (num, unit) => unit ? speakUnit(num, unit) : null);
+  swap(new RegExp(String.raw`(\d+(?:[.,]\d+)?)\s*(Mrd|Mio|M|K)\b${QTY_AFTER}`, "gi"), (num, unit) => unit ? speakUnit(num, unit) : null);
   out = out.replace(/\b((?:19|20)\d{2})\b/g, (_full, year: string) => speakYear(Number(year)));
   out = out.replace(/\b([A-Za-zÄÖÜäöüß]{2,})-(\d{1,2})\b/g, (full, prefix: string, num: string) => {
     const word = speakUnsigned(Number(num));
@@ -220,10 +273,34 @@ export function speakNormalize(text: string): string | null {
     if (prefix === prefix.toUpperCase() && /[A-ZÄÖÜ]/.test(prefix)) return `${prefix}-${word}`;
     return `${prefix} ${word}`;
   });
+  out = out.replace(/\bQ([1-4])\b/g, (_full, quarter: string) => `Quartal ${speakUnsigned(Number(quarter))}`);
   out = out.replace(/\b(\d+(?:[.,]\d+)?)\b/g, (full, num: string) => speakCount(num) ?? full);
-  out = out.replace(/\s+/g, " ").trim();
-  if (!out || spokenStillRaw(out)) return null;
+  out = restoreLiterals(out, masked.kept).replace(/\s+/g, " ");
+  if (spokenStillRaw(out)) return null;
   return out;
+}
+
+/**
+ * Letzter Schritt für jeden gesprochenen Satz, Code und Modell.
+ * Zahlen, Jahre, Prozent, <, >, K, M und Mrd sowie Bindestrich-Zahlen werden Worte.
+ * Geschützte Eigennamen und Produkt-Tokens bleiben stehen.
+ */
+export function speakNormalize(text: string): string | null {
+  const parts = text.split(NAME_GUARD);
+  let out = "";
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i] ?? "";
+    if (i % 2 === 1) {
+      out += part;
+      continue;
+    }
+    const normalized = normalizeFragment(part);
+    if (normalized == null) return null;
+    out += normalized;
+  }
+  const joined = out.replace(/\s+/g, " ").trim();
+  if (!joined) return null;
+  return joined;
 }
 
 export function priceLabelDe(n: number | null): string | null {
