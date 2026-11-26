@@ -4,7 +4,7 @@ Stand der Prüfung: 26.11.2026. Nur Dokumentation. Kein Produktcode, kein Score,
 
 **main-SHA:** `0247d57bd00ff456318a5e8427b1143c8513b829` (`ci: Sperre DCF_CALIBRATION.enabled auf false`, #526).
 
-**Platzierung und Look sind eine Design-Frage.** Philip gibt frei über Stabschef/Designer, bevor gebaut wird. Dieser Text legt die Technik fest und entscheidet das Aussehen nicht.
+**Slot ist entschieden** (C4, Philip 26.11.2026 13:10 Europe/Madrid, über den Stabschef): auf dem Desktop rechts neben der g*-Zeile, auf Mobile per Flex-Wrap darunter. Look und Bau warten auf den Designer-Mock und Philips OK.
 
 Live-Check NVDA, Render-Prod, 26.11. gegen 12:58 Europe/Madrid, plus Layout-Nachtrag Idea-Inverter 12:59: im Kopf gibt es keinen eigenen Button „KI-Analyse“. Die g*-Zeile steht unter der Ampel. Der Player nutzt Flex-Wrap und keinen festen Breakpoint.
 
@@ -33,8 +33,8 @@ Nicht mergen, nicht als Ist behandeln.
 
 | PR | Bezug | Folge für diesen Entwurf |
 |---|---|---|
-| [#435](https://github.com/1719842374/Aktienanalyst/pull/435) `cursor/stock-podcast-player-a101` | Aktien-Player, Piper, `POST /api/stock-podcast/:symbol`, Browser-Fallback. Skript lässt das Modell Zahlen schreiben. Cache-Key ist Ticker+Quartal, nicht der Hash der Kennzahlen. Liegt in Section 2, nicht an der g*-Zeile | Vom Platzhalter-Validator abgelöst. Nicht mergen. Player-Chrom nur nach diesem Entwurf und nach Philip-OK neu schneiden |
-| [#464](https://github.com/1719842374/Aktienanalyst/pull/464) `cursor/podcast-browser-speech-428a` | `speechSynthesis` für den Researcher-Podcast | Kein Media-Session-Ziel, nicht der Aktien-Slot. Nicht mergen |
+| [#435](https://github.com/1719842374/Aktienanalyst/pull/435) `cursor/stock-podcast-player-a101` | Aktien-Player, Piper, `POST /api/stock-podcast/:symbol`, Browser-Fallback. Skript lässt das Modell Zahlen schreiben. Cache-Key ist Ticker+Quartal, nicht der Hash der Kennzahlen. Liegt in Section 2, nicht an der g*-Zeile | Auf Philips Entscheidung vom 26.11. geschlossen. Schließen übernimmt die GitHub-Lane. Dieser Entwurf schließt die PR nicht |
+| [#464](https://github.com/1719842374/Aktienanalyst/pull/464) `cursor/podcast-browser-speech-428a` | `speechSynthesis` für den Researcher-Podcast | Auf Philips Entscheidung vom 26.11. geschlossen. Schließen übernimmt die GitHub-Lane. Dieser Entwurf schließt die PR nicht |
 | [#475](https://github.com/1719842374/Aktienanalyst/pull/475) | `ExecSummaryCard.tsx`, `server/exec-summary.ts` | Gleicher Slot wie der Player. Vor einem Bau gegen den dann aktuellen `main` lesen |
 | [#491](https://github.com/1719842374/Aktienanalyst/pull/491), [#492](https://github.com/1719842374/Aktienanalyst/pull/492) | Section 2, #492 zusätzlich `Dashboard.tsx` und ein noch nicht auf `main` liegendes `server/segment-gap-route.ts` | Segment-Lücken sind nicht die Umsatzquelle des Podcasts |
 
@@ -106,7 +106,11 @@ Nach `POST /api/analyze` (der Lauf, der die Seite füllt) liegt `StockAnalysis` 
 | Earnings-Call-**Transkript** | nicht auf `StockAnalysis` | separater, schon vorhandener Pfad: `useEarningsBrief` → `GET /api/chat/earnings-brief/:symbol` → `buildEarningsBrief` (`server/chat-earnings-route.ts`). Zwei FMP-Calls: `fmpEarningCallTranscriptDates` und `fmpEarningCallTranscript` (`server/fmp.ts` 1228–1238). Cache ist eine `Map` im Prozess, Schlüssel nur das Symbol | nicht im Analyze-Payload. Für Phase 2, nicht für Phase 1 |
 | News | `newsItems[]` (`title`, `source`, `pubDate`, `url`, `relativeTime`), gefüllt in `analyze-route.ts` etwa 1340 über `fetchNewsFromGoogleRSS` (`server/news-peers.ts` 97–102) | ja, mit dem Analyze | keine eigene `/api/news`-Route. Alter und 14-Tage-Filter für den Podcast existieren nicht |
 
-Berichtswährung: Listing `data.currency`. Statement-Währung für DCF und Entry wie in `exec-summary.ts` `currencyWord` (JOB D). Ein Quartalsvergleich und ein Umsatz über vier Quartale dürfen nur gesprochen werden, wenn Rate, Periodenende und Währung zusammen im JSON stehen. Das ist auf diesem Stand nicht der Fall. Das Geschäftsjahreswachstum wird nicht als Ersatz eingesprochen.
+Berichtswährung: Listing `data.currency`. Statement-Währung für DCF und Entry wie in `exec-summary.ts` `currencyWord` (JOB D).
+
+Geschäftsjahr, Philip 26.11.2026 13:10: der Umsatzsatz spricht `financialStatements.incomeStatement.revenueGrowth`. Formel in `analyze-route.ts` 688–693: `revenue` aus `financials.income[0]`, `revenueY1` aus `financials.income[1]`, `revenueGrowth = (revenue − revenueY1) / revenueY1 × 100`, wenn `revenueY1 > 0`, sonst 0. Geschrieben auf das Payload in Zeilen 1814–1815. Feld im Schema: `shared/schema.ts` 540. Ist `revenueY1` nicht positiv, fehlt der Vorjahresumsatz. Dann heißt der Satz „liegt nicht vor“, nicht „0 Prozent“.
+
+GJ-Bezeichnung: `latestFiscalYear` in `analyze-route.ts` 864, `incomeLatest.fiscalYear`, sonst `calendarYear`. Das Token wird an `lastReportedQuarterLabel` übergeben (867–872 und 1674) und steht nicht als eigenes Feld auf `StockAnalysis`. `lastReportedQuarter` ist das zuletzt gemeldete Quartal (`Q3 FY…`, `analyze-helpers.ts` 381–431) und wird nicht als Geschäftsjahr dieses YoY gesprochen. `incomeLatest.date` bleibt im Analyze-Lauf und kommt nicht auf das Payload. Steht die vierstellige Jahreszahl aus Zeile 864 im mitgeschickten Objekt, lautet der Satz „Geschäftsjahr“ plus diese Zahl. Steht sie nicht, heißt es nur „Geschäftsjahr“, ohne erfundenes Jahr und ohne das Wort seit Jahresbeginn.
 
 ### B4. DCF-Spanne WACC ±1 Prozentpunkt
 
@@ -160,7 +164,7 @@ Geschlossene Liste. Alles andere ist ein unbekannter Platzhalter und verwirft de
 
 `{ticker}` `{company}` `{as_of}` `{currency_word}` `{statement_currency_word}` `{price}` `{score}` `{ampel}` `{wacc}` `{g_star}` `{dcf_fair}` `{dcf_low}` `{dcf_high}` `{entry}` `{crv}` `{quarter_yoy}` `{quarter_period_end}` `{ttm_revenue}` `{ttm_period_end}` `{top_segment}` `{top_segment_share}` `{call_date}` `{call_quarter}` `{catalyst_mode}` `{news_1}` `{news_2}` `{news_3}` `{news_age}`.
 
-`{quarter_yoy}`, `{quarter_period_end}`, `{ttm_revenue}` und `{ttm_period_end}` bleiben auf diesem Stand `null` (B3). Der Builder legt sie nicht als Zahl an. Der Satz fällt weg, das Kapitel sagt, dass Quartalsvergleich und Umsatz über vier Quartale nicht vorliegen. `{dcf_low}` und `{dcf_high}` nur nach C5.
+`{fy_yoy}` ist `financialStatements.incomeStatement.revenueGrowth` (B3). `{gj_year}` nur die vier Stellen aus `latestFiscalYear` (`analyze-route.ts` 864), wenn sie im Objekt stehen. `{quarter_yoy}`, `{quarter_period_end}`, `{ttm_revenue}` und `{ttm_period_end}` bleiben `null` und werden nicht gesprochen. `{dcf_low}` und `{dcf_high}` nur nach C5.
 
 Validator, rein, ohne Netz, geplante Datei `shared/podcast-script.ts`, Test `script/test-ki-podcast-placeholders.ts`. Ablauf auf dem Modelltext, bevor Platzhalter ersetzt werden:
 
@@ -177,7 +181,7 @@ Positivliste, damit Q3, S&P 500, H100, B200, 3-nm und GJ2027 nicht als erfundene
 
 Deutsche Zahlwörter: ein Wort oder eine Kette aus der Reihe null bis zwölf, dreizehn bis neunzehn, die Zehner, hundert, tausend, optional mit „Komma“ dazwischen. Bis zu zwei Füllwörter dürfen davor stehen und bis zu zwei zwischen der Kette und der Einheit. Einheiten: Prozent, Milliarden, Millionen, Dollar, Euro, US-Dollar, Prozentpunkte, Punkte, Mal, Quartale. Zusätzlich gesperrt, auch ohne Einheit: Hälfte, Drittel, Viertel, verdoppelt, verdreifacht, halbiert und Wörter auf „-fach“. „vierzehn Prozent“, „elf Komma vier Prozent“, „rund fünfzig Dollar“ und „fünfzig US-Dollar“ werden abgelehnt. „um ein Drittel gestiegen“ wird abgelehnt, weil „Drittel“ auf der Sperrliste steht. „H100“ bleibt.
 
-Akzeptanztests in derselben Datei, ohne Netz: ein NVDA-Skript mit Produktnamen, Q3, S17, GJ-Kürzel, 3-nm und S&P 500 läuft ohne Fehlalarm durch; ein Freitext mit erfundener Ziffer wird abgelehnt; der Satz nur mit „H100“ besteht; „vierzehn Prozent“, „elf Komma vier Prozent“, „fünfzig US-Dollar“ und „um ein Drittel gestiegen“ werden abgelehnt.
+Akzeptanztests in derselben Datei, ohne Netz: ein NVDA-Skript mit Produktnamen, Q3, S17, GJ-Kürzel, 3-nm und S&P 500 läuft ohne Fehlalarm durch; ein Freitext mit erfundener Ziffer wird abgelehnt; der Satz nur mit „H100“ besteht; „vierzehn Prozent“, „elf Komma vier Prozent“, „fünfzig US-Dollar“ und „um ein Drittel gestiegen“ werden abgelehnt. Ein Skript, das „YTD“ oder „seit Jahresbeginn“ enthält, wird abgelehnt. Das Geschäftsjahr heißt im gesprochenen Text „Geschäftsjahr“.
 
 Ein verworfener Satz wird nicht in derselben Antwort nachgebessert. Ein zweiter Versuch ist erlaubt, höchstens einer, mit demselben JSON. Scheitert er, fällt das Kapitel auf die festen Sätze ohne Modell zurück.
 
@@ -198,7 +202,7 @@ Feste Reihenfolge. Ziel 800–1000 Wörter gesamt, gesprochen etwa 6–7 Minuten
 | 1 | Einstieg | 1 | Ticker, Name, Datenstand (`dataTimestamp` oder `_cachedAt`), Ampel-Wort. Erster Satz nennt den Stand |
 | 2 | Executive Summary | 1 | `execSummary.pro` / `contra`, Fazit-Sätze. Pro wird auf die Länge des Contra-Blocks gekürzt, nie umgekehrt mit erfundenen Punkten gefüllt |
 | 3 | These | 1 | `growthThesis`, sonst „liegt nicht vor“ |
-| 4 | Umsatz | 1 | Quartal gegen dasselbe Quartal im Vorjahr und Umsatz der letzten vier Quartale, jeweils nur mit Periodenende und Währung, zum Beispiel „Q3 GJ2027, Stand 26.10.2026“. Beides fehlt auf dem Payload (B3), also „liegt nicht vor“. Das Geschäftsjahreswachstum ist kein Ersatz. Fehlt `revenueSegments`, lautet der Satz „Hauptumsatzträger liegt nicht vor“. Kein Schätzwert, kein anderer Segmentname |
+| 4 | Umsatz | 1 | Geschäftsjahres-Wachstum YoY, Feld `financialStatements.incomeStatement.revenueGrowth` (`analyze-route.ts` 688–693 und 1814–1815). Der Satz sagt „Geschäftsjahr“ und, wenn vorhanden, die Jahreszahl aus `latestFiscalYear` (Zeile 864). Fehlt der Wert, weil `revenueY1` nicht positiv ist: „liegt nicht vor“. Fehlt `revenueSegments`: „Hauptumsatzträger liegt nicht vor“. Kein Schätzwert |
 | 5 | Earnings Call | 2 | Nur Phase 2. Transkript älter als `lastReportedQuarter`: Kapitel entfällt mit einem Satz, der das Alter nennt. Fehlende Quelle: „liegt nicht vor“ |
 | 6 | DCF | 1 | fair, optional Spanne, g*, WACC, Entry, CRV. Kein neues Kursziel |
 | 7 | S17 | 1 | Katalysatoren mit Name, PoS, GB, nur als Platzhalter. Steht der Modus auf generisch, wird `{catalyst_mode}` zum Wortlaut aus `catalystsModeLabel` (`shared/bias-fixes.ts` 268–273): „Katalysatoren: generisch (Sektor)“. Derselbe Text steht in der Karte (`ExecSummaryCard.tsx` 116–118). Das Kapitel darf diese Katalysatoren nicht als unternehmensspezifisch bezeichnen. Nur `catalystsSource === "llm"` erlaubt „KI-firmenspezifisch“ |
@@ -218,9 +222,9 @@ Unsicherheit mit dem Wortlaut der Anzeige, nicht mit einer dritten Schwelle:
 
 ### C4. UI-Slot und Flex-Wrap
 
-**Design-Frage, nicht entschieden:** ob der Player überhaupt neben der g*-Zeile sitzt, und wie er aussieht. Philip über Stabschef/Designer.
+**Slot, fest.** Philips Worte, bestätigt durch den Stabschef, 26.11.2026 13:10 Europe/Madrid: auf dem Desktop sitzt der Player rechts neben der g*-Zeile (`execSummary.headline`, `ExecSummaryCard.tsx` 111–114), in der Lücke unter der Ampel (103–109). Auf Mobile bricht er per Flex-Wrap unter die Zeile um. Das gilt bei jeder Aktie, die diese Karte zeigt. Die Steuerung ist Spotify-artig: Play/Pause, Vor- und Zurückspulen, Geschwindigkeit. Der Look bleibt offen, bis ein Designer-Mock vorliegt und Philip ihn freigibt. Vor diesem OK gibt es keinen Bauauftrag.
 
-**Technik, sobald der Slot freigegeben ist:** kein fester Breakpoint, kein `sm:`/`md:`-Wechsel zwischen „inline“ und „eigene Zeile“. Ein Wrapper um Absatz und Player:
+**Technik:** kein fester Breakpoint, kein `sm:`/`md:`-Wechsel zwischen „inline“ und „eigene Zeile“. Ein Wrapper um Absatz und Player:
 
 `className="flex flex-wrap items-center gap-x-3 gap-y-2"`.
 
@@ -234,7 +238,7 @@ Die bestehende `<p>`-Zeile erlaubt das **nicht ohne diesen Wrapper**. `buildExec
 
 Akzeptanz Layout, fünf Ticker, Viewports 375, 768 und 1280 px: die g*-Zeile ist vollständig lesbar, der Player überlappt sie nicht. Darunter ein Ticker mit langem Namen und einer ohne Call-Datum oder ohne WACC (`Call n/v` bzw. g* ohne WACC-Klammer, beides kann der heutige Builder). Der Live-Befund (1920 px viel freier Raum, 500 px wenig, 375 px Umbruch des Absatzes) begründet nur, warum Wrap nötig ist. Er wird nicht als `@media` abgeschrieben.
 
-Komponente, neu, erst nach Freigabe: `client/src/components/sections/PodcastPlayer.tsx`. Vorhandene Bausteine: `client/src/components/ui/button.tsx`, `client/src/components/ui/slider.tsx` (Radix/shadcn, schon im Repo). Steuerung: Play/Pause, Geschwindigkeit, Fortschritt, Sprung ±15 s, Kapitelliste. Phase 0 spricht über `speechSynthesis` (Rate nativ, Sprung nur satzweise). Ziel-Audio ist `<audio>` mit `playbackRate` und Media Session (C8).
+Komponente, neu: `client/src/components/sections/PodcastPlayer.tsx`. Vorhandene Bausteine: `client/src/components/ui/button.tsx`, `client/src/components/ui/slider.tsx` (Radix/shadcn, schon im Repo). Steuerung, Spotify-artig: Play/Pause, Vor- und Zurückspulen (±15 s), Geschwindigkeit, dazu Fortschritt und anspringbare Kapitelliste. Look-Details nach dem Designer-Mock. Phase 0 spricht über `speechSynthesis` (Rate nativ, Sprung nur satzweise). Ziel-Audio ist `<audio>` mit `playbackRate` und Media Session (C8). Der Player trägt `data-html2canvas-ignore` (B7, Abnahme 7).
 
 Hook `client/src/hooks/usePodcast.ts`: liest `data` aus dem Dashboard, kein `useMutation` auf `/api/analyze`. Skript: `POST /api/podcast/script` mit dem Fakten-JSON. Audio, erst nach Freigabe: `GET /api/podcast/audio/:id` je Kapitel.
 
@@ -244,9 +248,11 @@ Die Zelle steht in `client/src/components/sections/Section5.tsx` `sensitivityMat
 
 Benennung, eindeutig: `dcf_low` ist `value(WACC+1)`, der niedrigere Wert. `dcf_high` ist `value(WACC−1)`, der höhere Wert. `fair` ist derselbe Aufruf mit `wd` 0 und `gd` 0, also `mainResult.perShare` der Matrix, nicht ein anderes Feld. Der Test lautet `value(WACC+1) ≤ fair ≤ value(WACC−1)`. Gilt er nicht, wird die Spanne nicht gesprochen.
 
-Konvergenz-Sperre, bevor die Werte ins JSON kommen. `g_TV` ist `params.terminalG` in Prozent (Section 5 Zeile 401, Nenner in `calculateFCFFDCF` Zeilen 709–716). Die Spanne entfällt, wenn `(WACC − 1 − g_TV) < 1` Prozentpunkt, wenn einer der drei Werte nicht endlich ist (NaN oder Infinity), wenn einer negativ ist, oder wenn der Zweig Zeile 715 den Endwert auf das 25-Fache deckelt. Optimistic und Macro-Stress (Zeilen 211–215) sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`.
+Konvergenz-Sperre auf den Eingangsgrößen, vor dem Aufruf von `calculateFCFFDCF`. `g_TV` ist `params.terminalG` in Prozent (Section 5 Zeile 401). Bedingung: `(WACC − 1 − params.terminalG) < 1` Prozentpunkt. Trifft sie zu, werden die beiden Span-Aufrufe nicht ausgeführt und `{dcf_low}` sowie `{dcf_high}` bleiben draußen. Der 25-fach-Deckel in `calculateFCFFDCF` Zeile 715 liefert sonst einen endlichen, aber verzerrten Wert. Ein Test nur auf Endlichkeit und auf `value(WACC+1) ≤ fair ≤ value(WACC−1)` ließe ihn durch. Zusätzlicher Testfall: die Eingaben würden den Deckel auslösen (`waccDecimal ≤ gDecimal` im Zweig Zeilen 712–716), und die Spanne fällt trotzdem weg, weil die Prüfung vor dem Aufruf stoppt. Optimistic und Macro-Stress (Zeilen 211–215) sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`.
 
-Die Schleife liegt heute nur im Client. Vorschlag, keine zweite Formel: eine Funktion in `shared/valuation-signal.ts`, die genau die drei Aufrufe macht (`wd` −1, 0, +1 bei `gd` 0) und `{ dcf_low, fair, dcf_high }` zurückgibt. Section 5 liest daraus die beiden Matrixzellen. Der Server ruft dieselbe Funktion. Test `script/test-ki-podcast-dcf-span.ts` mit fünf Tester-Tickern: die Zahlen sind bitgleich (`Object.is`) mit den Zellen aus `Section5.tsx` 193–204. Schreibt P1 diese Funktion nicht, bleiben `{dcf_low}` und `{dcf_high}` draußen. Nichts davon wird nach `dcfFairValue`, Score oder Entry zurückgeschrieben.
+Die Schleife liegt heute nur im Client. Die Extraktion nach `shared/valuation-signal.ts` ist ein reines Verschieben ohne Formeländerung: dieselbe Schleife, dieselben Argumente an `calculateFCFFDCF`. Section 5 und der Server rufen die verschobene Funktion. Nichts davon wird nach `dcfFairValue`, Score oder Entry zurückgeschrieben. Schreibt P1 die Funktion nicht, bleiben `{dcf_low}` und `{dcf_high}` draußen.
+
+Regressionsschutz für eine sichtbare Sektion. Abnahme in `script/test-ki-podcast-dcf-span.ts` mit fünf Tester-Tickern: jede Zelle der Section-5-Matrix ist vor und nach dem Verschieben bitgleich (`Object.is`), nicht nur die Span-Zelle `gd === 0`. Dazu ein Screenshot der Sektion 5 vorher und nachher.
 
 ### C6. Server, Schema, Cache, Budget
 
@@ -279,7 +285,7 @@ Token-Deckel ein Skript-Call, 1500 Ausgabe-Tokens (800–1000 Wörter plus JSON-
 | 1 | Kapitel 1–4, 6–8, 10, Player, Cache, Validator, Flex-Wrap-Slot | Notnagel Phase 0, bis Phase Audio da ist. Gesperrtes iPhone ist damit nicht erfüllt |
 | 2 | Kapitel 5, bestehender Earnings-Brief, Altersvergleich mit `lastReportedQuarter` | dasselbe Audio wie die anderen Kapitel |
 | 3 | Kapitel 9 aus `newsItems`, 14 Tage, max. 3, Quelle und Datum | dasselbe |
-| Audio | MP3 je Kapitel, `<audio>`, Media Session, Seek, `playbackRate` | **blockiert**, bis Philip einen TTS-Zugang freigibt (neuer Key oder ausdrückliche Freigabe, den bestehenden OpenRouter-Key für `/api/v1/audio/speech` zu benutzen) |
+| Audio | MP3 je Kapitel, `<audio>`, Media Session, Seek, `playbackRate` | Bestehender `OPENROUTER_API_KEY`, `POST /api/v1/audio/speech`. Kein neuer Key, keine neue Env-Variable. Dieselbe Tagesobergrenze und dasselbe 429-Muster wie in C6. Bau erst nach Mock und Philips OK |
 
 ### C8. iPhone, gesperrtes Display
 
@@ -315,7 +321,7 @@ Dedizierte Sprache, `POST /api/v1/audio/speech`, Rohbytes ([OpenRouter TTS](http
 | `elevenlabs/eleven-multilingual-v2` und weitere Eleven-IDs | `mp3`, `pcm` | Stimmennamen ohne Sprachkennzeichen; Mehrsprachigkeit nicht aus der ID ableiten |
 | `mistralai/voxtral-mini-tts-2603` | `mp3`, `pcm` | Stimmen `en_*`, `gb_*`, `fr_marie_*`; kein `de_` |
 
-Ein TTS-Call über den bestehenden `OPENROUTER_API_KEY` ist ein neuer Kostenpfad auf demselben Konto, auch wenn kein zweiter Key nötig ist. Das bleibt die offene Freigabe-Frage (F).
+Philip, 26.11.2026 13:10, über den Stabschef: die Stimme läuft über den bestehenden `OPENROUTER_API_KEY` und `POST /api/v1/audio/speech`. Kein neuer Key, keine neue Env-Variable. Das ist ein zusätzlicher Kostenpfad auf demselben Konto. Die Tagesobergrenze je Ticker und das 429-Muster aus C6 gelten auch für diesen Aufruf. Ein 402 von OpenRouter beendet die Runde, ohne einen zweiten Anbieter aufzurufen.
 
 ### 3. Dedizierte TTS-API, MP3, echtes `<audio>`
 
@@ -328,7 +334,7 @@ Damit funktionieren Seek, `playbackRate` und Media Session.
 | Google Cloud TTS / ElevenLabs direkt | nicht als Zeichenpreis in diesem Lauf von der Herstellerseite gezogen. OpenRouter listet Eleven und Gemini-TTS bereits (oben). Ein eigener Key ist ein neuer Tool-Zugang | vor der Freigabe die dann gültige Preisseite lesen. Nicht aus dem Gedächtnis einsetzen |
 | Skript-LLM, getrennt von der Stimme | bestehendes Haiku 4.5, Kommentar `llm-openrouter.ts` Zeilen 46–49: 1 USD / 5 USD je 1 Mio. Tokens | ein Kapitel-JSON, grob 2–4 Tausend Tokens Input und unter 1500 Output: unter 0,02 USD. Cache-Treffer 0 |
 
-Empfehlung: Phase 1 liefert Skript, Validator, Cache und den Flex-Wrap-Slot. Abspielen in Phase 1 nur über Phase 0, mit sichtbarem Hinweis „nicht im gesperrten Display“. Phase Audio, sobald Philip freigibt: MP3, vorzugsweise eine Stimme mit `de-DE` im Katalog (`microsoft/mai-voice-2.1` über den bestehenden OpenRouter-Key **oder** ein eigener TTS-Key). Gemini-TTS auf OpenRouter liefert im Katalog kein MP3; das wäre ein zusätzlicher PCM/WAV-Schritt und ist nicht der kürzeste Weg zu `<audio>`. Haiku bleibt das Schreibmodell und spricht nicht.
+Empfehlung: Phase 1 liefert Skript, Validator, Cache und den Flex-Wrap-Slot, aber erst nach Designer-Mock und Philips OK (Abnahme, Gate). Abspielen bis die MP3 da ist nur über Phase 0, mit sichtbarem Hinweis „nicht im gesperrten Display“. Die MP3 kommt über den bestehenden OpenRouter-Key. Im Katalog vom 26.11. hat `microsoft/mai-voice-2.1` MP3 und eine `de-DE`-Stimme. Gemini-TTS auf OpenRouter liefert dort kein MP3. Haiku bleibt das Schreibmodell und spricht nicht.
 
 ---
 
@@ -355,7 +361,7 @@ Folgerung für Audio:
 - #475 ändert dieselbe Karte. Ein Bau ohne Rebase überschreibt die Ampel.
 - `SectionCard` `overflow-hidden` schneidet einen zu breiten Player ab, wenn er nicht umbricht.
 - Flex-Kind ohne `min-w-0` / `w-fit` macht die g*-Zeile entweder immer zur vollen Breite (Player immer darunter) oder überläuft (Zeile abgeschnitten).
-- Geschäftsjahreswachstum als Quartalsvergleich oder als Umsatz über vier Quartale zu sprechen wäre eine falsche Zahl. Beide Raten fehlen auf dem Payload (B3). Fehlt die Segmentliste, heißt der Satz „Hauptumsatzträger liegt nicht vor“.
+- Das Geschäftsjahres-Wachstum als Quartalsvergleich, als Umsatz über vier Quartale oder mit „seit Jahresbeginn“ zu sprechen wäre eine falsche Zahl. Es heißt „Geschäftsjahr“ und kommt aus `revenueGrowth` (B3). Fehlt die Segmentliste, heißt der Satz „Hauptumsatzträger liegt nicht vor“.
 - Ein Flex-Player im DOM von Sektion 1 verändert das PDF, weil `captureSections` die Karte fotografiert (`exportPdf.ts` 61–82, `windowWidth` mindestens 1024).
 - `DCF_CALIBRATION.enabled` anzufassen, um eine Spanne zu bekommen, ist verboten (#526).
 - Ein Podcast-Handler, der `POST /api/analyze` oder `trackFmpCall` in Phase 1 auslöst, verbraucht Budget und kann den Score-Pfad berühren. Phase 1 hat keinen FMP-Call.
@@ -363,15 +369,17 @@ Folgerung für Audio:
 
 ### Abnahme
 
-1. Fünf Ticker, darunter einer mit langem Firmennamen und einer ohne Call-Datum oder ohne WACC. Viewports 375, 768 und 1280 px. Die g*-Zeile ist komplett sichtbar und wird vom Player nicht überdeckt. Wrap ohne Media-Query: bei wenig Restbreite steht der Player in der Zeile unter der g*-Zeile und über dem Katalysator-Hinweis.
+0. Gate: Vor dem Designer-Mock und vor Philips OK dazu gibt es keinen Bauauftrag. Slot und Flex-Wrap sind schon festgelegt und werden nicht noch einmal entschieden.
+1. Fünf Ticker, darunter einer mit langem Firmennamen und einer ohne Call-Datum oder ohne WACC. Viewports 375, 768 und 1280 px. Auf dem Desktop steht der Player rechts neben der g*-Zeile, auf Mobile per Flex-Wrap darunter, über dem Katalysator-Hinweis. Die Zeile wird nicht abgeschnitten und nicht überdeckt. Kein fester Breakpoint.
 2. Ampel-Klassen und der Wortlaut der g*-Zeile bleiben. Einziger DOM-Zuwachs im Slot ist der Wrapper plus der Player.
 3. Kein `n/a` an einer Stelle, an der heute ein Wert steht. Fehlendes heißt „liegt nicht vor“. `Call n/v` in der sichtbaren Zeile bleibt, wie `formatEarningsCall` es heute schreibt; der gesprochene Satz sagt „ein Call-Termin liegt nicht vor“.
-4. Validator-Test grün: Positivliste lässt S17, Q3, H100, B200, 3-nm, eine Jahreszahl, ein GJ-Kürzel und S&P 500 durch. Ein NVDA-Skript mit Produktnamen hat keinen Fehlalarm. Eine erfundene Ziffer im Freitext wird abgelehnt. „H100“ besteht. „vierzehn Prozent“ wird abgelehnt. Fehlender Wert entfernt den Satz. Contra-Länge ≥ Pro-Länge. Inversion immer ein Kapitel. Disclaimer immer. Steht S17 auf „generisch (Sektor)“, sagt das Skript diesen Wortlaut und nennt die Katalysatoren nicht unternehmensspezifisch. Die DCF-Spanne fehlt, solange der Server die Zelle aus `Section5.tsx` 193–204 mit `gd === 0` und `wd` ±1 nicht ins JSON schreibt.
+4. Validator-Test grün: Positivliste lässt S17, Q3, H100, B200, 3-nm, eine Jahreszahl, ein GJ-Kürzel und S&P 500 durch. Ein NVDA-Skript mit Produktnamen hat keinen Fehlalarm. Eine erfundene Ziffer im Freitext wird abgelehnt. „H100“ besteht. „vierzehn Prozent“ wird abgelehnt. „YTD“ und „seit Jahresbeginn“ werden abgelehnt. Fehlender Wert entfernt den Satz. Contra-Länge ≥ Pro-Länge. Inversion immer ein Kapitel. Disclaimer immer. Steht S17 auf „generisch (Sektor)“, sagt das Skript diesen Wortlaut und nennt die Katalysatoren nicht unternehmensspezifisch. Die DCF-Spanne fehlt, solange der Server die Zelle aus `Section5.tsx` 193–204 mit `gd === 0` und `wd` ±1 nicht ins JSON schreibt.
 5. Score, Rating, Entry, `dcfFairValue` vor und nach dem Abspielen identisch. Kein Aufruf von `POST /api/analyze` aus `usePodcast`. Erzeugung nur auf Klick. Ein zweiter Klick desselben Tickers am selben Tag in Europe/Madrid erhält 429, ein Cache-Treffer nicht.
 6. Gesperrtes iPhone ist erst mit Phase Audio abgenommen. Phase 0 dokumentiert die Lücke im Player.
 7. PDF: Vorher- und Nachher-Export desselben Tickers bleibt Pflicht. Der Player trägt `data-html2canvas-ignore`. `captureSections` (`exportPdf.ts` 62 und 71) nutzt html2canvas 1.4.1 ohne eigene `ignoreElements`-Funktion. Die Bibliothek überspringt das Attribut in `appendChildNode` (B7). Im Bild ist kein Player. Der Nachweis zeigt denselben Umbruch der g*-Zeile wie vor dem Wrapper.
-8. DCF-Spanne: fünf Tester-Ticker, bitgleich zur Zelle `gd === 0`, `wd` ±1. `dcf_low` ist WACC+1, `dcf_high` ist WACC−1. Test `value(WACC+1) ≤ fair ≤ value(WACC−1)`. Liegt `(WACC − 1 − g_TV)` unter einem Prozentpunkt oder ist ein Wert nicht endlich oder negativ, wird die Spanne nicht gesprochen.
-9. Rundung auf drei signifikante Stellen für Kurs, fair, low, high und Entry. Die Rangfolge dieser fünf Werte bleibt nach dem Runden erhalten. Ein Gleichstand wird mit vier Stellen gesprochen oder der Satz fällt weg.
+8. DCF-Spanne: `dcf_low` ist WACC+1, `dcf_high` ist WACC−1. Test `value(WACC+1) ≤ fair ≤ value(WACC−1)`, wenn die Spanne gesprochen wird. Die Sperre `(WACC − 1 − params.terminalG) < 1` Prozentpunkt läuft vor `calculateFCFFDCF`. Testfall: der 25-fach-Deckel in Zeile 715 würde greifen, die Spanne wird trotzdem nicht gesprochen.
+9. Verschieben der Matrix nach `shared/valuation-signal.ts` ohne Formeländerung. Fünf Tester-Ticker: jede Section-5-Zelle vor und nach dem Umbau bitgleich (`Object.is`). Screenshot der Sektion 5 vorher und nachher. Regressionsschutz für eine sichtbare Sektion.
+10. Rundung auf drei signifikante Stellen für Kurs, fair, low, high und Entry. Die Rangfolge dieser fünf Werte bleibt nach dem Runden erhalten. Ein Gleichstand wird mit vier Stellen gesprochen oder der Satz fällt weg.
 
 ### Aufwand, technisch, keine Kalenderdauer
 
@@ -380,12 +388,14 @@ Folgerung für Audio:
 - Phase 3: Filter auf `newsItems` (14 Tage, drei Stück, Quelle, Datum, Alterssatz). Keine neue News-Route.
 - Phase Audio: Provider hinter einer Schnittstelle, Streaming-Route, Media Session, Cache-Key um `voice` ergänzt (ist von Anfang an Teil des Hash, auch wenn Phase 0 die Stimme `browser` heißt). Abhängigkeit: Freigabe des TTS-Zugangs.
 
-### Offene Fragen an Philip
+### Entscheidungen vom 26.11.2026, 13:10 Europe/Madrid, über den Stabschef
 
-1. Slot neben der g*-Zeile und das Aussehen des Players. Flex-Wrap ist der technische Vorschlag, nicht die Freigabe.
-2. TTS-Zugang: neuer Anbieter-Key, oder der bestehende OpenRouter-Key für `/api/v1/audio/speech` (Katalogmodell mit MP3 und `de-DE`, zum Beispiel `microsoft/mai-voice-2.1`). Ohne diese Antwort bleibt es bei Phase 0.
-3. Quartalsvergleich und Umsatz über vier Quartale liegen nicht auf dem Payload (B3). Das Kapitel sagt das, bis ein späterer Schritt die Quartalszeilen mit Datum und Währung ausliefert. Dieser Entwurf fügt sie nicht hinzu.
-4. PR #435 und #464 bleiben offen und sind „nicht mergen“, bis Philip entscheidet. Dieser Entwurf schließt sie nicht.
+1. Platz: Desktop rechts neben der g*-Zeile, Mobile per Flex-Wrap darunter. Look offen bis Designer-Mock und Philips OK. Vor diesem OK kein Bauauftrag (Abnahme, Gate).
+2. TTS: bestehender `OPENROUTER_API_KEY`, `POST /api/v1/audio/speech`. Kein neuer Key, keine neue Env-Variable. Tagesobergrenze und 429 wie in C6.
+3. Umsatz: Geschäftsjahres-Wachstum aus `revenueGrowth` (`analyze-route.ts` 688–693), gesprochen als „Geschäftsjahr“. „liegt nicht vor“ nur, wenn der Vorjahresumsatz fehlt. „Hauptumsatzträger liegt nicht vor“ bleibt bei fehlenden Segmenten.
+4. #435 und #464: auf Philips Entscheidung vom 26.11. geschlossen. Die GitHub-Lane schließt sie. Dieser Entwurf schließt keine PR.
+
+Offen bleibt nur die Mock-Freigabe des Looks.
 
 ---
 
@@ -393,12 +403,12 @@ Folgerung für Audio:
 
 | Wunsch | Ist auf `0247d57b` | Soll, ohne den Wunsch umzudeuten |
 |---|---|---|
-| Player rechts unter der Ampel, neben der g*-Zeile | Absatz 111–114, volle Breite, kein Player | Wrapper `flex flex-wrap`, Player-Kind mit Mindestbreite, Hinweis bleibt darunter. Look offen |
+| Player rechts unter der Ampel, neben der g*-Zeile | Absatz 111–114, volle Breite, kein Player | Philip 26.11. 13:10: Desktop rechts neben der Zeile, Mobile per Flex-Wrap darunter. Look-Mock und Philips OK sind das Bau-Gate |
 | Fester Breakpoint 375/Desktop | keiner an der Zeile | keiner. Wrap. Abnahme bei 375, 768, 1280 |
 | KI-Analyse-Button liefert den Text | Toolbar „KI“ startet `/api/analyze`. Chat ist separat. g*-Zeile ist schon `execSummary` | Podcast liest den geladenen Stand. These nur wenn `growthThesis` schon da ist |
 | Zahlen nie vom Modell | Markt-Podcast bittet nur darum; #435 prüft es nicht hart | Platzhalter, Positivliste, Zahlwörter vor Prozent und Größen, Test |
-| WACC ±1 Pp | Matrix nur im Client, Zeilen 189–208, gekoppelt mit Wachstum ±2. `g_TV` ist `terminalG`, Nenner Zeilen 709–716 | `dcf_low` = WACC+1, `dcf_high` = WACC−1, eine gemeinsame Funktion in `shared/`. Sperre unter 1 Prozentpunkt Abstand zu `g_TV`. Sonst keine Spanne |
-| Umsatz und Top-Segment | Geschäftsjahr gegen Vorjahr; Quartals-YoY und Umsatz-TTM fehlen; `revenueSegments` optional | Quartalsvergleich und vier Quartale nur mit Periodenende und Währung, sonst „liegt nicht vor“. Segment fehlt: „Hauptumsatzträger liegt nicht vor“ |
+| WACC ±1 Pp | Matrix nur im Client, Zeilen 189–208, gekoppelt mit Wachstum ±2. `g_TV` ist `terminalG`. Zeile 715 deckelt auf das 25-Fache | Reines Verschieben nach `shared/`, Zellen bitgleich, Screenshot Sektion 5. `dcf_low` = WACC+1, `dcf_high` = WACC−1. Sperre `(WACC − 1 − terminalG) < 1` Pp vor `calculateFCFFDCF` |
+| Umsatz und Top-Segment | `revenueGrowth` Zeilen 688–693 und 1814–1815, GJ-Jahr nur lokal in Zeile 864. Segmente optional | Gesprochen als „Geschäftsjahr“. „liegt nicht vor“ nur ohne Vorjahresumsatz. Segment fehlt: „Hauptumsatzträger liegt nicht vor“. „YTD“ und „seit Jahresbeginn“ sind verboten |
 | S17 generisch | `catalystsModeLabel`, Karte zeigt den Wortlaut | Podcast spricht denselben Wortlaut und nennt die Liste nicht firmenspezifisch |
 | PDF | Screenshot der Sektion, Headline nicht als Textfeld. html2canvas 1.4.1 ohne `ignoreElements` | Player mit `data-html2canvas-ignore`, Vorher/Nachher-PDF Pflicht |
 | Kosten | FMP-Tagesbudget global, Chat 20 je Minute je IP | Erzeugung nur auf Klick, Tagesobergrenze je Ticker nach `chatRateLimited`, MP3 ohne kursabhängige Zahl wiederverwendbar |
