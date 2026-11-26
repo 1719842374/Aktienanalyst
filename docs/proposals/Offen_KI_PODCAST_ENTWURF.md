@@ -112,7 +112,7 @@ Berichtswährung: Listing `data.currency`. Statement-Währung für DCF und Entry
 
 Vorhanden, aber nicht als Serverfeld und nicht als reine ±1-Funktion.
 
-`client/src/components/sections/Section5.tsx` `sensitivityMatrix` (Zeilen 186–209) ruft `calculateFCFFDCF` (`shared/valuation-signal.ts` Zeile 609) mit `waccDeltas = [-1, 0, 1]` **und** `growthDeltas = [-2, 0, 2]`. Die Zelle Wachstum 0 und WACC ±1 ist dieselbe Pipeline wie der angezeigte DCF, nur mit `waccOverride: mainResult.wacc + wd`.
+`client/src/components/sections/Section5.tsx` `sensitivityMatrix` (Zeilen 189–208, `useMemo` nur in dieser Datei) ruft `calculateFCFFDCF` (`shared/valuation-signal.ts` Zeile 609) mit `waccDeltas = [-1, 0, 1]` und `growthDeltas = [-2, 0, 2]`. Die Schleife steht nicht in `shared/` und nicht auf dem Server. `calculateFCFFDCF` und `buildDefaultDCFParams` (Zeile 508) sind schon gemeinsam. `g_TV` ist `params.terminalG` (Eingabe Section 5, Zeile 401 „Terminal g“). In `calculateFCFFDCF` Zeilen 707–716 wird daraus `gDecimal = params.terminalG / 100`. Der Nenner ist `waccDecimal - gDecimal`. Ist der Nenner nicht positiv, setzt Zeile 715 den Endwert auf das 25-Fache von FCFF₁₁.
 
 Die Szenarien Conservative / Optimistic / Macro-Stress (Zeilen 211–215) ändern Wachstum, Margin und ERP. Das ist **nicht** die Spanne ±1 Prozentpunkt.
 
@@ -140,7 +140,7 @@ KI: kein eigenes Token-Kontingent im Repo. OpenRouter antwortet 402, `llm-openro
 
 `client/src/lib/exportPdf.ts` liest `execSummary.headline` nicht. Die Zeichenkette kommt im Client-Fallback nicht vor: `buildClientPdf` Zeilen 98–106 setzt Kurs, Worst Case, Fair Value, CRV, Max-Entry und `scoring.finalScore`.
 
-Die sichtbare g*-Zeile kommt ins PDF nur als Pixel. `captureSections` Zeilen 61–82 fotografiert das DOM der Dashboard-Sektionen mit html2canvas. `Dashboard.tsx` übergibt die Sektions-Refs, Sektion 1 ist die Karte mit der Zeile. `windowWidth` ist mindestens 1024 (Zeile 71). Ein Player, der bei dieser Breite neben der Zeile steht, stünde auf jedem Sektionsbild.
+Die sichtbare g*-Zeile kommt ins PDF nur als Pixel. `captureSections` Zeilen 61–82 fotografiert das DOM. Zeile 62 lädt `html2canvas` 1.4.1 (`package-lock.json`, `node_modules/html2canvas` Version 1.4.1). Zeile 71 ruft es ohne `ignoreElements` auf. In dieser Version lässt `DocumentCloner.appendChildNode` Kinder mit `data-html2canvas-ignore` aus (`src/dom/document-cloner.ts` der Bibliothek, Konstante Zeile 46, Prüfung Zeile 280). `Dashboard.tsx` übergibt die Sektions-Refs. `windowWidth` ist mindestens 1024 (Zeile 71).
 
 `server/pdf-export.ts` hat ein eigenes Feld `narrative.execSummary` (Zeilen 294–325 und 480–483), ein LLM-Absatz, nicht `execSummary.headline`.
 
@@ -175,17 +175,18 @@ Positivliste, damit Q3, S&P 500, H100, B200, 3-nm und GJ2027 nicht als erfundene
 
 (a) Nach dem Entfernen bleibt keine Ziffer. Eine erfundene `14` oder `149` im Freitext fällt durch. (b) Jeder `{name}`-Treffer steht in der Liste. (c) Jeder erlaubte Platzhalter im Satz hat einen endlichen Wert oder einen freigegebenen Text im JSON. Sonst fällt der Satz weg. Bleibt vom Kapitel nichts, spricht das Kapitel „liegt nicht vor“.
 
-Deutsche Zahlwörter: ein Wort oder eine Kette aus der Reihe null bis zwölf, dreizehn bis neunzehn, die Zehner, hundert, tausend, optional mit „Komma“ dazwischen, unmittelbar vor „Prozent“, „Milliarden“, „Millionen“ oder „Dollar“. „vierzehn Prozent“ wird abgelehnt, auch ohne Ziffer. „H100“ bleibt, weil es kein Zahlwort vor einer dieser Einheiten ist.
+Deutsche Zahlwörter: ein Wort oder eine Kette aus der Reihe null bis zwölf, dreizehn bis neunzehn, die Zehner, hundert, tausend, optional mit „Komma“ dazwischen. Bis zu zwei Füllwörter dürfen davor stehen und bis zu zwei zwischen der Kette und der Einheit. Einheiten: Prozent, Milliarden, Millionen, Dollar, Euro, US-Dollar, Prozentpunkte, Punkte, Mal, Quartale. Zusätzlich gesperrt, auch ohne Einheit: Hälfte, Drittel, Viertel, verdoppelt, verdreifacht, halbiert und Wörter auf „-fach“. „vierzehn Prozent“, „elf Komma vier Prozent“, „rund fünfzig Dollar“ und „fünfzig US-Dollar“ werden abgelehnt. „um ein Drittel gestiegen“ wird abgelehnt, weil „Drittel“ auf der Sperrliste steht. „H100“ bleibt.
 
-Akzeptanztests in derselben Datei, ohne Netz: ein NVDA-Skript mit Produktnamen, Q3, S17, GJ-Kürzel, 3-nm und S&P 500 läuft ohne Fehlalarm durch; ein Freitext mit erfundener Ziffer wird abgelehnt; der Satz nur mit „H100“ besteht; der Satz mit „vierzehn Prozent“ wird abgelehnt.
+Akzeptanztests in derselben Datei, ohne Netz: ein NVDA-Skript mit Produktnamen, Q3, S17, GJ-Kürzel, 3-nm und S&P 500 läuft ohne Fehlalarm durch; ein Freitext mit erfundener Ziffer wird abgelehnt; der Satz nur mit „H100“ besteht; „vierzehn Prozent“, „elf Komma vier Prozent“, „fünfzig US-Dollar“ und „um ein Drittel gestiegen“ werden abgelehnt.
 
 Ein verworfener Satz wird nicht in derselben Antwort nachgebessert. Ein zweiter Versuch ist erlaubt, höchstens einer, mit demselben JSON. Scheitert er, fällt das Kapitel auf die festen Sätze ohne Modell zurück.
 
-Rundung vor der Sprechform, eine Stelle, danach Worte:
+Rundung vor der Sprechform, danach Worte. Kurs, fair, `dcf_low`, `dcf_high` und Entry auf drei signifikante Stellen: 149 bleibt 149, 52,76 wird 52,8, 3,472 wird 3,47. Die g*-Zeile auf dem Schirm bleibt bei der heutigen Anzeige. Der Player ändert sie nicht.
 
-- Prozent eine Nachkommastelle: `11,4` wird „elf Komma vier Prozent“.
-- Kurs ganzzahlig in der gesprochenen Form: `149,3` wird „einhundertneunundvierzig“ plus Währungswort. Die g*-Zeile auf dem Schirm bleibt bei der heutigen Anzeige (`fmtPx`, bis zwei Nachkommastellen). Der Player ändert die Zeile nicht.
-- Beträge ab 1e9: „… Milliarden“ plus Währungswort. Ab 1e12: „Billionen“. Darunter „Millionen“, wenn der bestehende `fmtMoney` in `exec-summary.ts` 106–110 die Schwelle 1e6 nutzt; dieselbe Schwelle, ausgeschrieben.
+Test `script/test-ki-podcast-rounding.ts`: die Rangfolge von Kurs, Entry, fair, low und high ist nach dem Runden dieselbe wie davor. Entsteht ein Gleichstand, wird einmal mit vier signifikanten Stellen gesprochen. Bleibt der Gleichstand, fällt der Satz weg, der die Reihenfolge behauptet.
+
+- Prozent eine Nachkommastelle: `11,4` wird „elf Komma vier Prozent“. Diese Form schreibt nur der Code, nie das Modell.
+- Beträge ab 1e9: „… Milliarden“ plus Währungswort, der Zahlenkern weiter mit drei signifikanten Stellen. Ab 1e12: „Billionen“. Darunter „Millionen“, Schwelle wie `fmtMoney` in `exec-summary.ts` 106–110.
 - Datum `24.02.2027` wird „vierundzwanzigster Februar zweitausendsiebenundzwanzig“.
 
 ### C3. Kapitel, Länge, Ausgewogenheit
@@ -241,7 +242,11 @@ Hook `client/src/hooks/usePodcast.ts`: liest `data` aus dem Dashboard, kein `use
 
 Die Zelle steht in `client/src/components/sections/Section5.tsx` `sensitivityMatrix`, Zeilen 189–208. `waccDeltas` ist `[-1, 0, 1]`, `growthDeltas` ist `[-2, 0, 2]` (Zeilen 190–191). Die Schleife Zeilen 193–204 ruft `calculateFCFFDCF` mit `waccOverride: mainResult.wacc + wd` und verschiebt das Wachstum um `gd`. Die Spanne ±1 Prozentpunkt sind nur die beiden Ergebnisse mit `wd` gleich −1 oder +1 und `gd` gleich 0. Die Funktion liegt in `shared/valuation-signal.ts` Zeile 609, die Default-Parameter in `buildDefaultDCFParams` Zeile 508 derselben Datei.
 
-Die Spanne kommt nur ins Skript, wenn der Server genau diese beiden Ergebnisse in das Fakten-JSON schreibt (`dcf_low`, `dcf_high`). Optimistic und Macro-Stress (Zeilen 211–215) sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`. Schreibt P1 diese zwei Zahlen nicht, bleiben `{dcf_low}` und `{dcf_high}` draußen. Es wird keine zweite DCF-Formel geschrieben. Die Ergebnisse werden nicht nach `dcfFairValue` oder in den Score zurückgeschrieben.
+Benennung, eindeutig: `dcf_low` ist `value(WACC+1)`, der niedrigere Wert. `dcf_high` ist `value(WACC−1)`, der höhere Wert. `fair` ist derselbe Aufruf mit `wd` 0 und `gd` 0, also `mainResult.perShare` der Matrix, nicht ein anderes Feld. Der Test lautet `value(WACC+1) ≤ fair ≤ value(WACC−1)`. Gilt er nicht, wird die Spanne nicht gesprochen.
+
+Konvergenz-Sperre, bevor die Werte ins JSON kommen. `g_TV` ist `params.terminalG` in Prozent (Section 5 Zeile 401, Nenner in `calculateFCFFDCF` Zeilen 709–716). Die Spanne entfällt, wenn `(WACC − 1 − g_TV) < 1` Prozentpunkt, wenn einer der drei Werte nicht endlich ist (NaN oder Infinity), wenn einer negativ ist, oder wenn der Zweig Zeile 715 den Endwert auf das 25-Fache deckelt. Optimistic und Macro-Stress (Zeilen 211–215) sind verboten. `DCF_CALIBRATION.enabled` bleibt `false`.
+
+Die Schleife liegt heute nur im Client. Vorschlag, keine zweite Formel: eine Funktion in `shared/valuation-signal.ts`, die genau die drei Aufrufe macht (`wd` −1, 0, +1 bei `gd` 0) und `{ dcf_low, fair, dcf_high }` zurückgibt. Section 5 liest daraus die beiden Matrixzellen. Der Server ruft dieselbe Funktion. Test `script/test-ki-podcast-dcf-span.ts` mit fünf Tester-Tickern: die Zahlen sind bitgleich (`Object.is`) mit den Zellen aus `Section5.tsx` 193–204. Schreibt P1 diese Funktion nicht, bleiben `{dcf_low}` und `{dcf_high}` draußen. Nichts davon wird nach `dcfFairValue`, Score oder Entry zurückgeschrieben.
 
 ### C6. Server, Schema, Cache, Budget
 
@@ -364,7 +369,9 @@ Folgerung für Audio:
 4. Validator-Test grün: Positivliste lässt S17, Q3, H100, B200, 3-nm, eine Jahreszahl, ein GJ-Kürzel und S&P 500 durch. Ein NVDA-Skript mit Produktnamen hat keinen Fehlalarm. Eine erfundene Ziffer im Freitext wird abgelehnt. „H100“ besteht. „vierzehn Prozent“ wird abgelehnt. Fehlender Wert entfernt den Satz. Contra-Länge ≥ Pro-Länge. Inversion immer ein Kapitel. Disclaimer immer. Steht S17 auf „generisch (Sektor)“, sagt das Skript diesen Wortlaut und nennt die Katalysatoren nicht unternehmensspezifisch. Die DCF-Spanne fehlt, solange der Server die Zelle aus `Section5.tsx` 193–204 mit `gd === 0` und `wd` ±1 nicht ins JSON schreibt.
 5. Score, Rating, Entry, `dcfFairValue` vor und nach dem Abspielen identisch. Kein Aufruf von `POST /api/analyze` aus `usePodcast`. Erzeugung nur auf Klick. Ein zweiter Klick desselben Tickers am selben Tag in Europe/Madrid erhält 429, ein Cache-Treffer nicht.
 6. Gesperrtes iPhone ist erst mit Phase Audio abgenommen. Phase 0 dokumentiert die Lücke im Player.
-7. PDF: Vorher- und Nachher-Export desselben Tickers. Der Flex-Wrapper ändert das PDF nicht. Kein Player und kein Platzhalter dafür im Bild, kein anderer Umbruch der g*-Zeile. Umsetzung: vor `captureSections` ist der Player nicht im DOM, der Wrapper setzt während der Aufnahme `display: contents`, die Zeile bleibt der bisherige Absatz. `exportPdf.ts` liest die Headline weiterhin nicht als Text (B7).
+7. PDF: Vorher- und Nachher-Export desselben Tickers bleibt Pflicht. Der Player trägt `data-html2canvas-ignore`. `captureSections` (`exportPdf.ts` 62 und 71) nutzt html2canvas 1.4.1 ohne eigene `ignoreElements`-Funktion. Die Bibliothek überspringt das Attribut in `appendChildNode` (B7). Im Bild ist kein Player. Der Nachweis zeigt denselben Umbruch der g*-Zeile wie vor dem Wrapper.
+8. DCF-Spanne: fünf Tester-Ticker, bitgleich zur Zelle `gd === 0`, `wd` ±1. `dcf_low` ist WACC+1, `dcf_high` ist WACC−1. Test `value(WACC+1) ≤ fair ≤ value(WACC−1)`. Liegt `(WACC − 1 − g_TV)` unter einem Prozentpunkt oder ist ein Wert nicht endlich oder negativ, wird die Spanne nicht gesprochen.
+9. Rundung auf drei signifikante Stellen für Kurs, fair, low, high und Entry. Die Rangfolge dieser fünf Werte bleibt nach dem Runden erhalten. Ein Gleichstand wird mit vier Stellen gesprochen oder der Satz fällt weg.
 
 ### Aufwand, technisch, keine Kalenderdauer
 
@@ -390,10 +397,10 @@ Folgerung für Audio:
 | Fester Breakpoint 375/Desktop | keiner an der Zeile | keiner. Wrap. Abnahme bei 375, 768, 1280 |
 | KI-Analyse-Button liefert den Text | Toolbar „KI“ startet `/api/analyze`. Chat ist separat. g*-Zeile ist schon `execSummary` | Podcast liest den geladenen Stand. These nur wenn `growthThesis` schon da ist |
 | Zahlen nie vom Modell | Markt-Podcast bittet nur darum; #435 prüft es nicht hart | Platzhalter, Positivliste, Zahlwörter vor Prozent und Größen, Test |
-| WACC ±1 Pp | Matrix in Section 5, Zeilen 189–208, gekoppelt mit Wachstum ±2 | nur die Zelle `gd === 0` und `wd` ±1, und nur wenn der Server sie ins JSON schreibt. Sonst in P1 draußen |
+| WACC ±1 Pp | Matrix nur im Client, Zeilen 189–208, gekoppelt mit Wachstum ±2. `g_TV` ist `terminalG`, Nenner Zeilen 709–716 | `dcf_low` = WACC+1, `dcf_high` = WACC−1, eine gemeinsame Funktion in `shared/`. Sperre unter 1 Prozentpunkt Abstand zu `g_TV`. Sonst keine Spanne |
 | Umsatz und Top-Segment | Geschäftsjahr gegen Vorjahr; Quartals-YoY und Umsatz-TTM fehlen; `revenueSegments` optional | Quartalsvergleich und vier Quartale nur mit Periodenende und Währung, sonst „liegt nicht vor“. Segment fehlt: „Hauptumsatzträger liegt nicht vor“ |
 | S17 generisch | `catalystsModeLabel`, Karte zeigt den Wortlaut | Podcast spricht denselben Wortlaut und nennt die Liste nicht firmenspezifisch |
-| PDF | Screenshot der Sektion, Headline nicht als Textfeld | Player beim Export nicht im DOM, Umbruch der Zeile unverändert, Nachweis Vorher/Nachher |
+| PDF | Screenshot der Sektion, Headline nicht als Textfeld. html2canvas 1.4.1 ohne `ignoreElements` | Player mit `data-html2canvas-ignore`, Vorher/Nachher-PDF Pflicht |
 | Kosten | FMP-Tagesbudget global, Chat 20 je Minute je IP | Erzeugung nur auf Klick, Tagesobergrenze je Ticker nach `chatRateLimited`, MP3 ohne kursabhängige Zahl wiederverwendbar |
 | Earnings-Transkript | FMP-Route des Chats, 2 Budget-Calls, nicht im Payload | Phase 2, sonst Kapitel „liegt nicht vor“ |
 | News | `newsItems` im Analyze, keine News-Route | Phase 3, max. 3 aus 14 Tagen |
