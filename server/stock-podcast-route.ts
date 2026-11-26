@@ -1,6 +1,7 @@
 /**
- * POST /api/podcast/script — Aktien-Podcast, neben der Markt-Route.
- * Klick erzeugt den Voll-KI-Pack und genau ein OpenRouter-Transkript.
+ * POST /api/podcast/script und GET /api/podcast/audio/:chapterId
+ * Aktien-Podcast neben der Markt-Route. Klick erzeugt den Voll-KI-Pack,
+ * genau ein OpenRouter-Transkript und auf Abruf MP3 je Kapitel.
  * Kein Schreibzugriff auf Score, Rating, Entry oder den Analyze-UI-Cache.
  */
 import type { Express, Request, Response } from "express";
@@ -31,11 +32,13 @@ import {
 } from "./stock-podcast-limit";
 import {
   dropPodcastScripts,
+  peekPodcastScript,
   readCachedScript,
   renderStockPodcastScript,
   resetPodcastScriptCache,
   type StockPodcastLlm,
 } from "./stock-podcast-script";
+import { podcastAudioCacheId, resetPodcastAudioCache, synthesizePodcastAudio, type PodcastAudioEnv, type PodcastAudioFetch } from "./stock-podcast-audio";
 
 export const stockPodcastRequestSchema = z.object({
   ticker: z.string().min(1).max(32),
@@ -63,12 +66,15 @@ export interface StockPodcastHandlerDeps {
   llmAvailable?: () => boolean;
   fullAi?: typeof runFullAiAnalysis;
   llm?: StockPodcastLlm;
+  audioEnv?: PodcastAudioEnv;
+  fetchAudio?: PodcastAudioFetch;
 }
 
 export function resetStockPodcastRouteState(): void {
   resetPodcastPackCache();
   resetPodcastDailyLimit();
   resetPodcastScriptCache();
+  resetPodcastAudioCache();
 }
 
 function errorBody(
@@ -222,4 +228,60 @@ export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandl
     const out = await handleStockPodcastScript(req.body, deps);
     res.status(out.http).json(out.body);
   });
+  app.get("/api/podcast/audio/:chapterId", async (req: Request, res: Response) => {
+    const out = await handleStockPodcastAudio({
+      chapterId: String(req.params.chapterId ?? ""),
+      ticker: req.query.ticker,
+      source: req.query.source,
+      voice: req.query.voice,
+      cacheKey: req.query.cacheKey,
+    }, deps);
+    if (out.ok) {
+      res.status(200);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.send(out.audio);
+      return;
+    }
+    res.status(out.http).json(out.body);
+  });
+}
+
+export async function handleStockPodcastAudio(
+  query: { chapterId?: unknown; ticker?: unknown; source?: unknown; voice?: unknown; cacheKey?: unknown },
+  deps: StockPodcastHandlerDeps = {},
+): Promise<{ ok: true; audio: Buffer } | { ok: false; http: number; body: StockPodcastRouteError }> {
+  const chapterId = typeof query.chapterId === "string" ? query.chapterId : "";
+  const ticker = typeof query.ticker === "string" ? query.ticker.toUpperCase() : "";
+  const source = query.source === "pdf" || query.source === "ki" ? query.source : null;
+  const cacheKey = typeof query.cacheKey === "string" ? query.cacheKey : "";
+  const voice = resolveStockPodcastVoice(typeof query.voice === "string" ? query.voice : undefined);
+  if (!chapterId || !ticker || !source || !cacheKey) {
+    return { ok: false, http: 400, body: errorBody("LLM_UNAVAILABLE", "Ungültige Audio-Anfrage.", "audio", ticker || undefined, source ?? undefined) };
+  }
+  const script = peekPodcastScript(cacheKey);
+  const chapter = script?.chapters.find(c => c.id === chapterId);
+  if (!script || !chapter) {
+    return {
+      ok: false,
+      http: 404,
+      body: errorBody("LLM_UNAVAILABLE", "KI-Podcast n/a — LLM nicht erreichbar.", "audio", ticker, source),
+    };
+  }
+  const audio = await synthesizePodcastAudio({
+    text: chapter.spoken,
+    voiceId: voice.id,
+    cacheId: podcastAudioCacheId({
+      ticker,
+      day: script.day,
+      source,
+      voice: voice.id,
+      chapterId,
+      spoken: chapter.spoken,
+    }),
+    env: deps.audioEnv,
+    fetchImpl: deps.fetchAudio,
+  });
+  if (!audio.ok) return { ok: false, http: httpFor(audio.errorCode), body: errorBody(audio.errorCode, audio.error, "audio", ticker, source) };
+  return { ok: true, audio: audio.audio };
 }
