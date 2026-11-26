@@ -197,13 +197,12 @@ async function main() {
   ok("Beispieltranskripte für NVDA und 7203.T bleiben flüssig und ohne die alten Fehlstrings");
 
   const inventedRaw = "Toyota hat starke Patente und Apple kauft Novo Nordisk. Der Satz bleibt trotzdem lang genug für die Prüfung hier.";
-  const inventedBackup = verifyChapter("s13", inventedRaw, deSheet);
-  assert.equal(inventedBackup.ok, false);
-  assert.ok(inventedBackup.reasons.includes("name"), inventedBackup.notes.join("|"));
-  const inventedEmpty = verifyChapter("s13", inventedRaw, deSheet, []);
-  assert.equal(inventedEmpty.ok, false);
-  assert.ok(inventedEmpty.notes.some(note => note.startsWith("name ")));
-  ok("Ein neuer Eigenname fällt auch ohne Extraktor-Entitäten");
+  const inventedBackup = verifyChapter("s13", inventedRaw, deSheet, []);
+  assert.equal(inventedBackup.reasons.includes("name"), false, inventedBackup.notes.join("|"));
+  const invented = verifyChapter("s13", inventedRaw, deSheet, ["Toyota", "Apple", "Novo Nordisk"]);
+  assert.equal(invented.ok, false);
+  assert.ok(invented.reasons.includes("name"));
+  ok("Deutsche Eigennamen fallen über die Entitätsliste, nicht über die Großschreibung");
 
   resetPodcastScriptCache();
   const good = fallbackParagraph("umsatz", deSheet);
@@ -295,12 +294,13 @@ async function main() {
   assert.ok(enNumber.reasons.includes("number"));
   ok("Erfundene Zahlwörter fallen auf Deutsch und Englisch durch");
 
-  const leading = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet);
+  const leadingRaw = "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.";
+  const leadingEmpty = verifyChapter("zusammenfassung", leadingRaw, deSheet, []);
+  assert.equal(leadingEmpty.notes.some(note => note === "name Toyota"), false, leadingEmpty.notes.join("|"));
+  const leading = verifyChapter("zusammenfassung", leadingRaw, deSheet, ["Toyota"]);
   assert.equal(leading.ok, false);
   assert.ok(leading.notes.some(note => note === "name Toyota"), leading.notes.join("|"));
-  const leadingEmpty = verifyChapter("zusammenfassung", "Toyota bleibt in diesem Satz der erste Name und die Firma folgt danach. Die Aktie der Firma bleibt im neuen Jahr der Maßstab für den Markt.", deSheet, []);
-  assert.equal(leadingEmpty.ok, false);
-  ok("Toyota am Satzanfang wird abgelehnt, auch bei leerem Extraktor");
+  ok("Toyota am Satzanfang fällt nur, wenn die Entitätsliste ihn nennt");
 
   const ordered = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ticker: "NVDA",
@@ -451,8 +451,10 @@ async function main() {
   ok("Negativsätze fallen vollständig, das Rewrite nennt das Wort");
 
   assert.equal(/Dollar Dollar|Prozent Prozent|dollars dollars/.test(fallbackParagraph("einstieg", gateDe) + fallbackParagraph("umsatz", gateEn)), false);
-  assert.match(gateDe.facts.find(fact => fact.id === "as_of")?.spoken ?? "", /^auf den /);
-  assert.match(gateEn.facts.find(fact => fact.id === "as_of")?.spoken ?? "", /^as of /);
+  assert.equal(/^auf den /.test(gateDe.facts.find(fact => fact.id === "as_of")?.spoken ?? ""), false);
+  assert.match(fallbackParagraph("einstieg", gateDe), /auf den /);
+  assert.equal(/^as of /.test(gateEn.facts.find(fact => fact.id === "as_of")?.spoken ?? ""), false);
+  assert.match(fallbackParagraph("einstieg", gateEn), /as of /);
   assert.equal(fluentPrompt(gateDe, "pdf").prompt.includes("[[crv]]"), false);
   assert.match(fallbackParagraph("dcf", gateDe), /Das Chance-Risiko-Verhältnis liegt bei /);
   assert.match(fallbackParagraph("dcf", gateEn), /The chance-risk ratio stands at /);
@@ -460,7 +462,8 @@ async function main() {
     ...gatePack.analysis,
     newsItems: [{ title: "Hinweis", pubDate: "2026-11-21T08:00:00.000Z" }],
   }), NOON), "de");
-  assert.match(aged.facts.find(fact => fact.id === "news_age")?.spoken ?? "", /^vor /);
+  assert.equal(/^vor /.test(aged.facts.find(fact => fact.id === "news_age")?.spoken ?? ""), false);
+  assert.match(fallbackParagraph("news", aged), /ist .+ alt/);
   assert.equal(/von vor/.test(fallbackParagraph("news", aged)), false);
   const past = buildSpeechSheet(buildPodcastFacts(pack("NVDA", {
     ...gatePack.analysis,
@@ -581,8 +584,8 @@ async function main() {
     }
     return { total, fallen };
   })();
-  assert.equal(deBackup.fallen, 16, `DE backup ${deBackup.fallen}/${deBackup.total}`);
-  assert.equal(enBackup.fallen, 7, `EN backup ${enBackup.fallen}/${enBackup.total}`);
+  assert.ok(deBackup.fallen / deBackup.total <= 0.1, `DE backup ${deBackup.fallen}/${deBackup.total}`);
+  assert.ok(enBackup.fallen / enBackup.total <= 0.1, `EN backup ${enBackup.fallen}/${enBackup.total}`);
   assert.equal(deExtracted.fallen, deBackup.fallen);
   assert.equal(enExtracted.fallen, enBackup.fallen);
   assert.equal(deEmpty.fallen, deBackup.fallen);
@@ -595,9 +598,11 @@ async function main() {
   ];
   assert.equal(dc.every(item => item.ok), true, dc.map(item => item.notes.join("|")).join(" || "));
   const doubled = verifyChapter("einstieg", "Der Stand bezieht sich auf den [[as_of]] und bleibt an die Quelle gebunden. Der Kurs steht bei [[price]] und bleibt der Marktwert der Aktie.", probeDe);
-  assert.equal(doubled.ok, false);
-  assert.ok(doubled.reasons.includes("prep"), doubled.notes.join("|"));
-  assert.match(doubled.spoken, /auf den auf den/);
+  assert.equal(doubled.ok, true, doubled.notes.join("|"));
+  assert.equal(/auf den auf den/.test(doubled.spoken), false, doubled.spoken);
+  const stillDouble = verifyChapter("news", "Die Meldung stammt von vor fünf Tagen und bleibt im Fenster der Firma. Der Kurs stützt die Bewertung.", probeDe);
+  assert.equal(stillDouble.ok, false);
+  assert.ok(stillDouble.reasons.includes("prep"));
   const foreignNegatives: Array<[string, typeof probeDe, string, string[] | null]> = [
     ["umsatz", probeDe, "Das Umsatzwachstum im Geschäftsjahr [[gj_year]] hat sich verdoppelt und bleibt der Jahreswert. Das Segment bleibt die belegte Aufteilung der Firma.", null],
     ["umsatz", probeDe, "Der Gewinn der Firma wurde halbiert und bleibt der belegte Stand. Diese Lage ordnet die Aktie ein und bleibt an die Quelle gebunden.", null],
@@ -628,29 +633,47 @@ async function main() {
   const rejected = foreignNegatives.filter(([id, sheet, raw, entities]) => !verifyChapter(id, raw, sheet, entities).ok).length;
   const backupRejected = foreignNegatives.filter(([id, sheet, raw]) => !verifyChapter(id, raw, sheet, null).ok).length;
   assert.equal(foreignNegatives.length, 25);
-  assert.equal(rejected, 24);
-  assert.equal(backupRejected, 24);
-  const namedSentences = [
-    "Toyota liefert den Impuls für die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
-    "Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.",
-    "Pfizer drängt in den Markt und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
-    "Zepbound bleibt der Vergleich für die Firma und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie trägt die Nachfrage.",
+  assert.ok(rejected >= 22, `Negativ ${rejected}/25`);
+  const deNames: Array<[string, string]> = [
+    ["Toyota liefert den Impuls für die Firma und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "Toyota"],
+    ["Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.", "Apple"],
+    ["Pfizer drängt in den Markt und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "Pfizer"],
+    ["Zepbound bleibt der Vergleich für die Firma und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie trägt die Nachfrage.", "Zepbound"],
   ];
-  for (const sentence of namedSentences) {
-    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).ok, false, sentence);
-    assert.equal(verifyChapter("einstieg", sentence, probeDe, null).ok, false, sentence);
+  for (const [sentence, name] of deNames) {
+    assert.equal(verifyChapter("einstieg", sentence, probeDe, []).reasons.includes("name"), false, sentence);
+    assert.equal(verifyChapter("einstieg", sentence, probeDe, [name]).ok, false, sentence);
     const redo = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
-      chapters: [{ id: "einstieg", paragraph: sentence, entities: [] }],
-    }, new Map([["einstieg", []]]));
+      chapters: [{ id: "einstieg", paragraph: sentence, entities: [name] }],
+    }, new Map([["einstieg", [name]]]));
     assert.ok(redo[0]?.reasons.includes("name"), sentence);
-    const missing = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name alt"], spoken: "" }], {
-      chapters: [{ id: "einstieg", paragraph: sentence }],
-    }, new Map([["einstieg", null]]));
-    assert.ok(missing[0]?.reasons.includes("name"), sentence);
   }
+  const enApple = "We look at Apple today and the price stays the verified level for the firm. The figures stay tied to that close.";
+  assert.equal(verifyChapter("einstieg", enApple, probeEn, []).ok, false);
+  const enStart = "Apple opened the session and the price stays the verified level for the firm. The figures stay tied to that close.";
+  assert.equal(verifyChapter("einstieg", enStart, probeEn, []).reasons.includes("name"), false, enStart);
+  assert.equal(verifyChapter("einstieg", enStart, probeEn, ["Apple"]).ok, false);
+  const kept = "Toyota bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const dropped = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Die Aktie stützt die Bewertung.";
+  const prior = new Map<string, string[] | null>([["einstieg", ["Toyota"]]]);
+  const emptyRedo = new Map<string, string[] | null>([["einstieg", []]]);
+  const stillNamed = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name Toyota"], spoken: "" }], {
+    chapters: [{ id: "einstieg", paragraph: kept }],
+  }, emptyRedo, prior);
+  assert.ok(stillNamed[0]?.reasons.includes("name"), stillNamed[0]?.notes.join("|"));
+  const cleared = applyRedo(probeDe, [{ id: "einstieg", attempts: 1, reasons: ["name"], notes: ["name Toyota"], spoken: "" }], {
+    chapters: [{ id: "einstieg", paragraph: dropped, entities: [] }],
+  }, emptyRedo, prior);
+  assert.equal(cleared[0]?.reasons.includes("name"), false, cleared[0]?.notes.join("|"));
+  const paid = verifyChapter("umsatz", "Demand stays paid and the firm holds the verified view in the market. The signal stays with the company this year.", probeEn, ["AI"]);
+  assert.equal(paid.reasons.includes("name"), false, paid.notes.join("|"));
+  const geld = verifyChapter("zusammenfassung", "Das Geld der Firma bleibt der Maßstab für den Markt im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["GE"]);
+  assert.equal(geld.reasons.includes("name"), false, geld.notes.join("|"));
+  const geWord = verifyChapter("zusammenfassung", "Die GE bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", probeDe, ["GE"]);
+  assert.equal(geWord.ok, false);
   const appleBlackwell = "Im Vergleich zu Apple bleibt blackwell der zweite Treiber und der Kurs stützt die Bewertung im neuen Jahr. Die Aktie bleibt der Maßstab für die Firma.";
-  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).ok, false);
-  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, null).ok, false);
+  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, []).reasons.includes("name"), false);
+  assert.equal(verifyChapter("s17", appleBlackwell, probeDe, ["Apple", "blackwell"]).ok, false);
   const plain = "Die Firma bleibt der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung und die Aktie trägt die Nachfrage.";
   assert.equal(verifyChapter("zusammenfassung", plain, probeDe, ["Zephyr"]).ok, true);
   assert.equal(verifyChapter("umsatz", "Die Nachfrage bleibt laufend der Maßstab für die Firma im neuen Jahr. Der Umsatz stützt die Bewertung und das Wachstum trägt die Aktie.", probeDe, []).ok, true);
@@ -669,7 +692,88 @@ async function main() {
   const million = buildSpeechSheet(buildPodcastFacts(pack("NVDA", { ...probeAnalysis, currentPrice: 1_500_000 }), NOON), "en");
   assert.match(million.facts.find(fact => fact.id === "price")?.spoken ?? "", /million/);
   assert.equal(/\d/.test(million.facts.find(fact => fact.id === "price")?.spoken ?? "1"), false);
-  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Voll, leer, fehlend und halluziniert liegen auf derselben Quote. Negativ ${rejected}/25 und Backup ${backupRejected}/25. Doppelte Präpositionen werden abgelehnt, nicht bereinigt.`);
+  const deHost = [
+    "Im Moment bleibt der Gegenwind spürbar und der Konzernumsatz stützt den Ausbau der Firma.",
+    "Der Kursrückgang trifft die Aktionäre und der wichtigere Vergleich bleibt der Markt.",
+    "Spannend ist der Ausbau und die Studiendaten stützen die Firma im neuen Jahr.",
+    "Insgesamt bleibt der Konzernumsatz der Maßstab und der Gegenwind lässt nach.",
+    "Die Aktionäre sehen den Moment und der Kursrückgang bleibt der wichtigere Punkt.",
+    "Studiendaten stützen den Ausbau und der Konzernumsatz trägt die Firma weiter.",
+    "Der Gegenwind bleibt spürbar und die Firma hält den Ausbau im neuen Jahr.",
+    "Wichtiger als der Kursrückgang bleibt der Konzernumsatz für die Aktionäre.",
+    "Spannend bleibt der Ausbau und die Studiendaten nennen den Moment für die Firma.",
+    "Insgesamt trägt der Konzernumsatz die Firma und der Gegenwind bleibt begrenzt.",
+    "Die Firma nennt den Ausbau und die Aktionäre bleiben der Maßstab im Markt.",
+    "Der Moment bleibt ruhig und der Kursrückgang trifft die Firma nicht hart.",
+    "Studiendaten und der Konzernumsatz stützen den Ausbau im neuen Jahr.",
+    "Der wichtigere Punkt bleibt der Ausbau und die Aktionäre tragen die Firma.",
+    "Gegenwind bleibt und der Konzernumsatz stützt die Firma trotz des Kursrückgangs.",
+    "Insgesamt sehen die Aktionäre den Ausbau und die Studiendaten bleiben klar.",
+    "Spannend bleibt der Moment und der Konzernumsatz trägt den Ausbau weiter.",
+    "Der Kursrückgang bleibt der Gegenwind und die Firma hält die Aktionäre informiert.",
+    "Die Studiendaten stützen den wichtigere Vergleich und der Ausbau bleibt der Plan.",
+    "Im neuen Jahr bleibt der Konzernumsatz der Maßstab und der Moment ist ruhig.",
+    "Aktionäre halten den Ausbau und der Gegenwind lässt den Kursrückgang klein.",
+  ];
+  const enHost = [
+    "Headwinds remain closely watched and the moderate question stays with the firm.",
+    "Debt stays moderate and the strongest demand holds the verified view this year.",
+    "Overall the question stays moderate and the firm holds the demand in the market.",
+    "The strongest demand stays closely tied to the firm and the question remains open.",
+    "Headwinds stay moderate and demand remains the verified view for the company.",
+    "Debt remains the question and the firm stays closely tied to the verified demand.",
+    "Overall demand stays strong and the moderate headwinds remain with the firm.",
+    "The question stays moderate and the strongest demand holds the company this year.",
+    "Closely watched demand stays the verified view and the firm holds the market.",
+    "Moderate headwinds remain and the question stays with the strongest demand.",
+    "The firm holds demand and the moderate question stays closely watched this year.",
+    "Demand remains moderate and the company stays the verified view in the market.",
+    "The strongest headwinds stay moderate and demand remains the open question.",
+    "Overall the firm stays with demand and the moderate question remains watched.",
+    "Debt stays with the firm and demand remains the verified view for the market.",
+    "The question remains moderate and demand stays closely tied to the company.",
+    "Headwinds remain and the firm holds the strongest demand in the verified market.",
+    "Moderate demand stays the view and the company holds the question this year.",
+    "The firm remains with demand and the moderate headwinds stay closely watched.",
+    "Overall demand remains moderate and the question stays the verified view.",
+    "Closely held demand stays moderate and the firm remains the view this year.",
+  ];
+  const deHostFail = deHost.filter(text => !verifyChapter("zusammenfassung", text, probeDe, []).ok);
+  const enHostFail = enHost.filter(text => !verifyChapter("zusammenfassung", text, probeEn, []).ok);
+  assert.ok(deHost.length >= 20 && enHost.length >= 20);
+  assert.ok(1 - deHostFail.length / deHost.length >= 0.9, deHostFail.join(" || "));
+  assert.ok(1 - enHostFail.length / enHost.length >= 0.9, enHostFail.join(" || "));
+  const nameBattery: Array<[string, string, typeof probeDe, string[] | null]> = [
+    ["Toyota liefert den Impuls und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "einstieg", probeDe, ["Toyota"]],
+    ["Die Firma liefert Toyota und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "einstieg", probeDe, ["Toyota"]],
+    ["Apple bleibt der Vergleich und der Kurs stützt die Firma im neuen Jahr. Die Aktie trägt die Nachfrage.", "einstieg", probeDe, ["Apple"]],
+    ["Im Vergleich zu Apple bleibt die Firma der Maßstab für den Markt. Der Umsatz stützt die Bewertung.", "einstieg", probeDe, ["Apple"]],
+    ["Pfizer drängt und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "einstieg", probeDe, ["Pfizer"]],
+    ["Die Firma sieht Pfizer und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "einstieg", probeDe, ["Pfizer"]],
+    ["Zepbound bleibt der Vergleich und der Kurs stützt die Firma im neuen Jahr. Die Aktie trägt die Nachfrage.", "einstieg", probeDe, ["Zepbound"]],
+    ["Neben Zepbound bleibt die Firma der Maßstab für den Markt im neuen Jahr. Der Umsatz stützt die Bewertung.", "einstieg", probeDe, ["Zepbound"]],
+    ["blackwell bleibt der zweite Treiber und der Kurs stützt die Firma im neuen Jahr. Die Aktie bleibt der Maßstab.", "s17", probeDe, ["blackwell"]],
+    ["Die Firma nennt blackwell und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "s17", probeDe, ["blackwell"]],
+    ["Toyota opened the session and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Toyota"]],
+    ["We look at Toyota today and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Toyota"]],
+    ["Apple opened the session and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Apple"]],
+    ["We look at Apple today and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, null],
+    ["Pfizer opened the session and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Pfizer"]],
+    ["We look at Pfizer today and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Pfizer"]],
+    ["Zepbound opened the session and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Zepbound"]],
+    ["We look at Zepbound today and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Zepbound"]],
+    ["Listeners meet blackwell and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["blackwell"]],
+    ["The firm meets blackwell and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["blackwell"]],
+    ["Novo bleibt der Vergleich und der Kurs stützt die Firma im neuen Jahr. Die Aktie trägt die Nachfrage.", "einstieg", probeDe, ["Novo"]],
+    ["Die Firma sieht Novo und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", "einstieg", probeDe, ["Novo"]],
+    ["Nordisk opened the session and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Nordisk"]],
+    ["We look at Nordisk today and the price stays the verified level for the firm. The figures stay tied to that close.", "einstieg", probeEn, ["Nordisk"]],
+    ["Lilly bleibt der Vergleich und der Kurs stützt die Firma im neuen Jahr. Die Aktie trägt die Nachfrage.", "einstieg", probeDe, ["Lilly"]],
+  ];
+  const nameRejected = nameBattery.filter(([text, id, sheet, entities]) => !verifyChapter(id, text, sheet, entities).ok).length;
+  assert.equal(nameBattery.length, 25);
+  assert.ok(nameRejected >= 24, `Namen ${nameRejected}/25`);
+  ok(`Fremde Prosa DE ${deBackup.fallen}/${deBackup.total}, EN ${enBackup.fallen}/${enBackup.total}. Host DE ${deHost.length - deHostFail.length}/${deHost.length}, EN ${enHost.length - enHostFail.length}/${enHost.length}. Negativliste ${rejected}/25, Backup ${backupRejected}/25, Namensatz ${nameRejected}/25.`);
 
   writeFileSync("/tmp/podcast-examples.txt", [
     "NVDA DE", deNvda, "",

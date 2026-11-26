@@ -196,7 +196,7 @@ export async function renderStockPodcastScript(opts: {
     }
     const redoPayload = readChapterPayload(edited.data);
     if (redoPayload.titles) applyTitleMap(sheet, redoPayload.titles);
-    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities);
+    drafts = applyRedo(sheet, drafts, edited.data, redoPayload.entities, payload.entities);
   }
   const assembled = chaptersFromDrafts(sheet, opts.source, drafts);
   const chapters = assembled.chapters;
