@@ -8,17 +8,24 @@ export type StockPodcastErrorCode = (typeof STOCK_PODCAST_ERROR_CODES)[number];
 
 export type StockPodcastSource = "pdf" | "ki";
 
+/** Gesprochene Sprache. Fehlt der Parameter, bleibt es Deutsch, damit #528 unverändert bleibt. */
+export type PodcastLanguage = "de" | "en";
+
 export type StockPodcastStage = "analyze" | "script" | "audio";
 
 /**
  * Obergrenze neuer Erzeugungen je Ticker bis Mitternacht Europe/Madrid.
- * Cache-Treffer zählen nicht. PDF und KI-Analyse teilen sich dieses Limit.
+ * Cache-Treffer zählen nicht. PDF und KI-Analyse teilen sich dieses Limit,
+ * und Deutsch und Englisch teilen es ebenfalls: jede Sprache ist ein eigener
+ * Lauf mit Modell und Sprache, ein zweites Kontingent würde die Kosten verdoppeln.
+ * Der Cache-Schlüssel trägt die Sprache, damit sich die beiden Skripte nicht überschreiben.
  */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v14";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v15";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
+export const PODCAST_DISCLAIMER_EN = "This is not investment advice.";
 
 export const PODCAST_STAGE_TIMEOUT_MS = {
   analyze: 180_000,
@@ -40,6 +47,18 @@ export const OPENROUTER_PODCAST_VOICES = [
   { id: "de-DE-Grant:MAI-Voice-2.1", label: "Grant" },
 ] as const;
 
+/**
+ * Dieselbe OpenRouter-Stimme microsoft/mai-voice-2.1. Die Locale der Stimme
+ * setzt die Sprache: en-US-Harper und en-US-Grant sind die englischen Pendants
+ * zu den deutschen Harper/Grant-Stimmen.
+ * Belegt: https://openrouter.ai/microsoft/mai-voice-2.1 und
+ * https://openrouter.ai/docs/guides/overview/multimodal/tts
+ */
+export const OPENROUTER_PODCAST_VOICES_EN = [
+  { id: "en-US-Harper:MAI-Voice-2.1", label: "Harper" },
+  { id: "en-US-Grant:MAI-Voice-2.1", label: "Grant" },
+] as const;
+
 export const XAI_PODCAST_VOICES = [
   { id: "eve", label: "Eve" },
   { id: "leo", label: "Leo" },
@@ -57,14 +76,19 @@ export interface StockPodcastVoice {
 export function listStockPodcastVoices(): StockPodcastVoice[] {
   return [
     ...OPENROUTER_PODCAST_VOICES.map(v => ({ id: v.id, label: v.label, provider: "openrouter" as const })),
+    ...OPENROUTER_PODCAST_VOICES_EN.map(v => ({ id: v.id, label: v.label, provider: "openrouter" as const })),
     ...XAI_PODCAST_VOICES.map(v => ({ id: v.id, label: v.label, provider: "xai" as const })),
   ];
 }
 
-export function resolveStockPodcastVoice(voiceId: string | undefined): StockPodcastVoice {
+export function resolveStockPodcastVoice(voiceId: string | undefined, language: PodcastLanguage = "de"): StockPodcastVoice {
   const wanted = (voiceId ?? "").trim();
   const found = listStockPodcastVoices().find(v => v.id === wanted);
   if (found) return found;
+  if (language === "en") {
+    const en = OPENROUTER_PODCAST_VOICES_EN[0];
+    return { id: en.id, label: en.label, provider: "openrouter" };
+  }
   const def = OPENROUTER_PODCAST_VOICES[0];
   return { id: def.id, label: def.label, provider: "openrouter" };
 }
@@ -95,10 +119,17 @@ export function emptyDropCounts(): PodcastDropCounts {
   return { total: 0, byReason: {} };
 }
 
+/** Versuchszahl und Fallback-Grund je Kapitel. Der Satztext steht hier nicht. */
+export interface PodcastChapterReport {
+  id: string;
+  attempts: number;
+  fallback: string | null;
+}
+
 /** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
 export interface StockPodcastStageTimings {
   analyze: StockPodcastStageTiming;
-  script: StockPodcastStageTiming & { dropped: PodcastDropCounts };
+  script: StockPodcastStageTiming & { dropped: PodcastDropCounts; chapters?: PodcastChapterReport[] };
   audio: { timeoutMs: number };
 }
 
@@ -106,6 +137,7 @@ export interface StockPodcastScriptResponse {
   ok: true;
   ticker: string;
   source: StockPodcastSource;
+  language: PodcastLanguage;
   asOf: string;
   asOfLabel: string;
   priceLabel: string | null;
@@ -135,12 +167,14 @@ export function stockPodcastAudioPath(opts: {
   source: StockPodcastSource;
   voice: string;
   cacheKey: string;
+  language?: PodcastLanguage;
 }): string {
   const q = new URLSearchParams({
     ticker: opts.ticker,
     source: opts.source,
     voice: opts.voice,
     cacheKey: opts.cacheKey,
+    language: opts.language ?? "de",
   });
   return `/api/podcast/audio/${encodeURIComponent(opts.chapterId)}?${q.toString()}`;
 }

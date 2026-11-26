@@ -10,9 +10,12 @@ import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import {
   emptyDropCounts,
   PODCAST_DISCLAIMER,
+  PODCAST_DISCLAIMER_EN,
   PODCAST_PROMPT_VERSION,
   PODCAST_STAGE_TIMEOUT_MS,
+  type PodcastChapterReport,
   type PodcastDropCounts,
+  type PodcastLanguage,
   type StockPodcastErrorCode,
   type StockPodcastScriptResponse,
   type StockPodcastSource,
@@ -50,6 +53,7 @@ export const stockPodcastRequestSchema = z.object({
   regenerate: z.boolean().optional().default(false),
   fullAi: z.boolean().optional().default(true),
   voice: z.string().max(80).optional(),
+  language: z.enum(["de", "en"]).optional().default("de"),
 }).strict();
 
 export interface StockPodcastRouteError {
@@ -107,10 +111,20 @@ function httpFor(code: StockPodcastErrorCode): number {
   }
 }
 
-function stageTimings(analyzeMs: number, scriptMs: number, dropped: PodcastDropCounts = emptyDropCounts()): StockPodcastStageTimings {
+function stageTimings(
+  analyzeMs: number,
+  scriptMs: number,
+  dropped: PodcastDropCounts = emptyDropCounts(),
+  reports?: PodcastChapterReport[],
+): StockPodcastStageTimings {
   return {
     analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
-    script: { elapsedMs: scriptMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script, dropped },
+    script: {
+      elapsedMs: scriptMs,
+      timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script,
+      dropped,
+      ...(reports ? { chapters: reports } : {}),
+    },
     audio: { timeoutMs: PODCAST_STAGE_TIMEOUT_MS.audio },
   };
 }
@@ -123,11 +137,12 @@ function successBody(opts: {
   stages: StockPodcastStageTimings;
   script: Awaited<ReturnType<typeof renderStockPodcastScript>> & { ok: true };
 }): StockPodcastScriptResponse {
-  const voice = resolveStockPodcastVoice(opts.script.voice);
+  const voice = resolveStockPodcastVoice(opts.script.voice, opts.script.language);
   return {
     ok: true,
     ticker: opts.ticker,
     source: opts.source,
+    language: opts.script.language,
     asOf: opts.script.asOf,
     asOfLabel: opts.script.asOfLabel,
     priceLabel: opts.script.priceLabel,
@@ -138,7 +153,7 @@ function successBody(opts: {
     cached: opts.script.cached,
     packCached: opts.packCached,
     promptVersion: PODCAST_PROMPT_VERSION,
-    disclaimer: PODCAST_DISCLAIMER,
+    disclaimer: opts.script.language === "en" ? PODCAST_DISCLAIMER_EN : PODCAST_DISCLAIMER,
     stages: opts.stages,
   };
 }
@@ -157,6 +172,7 @@ export async function handleStockPodcastScript(
   }
   const ticker = parsed.data.ticker.toUpperCase();
   const source = parsed.data.source;
+  const language: PodcastLanguage = parsed.data.language;
   const now = deps.now?.() ?? new Date();
   const day = madridDayKey(now);
   if (parsed.data.fullAi === false) {
@@ -200,8 +216,8 @@ export async function handleStockPodcastScript(
 
   const facts = buildPodcastFacts(pack, now);
   const factsHash = hashPodcastFacts(facts.values);
-  const voice = resolveStockPodcastVoice(parsed.data.voice);
-  const scriptHit = !regenerate ? readCachedScript({ ticker, day: pack.day, source, factsHash, voiceId: voice.id }) : null;
+  const voice = resolveStockPodcastVoice(parsed.data.voice, language);
+  const scriptHit = !regenerate ? readCachedScript({ ticker, day: pack.day, source, factsHash, voiceId: voice.id, language }) : null;
   if (scriptHit) {
     return {
       http: 200,
@@ -210,7 +226,7 @@ export async function handleStockPodcastScript(
         source,
         pack,
         packCached,
-        stages: stageTimings(analyzeMs, Date.now() - scriptStarted, scriptHit.entry.dropped),
+        stages: stageTimings(analyzeMs, Date.now() - scriptStarted, scriptHit.entry.dropped, scriptHit.entry.reports),
         script: {
           ok: true,
           cacheKey: scriptHit.entry.cacheKey,
@@ -224,10 +240,13 @@ export async function handleStockPodcastScript(
           modelUsed: scriptHit.entry.modelUsed,
           dropped: scriptHit.entry.dropped ?? emptyDropCounts(),
           facts,
+          language,
+          reports: scriptHit.entry.reports ?? [],
         },
       }),
     };
   }
+  // Deutsch und Englisch teilen das Tageslimit. Ein eigenes Kontingent je Sprache würde jeden Lauf doppelt bezahlen.
   if (!counted && !podcastDailyTake(ticker, now)) {
     return { http: httpFor("RATE_LIMITED"), body: errorBody("RATE_LIMITED", "Tageslimit erreicht.", "script", ticker, source) };
   }
@@ -236,7 +255,7 @@ export async function handleStockPodcastScript(
     const outcome = await callLLMJsonOutcome(opts);
     return outcome.ok ? { data: outcome.data, modelUsed: outcome.modelUsed } : { data: null, modelUsed: null, reason: outcome.reason };
   });
-  const rendered = await renderStockPodcastScript({ pack, source, voiceId: voice.id, llm, now });
+  const rendered = await renderStockPodcastScript({ pack, source, voiceId: voice.id, language, llm, now });
   if (!rendered.ok) {
     podcastDailyRefund(ticker, now);
     return {
@@ -244,7 +263,7 @@ export async function handleStockPodcastScript(
       body: errorBody("LLM_UNAVAILABLE", "KI-Podcast n/a — LLM nicht erreichbar.", "script", ticker, source),
     };
   }
-  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted, rendered.dropped), script: rendered }) };
+  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted, rendered.dropped, rendered.reports), script: rendered }) };
 }
 
 export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandlerDeps): void {
@@ -259,6 +278,7 @@ export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandl
       source: req.query.source,
       voice: req.query.voice,
       cacheKey: req.query.cacheKey,
+      language: req.query.language,
     }, deps);
     if (out.ok) {
       res.status(200);
@@ -272,14 +292,15 @@ export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandl
 }
 
 export async function handleStockPodcastAudio(
-  query: { chapterId?: unknown; ticker?: unknown; source?: unknown; voice?: unknown; cacheKey?: unknown },
+  query: { chapterId?: unknown; ticker?: unknown; source?: unknown; voice?: unknown; cacheKey?: unknown; language?: unknown },
   deps: StockPodcastHandlerDeps = {},
 ): Promise<{ ok: true; audio: Buffer } | { ok: false; http: number; body: StockPodcastRouteError }> {
   const chapterId = typeof query.chapterId === "string" ? query.chapterId : "";
   const ticker = typeof query.ticker === "string" ? query.ticker.toUpperCase() : "";
   const source = query.source === "pdf" || query.source === "ki" ? query.source : null;
   const cacheKey = typeof query.cacheKey === "string" ? query.cacheKey : "";
-  const voice = resolveStockPodcastVoice(typeof query.voice === "string" ? query.voice : undefined);
+  const language: PodcastLanguage = query.language === "en" ? "en" : "de";
+  const voice = resolveStockPodcastVoice(typeof query.voice === "string" ? query.voice : undefined, language);
   if (!chapterId || !ticker || !source || !cacheKey) {
     return { ok: false, http: 400, body: errorBody("BAD_REQUEST", "Ungültige Audio-Anfrage.", "audio", ticker || undefined, source ?? undefined) };
   }
@@ -295,6 +316,7 @@ export async function handleStockPodcastAudio(
   const audio = await synthesizePodcastAudio({
     text: chapter.spoken,
     voiceId: voice.id,
+    language,
     cacheId: podcastAudioCacheId({
       ticker,
       day: script.day,

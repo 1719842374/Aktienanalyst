@@ -1,12 +1,13 @@
 /**
- * Ein callLLMJson je Quelle für das Skript, plus ein Lektorat im selben Zeitbudget.
- * Ein kurzer Fehlversuch wird einmal wiederholt, ohne das Tageslimit ein zweites Mal zu zählen.
- * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme.
+ * Ein callLLMJson je Quelle für das Faktenblatt-Skript.
+ * Ein kaputtes Kapitel wird höchstens zweimal neu geschrieben, im selben Zeitbudget.
+ * Ein kurzer Fehlversuch des ersten Calls wird einmal wiederholt, ohne das Tageslimit ein zweites Mal zu zählen.
+ * Das Skript ist stimmunabhängig. Die Audiodatei hängt zusätzlich an der Stimme und der Sprache.
  */
-import type { PodcastDropCounts, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
-import { PODCAST_DISCLAIMER, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
+import type { PodcastChapterReport, PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "../shared/podcast-types";
+import { PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
-import { assemblePodcastChapters, buildPodcastLlmPrompt, mergeProofread, proofreadPrompt } from "../shared/podcast-script";
+import { applyRedo, brokenDrafts, buildSpeechSheet, chaptersFromDrafts, fluentPrompt, seedDrafts } from "../shared/podcast-fluent";
 import type { LlmFailureReason } from "./llm-openrouter";
 import type { FullAiPack } from "./stock-podcast-full-ai";
 import { withStageTimeout } from "./stock-podcast-limit";
@@ -32,6 +33,8 @@ interface ScriptCacheEntry {
   priceLabel: string | null;
   modelUsed: string | null;
   dropped: PodcastDropCounts;
+  language: PodcastLanguage;
+  reports: PodcastChapterReport[];
 }
 
 const scriptCache = new Map<string, ScriptCacheEntry>();
@@ -40,8 +43,8 @@ export function resetPodcastScriptCache(): void {
   scriptCache.clear();
 }
 
-export function scriptCacheId(ticker: string, day: string, source: StockPodcastSource, factsHash: string): string {
-  return `sps:${ticker}:${day}:${source}:${PODCAST_PROMPT_VERSION}:${factsHash.slice(0, 16)}`;
+export function scriptCacheId(ticker: string, day: string, source: StockPodcastSource, factsHash: string, language: PodcastLanguage = "de"): string {
+  return `sps:${ticker}:${day}:${source}:${language}:${PODCAST_PROMPT_VERSION}:${factsHash.slice(0, 16)}`;
 }
 
 export function dropPodcastScripts(ticker: string, day: string): void {
@@ -64,6 +67,7 @@ function stampVoice(entry: ScriptCacheEntry, voiceId: string): StockPodcastChapt
       source: entry.source,
       voice: voiceId,
       cacheKey: entry.cacheKey,
+      language: entry.language,
     }),
   }));
 }
@@ -74,8 +78,9 @@ export function readCachedScript(opts: {
   source: StockPodcastSource;
   factsHash: string;
   voiceId: string;
+  language?: PodcastLanguage;
 }): { entry: ScriptCacheEntry; chapters: StockPodcastChapter[] } | null {
-  const cacheKey = scriptCacheId(opts.ticker, opts.day, opts.source, opts.factsHash);
+  const cacheKey = scriptCacheId(opts.ticker, opts.day, opts.source, opts.factsHash, opts.language ?? "de");
   const entry = peekPodcastScript(cacheKey);
   if (!entry || entry.day !== opts.day || entry.factsHash !== opts.factsHash) return null;
   return { entry, chapters: stampVoice(entry, opts.voiceId) };
@@ -85,6 +90,7 @@ export async function renderStockPodcastScript(opts: {
   pack: FullAiPack;
   source: StockPodcastSource;
   voiceId?: string;
+  language?: PodcastLanguage;
   llm: StockPodcastLlm;
   now?: Date;
 }): Promise<{
@@ -100,11 +106,14 @@ export async function renderStockPodcastScript(opts: {
   modelUsed: string | null;
   dropped: PodcastDropCounts;
   facts: PodcastFacts;
+  language: PodcastLanguage;
+  reports: PodcastChapterReport[];
 } | { ok: false; reason: "timeout" | "empty" }> {
-  const voice = resolveStockPodcastVoice(opts.voiceId);
+  const language = opts.language ?? "de";
+  const voice = resolveStockPodcastVoice(opts.voiceId, language);
   const facts = buildPodcastFacts(opts.pack, opts.now ?? new Date());
   const factsHash = hashPodcastFacts(facts.values);
-  const cacheKey = scriptCacheId(opts.pack.ticker, opts.pack.day, opts.source, factsHash);
+  const cacheKey = scriptCacheId(opts.pack.ticker, opts.pack.day, opts.source, factsHash, language);
   const cached = peekPodcastScript(cacheKey);
   if (cached && cached.factsHash === factsHash) {
     return {
@@ -120,9 +129,12 @@ export async function renderStockPodcastScript(opts: {
       modelUsed: cached.modelUsed,
       dropped: cached.dropped,
       facts,
+      language: cached.language,
+      reports: cached.reports,
     };
   }
-  const prompt = buildPodcastLlmPrompt(opts.source, facts);
+  const sheet = buildSpeechSheet(facts, language);
+  const prompt = fluentPrompt(sheet, opts.source);
   const started = Date.now();
   const budget = PODCAST_STAGE_TIMEOUT_MS.script;
   const ac = new AbortController();
@@ -142,28 +154,37 @@ export async function renderStockPodcastScript(opts: {
     return { ok: false, reason: "timeout" };
   }
   if (raced == null || raced.data == null) return { ok: false, reason: "empty" };
-  let modelData = raced.data ?? null;
-  const proof = proofreadPrompt(modelData);
-  const left = budget - (Date.now() - started);
-  if (proof && left > 2000) {
-    const proofAc = new AbortController();
+  let drafts = seedDrafts(sheet, opts.source, raced.data);
+  let regens = 0;
+  while (regens < 2 && brokenDrafts(drafts).length) {
+    const left = budget - (Date.now() - started);
+    const brokenIds = new Set(brokenDrafts(drafts).map(draft => draft.id));
+    if (left < 500) {
+      drafts = drafts.map(draft => brokenIds.has(draft.id) ? { ...draft, reasons: ["timeout"] } : draft);
+      break;
+    }
+    regens += 1;
+    const redo = fluentPrompt(sheet, opts.source, brokenDrafts(drafts).map(draft => ({ id: draft.id, reasons: draft.reasons })));
+    const redoAc = new AbortController();
     const edited = await withStageTimeout(opts.llm({
-      prompt: proof.prompt,
-      systemPrompt: proof.systemPrompt,
+      prompt: redo.prompt,
+      systemPrompt: redo.systemPrompt,
       maxTokens: 1500,
-      temperature: 0,
-      signal: proofAc.signal,
+      temperature: 0.2,
+      signal: redoAc.signal,
     }), left);
-    if (edited === "timeout") proofAc.abort();
-    else if (edited) modelData = mergeProofread(modelData, edited.data ?? null);
+    if (edited === "timeout" || edited == null || edited.data == null) {
+      if (edited === "timeout") redoAc.abort();
+      drafts = drafts.map(draft => brokenIds.has(draft.id) ? { ...draft, reasons: ["timeout"] } : draft);
+      break;
+    }
+    drafts = applyRedo(sheet, drafts, edited.data);
   }
-  const assembled = assemblePodcastChapters(opts.source, facts, modelData);
-  const chapters = assembled.map(chapter => ({
-    ...chapter,
-    audioUrl: null as string | null,
-  }));
+  const assembled = chaptersFromDrafts(sheet, opts.source, drafts);
+  const chapters = assembled.chapters;
+  const disclaimer = language === "en" ? PODCAST_DISCLAIMER_EN : PODCAST_DISCLAIMER;
   if (!chapters.length) return { ok: false, reason: "empty" };
-  if (!chapters.some(c => c.id === "schluss" && c.spoken.includes(PODCAST_DISCLAIMER))) {
+  if (!chapters.some(c => c.id === "schluss" && c.spoken.includes(disclaimer))) {
     return { ok: false, reason: "empty" };
   }
   const entry: ScriptCacheEntry = {
@@ -177,6 +198,8 @@ export async function renderStockPodcastScript(opts: {
     priceLabel: facts.priceLabel,
     modelUsed: raced.modelUsed ?? null,
     dropped: assembled.dropped,
+    language,
+    reports: assembled.reports,
   };
   scriptCache.set(cacheKey, entry);
   return {
@@ -192,5 +215,7 @@ export async function renderStockPodcastScript(opts: {
     modelUsed: entry.modelUsed,
     dropped: assembled.dropped,
     facts,
+    language,
+    reports: assembled.reports,
   };
 }

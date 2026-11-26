@@ -1,6 +1,8 @@
 /**
  * Tageslimit des Aktien-Podcasts.
  * Fenster bis zur nächsten Mitternacht Europe/Madrid, Schlüssel ist der Ticker.
+ * Deutsch und Englisch teilen dieses Kontingent: jede Sprache ist ein bezahlter Lauf,
+ * ein zweites Limit würde die Kosten verdoppeln. Der Cache-Schlüssel trennt die Sprachen.
  * Gezählt wird nur ein Lauf, der neu erzeugt. Cache-Treffer rufen take() nicht auf.
  */
 import { PODCAST_DAILY_MAX } from "../shared/podcast-types";

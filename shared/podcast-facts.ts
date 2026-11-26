@@ -107,6 +107,32 @@ export interface PodcastFacts {
   proSeed: string | null;
   contraSeed: string | null;
   redactedContext: string;
+  /** Rohwerte hinter der Sprechform. Gesetzt von buildPodcastFacts, für die englische Sprechform. */
+  measures?: PodcastMeasures;
+}
+
+/** Zahlen, die buildPodcastFacts schon geprüft hat. Die Sprechform entsteht daraus, nichts wird geschätzt. */
+export interface PodcastMeasures {
+  companySource: string | null;
+  asOfIso: string;
+  price: number | null;
+  fair: number | null;
+  entry: number | null;
+  crv: number | null;
+  sig: 3 | 4;
+  fyYoy: number | null;
+  fiscalYear: number | null;
+  wacc: number | null;
+  gStar: number | null;
+  segmentName: string | null;
+  segmentShare: number | null;
+  newsAgeDays: number | null;
+  ampel: string | null;
+  callDateIso: string | null;
+  callQuarterRaw: string | null;
+  upsides: Array<{ name: string; upside: number }>;
+  catalystNames: string[];
+  riskNames: string[];
 }
 
 function finite(v: unknown): v is number {
@@ -380,6 +406,30 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,
     contraSeed: values.entry ? `Der rechnerische Einstieg liegt bei ${values.entry}.` : (spokenRisks.length ? `Die genannten Risiken sind ${spokenRisks.join(", ")}.` : null),
     redactedContext: buildContext(pack, values, payloadTitles, upsides),
+    measures: {
+      companySource: text(analysis.podcastCompanySource) ?? (namedCompany ? "analysis.companyName" : null),
+      asOfIso: asOf.iso,
+      price: priceN,
+      fair: fairN,
+      entry: entryN,
+      crv: finite(input.crvBase) ? input.crvBase : null,
+      sig,
+      fyYoy: fy,
+      fiscalYear: year && /^\d{4}$/.test(year) ? Number(year) : null,
+      wacc: finite(input.waccPct) ? input.waccPct : null,
+      gStar: finite(input.gStarPct) ? input.gStarPct : null,
+      segmentName: segment?.name ?? null,
+      segmentShare: segment?.share ?? null,
+      newsAgeDays: news.length ? news[0]!.ageDays : null,
+      ampel: text(input.s17Verdict),
+      callDateIso: nextCallIsFuture ? nextDay : null,
+      callQuarterRaw: brief && brief.status === "ok" && brief.quarter && brief.year
+        ? `Q${brief.quarter} GJ${brief.year}`
+        : reportedQuarter,
+      upsides,
+      catalystNames,
+      riskNames,
+    },
   };
 }
 

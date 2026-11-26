@@ -82,6 +82,12 @@ function speakUnsigned(v: number): string {
   return String(v);
 }
 
+/** Dieselbe Rundung wie speakRounded, ohne deutsche Zahlwörter. */
+export function roundedParts(n: number, sig: number): { int: number; frac: string } | null {
+  if (!Number.isFinite(n)) return null;
+  return partsFromPrecision(Math.abs(n), sig);
+}
+
 export function speakRounded(n: number, sig: number): string | null {
   if (!Number.isFinite(n)) return null;
   const neg = n < 0 ? "minus " : "";

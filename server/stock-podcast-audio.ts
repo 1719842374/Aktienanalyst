@@ -76,7 +76,7 @@ async function openRouterSpeech(text: string, voice: string, key: string, fetchI
   return readBytes(res);
 }
 
-async function xaiSpeech(text: string, voiceId: string, key: string, fetchImpl: PodcastAudioFetch, signal?: AbortSignal): Promise<Buffer | null> {
+async function xaiSpeech(text: string, voiceId: string, key: string, fetchImpl: PodcastAudioFetch, signal?: AbortSignal, language: "de" | "en" = "de"): Promise<Buffer | null> {
   const res = await fetchImpl(XAI_TTS_URL, {
     method: "POST",
     headers: {
@@ -86,7 +86,7 @@ async function xaiSpeech(text: string, voiceId: string, key: string, fetchImpl: 
     body: JSON.stringify({
       text,
       voice_id: voiceId,
-      language: "de",
+      language,
     }),
     signal,
   });
@@ -96,6 +96,7 @@ async function xaiSpeech(text: string, voiceId: string, key: string, fetchImpl: 
 export async function synthesizePodcastAudio(opts: {
   text: string;
   voiceId?: string;
+  language?: "de" | "en";
   cacheId: string;
   env?: PodcastAudioEnv;
   fetchImpl?: PodcastAudioFetch;
@@ -129,15 +130,16 @@ export async function synthesizePodcastAudio(opts: {
   try {
     let audio: Buffer | null = null;
     let provider: "openrouter" | "xai" = "openrouter";
+    const speechLanguage = opts.language ?? "de";
     if (voice.provider === "openrouter" && openrouterKey) {
       audio = await openRouterSpeech(text, voice.id, openrouterKey, fetchImpl, ac.signal);
       if (!audio && xaiKey) {
-        audio = await xaiSpeech(text, "eve", xaiKey, fetchImpl, ac.signal);
+        audio = await xaiSpeech(text, "eve", xaiKey, fetchImpl, ac.signal, speechLanguage);
         provider = "xai";
       }
     } else if (xaiKey) {
       const xaiVoice = voice.provider === "xai" ? voice.id : "eve";
-      audio = await xaiSpeech(text, xaiVoice, xaiKey, fetchImpl, ac.signal);
+      audio = await xaiSpeech(text, xaiVoice, xaiKey, fetchImpl, ac.signal, speechLanguage);
       provider = "xai";
     }
     if (!audio) {
