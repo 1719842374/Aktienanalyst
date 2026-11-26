@@ -1033,6 +1033,32 @@ async function main() {
   const lillyDe = buildSpeechSheet(buildPodcastFacts(lillyBody, NOON), "de");
   const lillyLiteral = verifyChapter("einstieg", "Wir sprechen heute über Eli Lilly und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.", lillyDe, ["Eli Lilly"]);
   assert.equal(lillyLiteral.ok, true, lillyLiteral.notes.join("|"));
+  const lillyEn = buildSpeechSheet(buildPodcastFacts(lillyBody, NOON), "en");
+  const allowedPossessives: Array<[string, typeof bareEn, string[] | null]> = [
+    ["We look at Novo Nordisk's stock and demand remains the verified view this year. The firm holds the market.", bareEn, null],
+    ["We look at Novo Nordisk's stock and demand remains the verified view this year. The firm holds the market.", bareEn, []],
+    ["We look at Novo Nordisk's stock and demand remains the verified view this year. The firm holds the market.", bareEn, ["Novo Nordisk"]],
+    ["We look at Novo's stock and demand remains the verified view this year. The firm holds the market.", bareEn, null],
+    ["We look at Lilly's drug and demand remains the verified view this year. The firm holds the market.", lillyEn, []],
+    ["We look at NVIDIA's stock and demand remains the verified view this year. The firm holds the market.", probeEn, null],
+    ["Demand in the United States' market remains the verified view this year. The firm holds the launch.", bareEn, []],
+  ];
+  for (const [sentence, sheet, entities] of allowedPossessives) {
+    const verdict = verifyChapter("einstieg", sentence, sheet, entities);
+    assert.equal(verdict.ok, true, `${sentence} ${verdict.notes.join("|")}`);
+  }
+  const blockedPossessives: Array<[string, typeof probeEn, string[] | null]> = [
+    ["We look at Toyota's stock and demand remains the verified view this year. The firm holds the market.", probeEn, null],
+    ["We look at Toyota's stock and demand remains the verified view this year. The firm holds the market.", probeEn, ["Toyota"]],
+    ["We look at Apple's stock and demand remains the verified view this year. The firm holds the market.", probeEn, []],
+    ["We look at Apple's stock and demand remains the verified view this year. The firm holds the market.", probeEn, ["Apple"]],
+    ["We look at China Mobile's sales and demand remains the verified view this year. The firm holds the market.", probeEn, ["China Mobile"]],
+  ];
+  for (const [sentence, sheet, entities] of blockedPossessives) {
+    const verdict = verifyChapter("einstieg", sentence, sheet, entities);
+    assert.equal(verdict.ok, false, `${sentence} ${verdict.notes.join("|")}`);
+    assert.ok(verdict.reasons.includes("name"), `${sentence} ${verdict.notes.join("|")}`);
+  }
   const partials: Array<[string, string]> = [
     ["Der Vergleich China Mobile bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "China Mobile"],
     ["Der Vergleich Nvidia Labs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "Nvidia Labs"],

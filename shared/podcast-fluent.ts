@@ -656,8 +656,15 @@ function internalOneEdit(a: string, b: string): boolean {
   return extra > 0 && extra < left.length - 1;
 }
 
+function withoutPossessive(word: string): string {
+  return word.replace(/(?:['’]s|['’])$/u, "");
+}
+
 function placeBits(text: string): string[] {
-  return text.replace(/\./g, "").split(/[^A-Za-zÄÖÜäöüß]+/).filter(bit => bit.length >= 2).map(bit => bit.toLowerCase());
+  return withoutPossessive(text).replace(/\./g, "").split(/[^A-Za-zÄÖÜäöüß]+/)
+    .map(bit => withoutPossessive(bit))
+    .filter(bit => bit.length >= 2)
+    .map(bit => bit.toLowerCase());
 }
 
 function mergePlaceNames(fromPack: string[] | undefined): string[] {
@@ -735,7 +742,7 @@ function entityMentioned(entity: string, text: string): boolean {
 }
 
 function allowedPackToken(clean: string, sheet: SpeechSheet): boolean {
-  const lower = clean.replace(/\./g, "").toLowerCase();
+  const lower = withoutPossessive(clean).replace(/\./g, "").toLowerCase();
   if (!lower) return false;
   if ((sheet.realNames ?? []).includes(lower)) return true;
   return (sheet.placeNames ?? []).some(place => {
