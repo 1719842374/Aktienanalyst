@@ -1,0 +1,65 @@
+name: DCF Calibration Regression Test
+
+# DCF_CALIBRATION.enabled bleibt false, bis Philip die Vorher/Nachher-Tabelle
+# freigibt (#523, Folge zu #512). Eine Zeile enabled: true in
+# shared/dcf-calibration.ts muss diesen Workflow rot machen.
+# Keine API-Keys und keine FMP-Calls. script/test-dcf-calibration.ts bleibt
+# unverändert. Der Guard prüft nur die importierte Konstante, ohne Fixtures.
+# Der große Test braucht --tsconfig script/tsconfig.jsx.json (jsx react-jsx).
+# Ohne das Flag bleibt JSX stehen (tsconfig.json jsx preserve) und Section5
+# wirft "React is not defined", auch bei enabled false. Der Aufruf steht so
+# im Kopf von script/test-dcf-calibration.ts.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "shared/dcf-calibration.ts"
+      - "shared/bias-fixes.ts"
+      - "shared/valuation-signal.ts"
+      - "server/pdf-export.ts"
+      - "client/src/components/sections/Section5.tsx"
+      - "client/src/components/sections/Section6.tsx"
+      - "script/test-dcf-calibration.ts"
+      - "script/test-dcf-flag-off.ts"
+      - "script/tsconfig.jsx.json"
+      - "script/fixtures/**"
+      - ".github/workflows/dcf-calibration-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "shared/dcf-calibration.ts"
+      - "shared/bias-fixes.ts"
+      - "shared/valuation-signal.ts"
+      - "server/pdf-export.ts"
+      - "client/src/components/sections/Section5.tsx"
+      - "client/src/components/sections/Section6.tsx"
+      - "script/test-dcf-calibration.ts"
+      - "script/test-dcf-flag-off.ts"
+      - "script/tsconfig.jsx.json"
+      - "script/fixtures/**"
+      - ".github/workflows/dcf-calibration-test.yml"
+  workflow_dispatch: {}
+
+jobs:
+  dcf-calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npm ci
+
+      - name: Guard DCF_CALIBRATION.enabled bleibt false
+        run: env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npx tsx script/test-dcf-flag-off.ts
+
+      - name: Run DCF calibration test
+        run: env -u FMP_API_KEY -u FRED_API_KEY -u RENDER_API_KEY -u OPENROUTER_API_KEY npx tsx --tsconfig script/tsconfig.jsx.json script/test-dcf-calibration.ts
