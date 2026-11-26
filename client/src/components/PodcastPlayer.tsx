@@ -314,13 +314,13 @@ export function PodcastPlayerView({
     <div
       data-testid="podcast-player"
       data-html2canvas-ignore=""
-      className="flex-auto shrink-0 min-w-[min(100%,18.5rem)] max-w-full"
+      className="basis-[min(100%,20rem)] min-w-[min(100%,18.5rem)] max-w-full"
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
         <div
           data-testid="podcast-toolbar"
-          className="flex w-full flex-wrap items-stretch gap-2 [container-type:inline-size]"
+          className="flex flex-wrap items-stretch gap-2 [container-type:inline-size]"
         >
           <div
             role="radiogroup"
@@ -380,12 +380,12 @@ export function PodcastPlayerView({
                   aria-checked={selected}
                   aria-disabled={disabled}
                   disabled={disabled}
-                  title={limited ? podcastUiCopy(code).limitTitle : undefined}
+                  title={limited ? podcastUiCopy(code).limitTooltip : undefined}
                   data-testid={`button-podcast-lang-${code}`}
                   aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
                   className={cn(
                     "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    selected ? "bg-foreground text-background" : "text-muted-foreground",
+                    selected ? "bg-foreground text-background" : code === "en" ? "text-slate-600 dark:text-slate-300" : "text-muted-foreground",
                     limitLocked && "cursor-not-allowed opacity-[0.45]",
                   )}
                   onClick={() => onLanguageChange?.(code)}
@@ -414,7 +414,7 @@ export function PodcastPlayerView({
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-foreground">{copy.idleTitle}</div>
                 <div className="text-[11px] text-muted-foreground">{language === "en"
-                  ? `Only on click · fresh analysis · ${podcastSourceLabel(source)} · ${ticker}`
+                  ? `On click only · fresh analysis · ${podcastSourceLabel(source)} · ${ticker}`
                   : `Nur auf Klick · frische Analyse · ${podcastSourceLabel(source)} · ${ticker}`}</div>
               </div>
             </div>
@@ -483,7 +483,7 @@ export function PodcastPlayerView({
                 <button
                   type="button"
                   data-testid="button-podcast-speed"
-                  aria-label={`Geschwindigkeit ${formatSpeedLabel(speed)}, ändern`}
+                  aria-label={language === "en" ? `Speed ${formatSpeedLabel(speed)}, change` : `Geschwindigkeit ${formatSpeedLabel(speed)}, ändern`}
                   onClick={onSpeed}
                   className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1 text-[12px] font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -496,7 +496,7 @@ export function PodcastPlayerView({
                   aria-haspopup="listbox"
                   aria-expanded={menuOpen}
                   aria-controls={menuId}
-                  aria-label={`Stimme ${voiceName}`}
+                  aria-label={language === "en" ? `Voice ${voiceName}` : `Stimme ${voiceName}`}
                   onClick={() => {
                     if (menuOpen) setMenuOpen(false);
                     else { placeMenu(); setMenuOpen(true); }
@@ -505,10 +505,10 @@ export function PodcastPlayerView({
                 >
                   {voiceName}
                 </button>
-                <TransportButton testId="button-podcast-back15" label="15 Sekunden zurück" onClick={() => onSeekTo(currentSec - 15)}>
+                <TransportButton testId="button-podcast-back15" label={copy.back15} onClick={() => onSeekTo(currentSec - 15)}>
                   <SecondsGlyph direction="back" />
                 </TransportButton>
-                <TransportButton testId="button-podcast-prev" label="Vorheriges Kapitel" onClick={() => onSkipChapter(-1)}>
+                <TransportButton testId="button-podcast-prev" label={copy.prevChapter} onClick={() => onSkipChapter(-1)}>
                   <SkipBack className="h-4 w-4" />
                 </TransportButton>
                 <button
@@ -520,10 +520,10 @@ export function PodcastPlayerView({
                 >
                   {playing ? <PauseGlyph /> : <PlayGlyph className="h-4 w-4" />}
                 </button>
-                <TransportButton testId="button-podcast-next" label="Nächstes Kapitel" onClick={() => onSkipChapter(1)}>
+                <TransportButton testId="button-podcast-next" label={copy.nextChapter} onClick={() => onSkipChapter(1)}>
                   <SkipForward className="h-4 w-4" />
                 </TransportButton>
-                <TransportButton testId="button-podcast-fwd15" label="15 Sekunden vor" onClick={() => onSeekTo(currentSec + 15)}>
+                <TransportButton testId="button-podcast-fwd15" label={copy.forward15} onClick={() => onSeekTo(currentSec + 15)}>
                   <SecondsGlyph direction="forward" />
                 </TransportButton>
               </div>
@@ -533,11 +533,13 @@ export function PodcastPlayerView({
                   data-testid="podcast-progress"
                   role="slider"
                   tabIndex={0}
-                  aria-label="Fortschritt"
+                  aria-label={copy.progress}
                   aria-valuemin={0}
                   aria-valuemax={Math.round(totalSec)}
                   aria-valuenow={Math.round(currentSec)}
-                  aria-valuetext={`${formatClock(currentSec)} von ${formatClock(totalSec)}`}
+                  aria-valuetext={language === "en"
+                    ? `${formatClock(currentSec)} of ${formatClock(totalSec)}`
+                    : `${formatClock(currentSec)} von ${formatClock(totalSec)}`}
                   className="flex h-1.5 min-w-0 flex-1 gap-[3px]"
                   onClick={seekFromBar}
                 >

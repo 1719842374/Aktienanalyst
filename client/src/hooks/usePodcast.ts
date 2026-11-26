@@ -97,6 +97,8 @@ const SHARED_VOICES: readonly PodcastVoiceOption[] = PODCAST_VOICES.filter((voic
 export const PODCAST_VOICES_EN: readonly PodcastVoiceOption[] = [
   { id: PODCAST_EN_DEFAULT_VOICE, slug: "harper-en", name: "Harper", group: "openrouter" },
   { id: "en-US-Grant:MAI-Voice-2.1", slug: "grant-en", name: "Grant", group: "openrouter" },
+  { id: "en-US-Olivia:MAI-Voice-2.1", slug: "olivia", name: "Olivia", group: "openrouter" },
+  { id: "en-US-Ethan:MAI-Voice-2.1", slug: "ethan", name: "Ethan", group: "openrouter" },
   ...SHARED_VOICES,
 ];
 
@@ -159,6 +161,28 @@ export function tickerIdleResetFields(fallback: { asOf: string; price: string })
     stage: "analyze",
     activeChapterId: null,
   };
+}
+
+export interface PodcastAudioElement {
+  src: string;
+  currentSrc?: string;
+  currentTime: number;
+  pause: () => void;
+  load: () => void;
+  removeAttribute?: (name: string) => void;
+}
+
+/** Tickerwechsel: Blob-URL und currentTime verlassen das Element. reqRef bleibt außen. */
+export function detachPodcastAudio(element: PodcastAudioElement | null): string | null {
+  if (!element) return null;
+  const src = element.currentSrc || element.src || "";
+  element.pause();
+  const blob = src.startsWith("blob:") ? src : null;
+  if (typeof element.removeAttribute === "function") element.removeAttribute("src");
+  else element.src = "";
+  element.load();
+  element.currentTime = 0;
+  return blob;
 }
 
 export function readPodcastLanguage(storage: { getItem(key: string): string | null } | null): PodcastLanguage {
@@ -340,9 +364,9 @@ export function formatStandLine(
   language: PodcastLanguage = "de",
 ): string {
   if (language === "en") {
-    return `As of ${asOf}, price ${price} · ${podcastSourceLabel(source)} · Voice ${voiceName}`;
+    return `As of ${asOf}, price ${price} · ${podcastSourceLabel(source)} · Voice ${voiceName} · EN`;
   }
-  return `Stand ${asOf}, Kurs ${price} · ${podcastSourceLabel(source)} · Stimme ${voiceName}`;
+  return `Stand ${asOf}, Kurs ${price} · ${podcastSourceLabel(source)} · Stimme ${voiceName} · DE`;
 }
 
 /** Player-Labels folgen der Audiosprache. Quellen-Namen und die übrige Seite bleiben Deutsch. */
@@ -366,6 +390,12 @@ export function podcastUiCopy(language: PodcastLanguage): {
   audioDetail: string;
   noKey: string;
   noKeyDetail: string;
+  limitTooltip: string;
+  back15: string;
+  forward15: string;
+  prevChapter: string;
+  nextChapter: string;
+  progress: string;
 } {
   switch (language) {
     case "en":
@@ -378,17 +408,23 @@ export function podcastUiCopy(language: PodcastLanguage): {
         transcript: "Show transcript",
         llmUnavailable: "AI podcast n/a — LLM unavailable.",
         missing: "not available",
-        idleTitle: "Generate AI podcast",
-        idleHint: "Play starts a fresh AI analysis of every section (current figures), then the transcript and audio via OpenRouter. The dashboard view stays unchanged.",
-        generateAria: "Generate AI podcast for",
+        idleTitle: "Create AI podcast",
+        idleHint: "Play runs a fresh AI analysis of all sections (current figures), then the transcript and audio via OpenRouter. The dashboard view stays unchanged.",
+        generateAria: "Create AI podcast for",
         analyzeLabel: "Analysis running …",
-        analyzeDetail: "Fresh figures + AI for every section",
+        analyzeDetail: "Fresh figures and AI across all sections",
         scriptLabel: "Transcript is being written …",
         scriptDetail: "OpenRouter interprets the analysis",
         audioLabel: "Audio is being generated …",
         audioDetail: "OpenRouter TTS, xAI fallback",
         noKey: "AI is unavailable: no OpenRouter key is configured on this server. No answer is generated.",
         noKeyDetail: "The podcast transcript needs OPENROUTER_API_KEY. The PDF export stays unchanged.",
+        limitTooltip: "The daily limit applies only to the English episode.",
+        back15: "15 seconds back",
+        forward15: "15 seconds forward",
+        prevChapter: "Previous chapter",
+        nextChapter: "Next chapter",
+        progress: "Progress",
       };
     case "de":
       return {
@@ -411,6 +447,12 @@ export function podcastUiCopy(language: PodcastLanguage): {
         audioDetail: PODCAST_LOADING_COPY.audio.detail,
         noKey: OPENROUTER_NO_KEY_MESSAGE,
         noKeyDetail: PODCAST_NO_KEY_DETAIL,
+        limitTooltip: "Tageslimit erreicht.",
+        back15: "15 Sekunden zurück",
+        forward15: "15 Sekunden vor",
+        prevChapter: "Vorheriges Kapitel",
+        nextChapter: "Nächstes Kapitel",
+        progress: "Fortschritt",
       };
     default: {
       const unreachable: never = language;
@@ -432,7 +474,7 @@ export function podcastLimitDetail(
     if (language === "en") return `This language is not available again today for ${ticker}. The other language and cached episodes stay playable.`;
     return `Für ${ticker} ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar.`;
   }
-  if (language === "en") return `Not available again today for ${ticker}. Cached episodes stay playable.`;
+  if (language === "en") return `The daily limit applies only to the English episode. Cached episodes stay playable.`;
   return `Für ${ticker} heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.`;
 }
 
@@ -712,9 +754,24 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
   }, [audioRef, clearSpeechTimer]);
 
+  const releaseActiveAudio = useCallback(() => {
+    const stale = detachPodcastAudio(audioRef.current);
+    if (!stale) return;
+    URL.revokeObjectURL(stale);
+    blobRef.current = blobRef.current.filter((url) => url !== stale);
+    scriptCacheRef.current.forEach((slot, key) => {
+      if (!slot.chapters.some((chapter) => chapter.src === stale)) return;
+      scriptCacheRef.current.set(key, {
+        ...slot,
+        chapters: slot.chapters.map((chapter) => chapter.src === stale ? { ...chapter, src: null } : chapter),
+      });
+    });
+  }, [audioRef]);
+
   const resetForTicker = useCallback(() => {
     reqRef.current += 1;
     stopOutput();
+    releaseActiveAudio();
     revokeBlobs();
     chaptersRef.current = [];
     currentSecRef.current = 0;
@@ -728,7 +785,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     setStage(cleared.stage);
     setStandAsOf(cleared.standAsOf);
     setStandPrice(cleared.standPrice);
-  }, [revokeBlobs, stopOutput]);
+  }, [releaseActiveAudio, revokeBlobs, stopOutput]);
 
   useEffect(() => {
     return () => {
@@ -952,6 +1009,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, [markLanguageLimit, revokeBlobs, ticker]);
 
   useEffect(() => {
+    releaseActiveAudio();
     const slot = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, sourceRef.current, languageRef.current, voiceRef.current));
     const limited = limitRef.current.get(podcastLimitKey(ticker, languageRef.current)) === true;
     if (slot && slot.chapters.length > 0) {
@@ -975,7 +1033,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
     } else {
       stateRef.current = "idle";
     }
-  }, [ticker, loadAudio, resetForTicker]);
+  }, [ticker, loadAudio, releaseActiveAudio, resetForTicker]);
 
   const adoptScript = useCallback((parsed: ParsedPodcastScript) => {
     cacheKeyRef.current = parsed.cacheKey;

@@ -20,6 +20,8 @@ import {
   buildPodcastScriptRequest,
   mapVoiceAcrossLanguage,
   tickerIdleResetFields,
+  detachPodcastAudio,
+  voicesForLanguage,
   podcastUiCopy,
   decideLanguageSwitch,
   defaultVoiceForLanguage,
@@ -179,14 +181,14 @@ check("Speed-Label mit Komma", formatSpeedLabel(1) === "1×" && formatSpeedLabel
 check("Uhr 1:12 und 4:36", formatClock(72) === "1:12" && formatClock(276) === "4:36" && formatClock(-4) === "0:00");
 check("Seek bleibt im Kapitelbereich", clampSeek(-10, 100) === 0 && clampSeek(140, 100) === 100 && clampSeek(15, 100) === 15);
 check("Kapitelspannen", JSON.stringify(chapterSpans([{ id: "a", durationSec: 72 }, { id: "b", durationSec: 204 }])) === JSON.stringify([{ id: "a", start: 0, end: 72 }, { id: "b", start: 72, end: 276 }]));
-check("Stand-Zeile", formatStandLine("26.11.2026", "149,3", "pdf", "Eve") === "Stand 26.11.2026, Kurs 149,3 · PDF-basiert · Stimme Eve");
+check("Stand-Zeile", formatStandLine("26.11.2026", "149,3", "pdf", "Eve") === "Stand 26.11.2026, Kurs 149,3 · PDF-basiert · Stimme Eve · DE");
 check("Datum ohne Zeitzone bleibt der Kalendertag, Mitternacht Madrid springt",
   formatPodcastAsOf("2026-11-26") === "26.11.2026" && formatPodcastAsOf("2026-11-26T23:30:00.000Z") === "27.11.2026");
 check("Idle-Unterzeile nennt Quelle und Ticker", podcastIdleSubtitle("ki", "NVDA") === "Nur auf Klick · frische Analyse · KI-Analyse · NVDA");
 check("Limit-Unterzeile je Ticker nennt nicht die andere Sprache",
   PODCAST_LIMIT_SCOPE === "ticker"
   && podcastLimitDetail("NVDA", "de", "ticker") === "Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar."
-  && podcastLimitDetail("NVDA", "en", "ticker") === "Not available again today for NVDA. Cached episodes stay playable."
+  && podcastLimitDetail("NVDA", "en", "ticker") === "The daily limit applies only to the English episode. Cached episodes stay playable."
   && !podcastLimitDetail("NVDA", "de", "ticker").includes("andere Sprache")
   && !podcastLimitDetail("NVDA", "en", "ticker").toLowerCase().includes("other language"));
 check("Limit je Sprache nennt die andere Sprache und den Cache",
@@ -233,7 +235,8 @@ check("Idle: Quellen, Default KI-Analyse, grüner Play, Hinweis",
   && idle.includes("#1ED760")
   && idle.includes('data-html2canvas-ignore')
   && idle.includes("min-w-[min(100%,18.5rem)]")
-  && idle.includes("flex-auto shrink-0")
+  && idle.includes("basis-[min(100%,20rem)]")
+  && !idle.includes("flex-auto shrink-0")
   && !idle.includes("flex-basis")
   && !idle.includes("flexBasis"));
 check("Sprachschalter DE | EN, Default DE",
@@ -253,7 +256,8 @@ check("Sprachschalter DE | EN, Default DE",
   const langButtonAt = idle.indexOf('data-testid="button-podcast-lang-de"');
   const langButton = idle.slice(langButtonAt, idle.indexOf(">", langButtonAt));
   check("Toolbar folgt dem v5-Mock",
-    toolbar.includes("flex w-full flex-wrap items-stretch gap-2")
+    toolbar.includes("flex flex-wrap items-stretch gap-2")
+    && !toolbar.includes("w-full")
     && sourceSeg.includes("flex-[1_1_16rem]")
     && sourceSeg.includes("min-w-[min(100%,12rem)]")
     && sourceSeg.includes("text-xs")
@@ -376,7 +380,7 @@ check("Playing: Zeiten, Balken, Stand, Transkript, Neu erzeugen, Light/Dark-Play
   && playing.includes("bg-muted/[0.45]")
   && playing.includes("rounded-[10px]")
   && playing.includes('data-testid="podcast-stand"')
-  && playing.includes("Stand 26.11.2026, Kurs 149,3 · KI-Analyse · Stimme Klaus")
+  && playing.includes("Stand 26.11.2026, Kurs 149,3 · KI-Analyse · Stimme Klaus · DE")
   && playing.includes('data-testid="podcast-transcript"')
   && playing.includes("Transkript anzeigen")
   && playing.includes("Katalysator-Text.")
@@ -595,7 +599,15 @@ const enCopy = podcastUiCopy("en");
 check("EN-Player übersetzt die Leiste, der Kapiteltitel bleibt die Response",
   english.includes(enCopy.regenerate)
   && english.includes(enCopy.transcript)
-  && english.includes("As of 26.11.2026, price 149.3 · KI-Analyse · Voice Harper")
+  && english.includes("As of 26.11.2026, price 149.3 · KI-Analyse · Voice Harper · EN")
+  && english.includes('aria-label="Speed 1×, change"')
+  && english.includes('aria-label="Voice Harper"')
+  && english.includes('aria-label="15 seconds back"')
+  && english.includes('aria-label="Previous chapter"')
+  && english.includes('aria-label="Next chapter"')
+  && english.includes('aria-label="15 seconds forward"')
+  && english.includes('aria-label="Progress"')
+  && english.includes('aria-valuetext="0:04 of 0:40"')
   && english.includes("Catalysts")
   && english.includes("PDF-basiert")
   && !english.includes("Neu erzeugen")
@@ -629,7 +641,11 @@ check("EN-Limit zeigt den Limit-Zustand ohne Retry",
   const enButton = englishLimit.slice(englishLimit.lastIndexOf("<button", enAt), englishLimit.indexOf(">", enAt));
   const langAt = englishLimit.indexOf('data-testid="podcast-language"');
   const langSeg = englishLimit.slice(englishLimit.lastIndexOf("<div", langAt), englishLimit.indexOf(">", langAt));
-  check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
+  check("EN-Limit-Tooltip ist der Spec-Satz",
+  podcastUiCopy("en").limitTooltip === "The daily limit applies only to the English episode."
+  && englishLimit.includes('title="The daily limit applies only to the English episode."'));
+check("Ungewähltes EN-Label nutzt slate-600", idle.includes("text-slate-600"));
+check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
     enButton.includes("opacity-[0.45]")
     && enButton.includes("cursor-not-allowed")
     && enButton.includes("disabled")
@@ -639,5 +655,38 @@ check("EN-Limit zeigt den Limit-Zustand ohne Retry",
     && !langSeg.includes("opacity-[0.62]"));
 }
 
+check("EN-Idle sagt Create, On click only, und runs all sections",
+  podcastUiCopy("en").idleTitle === "Create AI podcast"
+  && podcastUiCopy("en").idleHint.includes("runs")
+  && podcastUiCopy("en").idleHint.includes("all sections"));
+check("EN-Kurzliste ergänzt Olivia und Ethan, Default bleibt Harper",
+  voicesForLanguage("en").slice(0, 4).map((voice) => voice.name).join(",") === "Harper,Grant,Olivia,Ethan"
+  && defaultVoiceForLanguage("en") === PODCAST_EN_DEFAULT_VOICE);
+{
+  const element = {
+    src: "blob:old-ticker",
+    currentTime: 5.3,
+    paused: false,
+    loaded: false,
+    pause() { this.paused = true; },
+    load() { this.loaded = true; },
+  };
+  const revoked = detachPodcastAudio(element);
+  check("Tickerwechsel leert src, setzt currentTime auf 0 und nennt die Blob-URL",
+    revoked === "blob:old-ticker"
+    && element.src === ""
+    && element.currentTime === 0
+    && element.loaded
+    && element.paused);
+}
+{
+  const resetAt = hookSrc.indexOf("const resetForTicker");
+  const resetBody = hookSrc.slice(resetAt, resetAt + 500);
+  const discardAt = resetBody.indexOf("reqRef.current += 1");
+  check("Ticker-Reset verwirft spätere Antworten und löst danach das Audio",
+    discardAt >= 0
+    && resetBody.indexOf("releaseActiveAudio()") > discardAt
+    && hookSrc.includes("if (requestId !== reqRef.current) return"));
+}
 assert.equal(failed, 0, `${failed} Prüfungen fehlgeschlagen`);
 console.log(`\n${failed === 0 ? "Alle Prüfungen grün." : failed + " fehlgeschlagen."}`);
