@@ -5,6 +5,7 @@
  */
 import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
+import { DE_CLOSED_LEMMAS, DE_VERB_LEMMAS } from "./de-closed";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
@@ -335,6 +336,17 @@ function newsTitlesOf(facts: PodcastFacts): string[] {
   return facts.newsTitles ?? [];
 }
 
+function segmentNamePieces(label: string | null | undefined): string[] {
+  if (!label || !/[\/(),]/.test(label)) return [];
+  const pieces: string[] = [];
+  for (const piece of label.split(/[\/(),]+/)) {
+    const words = piece.trim().split(/[^A-Za-zÄÖÜäöüß0-9]+/).filter(word => word.length >= 2);
+    const word = words[0];
+    if (words.length === 1 && word && /^[A-ZÄÖÜ]/.test(word)) pieces.push(word);
+  }
+  return pieces;
+}
+
 function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames: string[]; realPhrases: string[]; nearTitleNames: string[] } {
   const realNames: string[] = [];
   const realPhrases: string[] = [];
@@ -351,6 +363,7 @@ function collectPackNames(facts: PodcastFacts): { packNames: string[]; realNames
   pushReal(facts.values.company);
   for (const peer of facts.peerNames ?? []) pushReal(peer);
   for (const name of facts.protectedNames) pushReal(name);
+  for (const piece of segmentNamePieces(facts.measures?.segmentName)) pushReal(piece);
   const packNames = [...realNames];
   const titles = [
     ...facts.payloadTitles,
@@ -677,23 +690,83 @@ function isListedNoun(word: string): boolean {
   return nounKeys(word).some(key => DE_NOUNS.has(key));
 }
 
-function provenGermanNoun(word: string): boolean {
+function listedNounForm(word: string): boolean {
   const lower = withoutPossessive(word).toLowerCase();
   if (isListedNoun(lower)) return true;
   for (const suffix of ["en", "er", "e", "n", "s"]) {
     if (lower.length - suffix.length < 4 || !lower.endsWith(suffix)) continue;
     if (isListedNoun(lower.slice(0, -suffix.length))) return true;
   }
-  for (let tailLen = 4; tailLen <= lower.length - 4; tailLen++) {
-    const tail = lower.slice(lower.length - tailLen);
-    if (isListedNoun(tail)) return true;
-    for (const suffix of ["en", "er", "e", "n", "s"]) {
-      if (!tail.endsWith(suffix)) continue;
-      const core = tail.slice(0, -suffix.length);
-      if (core.length >= 4 && isListedNoun(core)) return true;
+  return false;
+}
+
+const DE_CLOSED = new Set(DE_CLOSED_LEMMAS);
+const DE_VERBS = new Set(DE_VERB_LEMMAS);
+
+function partKnown(part: string): boolean {
+  if (part.length < 3) return false;
+  if (listedNounForm(part) || DE_CLOSED.has(part) || DE_VERBS.has(part)) return true;
+  return part.length >= 4 && DE_VERBS.has(`${part}en`);
+}
+
+function knownCompound(word: string): boolean {
+  const lower = withoutPossessive(word).toLowerCase();
+  const forms = [lower];
+  for (const suffix of ["n", "en", "e", "s"]) {
+    if (lower.length - suffix.length >= 8 && lower.endsWith(suffix)) forms.push(lower.slice(0, -suffix.length));
+  }
+  const fugen = ["", "s", "n", "en", "es", "e"];
+  for (const form of forms) {
+    for (let endLen = form.length - 4; endLen >= 3; endLen--) {
+      const end = form.slice(form.length - endLen);
+      if (!partKnown(end)) continue;
+      const rest = form.slice(0, form.length - endLen);
+      for (const fuge of fugen) {
+        if (fuge && !rest.endsWith(fuge)) continue;
+        const head = fuge ? rest.slice(0, -fuge.length) : rest;
+        if (head.length >= 4 && partKnown(head)) return true;
+      }
     }
   }
   return false;
+}
+
+const GERMAN_NOUN_ENDING = /(?:ung|keit|heit|schaft|ion|tät|tum|nis)$/;
+const GERMAN_DETERMINER = new Set(["der", "die", "das", "den", "dem", "des", "ein", "eine", "einer", "einem", "einen", "eines", "kein", "keine", "keiner", "keinem", "keinen", "keines", "dieser", "diese", "dieses", "diesen", "diesem", "jeder", "jede", "jedes", "jeden", "jedem"]);
+
+function germanNounEnding(word: string): boolean {
+  return GERMAN_NOUN_ENDING.test(withoutPossessive(word).toLowerCase());
+}
+
+function determinerBefore(words: string[], index: number): boolean {
+  if (index === 0) return false;
+  const prev = tokenCore(words[index - 1] ?? "").toLowerCase();
+  return GERMAN_DETERMINER.has(prev);
+}
+
+function adjectiveStems(word: string): string[] {
+  const lower = withoutPossessive(word).toLowerCase();
+  const stems = [lower];
+  for (const suffix of ["em", "en", "er", "es", "e"]) {
+    if (lower.length - suffix.length >= 3 && lower.endsWith(suffix)) stems.push(lower.slice(0, -suffix.length));
+  }
+  const keys: string[] = [];
+  for (const stem of stems) {
+    keys.push(stem);
+    const folded = foldUmlaut(stem);
+    if (folded !== stem) keys.push(folded);
+  }
+  return keys;
+}
+
+function knownSentenceStart(word: string): boolean {
+  if (listedNounForm(word)) return true;
+  return adjectiveStems(word).some(stem => DE_LEXICON.has(stem) || DE_CLOSED.has(stem));
+}
+
+function atSentenceStart(words: string[], index: number): boolean {
+  if (index === 0) return true;
+  return /[:.!?]$/.test(words[index - 1] ?? "");
 }
 
 function placeBits(text: string): string[] {
@@ -711,6 +784,14 @@ function mergePlaceNames(fromPack: string[] | undefined): string[] {
   return out;
 }
 
+function flexBit(bit: string): string {
+  const lower = bit.toLowerCase();
+  for (const suffix of ["em", "en", "er", "e"]) {
+    if (lower.length - suffix.length >= 4 && lower.endsWith(suffix)) return lower.slice(0, -suffix.length);
+  }
+  return lower;
+}
+
 function placeCovers(words: string[], index: number, places: string[]): boolean {
   const tokens: Array<{ bit: string; index: number }> = [];
   words.forEach((word, wordIndex) => {
@@ -720,7 +801,10 @@ function placeCovers(words: string[], index: number, places: string[]): boolean 
     const parts = placeBits(place);
     if (!parts.length) continue;
     for (let start = 0; start + parts.length <= tokens.length; start++) {
-      const match = parts.every((part, offset) => tokens[start + offset]?.bit === part);
+      const match = parts.every((part, offset) => {
+        const bit = tokens[start + offset]?.bit;
+        return bit === part || (bit != null && flexBit(bit) === flexBit(part));
+      });
       if (!match) continue;
       for (let offset = 0; offset < parts.length; offset++) {
         if (tokens[start + offset]?.index === index) return true;
@@ -760,8 +844,13 @@ function structuralName(text: string, sheet: SpeechSheet, proveNouns = false): s
       if (!clean || wordAllowed(withoutPossessive(clean), allowed, sheet.language)) continue;
       if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
       if (proveNouns && sheet.language === "de" && /^[A-ZÄÖÜ]/.test(withoutPossessive(clean))) {
-        if (!provenGermanNoun(clean)) return clean;
-        continue;
+        const bare = withoutPossessive(clean);
+        if (atSentenceStart(words, i)) {
+          if (knownSentenceStart(bare) || germanNounEnding(bare) || knownCompound(bare)) continue;
+          return clean;
+        }
+        if (listedNounForm(bare) || germanNounEnding(bare) || determinerBefore(words, i) || knownCompound(bare)) continue;
+        return clean;
       }
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
