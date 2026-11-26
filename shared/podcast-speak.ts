@@ -184,21 +184,26 @@ export function unguard(text: string): string {
   return text.split(NAME_GUARD).join("");
 }
 
-/** true, wenn der Endtext außerhalb erlaubter Produkt-Tokens noch Ziffern, <, > oder % enthält. camelCase gilt nur für den Modell-Rohtext. */
-export function spokenStillRaw(text: string): boolean {
-  const rest = exemptSpokenTokens(unguard(text));
-  return /\d/.test(rest) || /[<>%]/.test(rest);
+const PRODUCT_PREFIX = "USD|EUR|CHF|GBP|JPY|DKK|FY|Q";
+
+/** Großbuchstaben (1–3) plus Ziffern (2–4), ohne Währungs- oder FY/Q-Präfix. */
+function productTokenPattern(): RegExp {
+  return new RegExp(String.raw`\b(?!(?:${PRODUCT_PREFIX}))[A-Z]{1,3}\d{2,4}\b`, "g");
 }
 
-function exemptSpokenTokens(text: string): string {
+/** Nimmt nur S&P 500, Microsoft 365, Q1–Q4 und die Produkt-Allowlist aus der Prüfung. */
+export function stripAllowedNumberTokens(text: string): string {
   return text
     .replace(/S&P 500/g, " ")
     .replace(/\bMicrosoft 365\b/g, " ")
-    .replace(/\b(?:GJ|FY)\d{4}\b/g, " ")
-    .replace(/\bS\d{1,2}\b/g, " ")
-    .replace(/\b\d+-nm\b/g, " ")
-    .replace(/\b[A-Za-z]{1,6}\d{2,4}\b/g, " ")
-    .replace(/\b\d{1,4}[A-Za-z]{1,4}\b/g, " ");
+    .replace(/\bQ[1-4]\b/g, " ")
+    .replace(productTokenPattern(), " ");
+}
+
+/** true, wenn nach der Allowlist noch eine Ziffer, <, > oder % steht. */
+export function spokenStillRaw(text: string): boolean {
+  const rest = stripAllowedNumberTokens(unguard(text));
+  return /\d/.test(rest) || /[<>%]/.test(rest);
 }
 
 function speakCount(raw: string): string | null {
@@ -221,21 +226,14 @@ function speakUnit(num: string, unit: string): string | null {
 
 function maskLiterals(text: string): { text: string; kept: string[] } {
   const kept: string[] = [];
-  const patterns = [
-    /S&P 500/g,
-    /\bMicrosoft 365\b/g,
-    /\b(?:GJ|FY)\d{4}\b/g,
-    /\b\d+-nm\b/g,
-    /\b[A-Za-z]{1,6}\d{2,4}\b/g,
-    /\bS\d{1,2}\b/g,
-  ];
-  let out = text;
-  for (const pattern of patterns) {
-    out = out.replace(pattern, (match) => {
-      kept.push(match);
-      return `\u0002${"x".repeat(kept.length)}\u0002`;
-    });
-  }
+  const hide = (match: string) => {
+    kept.push(match);
+    return `\u0002${"x".repeat(kept.length)}\u0002`;
+  };
+  const out = text
+    .replace(/S&P 500/g, hide)
+    .replace(/\bMicrosoft 365\b/g, hide)
+    .replace(productTokenPattern(), hide);
   return { text: out, kept };
 }
 
@@ -291,7 +289,7 @@ export function speakNormalize(text: string): string | null {
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i] ?? "";
     if (i % 2 === 1) {
-      out += part;
+      if (part) out += `${NAME_GUARD}${part}${NAME_GUARD}`;
       continue;
     }
     const normalized = normalizeFragment(part);

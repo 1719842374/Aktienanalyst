@@ -52,10 +52,19 @@ function listed(ticker: string, company: string, extra: Record<string, unknown> 
 
 function main() {
   assert.equal(speakNormalize("unter 5M Seats")?.includes("fünf Millionen"), true);
-  assert.equal(speakNormalize("MMM, 3M Company"), "MMM, 3M Company");
   assert.equal(speakNormalize("NVIDIA nutzt H100, B200, GB200, A17 und Q4."), "NVIDIA nutzt H100, B200, GB200, A17 und Quartal vier.");
   assert.equal(speakNormalize("Microsoft 365 und der S&P 500 bleiben."), "Microsoft 365 und der S&P 500 bleiben.");
-  ok("5M Seats wird Worte, 3M, H100 und Microsoft 365 bleiben Tokens");
+  const rejected = [
+    "Der Umsatz liegt bei 30Mrd.",
+    "Das Ziel ist USD500.",
+    "Das Kursziel liegt bei EUR250.",
+    "Bis FY27.",
+    "Die Marge steigt um 5x.",
+    "NVIDIA2025 wächst stark.",
+    "Blackwell Q3 2025 ramp +40% to 30B.",
+  ];
+  for (const sentence of rejected) assert.equal(speakNormalize(sentence), null, sentence);
+  ok("Produkt-Tokens bleiben, 30Mrd, USD500, FY27, 5x und 30B fallen");
 
   const ebay = listed("EBAY", "eBay");
   const ebayStart = assemblePodcastChapters("pdf", ebay, {
@@ -122,6 +131,28 @@ function main() {
   assert.match(nvdaMoat, /S&P 500/);
   assert.equal(/\bQ4\b/.test(nvdaMoat), false);
   ok("NVDA-Einstieg behält den Code-Satz vor dem Modell, H100 und Q4 bleiben sprechbar");
+
+  const blocked = listed("NVDA", "NVIDIA", {
+    catalysts: [{ name: "Blackwell Q3 2025 ramp +40% to 30B", nettoUpside: 12.5 }],
+  });
+  for (const sentence of rejected) {
+    assert.equal(checkPodcastSentence(sentence, blocked, "s17", "model").ok, false, sentence);
+  }
+  const blockedSpoken = assemblePodcastChapters("ki", blocked, {
+    chapters: [{ id: "s17", sentences: rejected }],
+  }).map(c => c.spoken).join(" ");
+  assert.equal(/30Mrd|USD500|EUR250|FY27|5x|NVIDIA2025|30B|ramp \+/.test(blockedSpoken), false, blockedSpoken);
+  ok("Die sieben Modellsätze mit Zahl, Einheit oder Währung kommen nicht ins Audio");
+
+  const kept = "NVIDIA nutzt H100, B200, GB200, A17, Microsoft 365 und den S&P 500 im Quartal Q4.";
+  assert.equal(checkPodcastSentence(kept, blocked, "s13", "model").ok, true);
+  const keptSpoken = assemblePodcastChapters("ki", blocked, {
+    chapters: [{ id: "s13", sentences: [kept] }],
+  }).find(c => c.id === "s13")?.spoken ?? "";
+  for (const token of ["H100", "B200", "GB200", "A17", "Microsoft 365", "S&P 500", "Quartal vier"]) {
+    assert.match(keptSpoken, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  ok("H100, B200, GB200, A17, Microsoft 365 und S&P 500 bleiben, Q4 wird Quartal vier");
 
   const risk = listed("NVDA", "NVIDIA", { risks: [{ name: "Export controls" }] });
   const withGerman = assemblePodcastChapters("ki", risk, {

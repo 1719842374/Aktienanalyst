@@ -63,7 +63,7 @@ const values = {
 
 function main() {
   const facts = shell({ values });
-  const allowed = "{ticker} nutzt H100, Q3, S17, GJ2026, 3-nm und S&P 500.";
+  const allowed = "{ticker} nutzt H100, Q3, S17, GJ2026 und S&P 500.";
   assert.equal(checkPodcastSentence(allowed, facts).ok, true);
   assert.equal(checkPodcastSentence("Nur H100.", facts).ok, true);
   assert.equal(checkPodcastSentence("Der erfundene Kurs ist 149.", facts).ok, false);

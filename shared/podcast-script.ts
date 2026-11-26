@@ -6,7 +6,7 @@
 import type { StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { PODCAST_DISCLAIMER } from "./podcast-types";
 import { PLACEHOLDER_KIND, PODCAST_PLACEHOLDERS, placeholderForbiddenInModel, type PodcastFacts, type PodcastFactValues, type PodcastPlaceholder } from "./podcast-facts";
-import { guardSpan, keepCompleteSentences, NAME_GUARD, speakNormalize, spokenStillRaw, unguard } from "./podcast-speak";
+import { guardSpan, keepCompleteSentences, NAME_GUARD, speakNormalize, spokenStillRaw, stripAllowedNumberTokens, unguard } from "./podcast-speak";
 
 const PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
 const ALLOWED = new Set<string>(PODCAST_PLACEHOLDERS);
@@ -91,17 +91,12 @@ function hasNumberUnit(text: string): boolean {
   return false;
 }
 
-function stripPatterns(text: string): string {
-  return text
-    .replace(/S&P 500/g, " ")
-    .replace(/\bMicrosoft 365\b/g, " ")
-    .replace(/\bS\d{1,2}\b/g, " ")
-    .replace(/\bQ[1-4]\b/g, " ")
-    .replace(/\b(?:GJ|FY)\d{4}\b/g, " ")
-    .replace(/\b(?:19|20)\d{2}\b/g, " ")
-    .replace(/\b\d+-nm\b/g, " ")
-    .replace(/\b[A-Za-z]{1,6}\d{2,4}\b/g, " ")
-    .replace(/\b\d{1,4}[A-Za-z]{1,4}\b(?!\s+(?:Seats|Sitze|Sitz|Dollar|Euro|Prozent|Stück|Stueck|Einheiten|Nutzer|User|Aktien|Shares|Barrel|Tonnen)\b)/g, " ");
+function modelNumberLeft(text: string): string | null {
+  const rest = stripAllowedNumberTokens(text);
+  if (/\b(?:USD|EUR|CHF|GBP|JPY|DKK)\s*\d/i.test(rest)) return "Währung";
+  if (/\d+(?:[.,]\d+)?\s*(?:Mrd|Mio|Bn|B|M|K|x|%)/i.test(rest)) return "Zahl mit Einheit";
+  if (/\d/.test(rest) || /[<>%]/.test(rest)) return "Ziffer";
+  return null;
 }
 
 function stripTokens(text: string, tokens: string[]): string {
@@ -259,9 +254,9 @@ export function checkPodcastSentence(
   if (origin === "code") return { ok: true };
   let rest = raw.replace(PLACEHOLDER_RE, " ");
   if (/[{}]/.test(rest)) return { ok: false, reason: "ungültige Klammer" };
-  rest = stripTokens(rest, facts.tokens);
-  rest = stripPatterns(rest);
-  if (/\d/.test(rest)) return { ok: false, reason: "Ziffer" };
+  rest = stripTokens(rest, [...(facts.protectedNames ?? []), ...facts.tokens]);
+  const left = modelNumberLeft(rest);
+  if (left) return { ok: false, reason: left };
   if (hasNumberUnit(rest)) return { ok: false, reason: "Zahlwort" };
   return { ok: true };
 }
@@ -288,7 +283,10 @@ export function applyPlaceholders(
   const guarded = guardNames(filled, facts.protectedNames ?? []);
   const polished = polishSpoken(guarded);
   if (!polished || spokenLeaksPlaceholder(unguard(polished))) return null;
-  return speakNormalize(polished);
+  const spoken = speakNormalize(polished);
+  if (!spoken) return null;
+  if (origin === "model" && modelNumberLeft(stripTokens(unguard(spoken), facts.protectedNames ?? []))) return null;
+  return spoken;
 }
 
 export function balanceProContra(pro: string, contra: string): { pro: string; contra: string } {
@@ -453,7 +451,7 @@ function scrubSpoken(text: string): string {
     const normalized = speakNormalize(polishSpoken(part));
     if (normalized) kept.push(normalized);
   }
-  return polishSpoken(kept.join(" ")).trim();
+  return unguard(polishSpoken(kept.join(" ")).trim());
 }
 
 export function assemblePodcastChapters(source: StockPodcastSource, facts: PodcastFacts, modelData: unknown): StockPodcastChapter[] {

@@ -327,7 +327,8 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     netto_upside_2: upsides[1] ? speakPercent(upsides[1].upside) : null,
     netto_upside_3: upsides[2] ? speakPercent(upsides[2].upside) : null,
   };
-  const payloadTitles = [...riskNames, ...news.map(item => item.title)];
+  const catalystNames: string[] = catalysts.map((c: any) => text(c?.name)).filter((t: string | null): t is string => !!t);
+  const payloadTitles = [...riskNames, ...news.map(item => item.title), ...catalystNames];
   const spokenRisks = riskNames
     .map(name => speakNormalize(name))
     .filter((name): name is string => !!name);
