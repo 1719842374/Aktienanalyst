@@ -801,7 +801,22 @@ function salvageByClosingBrackets(s: string): string {
   return out;
 }
 
-export async function callLLMJson(opts: {
+export type LlmFailureReason = "no_key" | "rate_limit" | "http" | "network" | "empty" | "abort";
+
+export type LlmJsonOutcome =
+  | { ok: true; data: any; modelUsed: string; promptTokens?: number; completionTokens?: number }
+  | { ok: false; reason: LlmFailureReason };
+
+function llmFailureReason(err: any): LlmFailureReason {
+  if (err?.name === "AbortError" || err?.code === "ABORT_ERR") return "abort";
+  const status = err?.status || err?.response?.status;
+  if (status === 429 || status === 402) return "rate_limit";
+  if (typeof status === "number" && status >= 500) return "http";
+  if (typeof status !== "number") return "network";
+  return "empty";
+}
+
+export async function callLLMJsonOutcome(opts: {
   prompt: string;
   maxTokens?: number;
   temperature?: number;
@@ -810,9 +825,9 @@ export async function callLLMJson(opts: {
   online?: boolean;
   /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
   signal?: AbortSignal;
-}): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
+}): Promise<LlmJsonOutcome> {
   const client = getClient();
-  if (!client) return null;
+  if (!client) return { ok: false, reason: "no_key" };
   try {
     const messages: any[] = [];
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
@@ -823,7 +838,7 @@ export async function callLLMJson(opts: {
       messages,
       response_format: { type: "json_object" } as any,
     }, { online: opts.online, signal: opts.signal });
-    if (!text) return null;
+    if (!text) return { ok: false, reason: "empty" };
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
       jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
@@ -839,6 +854,7 @@ export async function callLLMJson(opts: {
       console.warn(`[LLM-JSON] salvaged truncated response (orig=${jsonStr.length}b, salvaged=${salvaged.length}b)`);
     }
     return {
+      ok: true,
       data: JSON.parse(salvaged),
       modelUsed,
       promptTokens: usage?.prompt_tokens,
@@ -846,8 +862,21 @@ export async function callLLMJson(opts: {
     };
   } catch (err: any) {
     console.error(`[LLM-JSON] failed: ${(err?.message || String(err)).substring(0, 300)}`);
-    return null;
+    if (err instanceof SyntaxError) return { ok: false, reason: "empty" };
+    return { ok: false, reason: llmFailureReason(err) };
   }
+}
+
+export async function callLLMJson(opts: {
+  prompt: string;
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+  online?: boolean;
+  signal?: AbortSignal;
+}): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
+  const outcome = await callLLMJsonOutcome(opts);
+  return outcome.ok ? outcome : null;
 }
 
 export interface GrowthThesisInput {

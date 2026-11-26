@@ -101,12 +101,12 @@ export async function yahooFetch(symbol: string, from: string, to: string): Prom
 }
 
 /** Yahoo bars in the major unit plus that major currency (GBp → GBP). */
-export async function yahooChart(symbol: string, from: string, to: string): Promise<{ bars: DailyBar[]; currency: string | null }> {
+export async function yahooChart(symbol: string, from: string, to: string): Promise<{ bars: DailyBar[]; currency: string | null; meta: unknown }> {
   const period1 = utcUnixDay(from);
   const end = new Date(`${to}T00:00:00Z`);
   end.setUTCDate(end.getUTCDate() + 1);
   const period2 = Math.floor(end.getTime() / 1000);
-  if (!isFinite(period1) || !isFinite(period2) || period1 >= period2) return { bars: [], currency: null };
+  if (!isFinite(period1) || !isFinite(period2) || period1 >= period2) return { bars: [], currency: null, meta: null };
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(15000),
@@ -149,6 +149,7 @@ export async function yahooChart(symbol: string, from: string, to: string): Prom
   return {
     bars: yahooBarsToMajor(bars, metaCurrency),
     currency: minorUnitInfo(metaCurrency)?.major ?? metaCurrency,
+    meta: result.meta ?? null,
   };
 }
 
