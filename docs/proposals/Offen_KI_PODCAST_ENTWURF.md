@@ -29,7 +29,7 @@ Diesen Pfad nicht zum Aktien-Button ausbauen. Anderes Publikum, anderer Cache, d
 
 ### Offene PRs, die spätere Baudateien berühren
 
-Nicht mergen, nicht als Ist behandeln.
+#435 und #464 sind auf Philips Entscheidung vom 26.11. geschlossen. Die übrigen Zeilen nicht mergen und nicht als Ist behandeln.
 
 | PR | Bezug | Folge für diesen Entwurf |
 |---|---|---|
