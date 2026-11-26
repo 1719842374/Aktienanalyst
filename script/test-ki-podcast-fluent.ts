@@ -1059,6 +1059,40 @@ async function main() {
     assert.equal(verdict.ok, false, `${sentence} ${verdict.notes.join("|")}`);
     assert.ok(verdict.reasons.includes("name"), `${sentence} ${verdict.notes.join("|")}`);
   }
+  const lillyRiskEn = buildSpeechSheet(buildPodcastFacts(pack("NVO", {
+    ...baseFacts,
+    ticker: "NVO",
+    companyName: "Novo Nordisk",
+    podcastCompanySource: "yahoo-chart",
+    revenueSegments: [{ name: "Diabetes", percentage: 80, fiscalYear: "2026" }],
+    catalysts: [{ name: "Zulassung in der Phase", nettoUpside: 4 }],
+    risks: [{ name: "Wettbewerb durch Lilly" }],
+    newsItems: [{ title: "Neue Zulassung", pubDate: "2026-11-25T08:00:00.000Z" }],
+    growthThesis: "Die Nachfrage trägt die Geschichte der Firma.",
+  }), NOON), "en");
+  for (const entities of [null, [], ["Lilly"]] as Array<string[] | null>) {
+    for (const sentence of [
+      "We look at Lilly's drug and demand remains the verified view this year. The firm holds the market.",
+      "We look at Lilly’s drug and demand remains the verified view this year. The firm holds the market.",
+    ]) {
+      const verdict = verifyChapter("einstieg", sentence, lillyRiskEn, entities);
+      assert.equal(verdict.ok, true, `${entities === null ? "null" : entities.join(",") || "[]"} ${verdict.notes.join("|")}`);
+    }
+  }
+  const riskBlocked: Array<[string, string[] | null]> = [
+    ["We look at Toyota's stock and demand remains the verified view this year. The firm holds the market.", null],
+    ["We look at Toyota's stock and demand remains the verified view this year. The firm holds the market.", ["Toyota"]],
+    ["We look at Apple's stock and demand remains the verified view this year. The firm holds the market.", []],
+    ["We look at Apple's stock and demand remains the verified view this year. The firm holds the market.", ["Apple"]],
+    ["We look at Lily's drug and demand remains the verified view this year. The firm holds the market.", []],
+    ["We look at Nordisk Capital's plan and demand remains the verified view this year. The firm holds the market.", ["Nordisk Capital"]],
+    ["We look at United Pharma's drug and demand remains the verified view this year. The firm holds the market.", null],
+  ];
+  for (const [sentence, entities] of riskBlocked) {
+    const verdict = verifyChapter("einstieg", sentence, lillyRiskEn, entities);
+    assert.equal(verdict.ok, false, `${sentence} ${verdict.notes.join("|")}`);
+    assert.ok(verdict.reasons.includes("name"), `${sentence} ${verdict.notes.join("|")}`);
+  }
   const partials: Array<[string, string]> = [
     ["Der Vergleich China Mobile bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "China Mobile"],
     ["Der Vergleich Nvidia Labs bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.", "Nvidia Labs"],

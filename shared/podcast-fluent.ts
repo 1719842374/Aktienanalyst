@@ -657,7 +657,7 @@ function internalOneEdit(a: string, b: string): boolean {
 }
 
 function withoutPossessive(word: string): string {
-  return word.replace(/(?:['’]s|['’])$/u, "");
+  return word.replace(/(?:['’]s|['’])$/, "");
 }
 
 function placeBits(text: string): string[] {
@@ -721,7 +721,7 @@ function structuralName(text: string, sheet: SpeechSheet): string | null {
     const words = sentence.split(/\s+/).filter(Boolean);
     for (let i = 0; i < words.length; i++) {
       const clean = tokenCore(words[i] ?? "");
-      if (!clean || wordAllowed(clean, allowed, sheet.language)) continue;
+      if (!clean || wordAllowed(withoutPossessive(clean), allowed, sheet.language)) continue;
       if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
       const lower = clean.toLowerCase();
       const camelOrDigit = /[a-zäöü][A-ZÄÖÜ]|\d/.test(clean);
