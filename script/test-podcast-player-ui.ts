@@ -23,6 +23,9 @@ import {
   podcastUiCopy,
   decideLanguageSwitch,
   defaultVoiceForLanguage,
+  PODCAST_LIMIT_SCOPE,
+  languagesMarkedByLimit,
+  podcastScriptCacheKey,
   languageSegmentDisabled,
   readPodcastLanguage,
   voicesForLanguage,
@@ -180,7 +183,22 @@ check("Stand-Zeile", formatStandLine("26.11.2026", "149,3", "pdf", "Eve") === "S
 check("Datum ohne Zeitzone bleibt der Kalendertag, Mitternacht Madrid springt",
   formatPodcastAsOf("2026-11-26") === "26.11.2026" && formatPodcastAsOf("2026-11-26T23:30:00.000Z") === "27.11.2026");
 check("Idle-Unterzeile nennt Quelle und Ticker", podcastIdleSubtitle("ki", "NVDA") === "Nur auf Klick · frische Analyse · KI-Analyse · NVDA");
-check("Limit-Unterzeile", podcastLimitDetail("NVDA") === "Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.");
+check("Limit-Unterzeile je Ticker nennt nicht die andere Sprache",
+  PODCAST_LIMIT_SCOPE === "ticker"
+  && podcastLimitDetail("NVDA", "de", "ticker") === "Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar."
+  && podcastLimitDetail("NVDA", "en", "ticker") === "Not available again today for NVDA. Cached episodes stay playable."
+  && !podcastLimitDetail("NVDA", "de", "ticker").includes("andere Sprache")
+  && !podcastLimitDetail("NVDA", "en", "ticker").toLowerCase().includes("other language"));
+check("Limit je Sprache nennt die andere Sprache und den Cache",
+  podcastLimitDetail("NVDA", "de", "ticker-language") === "Für NVDA ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar."
+  && podcastLimitDetail("NVDA", "en", "ticker-language") === "This language is not available again today for NVDA. The other language and cached episodes stay playable.");
+check("429 markiert bei ticker beide Sprachen, bei ticker-language nur eine",
+  languagesMarkedByLimit("ticker", "de").join(",") === "de,en"
+  && languagesMarkedByLimit("ticker", "en").join(",") === "de,en"
+  && languagesMarkedByLimit("ticker-language", "en").join(",") === "en");
+check("Slot-Key trägt die Stimme",
+  podcastScriptCacheKey("NVDA", "ki", "en", "en-US-Harper:MAI-Voice-2.1")
+    !== podcastScriptCacheKey("NVDA", "ki", "en", "en-US-Grant:MAI-Voice-2.1"));
 check("Stufe analyze, danach script", stageWhileScriptPending(1_000) === "analyze" && stageWhileScriptPending(45_000) === "script");
 check("Default-Stimme ist Mia, Reihenfolge OpenRouter dann xAI dann Browser",
   PODCAST_DEFAULT_VOICE === "de-DE-Mia:MAI-Voice-2.1"
@@ -221,7 +239,8 @@ check("Sprachschalter DE | EN, Default DE",
   && idle.includes('data-testid="button-podcast-lang-en"')
   && idle.includes('aria-label="Sprache Deutsch"')
   && idle.includes("min-h-11")
-  && idle.includes("min-[376px]:flex-row"));
+  && idle.includes("flex flex-wrap items-center gap-x-4 gap-y-2.5")
+  && !idle.includes("min-[376px]"));
 check("Idle ohne Extra-Icons und ohne Leisten-Controls",
   !idle.includes('data-testid="button-podcast-play"')
   && !idle.includes("Download")
@@ -472,6 +491,12 @@ check("Harper und Grant wechseln die Locale, xAI und Browser bleiben, Mia wird d
     && after.stage === "analyze"
     && after.activeChapterId === null);
 }
+check("Der Hook-Reset ruft dieselben Felder auf", (() => {
+  const start = hookSrc.indexOf("const resetForTicker");
+  const body = hookSrc.slice(start, start + 600);
+  const idle = hookSrc.indexOf("resetForTicker();");
+  return start > 0 && body.includes("tickerIdleResetFields") && idle > start;
+})());
 check("429 bleibt das Limit, auch wenn der Text nach einem LLM-Fehler aussieht",
   classifyPodcastFailure(429, { ok: false, errorCode: "LLM_UNAVAILABLE", error: "KI-Podcast n/a — LLM nicht erreichbar.", stage: "script" })?.kind === "limit");
 check("Tageslimit sperrt nur die Sprache ohne Cache",

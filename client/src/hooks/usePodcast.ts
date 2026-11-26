@@ -6,7 +6,7 @@
  * nach shared/ kopiert. Nach dem Merge von PR A auf den shared-Export
  * umstellen. PR B wird erst nach PR A gemergt.
  *
- * Lokale Spiegelung von shared/podcast-types.ts auf PR #529 (Head 60e6b906).
+ * Lokale Spiegelung von shared/podcast-types.ts aus dem offenen Backend-PR, solange der Branch nicht auf main liegt.
  * Nicht aus shared/ importieren, solange #529 nicht auf main liegt.
  * Nach dem Merge von #529 per Merge-Commit auf die shared-Exports umstellen.
  *
@@ -175,14 +175,30 @@ export function decideLanguageSwitch(hasCache: boolean): "play" | "idle" {
   return hasCache ? "play" : "idle";
 }
 
-/** Tageslimit sperrt nur die betroffene Sprache, und nur solange kein Cache da ist. */
+/** Tageslimit sperrt die markierte Sprache, solange für sie kein Cache da ist. */
 export function languageSegmentDisabled(opts: { limited: boolean; hasCache: boolean; loading: boolean }): boolean {
   if (opts.loading) return true;
   return opts.limited && !opts.hasCache;
 }
 
-export function podcastScriptCacheKey(ticker: string, source: PodcastSource, language: PodcastLanguage): string {
-  return `${ticker}|${source}|${language}`;
+/**
+ * Der Server zählt heute je Ticker über beide Sprachen.
+ * `ticker-language` ist der Spec-Text, solange Philip die Zählweise nicht festlegt.
+ */
+export type PodcastLimitScope = "ticker" | "ticker-language";
+export const PODCAST_LIMIT_SCOPE: PodcastLimitScope = "ticker";
+
+export function languagesMarkedByLimit(scope: PodcastLimitScope, language: PodcastLanguage): PodcastLanguage[] {
+  return scope === "ticker" ? ["de", "en"] : [language];
+}
+
+export function podcastScriptCacheKey(
+  ticker: string,
+  source: PodcastSource,
+  language: PodcastLanguage,
+  voice: string,
+): string {
+  return `${ticker}|${source}|${language}|${voice}`;
 }
 
 export function podcastLimitKey(ticker: string, language: PodcastLanguage): string {
@@ -407,7 +423,15 @@ export function podcastIdleSubtitle(source: PodcastSource, ticker: string): stri
   return `Nur auf Klick · frische Analyse · ${podcastSourceLabel(source)} · ${ticker}`;
 }
 
-export function podcastLimitDetail(ticker: string, language: PodcastLanguage = "de"): string {
+export function podcastLimitDetail(
+  ticker: string,
+  language: PodcastLanguage = "de",
+  scope: PodcastLimitScope = PODCAST_LIMIT_SCOPE,
+): string {
+  if (scope === "ticker-language") {
+    if (language === "en") return `This language is not available again today for ${ticker}. The other language and cached episodes stay playable.`;
+    return `Für ${ticker} ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar.`;
+  }
   if (language === "en") return `Not available again today for ${ticker}. Cached episodes stay playable.`;
   return `Für ${ticker} heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.`;
 }
@@ -855,8 +879,10 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, [playAudioAt, speakFrom]);
 
   const markLanguageLimit = useCallback((source: PodcastSource) => {
-    limitRef.current.set(podcastLimitKey(ticker, languageRef.current), true);
-    const key = podcastScriptCacheKey(ticker, source, languageRef.current);
+    for (const marked of languagesMarkedByLimit(PODCAST_LIMIT_SCOPE, languageRef.current)) {
+      limitRef.current.set(podcastLimitKey(ticker, marked), true);
+    }
+    const key = podcastScriptCacheKey(ticker, source, languageRef.current, voiceRef.current);
     const remembered = scriptCacheRef.current.get(key);
     scriptCacheRef.current.set(key, {
       chapters: remembered?.chapters ?? chaptersRef.current,
@@ -926,7 +952,7 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, [markLanguageLimit, revokeBlobs, ticker]);
 
   useEffect(() => {
-    const slot = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, sourceRef.current, languageRef.current));
+    const slot = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, sourceRef.current, languageRef.current, voiceRef.current));
     const limited = limitRef.current.get(podcastLimitKey(ticker, languageRef.current)) === true;
     if (slot && slot.chapters.length > 0) {
       const chapters = slot.chapters.map((chapter) => ({ ...chapter, src: null }));
@@ -997,9 +1023,12 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       const failure = classifyPodcastFailure(res.status, body);
       if (failure?.kind === "limit" || res.status === 429) {
         if (parsed) adoptScript(parsed);
-        limitRef.current.set(podcastLimitKey(ticker, languageRef.current), true);
-        const remembered = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, nextSource, languageRef.current));
-        scriptCacheRef.current.set(podcastScriptCacheKey(ticker, nextSource, languageRef.current), {
+        for (const marked of languagesMarkedByLimit(PODCAST_LIMIT_SCOPE, languageRef.current)) {
+          limitRef.current.set(podcastLimitKey(ticker, marked), true);
+        }
+        const limitVoice = voiceRef.current;
+        const remembered = scriptCacheRef.current.get(podcastScriptCacheKey(ticker, nextSource, languageRef.current, limitVoice));
+        scriptCacheRef.current.set(podcastScriptCacheKey(ticker, nextSource, languageRef.current, limitVoice), {
           chapters: parsed?.chapters ?? remembered?.chapters ?? chaptersRef.current,
           cacheKey: parsed?.cacheKey ?? remembered?.cacheKey ?? cacheKeyRef.current,
           asOf: parsed?.asOf ?? remembered?.asOf ?? "",
@@ -1020,7 +1049,9 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
         return;
       }
       adoptScript(parsed);
-      scriptCacheRef.current.set(podcastScriptCacheKey(ticker, nextSource, parsed.language ?? languageRef.current), {
+      const storedVoice = voiceRef.current;
+      const slotKey = podcastScriptCacheKey(ticker, nextSource, parsed.language ?? languageRef.current, storedVoice);
+      scriptCacheRef.current.set(slotKey, {
         chapters: parsed.chapters,
         cacheKey: parsed.cacheKey,
         asOf: parsed.asOf,
@@ -1029,10 +1060,9 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
       });
       setCacheEpoch((value) => value + 1);
       setStage("audio");
-      const playbackVoice = voiceRef.current === PODCAST_BROWSER_VOICE ? PODCAST_BROWSER_VOICE : (parsed.voice ?? voiceRef.current);
+      const playbackVoice = storedVoice === PODCAST_BROWSER_VOICE ? PODCAST_BROWSER_VOICE : (parsed.voice ?? storedVoice);
       const audio = await loadAudio(parsed.chapters, playbackVoice, parsed.cacheKey, requestId);
       if (requestId !== reqRef.current || audio === "limit") return;
-      const slotKey = podcastScriptCacheKey(ticker, nextSource, parsed.language ?? languageRef.current);
       const stored = scriptCacheRef.current.get(slotKey);
       if (stored) {
         scriptCacheRef.current.set(slotKey, { ...stored, chapters: chaptersRef.current });
@@ -1142,12 +1172,12 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
 
   const selectLanguage = useCallback((next: PodcastLanguage) => {
     if (stateRef.current === "loading" || next === languageRef.current) return;
-    const key = podcastScriptCacheKey(ticker, sourceRef.current, next);
+    const nextVoice = mapVoiceAcrossLanguage(voiceRef.current, next);
+    const key = podcastScriptCacheKey(ticker, sourceRef.current, next, nextVoice);
     const slot = scriptCacheRef.current.get(key);
     const hasCache = (slot?.chapters.length ?? 0) > 0;
     const limited = limitRef.current.get(podcastLimitKey(ticker, next)) === true;
     if (languageSegmentDisabled({ limited, hasCache, loading: false })) return;
-    const nextVoice = mapVoiceAcrossLanguage(voiceRef.current, next);
     voiceByLanguageRef.current[next] = nextVoice;
     languageRef.current = next;
     setLanguage(next);
@@ -1205,9 +1235,10 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
 
   const spans = chapterSpans(chapters);
   const activeChapterId = spanAt(spans, currentSec)?.id ?? null;
+  const voiceFor = (target: PodcastLanguage) => target === language ? voiceId : mapVoiceAcrossLanguage(voiceId, target);
   const cachedLanguages: Record<PodcastLanguage, boolean> = {
-    de: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "de"))?.chapters.length ?? 0) > 0,
-    en: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "en"))?.chapters.length ?? 0) > 0,
+    de: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "de", voiceFor("de")))?.chapters.length ?? 0) > 0,
+    en: (scriptCacheRef.current.get(podcastScriptCacheKey(ticker, source, "en", voiceFor("en")))?.chapters.length ?? 0) > 0,
   };
   const limitedLanguages: Record<PodcastLanguage, boolean> = {
     de: limitRef.current.get(podcastLimitKey(ticker, "de")) === true,

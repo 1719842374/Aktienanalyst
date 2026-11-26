@@ -319,12 +319,12 @@ export function PodcastPlayerView({
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
-        <div data-testid="podcast-toolbar" className="flex flex-col gap-2 min-[376px]:flex-row min-[376px]:items-center">
+        <div data-testid="podcast-toolbar" className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
           <div
             role="radiogroup"
             aria-label="Podcast-Quelle"
             data-testid="podcast-source"
-            className="flex w-full min-[376px]:min-w-0 min-[376px]:flex-1 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
+            className="flex min-w-[min(100%,12rem)] max-w-full flex-1 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
           >
             <button
               type="button"
@@ -359,7 +359,7 @@ export function PodcastPlayerView({
             role="radiogroup"
             aria-label="Podcast-Sprache"
             data-testid="podcast-language"
-            className="flex w-full min-[376px]:w-auto min-[376px]:shrink-0 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
+            className="flex min-w-[min(100%,18.5rem)] max-w-full shrink-0 rounded-md border border-border bg-muted/40 p-0.5 text-[11px] font-semibold"
           >
             {(["de", "en"] as const).map((code) => {
               const hasCache = cachedLanguages[code];
@@ -378,7 +378,7 @@ export function PodcastPlayerView({
                   data-testid={`button-podcast-lang-${code}`}
                   aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
                   className={cn(
-                    "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-[376px]:flex-none",
+                    "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     selected ? "bg-foreground text-background" : "text-muted-foreground",
                     disabled && "cursor-not-allowed opacity-50",
                   )}
