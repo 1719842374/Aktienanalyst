@@ -406,19 +406,19 @@ export function podcastUiCopy(language: PodcastLanguage): {
         limitTitle: "Daily limit reached.",
         retry: "Try again",
         transcript: "Show transcript",
-        llmUnavailable: "AI podcast n/a — LLM unavailable.",
+        llmUnavailable: "AI podcast n/a — LLM unavailable. This error applies only to the English episode.",
         missing: "not available",
         idleTitle: "Create AI podcast",
         idleHint: "Play runs a fresh AI analysis of all sections (current figures), then the transcript and audio via OpenRouter. The dashboard view stays unchanged.",
         generateAria: "Create AI podcast for",
         analyzeLabel: "Analysis running …",
         analyzeDetail: "Fresh figures and AI across all sections",
-        scriptLabel: "Transcript is being written …",
+        scriptLabel: "Transcript in progress …",
         scriptDetail: "OpenRouter interprets the analysis",
-        audioLabel: "Audio is being generated …",
+        audioLabel: "Audio is being created …",
         audioDetail: "OpenRouter TTS, xAI fallback",
         noKey: "AI is unavailable: no OpenRouter key is configured on this server. No answer is generated.",
-        noKeyDetail: "The podcast transcript needs OPENROUTER_API_KEY. The PDF export stays unchanged.",
+        noKeyDetail: "The podcast transcript needs OPENROUTER_API_KEY. The PDF export stays unchanged. This error applies only to the English episode.",
         limitTooltip: "German and English share the daily limit.",
         back15: "15 seconds back",
         forward15: "15 seconds forward",
@@ -447,7 +447,7 @@ export function podcastUiCopy(language: PodcastLanguage): {
         audioDetail: PODCAST_LOADING_COPY.audio.detail,
         noKey: OPENROUTER_NO_KEY_MESSAGE,
         noKeyDetail: PODCAST_NO_KEY_DETAIL,
-        limitTooltip: "Tageslimit erreicht.",
+        limitTooltip: "Für diesen Ticker heute nicht mehr verfügbar. Deutsch und Englisch teilen sich das Tageslimit. Cache-Treffer bleiben abspielbar.",
         back15: "15 Sekunden zurück",
         forward15: "15 Sekunden vor",
         prevChapter: "Vorheriges Kapitel",
@@ -475,7 +475,7 @@ export function podcastLimitDetail(
     return `Für ${ticker} ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar.`;
   }
   if (language === "en") return `Not available again today for ${ticker}. German and English share the daily limit.`;
-  return `Für ${ticker} heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.`;
+  return `Für ${ticker} heute nicht mehr verfügbar. Deutsch und Englisch teilen sich das Tageslimit. Cache-Treffer bleiben abspielbar.`;
 }
 
 /** Tooltip folgt dem Scope. Der Satz „only the English episode“ gilt nur für ticker-language. */
@@ -484,8 +484,7 @@ export function podcastLimitTooltip(
   language: PodcastLanguage,
   scope: PodcastLimitScope = PODCAST_LIMIT_SCOPE,
 ): string {
-  if (language === "en") return podcastLimitDetail(ticker, language, scope);
-  return podcastUiCopy(language).limitTooltip;
+  return podcastLimitDetail(ticker, language, scope);
 }
 
 export function estimateDurationSec(spoken: string): number {
@@ -1238,8 +1237,37 @@ export function usePodcast({ ticker, asOfLabel, priceLabel, audioRef }: UsePodca
   }, [bindMediaSession, chapters, source, voiceId, speed]);
 
   const selectSource = useCallback((next: PodcastSource) => {
-    void run(next, false);
-  }, [run]);
+    if (stateRef.current === "loading" || next === sourceRef.current) return;
+    sourceRef.current = next;
+    setSource(next);
+    const key = podcastScriptCacheKey(ticker, next, languageRef.current, voiceRef.current);
+    const slot = scriptCacheRef.current.get(key);
+    const hasCache = (slot?.chapters.length ?? 0) > 0;
+    stopOutput();
+    if (hasCache && slot) {
+      const chapters = slot.chapters;
+      chaptersRef.current = chapters;
+      setChapters(chapters);
+      cacheKeyRef.current = slot.cacheKey;
+      currentSecRef.current = 0;
+      setCurrentSec(0);
+      setStandAsOf(formatPodcastAsOf(slot.asOf, asOfFallback.current));
+      setStandPrice(slot.priceLabel || priceFallback.current);
+      setError(null);
+      modeRef.current = chapters.some((chapter) => chapter.src) && isServerVoice(voiceRef.current) ? "audio" : "speech";
+      setState("paused");
+      stateRef.current = "paused";
+      play();
+      return;
+    }
+    chaptersRef.current = [];
+    currentSecRef.current = 0;
+    setChapters([]);
+    setCurrentSec(0);
+    setError(null);
+    setState("idle");
+    stateRef.current = "idle";
+  }, [play, stopOutput, ticker]);
 
   const selectLanguage = useCallback((next: PodcastLanguage) => {
     if (stateRef.current === "loading" || next === languageRef.current) return;

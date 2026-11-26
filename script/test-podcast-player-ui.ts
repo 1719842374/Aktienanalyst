@@ -188,7 +188,7 @@ check("Datum ohne Zeitzone bleibt der Kalendertag, Mitternacht Madrid springt",
 check("Idle-Unterzeile nennt Quelle und Ticker", podcastIdleSubtitle("ki", "NVDA") === "Nur auf Klick · frische Analyse · KI-Analyse · NVDA");
 check("Limit-Unterzeile je Ticker teilt Deutsch und Englisch",
   PODCAST_LIMIT_SCOPE === "ticker"
-  && podcastLimitDetail("NVDA", "de", "ticker") === "Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar."
+  && podcastLimitDetail("NVDA", "de", "ticker") === "Für NVDA heute nicht mehr verfügbar. Deutsch und Englisch teilen sich das Tageslimit. Cache-Treffer bleiben abspielbar."
   && podcastLimitDetail("NVDA", "en", "ticker") === "Not available again today for NVDA. German and English share the daily limit."
   && podcastLimitTooltip("NVDA", "en", "ticker") === podcastLimitDetail("NVDA", "en", "ticker")
   && !podcastLimitDetail("NVDA", "en", "ticker").includes("only the English episode"));
@@ -196,7 +196,7 @@ check("Limit je Sprache nutzt den Spec-Satz nur dort",
   podcastLimitDetail("NVDA", "de", "ticker-language") === "Für NVDA ist diese Sprache heute nicht mehr verfügbar. Die andere Sprache und Cache-Treffer bleiben nutzbar."
   && podcastLimitDetail("NVDA", "en", "ticker-language") === "The daily limit applies only to the English episode."
   && podcastLimitTooltip("NVDA", "en", "ticker-language") === "The daily limit applies only to the English episode."
-  && podcastLimitTooltip("NVDA", "de", "ticker") === "Tageslimit erreicht.");
+  && podcastLimitTooltip("NVDA", "de", "ticker") === podcastLimitDetail("NVDA", "de", "ticker"));
 check("429 markiert bei ticker beide Sprachen, bei ticker-language nur eine",
   languagesMarkedByLimit("ticker", "de").join(",") === "de,en"
   && languagesMarkedByLimit("ticker", "en").join(",") === "de,en"
@@ -238,7 +238,8 @@ check("Idle: Quellen, Default KI-Analyse, grüner Play, Hinweis",
   && idle.includes("#1ED760")
   && idle.includes('data-html2canvas-ignore')
   && idle.includes("min-w-[min(100%,18.5rem)]")
-  && idle.includes("basis-[min(100%,20rem)]")
+  && idle.includes("basis-[min(100%,20rem)] grow")
+  && idle.includes("max-w-[26.25rem]")
   && !idle.includes("flex-auto shrink-0")
   && !idle.includes("flex-basis")
   && !idle.includes("flexBasis"));
@@ -479,7 +480,7 @@ const limit = renderToStaticMarkup(React.createElement(PodcastPlayerView, {
 check("Tageslimit bleibt abspielbar, wenn ein Skript da ist",
   limit.includes('data-testid="podcast-rate-limit"')
   && limit.includes("Tageslimit erreicht.")
-  && limit.includes("Für NVDA heute nicht mehr verfügbar. Cache-Treffer bleiben abspielbar.")
+  && limit.includes("Für NVDA heute nicht mehr verfügbar. Deutsch und Englisch teilen sich das Tageslimit. Cache-Treffer bleiben abspielbar.")
   && limit.includes('data-testid="button-podcast-play"')
   && !limit.includes('data-testid="button-podcast-regenerate"'));
 
@@ -496,7 +497,10 @@ check("Stimmen-Menü: Mia zuerst, dann xAI, zuletzt Browser",
     "option-podcast-voice-ara",
     "option-podcast-voice-browser",
   ])
+  && menu.includes('aria-label="Stimme"')
   && menu.includes('aria-selected="true"'));
+const menuEn = renderToStaticMarkup(React.createElement(PodcastVoiceMenu, { activeId: PODCAST_EN_DEFAULT_VOICE, language: "en", onSelect: noop }));
+check("Englisches Stimmen-Menü heißt Voice", menuEn.includes('aria-label="Voice"'));
 
 const card = readFileSync("client/src/components/ExecSummaryCard.tsx", "utf8");
 const wrapAt = card.indexOf('data-testid="podcast-headline-wrap"');
@@ -518,7 +522,12 @@ const hookSrc = readFileSync("client/src/hooks/usePodcast.ts", "utf8");
 const selectAt = hookSrc.indexOf("const selectSource");
 check("Hook startet nicht /api/analyze und nicht den Markt-Podcast",
   !hookSrc.includes("/api/analyze") && !hookSrc.includes("/api/podcast/brief") && hookSrc.includes('"/api/podcast/script"'));
-check("Klick auf eine Quelle startet den Lauf mit regenerate false", selectAt > 0 && hookSrc.slice(selectAt, selectAt + 180).includes("run(next, false)"));
+check("Klick auf eine Quelle erzeugt nicht, Play schon", (() => {
+  const end = hookSrc.indexOf("const selectLanguage", selectAt);
+  const body = hookSrc.slice(selectAt, end);
+  const playAt = hookSrc.indexOf("const togglePlay");
+  return selectAt > 0 && end > selectAt && !body.includes("run(") && hookSrc.slice(playAt, playAt + 280).includes("run(sourceRef.current, false)");
+})());
 check("Neu erzeugen ruft den Lauf mit regenerate true auf", hookSrc.includes("void run(sourceRef.current, true)"));
 check("Hook schickt kein fresh-Feld", !hookSrc.includes("fresh:"));
 check("Kopfkommentar nennt keinen Commit", !hookSrc.includes("64168d9c") && !hookSrc.includes("60e6b906"));
@@ -658,6 +667,10 @@ check("Limit ohne Cache dunkelt nur das gesperrte Segment auf 0.45 ab",
     && !langSeg.includes("opacity-[0.62]"));
 }
 
+check("EN-Loading und EN-Fehler nennen die Spec-Sätze",
+  podcastUiCopy("en").scriptLabel === "Transcript in progress …"
+  && podcastUiCopy("en").audioLabel === "Audio is being created …"
+  && podcastUiCopy("en").noKeyDetail.includes("This error applies only to the English episode."));
 check("EN-Idle sagt Create, On click only, und runs all sections",
   podcastUiCopy("en").idleTitle === "Create AI podcast"
   && podcastUiCopy("en").idleHint.includes("runs")

@@ -100,16 +100,18 @@ export function PodcastVoiceMenu({
   onSelect,
   className,
   voices = PODCAST_VOICES,
+  language = "de",
 }: {
   activeId: string;
   onSelect: (voiceId: string) => void;
   className?: string;
   voices?: readonly PodcastVoiceOption[];
+  language?: PodcastLanguage;
 }) {
   return (
     <ul
       role="listbox"
-      aria-label="Stimme"
+      aria-label={language === "en" ? "Voice" : "Stimme"}
       data-testid="podcast-voice-menu"
       className={cn("max-h-72 w-56 overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", className)}
     >
@@ -315,7 +317,7 @@ export function PodcastPlayerView({
     <div
       data-testid="podcast-player"
       data-html2canvas-ignore=""
-      className="basis-[min(100%,20rem)] min-w-[min(100%,18.5rem)] max-w-full"
+      className="basis-[min(100%,20rem)] grow min-w-[min(100%,18.5rem)] max-w-[26.25rem]"
       onKeyDown={onKeyDown}
     >
       <div data-testid="podcast-cluster" className="flex min-w-0 max-w-full flex-col gap-2" aria-busy={state === "loading"}>
@@ -386,7 +388,7 @@ export function PodcastPlayerView({
                   aria-label={code === "de" ? "Sprache Deutsch" : "Sprache Englisch"}
                   className={cn(
                     "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-[5px] px-3 uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    selected ? "bg-foreground text-background" : code === "en" ? "text-slate-600 dark:text-slate-300" : "text-muted-foreground",
+                    selected ? "bg-foreground text-background" : "text-slate-600 dark:text-slate-300",
                     limitLocked && "cursor-not-allowed opacity-[0.45]",
                   )}
                   onClick={() => onLanguageChange?.(code)}
@@ -598,6 +600,7 @@ export function PodcastPlayerView({
           <div ref={menuRef} id={menuId} className="z-[60]" style={{ position: "fixed", top: menuStyle.top, left: menuStyle.left }}>
             <PodcastVoiceMenu
               activeId={voiceId}
+              language={language}
               voices={voices ?? voicesForLanguage(language)}
               onSelect={(id) => {
                 setMenuOpen(false);
