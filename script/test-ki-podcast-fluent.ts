@@ -1145,6 +1145,26 @@ async function main() {
     const verdict = verifyChapter("einstieg", inMiddle(word), nvoNames, []);
     assert.equal(verdict.ok, true, `${word} ${verdict.notes.join("|")}`);
   }
+  const actorFrames = (name: string) => [
+    `Der stärkste Treiber ist der Markt, und auch ${name} beobachtet den Markt sehr genau. Die Aktie stützt die Bewertung.`,
+    `${name} steigt ebenfalls in den Markt ein, und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.`,
+    `Der Rivale ${name} holt im Markt auf, und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.`,
+  ];
+  for (const name of ["Allianz", "Linde", "Bayer", "Volkswagen", "Henkel", "Lufthansa", "Rheinmetall", "Beiersdorf", "Siemens", "Novartis"]) {
+    for (const sentence of actorFrames(name)) {
+      for (const entities of [null, [], [name]] as Array<string[] | null>) {
+        const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+        assert.equal(verdict.ok, false, `${name} ${entities === null ? "null" : entities.join(",") || "[]"} ${verdict.notes.join("|")}`);
+        assert.ok(verdict.reasons.includes("name"), `${name} ${verdict.notes.join("|")}`);
+      }
+    }
+  }
+  for (const sentence of actorFrames("Lilly")) {
+    for (const entities of [null, [], ["Lilly"]] as Array<string[] | null>) {
+      const verdict = verifyChapter("einstieg", sentence, nvoNames, entities);
+      assert.equal(verdict.ok, true, `Lilly ${entities === null ? "null" : entities.join(",") || "[]"} ${verdict.notes.join("|")}`);
+    }
+  }
   const pharma = verifyChapter("einstieg", "The firm meets United Pharma and demand remains the verified view this year. Competition holds the market.", bareEn, []);
   assert.equal(pharma.ok, false, pharma.notes.join("|"));
   assert.ok(pharma.reasons.includes("name"), pharma.notes.join("|"));

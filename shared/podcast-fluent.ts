@@ -733,6 +733,9 @@ function knownCompound(word: string): boolean {
 
 const GERMAN_NOUN_ENDING = /(?:ung|keit|heit|schaft|ion|tät|tum|nis)$/;
 const GERMAN_DETERMINER = new Set(["der", "die", "das", "den", "dem", "des", "ein", "eine", "einer", "einem", "einen", "eines", "kein", "keine", "keiner", "keinem", "keinen", "keines", "dieser", "diese", "dieses", "diesen", "diesem", "jeder", "jede", "jedes", "jeden", "jedem"]);
+const ACTOR_ROLE = new Set(["rivale", "konkurrent", "hersteller", "anbieter", "gegner", "partner", "wettbewerber"]);
+const ACTOR_VERB = new Set(["beobachtet", "beobachten", "steigt", "steigen", "stieg", "stiegen", "arbeitet", "arbeiten", "holt", "holen"]);
+const DE_PREPOSITION = new Set(["gegen", "für", "fuer", "mit", "von", "vom", "aus", "bei", "beim", "nach", "über", "ueber", "unter", "ohne", "durch", "in", "im", "am", "an", "auf", "vor", "zwischen", "seit", "um", "zum", "zur", "ins", "ans"]);
 
 function germanNounEnding(word: string): boolean {
   return GERMAN_NOUN_ENDING.test(withoutPossessive(word).toLowerCase());
@@ -767,6 +770,15 @@ function knownSentenceStart(word: string): boolean {
 function atSentenceStart(words: string[], index: number): boolean {
   if (index === 0) return true;
   return /[:.!?]$/.test(words[index - 1] ?? "");
+}
+
+/** Akteur ohne Artikel: Rolle davor oder finite Akteursverbform danach. Pack-Belege sind schon ausgesiebt. */
+function actorSlot(words: string[], index: number): boolean {
+  const prev = index > 0 ? tokenCore(words[index - 1] ?? "").toLowerCase() : "";
+  if (ACTOR_ROLE.has(prev)) return true;
+  if (determinerBefore(words, index) || DE_PREPOSITION.has(prev)) return false;
+  const next = tokenCore(words[index + 1] ?? "").toLowerCase();
+  return ACTOR_VERB.has(next);
 }
 
 function placeBits(text: string): string[] {
@@ -844,6 +856,7 @@ function structuralName(text: string, sheet: SpeechSheet, proveNouns = false): s
       if (!clean || wordAllowed(withoutPossessive(clean), allowed, sheet.language)) continue;
       if (placeCovers(words, i, sheet.placeNames ?? []) || allowedPackToken(clean, sheet)) continue;
       if (proveNouns && sheet.language === "de" && /^[A-ZÄÖÜ]/.test(withoutPossessive(clean))) {
+        if (actorSlot(words, i)) return clean;
         const bare = withoutPossessive(clean);
         if (atSentenceStart(words, i)) {
           if (knownSentenceStart(bare) || germanNounEnding(bare) || knownCompound(bare)) continue;
