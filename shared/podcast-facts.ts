@@ -65,7 +65,7 @@ const MODEL_FORBIDDEN = new Set<PodcastPlaceholder>([
   "price", "dcf_fair", "dcf_low", "dcf_high", "entry", "ttm_revenue",
   "as_of", "call_date", "quarter_period_end", "ttm_period_end",
   "call_quarter", "catalyst_mode", "currency_word", "statement_currency_word",
-  "news_1", "news_2", "news_3", "crv",
+  "news_1", "news_2", "news_3", "news_age", "crv",
 ]);
 
 export function placeholderForbiddenInModel(name: PodcastPlaceholder): boolean {
@@ -153,17 +153,28 @@ function topSegment(analysis: any): { name: string; share: number | null; fiscal
   };
 }
 
-function recentNews(analysis: any, asOfIso: string): Array<{ title: string; ageDays: number }> {
+function madridDayNumber(raw: string): number | null {
+  const when = new Date(raw);
+  if (Number.isNaN(when.getTime())) return null;
+  const key = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(when);
+  const [year, month, day] = key.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+function recentNews(analysis: any, dataTimestamp: string): Array<{ title: string; ageDays: number }> {
   const items = Array.isArray(analysis?.newsItems) ? analysis.newsItems : [];
-  const asOf = new Date(`${asOfIso}T12:00:00Z`).getTime();
+  const asOfDay = madridDayNumber(dataTimestamp);
   const out: Array<{ title: string; ageDays: number }> = [];
   for (const item of items) {
     const title = text(item?.title);
     const pub = text(item?.pubDate);
-    if (!title || !pub) continue;
-    const ts = new Date(pub).getTime();
-    if (!Number.isFinite(ts)) continue;
-    const ageDays = Math.floor((asOf - ts) / 86_400_000);
+    if (!title || !pub || asOfDay == null) continue;
+    const pubDay = madridDayNumber(pub);
+    if (pubDay == null) continue;
+    const ageDays = asOfDay - pubDay;
     if (ageDays < 0 || ageDays > 14) continue;
     out.push({ title, ageDays });
   }
@@ -190,7 +201,7 @@ function clip(textIn: string, max: number): string {
 
 function spokenCatalystMode(analysis: any): string {
   const llm = analysis?.catalystsSource === "llm" || analysis?.llmMode === true;
-  if (!llm) return "Katalysatoren: generisch (Sektor)";
+  if (!llm) return "Katalysatoren: generisch, Sektor";
   const raw = text(analysis?.growthThesisGeneratedAt) ?? text(analysis?.catalystsTimestamp) ?? text(analysis?.dataTimestamp);
   if (!raw) return "Katalysatoren: KI-firmenspezifisch";
   const when = new Date(raw);
@@ -235,7 +246,7 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const year = text(internals.fiscalYear);
   const gj = year && /^\d{4}$/.test(year) ? speakYear(Number(year)) : null;
   const segment = topSegment(analysis);
-  const news = recentNews(analysis, asOf.iso);
+  const news = recentNews(analysis, stamp);
   const callIso = text(analysis.nextEarningsDate);
   const nextDay = callIso ? callIso.slice(0, 10) : null;
   const todayKey = isoDay(now.toISOString(), now).iso;
@@ -276,26 +287,25 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
   const rawTicker = text(analysis.ticker) ?? pack.ticker;
   const silentTicker = isNumericTicker(rawTicker) ? rawTicker : null;
   const namedCompany = companyFromAnalysis(analysis, rawTicker);
-  const productNames = [
-    ...catalysts.map((c: any) => text(c?.name)),
+  const segmentAndProjects = [
     segment?.name ?? null,
     ...(Array.isArray(analysis.keyProjects) ? analysis.keyProjects.map((p: any) => text(p)) : []),
   ].filter((t): t is string => !!t);
   const protectedNames = [
     silentTicker ? null : rawTicker,
     namedCompany,
-    ...productNames,
+    ...segmentAndProjects,
   ].filter((t): t is string => !!t);
   const tokens = [
     silentTicker ? null : rawTicker,
     namedCompany,
-    ...productNames,
+    ...segmentAndProjects,
     ...riskNames,
   ].filter((t): t is string => !!t);
   const moneyWord = reported === "USD" || fx != null ? "Dollar" : currencyWord(reported);
   const values: PodcastFactValues = {
     ticker: silentTicker ? null : rawTicker,
-    company: namedCompany ?? "das Unternehmen",
+    company: namedCompany,
     as_of: speakIsoDate(asOf.iso, "dat"),
     currency_word: moneyWord,
     statement_currency_word: moneyWord,
@@ -425,12 +435,21 @@ function buildContext(
   const lines: string[] = [];
   const sector = text(analysis.sector);
   const industry = text(analysis.industry);
-  lines.push([
-    `Firma: ${values.company ?? "das Unternehmen"}.`,
-    sector ? `Sektor: ${sector}.` : "",
-    industry ? `Branche: ${industry}.` : "",
-    "Einen numerischen Börsenkürzel nicht schreiben und kein s an einen Namen hängen.",
-  ].filter(Boolean).join(" "));
+  if (values.company) {
+    lines.push([
+      `Firma: ${values.company}.`,
+      sector ? `Sektor: ${sector}.` : "",
+      industry ? `Branche: ${industry}.` : "",
+      "Rate keine andere Firma und keine andere Branche.",
+    ].filter(Boolean).join(" "));
+  } else {
+    lines.push([
+      "Eine Firma ist nicht bekannt.",
+      sector ? `Sektor: ${sector}.` : "Ein Sektor ist nicht bekannt.",
+      industry ? `Branche: ${industry}.` : "Eine Branche ist nicht bekannt.",
+      "Rate keine Firma und keine Branche. Schreibe das Wort Unternehmen nicht.",
+    ].join(" "));
+  }
   const thesis = text(analysis.growthThesis);
   if (thesis) lines.push(`These: ${clip(thesis, 500)}`);
   const forces = analysis.moatAssessment?.porterForces;

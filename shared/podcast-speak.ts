@@ -167,9 +167,9 @@ export function speakQuarterPhrase(raw: string): string | null {
 
 /** Fertige Altersphrase. Der Satz heißt „stammt von heute“, nicht „ist weniger als einem Tag alt“. */
 export function speakNewsAge(days: number): string {
-  if (!Number.isFinite(days) || days <= 0) return "von heute";
-  if (Math.trunc(days) === 1) return "von gestern";
-  return `von vor ${speakUnsigned(Math.trunc(days))} Tagen`;
+  if (!Number.isFinite(days) || days <= 0) return "heute";
+  if (Math.trunc(days) === 1) return "gestern";
+  return `vor ${speakUnsigned(Math.trunc(days))} Tagen`;
 }
 
 /** Trennt einen eingesetzten Eigennamen vom Normalisierer. */
@@ -246,9 +246,16 @@ function restoreLiterals(text: string, kept: string[]): string {
 }
 
 /** Zahlen außerhalb geschützter Spans. Ein Eigenname zwischen den Wächtern bleibt stehen. */
+function speakKnownTerms(text: string): string {
+  const phase = ["", "eins", "zwei", "drei", "vier"];
+  return text
+    .replace(/\bGLP-1\b/g, "GLP-eins")
+    .replace(/\bPhase[-\s]([1-4])\b/gi, (_match, n: string) => `Phase ${phase[Number(n)] ?? n}`);
+}
+
 function normalizeFragment(text: string): string | null {
   if (!text.trim()) return text;
-  const masked = maskLiterals(text.normalize("NFKC"));
+  const masked = maskLiterals(speakKnownTerms(text).normalize("NFKC"));
   let out = masked.text;
   const swap = (pattern: RegExp, to: (num: string, extra?: string) => string | null) => {
     out = out.replace(pattern, (full: string, num: string, extra?: string) => to(num, extra) ?? full);
@@ -336,7 +343,7 @@ export function rankAfterRounding(values: RankedFigures): { ok: boolean; sig: 3 
 
 /** Behält nur Sätze, die mit Punkt, Ausrufe- oder Fragezeichen enden. Ein abgeschnittenes Wort fällt weg. */
 export function keepCompleteSentences(text: string): string {
-  const parts = text.match(/[^.!?]*[.!?]+/g);
+  const parts = text.match(/(?:[^.!?]|\.(?!\s))*[.!?]+(?=\s|$)/g);
   if (!parts) return "";
   return parts.map(s => s.trim()).filter(Boolean).join(" ");
 }

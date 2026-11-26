@@ -124,9 +124,9 @@ function main() {
   assert.match(msftNorm, /fünf Millionen/);
   assert.equal(spokenStillRaw(msftNorm), false);
   assert.equal(speakNormalize("Prediction for 2027.")?.includes("2027"), false);
-  assert.equal(speakNewsAge(0), "von heute");
-  assert.equal(speakNewsAge(1), "von gestern");
-  assert.equal(speakNewsAge(3), "von vor drei Tagen");
+  assert.equal(speakNewsAge(0), "heute");
+  assert.equal(speakNewsAge(1), "gestern");
+  assert.equal(speakNewsAge(3), "vor drei Tagen");
   ok("speakNormalize macht Ziffern, Prozent, 5M und Bindestrich-Zahlen zu Worten");
 
   const nvo = factsOf(base("NVO", "Novo Nordisk", {
@@ -140,7 +140,8 @@ function main() {
   }
   assert.equal(checkPodcastSentence("Die FCF-Marge liegt bei {fcf_margin}.", nvo, "s14", "model").ok, true);
   assert.equal(checkPodcastSentence("Der Netto-Upside liegt bei {netto_upside_1}.", nvo, "s17", "model").ok, true);
-  assert.equal(checkPodcastSentence("Die jüngste Meldung stammt {news_age}.", nvo, "news-llm", "model").ok, true);
+  assert.equal(checkPodcastSentence("Die jüngste Meldung stammt {news_age}.", nvo, "news-llm", "model").ok, false);
+  assert.equal(checkPodcastSentence("Die jüngste Meldung stammt von {news_age}.", nvo, "news-llm", "code").ok, true);
   ok("Ist-Sätze fallen, Kennzahlen mit Platzhalter bleiben");
 
   const nvda = factsOf(base("NVDA", "NVIDIA", {
@@ -173,7 +174,8 @@ function main() {
   assert.equal(/liegt nicht vor|Prediction|Rejection|GLP-1|2025/.test(nvoNews), false, nvoNews);
   assert.equal(/\balt\b|weniger als einem Tag/.test(nvoNews), false, nvoNews);
   const nvoInversion = nvoKi.find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(nvoInversion, /Risiko: GLP-eins Phase drei/);
+  assert.match(nvoInversion, /Das erste Risiko/);
+  assert.equal(/Risiko:|GLP-eins|Phase drei/.test(nvoInversion), false, nvoInversion);
   assert.equal(/Phase-3|<25%|2025|2026/.test(nvoInversion), false, nvoInversion);
   const nvoS17 = nvoKi.find(c => c.id === "s17")?.spoken ?? "";
   assert.match(nvoS17, /Netto-Upside liegt bei/);
@@ -191,9 +193,8 @@ function main() {
   const msftNews = assemblePodcastChapters("ki", msft, msftModel).find(c => c.id === "news-llm")?.spoken ?? "";
   assert.match(msftNews, /stammt von gestern/);
   const msftInversion = assemblePodcastChapters("ki", msft, msftModel).find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(msftInversion, /Risiko:/);
-  assert.match(msftInversion, /fünf Millionen/);
-  assert.equal(/5M|2025/.test(msftInversion), false, msftInversion);
+  assert.match(msftInversion, /Das erste Risiko/);
+  assert.equal(/Risiko:|fünf Millionen|5M|2025/.test(msftInversion), false, msftInversion);
   ok("News-Alter ist von heute oder von gestern, englische Titel bleiben draußen");
 
   const filing = factsOf(base("NVO", "Novo Nordisk", { lastReportedQuarter: "2026-11-17" }));

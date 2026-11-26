@@ -29,6 +29,7 @@ interface ScriptCacheEntry {
   asOfLabel: string;
   priceLabel: string | null;
   modelUsed: string | null;
+  dropped: number;
 }
 
 const scriptCache = new Map<string, ScriptCacheEntry>();
@@ -95,6 +96,7 @@ export async function renderStockPodcastScript(opts: {
   voiceLabel: string;
   cached: boolean;
   modelUsed: string | null;
+  dropped: number;
   facts: PodcastFacts;
 } | { ok: false; reason: "timeout" | "empty" }> {
   const voice = resolveStockPodcastVoice(opts.voiceId);
@@ -114,6 +116,7 @@ export async function renderStockPodcastScript(opts: {
       voiceLabel: voice.label,
       cached: true,
       modelUsed: cached.modelUsed,
+      dropped: cached.dropped,
       facts,
     };
   }
@@ -133,7 +136,8 @@ export async function renderStockPodcastScript(opts: {
   }
   if (raced == null) return { ok: false, reason: "empty" };
   const modelData = raced.data ?? null;
-  const chapters = assemblePodcastChapters(opts.source, facts, modelData).map(chapter => ({
+  const assembled = assemblePodcastChapters(opts.source, facts, modelData);
+  const chapters = assembled.map(chapter => ({
     ...chapter,
     audioUrl: null as string | null,
   }));
@@ -151,6 +155,7 @@ export async function renderStockPodcastScript(opts: {
     asOfLabel: facts.asOfLabel,
     priceLabel: facts.priceLabel,
     modelUsed: raced.modelUsed ?? null,
+    dropped: assembled.dropped,
   };
   scriptCache.set(cacheKey, entry);
   return {
@@ -164,6 +169,7 @@ export async function renderStockPodcastScript(opts: {
     voiceLabel: voice.label,
     cached: false,
     modelUsed: entry.modelUsed,
+    dropped: assembled.dropped,
     facts,
   };
 }

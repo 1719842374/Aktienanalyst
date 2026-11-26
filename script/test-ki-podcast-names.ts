@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { buildPodcastFacts } from "../shared/podcast-facts";
 import { assemblePodcastChapters, buildPodcastLlmPrompt, checkPodcastSentence } from "../shared/podcast-script";
 import { speakNormalize } from "../shared/podcast-speak";
-import type { FullAiPack } from "../server/stock-podcast-full-ai";
+import { resolvePodcastCompanyName, type FullAiPack } from "../server/stock-podcast-full-ai";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
@@ -50,7 +50,7 @@ function listed(ticker: string, company: string, extra: Record<string, unknown> 
   });
 }
 
-function main() {
+async function main() {
   assert.equal(speakNormalize("unter 5M Seats")?.includes("fünf Millionen"), true);
   assert.equal(speakNormalize("NVIDIA nutzt H100, B200, GB200, A17 und Q4."), "NVIDIA nutzt H100, B200, GB200, A17 und Quartal vier.");
   assert.equal(speakNormalize("Microsoft 365 und der S&P 500 bleiben."), "Microsoft 365 und der S&P 500 bleiben.");
@@ -142,7 +142,8 @@ function main() {
     chapters: [{ id: "s17", sentences: rejected }],
   }).map(c => c.spoken).join(" ");
   assert.equal(/30Mrd|USD500|EUR250|\bFY27\b|5x|NVIDIA2025/.test(blockedSpoken), false, blockedSpoken);
-  assert.match(blockedSpoken, /Katalysator Blackwell Q3 2025 ramp \+40% to 30B: Der Netto-Upside liegt bei/);
+  assert.match(blockedSpoken, /Der erste Katalysator: Der Netto-Upside liegt bei/);
+  assert.equal(/Blackwell|30B|Phase-3/.test(blockedSpoken), false, blockedSpoken);
   ok("Die sieben Modellsätze mit Zahl, Einheit oder Währung kommen nicht ins Audio");
 
   const kept = "NVIDIA nutzt H100, B200, GB200, A17, Microsoft 365 und den S&P 500 im Quartal Q4.";
@@ -162,7 +163,8 @@ function main() {
   assert.match(withGerman, /Das Exportkontroll-Risiko bleibt der Gegenpol/);
   assert.equal(/Risiko: Export controls/.test(withGerman), false, withGerman);
   const fallback = assemblePodcastChapters("ki", risk, null).find(c => c.id === "inversion")?.spoken ?? "";
-  assert.match(fallback, /Risiko: Export controls/);
+  assert.match(fallback, /Das erste Risiko/);
+  assert.equal(/Export controls/.test(fallback), false, fallback);
   ok("Deutscher Inversionssatz ersetzt den englischen Risiko-Fallback");
 
   const toyota = listed("7203.T", "7203.T", {
@@ -176,7 +178,7 @@ function main() {
     nextEarningsDate: "2027-02-10",
   });
   assert.equal(toyota.values.ticker, null);
-  assert.equal(toyota.values.company, "das Unternehmen");
+  assert.equal(toyota.values.company, null);
   assert.equal(toyota.silentTicker, "7203.T");
   const toyotaModel = {
     chapters: [
@@ -193,13 +195,14 @@ function main() {
     ...assemblePodcastChapters("ki", toyota, toyotaModel),
   ].map(c => c.spoken).join(" ");
   assert.equal(/7203|siebentausend/.test(toyotaSpoken), false, toyotaSpoken);
-  assert.match(toyotaSpoken, /das Unternehmen/);
-  assert.match(toyotaSpoken, /Katalysator Hybrid demand: Der Netto-Upside liegt bei/);
+  assert.equal(/das Unternehmen|von das/.test(toyotaSpoken), false, toyotaSpoken);
+  assert.match(toyotaSpoken, /Der erste Katalysator: Der Netto-Upside liegt bei/);
+  assert.equal(/Hybrid demand/.test(toyotaSpoken), false, toyotaSpoken);
   const toyotaNews = assemblePodcastChapters("ki", toyota, toyotaModel).find(c => c.id === "news-llm")?.spoken ?? "";
   assert.equal((toyotaNews.match(/Die jüngste Meldung stammt von vor sieben Tagen/g) ?? []).length, 1, toyotaNews);
   assert.equal(/Eine Investmentthese liegt vor|zuletzt gemeldete Quartal liegt vor/.test(toyotaSpoken), false);
   const toyotaPrompt = buildPodcastLlmPrompt("ki", toyota);
-  assert.match(toyotaPrompt.prompt, /Firma: das Unternehmen/);
+  assert.match(toyotaPrompt.prompt, /Eine Firma ist nicht bekannt/);
   assert.match(toyotaPrompt.prompt, /Sektor: Consumer Cyclical/);
   assert.match(toyotaPrompt.prompt, /Branche: Auto Manufacturers/);
   assert.equal(toyotaPrompt.prompt.includes("7203"), false);
@@ -243,6 +246,115 @@ function main() {
     assert.equal(/(?<!nicht )liegt vor\./.test(spoken), false, spoken);
   }
   ok("Echte Pack-Form: kein numerischer Ticker, kein leeres liegt vor, kein doppelter Satz");
+
+  const unknown = { companyName: "7203.T", ticker: "7203.T" };
+  const resolved = await resolvePodcastCompanyName(unknown, "7203.T", async () => ({ companyName: "Toyota Motor Corporation" }));
+  assert.equal(resolved.name, "Toyota Motor Corporation");
+  assert.equal(resolved.source, "fmp-profile");
+  assert.equal(unknown.companyName, "7203.T");
+  const knownName = await resolvePodcastCompanyName({ companyName: "NVIDIA Corporation" }, "NVDA", async () => {
+    throw new Error("Profil darf bei vorhandenem Namen nicht gelesen werden");
+  });
+  assert.equal(knownName.source, "analysis");
+  assert.equal(knownName.name, "NVIDIA Corporation");
+  const missing = await resolvePodcastCompanyName({ companyName: "7203.T" }, "7203.T", async () => {
+    throw new Error("down");
+  });
+  assert.equal(missing.name, null);
+  assert.equal(missing.source, "missing");
+  ok("Podcast-Pfad löst den Firmennamen über den FMP-Profile-Client, Analyze bleibt unangetastet");
+
+  const sameDay = facts({
+    ticker: "NVDA",
+    companyName: "NVIDIA",
+    dataTimestamp: "2026-11-26T10:00:00.000Z",
+    newsItems: [{ title: "Same day note", pubDate: "2026-11-26T13:00:00.000Z" }],
+    currentPrice: 100,
+    currency: "USD",
+  });
+  assert.equal(sameDay.values.news_age, "heute");
+  ok("Meldungsalter rechnet gegen dataTimestamp, derselbe Madrid-Tag bleibt heute");
+
+  const bare = listed("NVDA", "NVDA", {
+    sector: "Technology",
+    industry: "Semiconductors",
+    growthThesis: "",
+    newsItems: [{ title: "Chip update", pubDate: "2026-11-26T08:00:00.000Z" }],
+    catalysts: [
+      { name: "Phase-3 readout & Marktstart", nettoUpside: 4 },
+      { name: "Expansion +27%", nettoUpside: 5 },
+      { name: "GLP-1", nettoUpside: 6 },
+    ],
+    risks: [
+      { name: "US Core Business Margin Recovery Stalls Permanently" },
+      { name: "(Lexus 2027)" },
+      { name: "(Mirai Gen3)" },
+      { name: "bZ4X" },
+      { name: "Omniverse Enterprise Monetization" },
+      { name: "Hydrogen Fuel-Cell Expansion" },
+    ],
+  });
+  assert.equal(bare.values.company, null);
+  assert.equal(bare.values.ampel, null);
+  const liveModel = {
+    labels: {
+      catalysts: ["Phase drei und Marktstart", "Expansion +27%", "GLP-eins"],
+      risks: [
+        "US Core Business Margin Recovery Stalls Permanently",
+        "(Lexus 2027)",
+        "Der Mirai-Nachfolger",
+        "bZ4X",
+        "Omniverse Enterprise Monetization",
+        "Wasserstoffantrieb",
+      ],
+    },
+    chapters: [
+      { id: "einstieg", sentences: ["NVDA, das Unternehmen.", "das Unternehmen. Stand vom heute.", "Die Ampel liegt nicht vor.", "Die jüngste Meldung stammt von von heute."] },
+      { id: "s14", sentences: ["durch drei Hauptkatalyse getrieben."] },
+      { id: "s17", sentences: ["durch drei Hauptkatalyse getrieben."] },
+      { id: "these", sentences: ["Die Angabe liegt nicht vor."] },
+      { id: "s13", sentences: ["Im Jahr 2025 liefert NVIDIA weiter.", "von das Unternehmen bleibt der Kern.", "das Unternehmen konkurriert mit dem Feld.", "das Unternehmen genießt einen Vorsprung."] },
+      { id: "inversion", sentences: ["US Core Business Margin Recovery Stalls Permanently."] },
+      { id: "news-llm", sentences: ["Die jüngste Meldung stammt von heute.", "Die jüngste Meldung stammt von von heute."] },
+    ],
+  };
+  const live = assemblePodcastChapters("pdf", bare, liveModel);
+  const liveSpoken = live.map(c => c.spoken).join(" ");
+  assert.equal(live.find(c => c.id === "these"), undefined, liveSpoken);
+  assert.equal(/Die Ampel liegt nicht vor|Die Angabe liegt nicht vor|NVDA, das Unternehmen|von das|von von|das Unternehmen konkurriert|das Unternehmen genießt|Stahlzölle|grünen Stahl|Stahlindustrie|Hauptkatalyse|Phase-3|&|Expansion \+|Lexus|Mirai Gen|bZ4X|Omniverse|Hydrogen|US Core Business/.test(liveSpoken), false, liveSpoken);
+  assert.match(liveSpoken, /Phase drei und Marktstart/);
+  assert.match(liveSpoken, /Der zweite Katalysator/);
+  assert.match(liveSpoken, /GLP-eins/);
+  assert.match(liveSpoken, /Das erste Risiko/);
+  assert.match(liveSpoken, /Der Mirai-Nachfolger/);
+  assert.match(liveSpoken, /zweitausendfünfundzwanzig/);
+  assert.ok(live.dropped > 0);
+  const liveNews = live.find(c => c.id === "news")?.spoken ?? "";
+  assert.equal((liveNews.match(/Die jüngste Meldung stammt von/g) ?? []).length, 1, liveNews);
+  assert.equal(/jüngste Meldung/.test(live.find(c => c.id === "einstieg")?.spoken ?? ""), false);
+  const barePrompt = buildPodcastLlmPrompt("ki", bare);
+  assert.match(barePrompt.prompt, /Rate keine Firma und keine Branche/);
+  assert.equal(/Stahlzölle|fördert grünen Stahl|Südkoreas Stahlindustrie/.test(barePrompt.prompt), false);
+  ok("Live-Strings aus dem Retest fallen, deutsche Labels und das Jahr bleiben");
+
+  const apple = listed("AAPL", "Apple Inc.", { keyProjects: ["iPhone", "Mac", "Service"] });
+  const appleSpoken = assemblePodcastChapters("ki", apple, {
+    chapters: [{ id: "s13", sentences: ["Apple Inc.s Ökosystem bleibt der Kern.", "Die iPhones, Macs und Services bleiben."] }],
+  }).map(c => c.spoken).join(" ");
+  assert.match(appleSpoken, /Apple Inc\./);
+  assert.equal(/s Ökosystem|Inc\.s/.test(appleSpoken), false, appleSpoken);
+  assert.match(appleSpoken, /iPhones/);
+  assert.match(appleSpoken, /Macs/);
+  assert.match(appleSpoken, /Services/);
+  const longName = listed("7203.T", "Toyota Motor Corporation");
+  const longSpoken = assemblePodcastChapters("ki", longName, {
+    chapters: [
+      { id: "einstieg", sentences: ["Toyota Motor Corporation bleibt der Hybridhersteller."] },
+      { id: "s13", sentences: ["Toyota Motor Corporation bleibt der Hybridhersteller im Kerngeschäft."] },
+    ],
+  }).map(c => c.spoken).join(" ");
+  assert.match(longSpoken, /im Kerngeschäft/);
+  ok("Genitiv trennt Apple Inc. nicht, Plurale bleiben, der lange Name streicht den Folgesatz nicht");
 
   console.log(`ki-podcast names: ${n} checks ok`);
 }

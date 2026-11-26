@@ -16,7 +16,7 @@ export type StockPodcastStage = "analyze" | "script" | "audio";
  */
 export const PODCAST_DAILY_MAX = 2;
 
-export const PODCAST_PROMPT_VERSION = "stock-podcast-v10";
+export const PODCAST_PROMPT_VERSION = "stock-podcast-v11";
 
 export const PODCAST_DISCLAIMER = "Dies ist keine Anlageberatung.";
 
@@ -88,7 +88,7 @@ export interface StockPodcastStageTiming {
 /** Sichtbare Stufen-Laufzeiten. Audio-Timeout steht hier, die Messung folgt dem GET. */
 export interface StockPodcastStageTimings {
   analyze: StockPodcastStageTiming;
-  script: StockPodcastStageTiming;
+  script: StockPodcastStageTiming & { dropped: number };
   audio: { timeoutMs: number };
 }
 

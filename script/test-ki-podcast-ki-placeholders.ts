@@ -185,6 +185,7 @@ async function routeChecks() {
     assert.equal(out.body.stages.audio.timeoutMs, PODCAST_STAGE_TIMEOUT_MS.audio);
     assert.equal(typeof out.body.stages.analyze.elapsedMs, "number");
     assert.equal(typeof out.body.stages.script.elapsedMs, "number");
+    assert.equal(typeof out.body.stages.script.dropped, "number");
     assert.ok(out.body.chapters.some(c => c.id === "umsatz" && /Geschäftsjahr/.test(c.spoken)));
   }
   ok("Response trägt Stufen-Timeouts und ein ki-Transkript ohne nackte Namen");

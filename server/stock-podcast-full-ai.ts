@@ -10,7 +10,7 @@ import { PODCAST_STAGE_TIMEOUT_MS } from "../shared/podcast-types";
 import type { StockPodcastErrorCode } from "../shared/podcast-types";
 import { runAnalyzeIsolated } from "./analyze-route";
 import { buildEarningsBrief, type EarningsBriefDeps } from "./chat-earnings-route";
-import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates } from "./fmp";
+import { fmpEarningCallTranscript, fmpEarningCallTranscriptDates, fmpProfile } from "./fmp";
 import {
   buildManagementInterpretPrompt,
   buildManagementInterpretSystemPrompt,
@@ -64,6 +64,40 @@ export interface FullAiDeps {
   earnings: (symbol: string) => Promise<EarningsCallBrief>;
   regulatory: (input: Parameters<typeof assessRegulatoryExposure>[0]) => Promise<any>;
   thesis: (input: ThesisStrengthInput) => any;
+  profile?: (symbol: string) => Promise<any>;
+}
+
+export type PodcastCompanySource = "analysis" | "fmp-profile" | "missing";
+
+function cleanCompanyName(value: unknown, ticker: string): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name) return null;
+  if (name.toUpperCase() === ticker.toUpperCase()) return null;
+  if (/^\d{3,}(?:\.[A-Za-z]{1,4})?$/.test(name)) return null;
+  return name;
+}
+
+/** Firma für den Podcast. Analyze bleibt unverändert. Fehlt der Name, liest der vorhandene FMP-Profile-Client nach. */
+export async function resolvePodcastCompanyName(
+  analysis: any,
+  ticker: string,
+  profile: (symbol: string) => Promise<any> = fmpProfile,
+): Promise<{ name: string | null; source: PodcastCompanySource }> {
+  const upper = ticker.toUpperCase();
+  const fromAnalysis = cleanCompanyName(analysis?.companyName, upper)
+    ?? cleanCompanyName(analysis?.name, upper)
+    ?? cleanCompanyName(analysis?.profile?.companyName, upper)
+    ?? cleanCompanyName(analysis?.profile?.name, upper);
+  if (fromAnalysis) return { name: fromAnalysis, source: "analysis" };
+  try {
+    const row = await profile(upper);
+    const fromProfile = cleanCompanyName(row?.companyName, upper) ?? cleanCompanyName(row?.name, upper);
+    if (fromProfile) return { name: fromProfile, source: "fmp-profile" };
+  } catch {
+    return { name: null, source: "missing" };
+  }
+  return { name: null, source: "missing" };
 }
 
 export interface FullAiFailure {
@@ -230,6 +264,7 @@ function defaultDeps(): FullAiDeps {
     earnings: defaultEarnings,
     regulatory: assessRegulatoryExposure,
     thesis: computeThesisStrength,
+    profile: fmpProfile,
   };
 }
 
@@ -312,11 +347,17 @@ export async function runFullAiAnalysis(
     ? (timedOut.push("supplement"), { pestel: null, management: null, earnings: null, regulatory: null, thesis: null, interpret: null })
     : supplemented;
 
+  const company = await resolvePodcastCompanyName(body, upper, deps.profile ?? fmpProfile);
+  const analysis = {
+    ...body,
+    companyName: company.name ?? "",
+    podcastCompanySource: company.source,
+  };
   const draft = {
     ticker: upper,
     day: madridDayKey(now),
     generatedAt: now.toISOString(),
-    analysis: body,
+    analysis,
     pestelLlm: extra.pestel,
     management: extra.management,
     managementInterpret: extra.interpret,

@@ -105,10 +105,10 @@ function httpFor(code: StockPodcastErrorCode): number {
   }
 }
 
-function stageTimings(analyzeMs: number, scriptMs: number): StockPodcastStageTimings {
+function stageTimings(analyzeMs: number, scriptMs: number, dropped = 0): StockPodcastStageTimings {
   return {
     analyze: { elapsedMs: analyzeMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.analyze },
-    script: { elapsedMs: scriptMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script },
+    script: { elapsedMs: scriptMs, timeoutMs: PODCAST_STAGE_TIMEOUT_MS.script, dropped },
     audio: { timeoutMs: PODCAST_STAGE_TIMEOUT_MS.audio },
   };
 }
@@ -208,7 +208,7 @@ export async function handleStockPodcastScript(
         source,
         pack,
         packCached,
-        stages: stageTimings(analyzeMs, Date.now() - scriptStarted),
+        stages: stageTimings(analyzeMs, Date.now() - scriptStarted, scriptHit.entry.dropped),
         script: {
           ok: true,
           cacheKey: scriptHit.entry.cacheKey,
@@ -220,6 +220,7 @@ export async function handleStockPodcastScript(
           voiceLabel: voice.label,
           cached: true,
           modelUsed: scriptHit.entry.modelUsed,
+          dropped: scriptHit.entry.dropped ?? 0,
           facts,
         },
       }),
@@ -238,7 +239,7 @@ export async function handleStockPodcastScript(
       body: errorBody("LLM_UNAVAILABLE", "KI-Podcast n/a — LLM nicht erreichbar.", "script", ticker, source),
     };
   }
-  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted), script: rendered }) };
+  return { http: 200, body: successBody({ ticker, source, pack, packCached, stages: stageTimings(analyzeMs, Date.now() - scriptStarted, rendered.dropped), script: rendered }) };
 }
 
 export function registerStockPodcastRoute(app: Express, deps?: StockPodcastHandlerDeps): void {

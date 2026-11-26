@@ -57,7 +57,7 @@ const values = {
   dcf_fair: null, dcf_low: null, dcf_high: null, entry: null, crv: null,
   quarter_yoy: null, quarter_period_end: null, ttm_revenue: null, ttm_period_end: null,
   top_segment: null, top_segment_share: null, call_date: null, call_quarter: null,
-  catalyst_mode: "Katalysatoren: generisch (Sektor)",
+  catalyst_mode: "Katalysatoren: generisch, Sektor",
   news_1: null, news_2: null, news_3: null, news_age: null,
   fy_yoy: "einhundertvierzehn Prozent", gj_year: "2026",
   fcf_margin: null, netto_upside_1: null, netto_upside_2: null, netto_upside_3: null,
@@ -143,7 +143,7 @@ function main() {
   assert.equal(/YTD|seit Jahresbeginn/.test(chapters.map(c => c.spoken).join(" ")), false);
   assert.ok(chapters.some(c => c.id === "inversion"));
   assert.ok(chapters.some(c => c.spoken.includes("Dies ist keine Anlageberatung.")));
-  assert.match(chapters.find(c => c.id === "s17")?.spoken ?? "", /generisch \(Sektor\)/);
+  assert.match(chapters.find(c => c.id === "s17")?.spoken ?? "", /generisch, Sektor/);
   const pro = chapters.find(c => c.id === "zusammenfassung")?.spoken.length ?? 0;
   const contra = chapters.find(c => c.id === "inversion")?.spoken.length ?? 0;
   assert.ok(contra >= pro);
