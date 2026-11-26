@@ -8,6 +8,8 @@ vite.config.ts.*
 .env.local
 .env.*.local
 .cache/
+# Piper-Binärdatei und Stimme (script/install-piper.sh)
+vendor/piper/
 data.db
 data.db-wal
 data.db-shm

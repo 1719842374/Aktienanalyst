@@ -26,3 +26,23 @@ export class CursorVoiceAudioAdapter implements PodcastAudioAdapter {
     return { status: "n/a", reason: CURSOR_VOICE_AUDIO_REASON, audioUrl: null };
   }
 }
+
+export type TtsProviderStatus = { provider: string; providerLabel: string; server: boolean; reason: string | null };
+
+/**
+ * Meldet, wer das Skript spricht: die Server-Stimme (/api/tts, Default Piper) oder,
+ * wenn sie fehlt, die Browser-Stimme. Das Audio entsteht erst beim Abspielen im Player,
+ * je Kapitel und gecacht; deshalb bleibt audioUrl hier null.
+ */
+export class TtsPlayerAudioAdapter implements PodcastAudioAdapter {
+  readonly id = "tts-player";
+
+  constructor(private readonly status: () => Promise<TtsProviderStatus>, private readonly browserLabel: string) {}
+
+  async synthesize(script: string): Promise<PodcastAudioResult> {
+    if (!script.trim()) return { status: "n/a", reason: "n/a — kein Skript zum Vorlesen", audioUrl: null };
+    const s = await this.status();
+    if (s.server) return { status: "ok", reason: `ok — ${s.providerLabel}`, audioUrl: null };
+    return { status: "ok", reason: `ok — ${this.browserLabel}${s.reason ? ` · Server-Stimme: ${s.reason}` : ""}`, audioUrl: null };
+  }
+}
