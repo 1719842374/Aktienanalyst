@@ -442,14 +442,33 @@ function proseLines(value: unknown, depth = 0): string[] {
     return clean ? [clean] : [];
   }
   if (value == null || typeof value === "number" || typeof value === "boolean" || depth > 3) return [];
-  if (Array.isArray(value)) return value.flatMap(item => proseLines(item, depth + 1)).slice(0, 6);
+  if (Array.isArray(value)) return value.flatMap(item => proseLines(item, depth + 1).slice(0, 8)).slice(0, 6);
   if (typeof value !== "object") return [];
   const out: string[] = [];
   for (const [key, inner] of Object.entries(value)) {
     const label = GERMAN_FIELD[key] ?? null;
-    for (const line of proseLines(inner, depth + 1)) out.push(label ? `${label}: ${line}` : line);
+    for (const line of proseLines(inner, depth + 1).slice(0, 8)) out.push(label ? `${label}: ${line}` : line);
   }
-  return out.slice(0, 8);
+  return out;
+}
+
+function regulatoryContext(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const body = value as { exposures?: unknown; gate?: { rationale?: unknown } };
+  const lines: string[] = [];
+  const exposures = Array.isArray(body.exposures) ? body.exposures : [];
+  for (const row of exposures) {
+    if (!row || typeof row !== "object") continue;
+    const item = row as { title?: unknown; description?: unknown };
+    const title = text(item.title);
+    const description = text(item.description);
+    const bit = [title, description].filter(Boolean).join(": ");
+    if (!bit || /https?:\/\//i.test(bit) || /REGULATORY_EXPOSURE|price_regulation/.test(bit) || /…-…m|\d+-\d+m/.test(bit)) continue;
+    lines.push(clip(bit, 220));
+  }
+  const rationale = text(body.gate?.rationale);
+  if (rationale && !/REGULATORY_EXPOSURE|price_regulation|https?:\/\//i.test(rationale)) lines.push(clip(rationale, 220));
+  return lines;
 }
 
 function speakRoundedCrv(n: number): string {
@@ -488,7 +507,9 @@ function buildContext(
   if (Array.isArray(forces)) {
     for (const force of forces.slice(0, 5)) {
       const summary = text(force?.summary) ?? text(force?.reasoning);
-      if (summary) lines.push(`Wettbewerbskraft: ${clip(summary, 220)}`);
+      const forceName = text(force?.force);
+      const heading = forceName && !/_/.test(forceName) && !/[a-z][A-Z]/.test(forceName) ? `Porter ${forceName}` : "Porter";
+      if (summary) lines.push(`${heading}: ${clip(summary, 220)}`);
     }
   }
   if (Array.isArray(pack.pestelLlm)) {
@@ -510,7 +531,7 @@ function buildContext(
     }
   }
   for (const line of proseLines(pack.managementInterpret?.data)) lines.push(`Management: ${line}`);
-  for (const line of proseLines(pack.regulatory)) lines.push(`Regulierung: ${line}`);
+  for (const line of regulatoryContext(pack.regulatory)) lines.push(`Regulierung: ${line}`);
   if (pack.earningsBrief?.status === "ok" && pack.earningsBrief.excerpt) {
     lines.push(`Earnings-Auszug: ${clip(pack.earningsBrief.excerpt, 700)}`);
   }

@@ -200,7 +200,7 @@ async function main() {
     llmAvailable: () => true,
     llm: async () => {
       tries += 1;
-      if (tries === 1) return null;
+      if (tries === 1) return { data: null, modelUsed: null, reason: "http" as const };
       return { data: { chapters: [] }, modelUsed: "test" };
     },
     fullAi: (ticker: string) => runFullAiAnalysis(ticker, {
@@ -222,6 +222,34 @@ async function main() {
   assert.equal(tries, 2);
   assert.equal(podcastDailyCount("IBM", noonMadridWinter), 1);
   ok("Ein kurzer Fehlversuch wird einmal wiederholt und zählt das Tageslimit nur einmal");
+
+  let limitedTries = 0;
+  const noRetry = await handleStockPodcastScript({ ticker: "ORCL", source: "pdf" }, {
+    now: () => noonMadridWinter,
+    llmAvailable: () => true,
+    llm: async () => {
+      limitedTries += 1;
+      return { data: null, modelUsed: null, reason: "rate_limit" as const };
+    },
+    fullAi: (ticker: string) => runFullAiAnalysis(ticker, {
+      now: noonMadridWinter,
+      deps: {
+        llmAvailable: () => true,
+        now: () => noonMadridWinter,
+        analyze: async () => ({ status: 200, body: { ...analysisBody(), ticker: "ORCL", companyName: "Oracle" } }),
+        pestel: async () => null,
+        management: async () => null,
+        interpret: async () => null,
+        earnings: async () => ({ symbol: "ORCL", status: "n/a" as const, reason: "n/a", year: null, quarter: null, date: null, summary: null, excerpt: null, excerptTruncated: false, source: null }),
+        regulatory: async () => null,
+        thesis: () => null,
+      },
+    }),
+  });
+  assert.equal(noRetry.http, 503);
+  assert.equal(limitedTries, 1);
+  assert.equal(podcastDailyCount("ORCL", noonMadridWinter), 0);
+  ok("Ein Rate-Limit wird nicht erneut versucht");
 
   console.log(`ki-podcast cache/limit: ${n} checks ok`);
 }

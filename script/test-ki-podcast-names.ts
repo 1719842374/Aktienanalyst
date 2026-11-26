@@ -478,18 +478,85 @@ async function main() {
   assert.match(JSON.stringify(droppedEdit), /japanische Stahl und \{fy_yoy\}/);
   ok("Lektorat behält die Platzhalter, Apostroph-s und weiche Trennstriche fallen deterministisch");
 
-  const summary = assemblePodcastChapters("pdf", listed("NVO", "Novo Nordisk", {
+  const summaryPack = assemblePodcastChapters("pdf", listed("NVO", "Novo Nordisk", {
     growthThesis: "Abnehmmittel tragen das Wachstum.",
     s17Verdict: "Grün",
     revenueSegments: [{ name: "Diabetes", revenue: 8, percentage: 70, fiscalYear: "2026" }],
-  }), { labels: { "Segment 1": "Diabetesmittel" } }).find(c => c.id === "zusammenfassung")?.spoken ?? "";
-  assert.match(summary, /Der Kurs steht bei/);
+  }), { labels: { "Segment 1": "Diabetesmittel" } });
+  const summary = summaryPack.find(c => c.id === "zusammenfassung")?.spoken ?? "";
+  const umsatz = summaryPack.find(c => c.id === "umsatz")?.spoken ?? "";
+  assert.equal(summary.startsWith("Der Kurs steht bei"), false, summary);
   assert.match(summary, /Ampel steht auf/);
   assert.match(summary, /Abnehmmittel tragen das Wachstum/);
-  assert.match(summary, /Diabetesmittel hat einen Anteil/);
+  assert.equal(/Diabetesmittel/.test(summary), false, summary);
+  assert.match(umsatz, /Diabetesmittel hat einen Anteil/);
   const context = buildPodcastLlmPrompt("ki", listed("NVDA", "NVIDIA", { growthThesis: "Die Nachfrage bleibt hoch." })).prompt;
   assert.equal(/fcfMargin|growthThesis|nettoUpside|moatImpact/.test(context), false, context);
-  ok("Zusammenfassung nennt These, Ampel und Segment, der Kontext nennt keine Feldnamen");
+  ok("Zusammenfassung nennt These und Ampel, das Segment nur im Umsatz, der Kontext nennt keine Feldnamen");
+
+  const germanTitles = listed("NVDA", "NVIDIA", {
+    catalysts: [
+      { name: "Rubin-Plattform", nettoUpside: 5.2 },
+      { name: "Blackwell-Hochlauf", nettoUpside: 10.6 },
+      { name: "Souveräne KI", nettoUpside: 3.1 },
+    ],
+    risks: [{ name: "Preisregulierung" }, { name: "Lilly-Wettbewerb" }],
+  });
+  const germanSpoken = assemblePodcastChapters("ki", germanTitles, {
+    labels: {
+      "Katalysator 1": "Rubin-Plattform",
+      "Katalysator 2": "Blackwell-Hochlauf",
+      "Katalysator 3": "Souveräne KI",
+      "Risiko 1": "Preisregulierung",
+      "Risiko 2": "Lilly-Wettbewerb",
+    },
+  }).map(c => c.spoken).join(" ");
+  assert.match(germanSpoken, /Rubin-Plattform: Der Netto-Upside liegt bei/);
+  assert.match(germanSpoken, /Blackwell-Hochlauf: Der Netto-Upside liegt bei/);
+  assert.match(germanSpoken, /Souveräne KI: Der Netto-Upside liegt bei/);
+  assert.match(germanSpoken, /Die genannten Risiken sind Preisregulierung und Lilly-Wettbewerb/);
+  assert.equal(/(?:^|\. )Preisregulierung\.|(?:^|\. )Lilly-Wettbewerb\./.test(germanSpoken), false, germanSpoken);
+  for (const english of ["Data Center", "Marketplaces"]) {
+    const spoken = assemblePodcastChapters("pdf", listed("TEST", "Firma", {
+      revenueSegments: [{ name: english, revenue: 4, percentage: 40, fiscalYear: "2026" }],
+    }), { labels: { "Segment 1": english } }).map(c => c.spoken).join(" ");
+    assert.equal(spoken.includes(english), false, spoken);
+    assert.match(spoken, /Das größte Segment/);
+  }
+  const englishThesis = assemblePodcastChapters("pdf", listed("NVO", "Novo Nordisk", {
+    growthThesis: "The company is well positioned for growth in 2027 with 20% margin.",
+  }), null).find(c => c.id === "zusammenfassung")?.spoken ?? "";
+  assert.equal(/well positioned|2027|20%/.test(englishThesis), false, englishThesis);
+  const invented = mergeProofread(
+    { chapters: [{ id: "s13", sentences: ["Novo Nordisk bleibt der Spezialist für Abnehmmittel."] }] },
+    { sentences: [{ id: "s13:0", text: "Toyota hat starke Patente und Apple kauft Novo Nordisk." }] },
+  );
+  assert.match(JSON.stringify(invented), /Novo Nordisk bleibt der Spezialist für Abnehmmittel/);
+  assert.equal(JSON.stringify(invented).includes("Toyota"), false);
+  const porter = buildPodcastLlmPrompt("ki", facts({
+    ticker: "NVDA", companyName: "NVIDIA",
+    moatAssessment: { porterForces: [{ force: "Rivalität", summary: "Der Wettbewerb bleibt hoch." }] },
+  })).prompt;
+  assert.match(porter, /Porter Rivalität:/);
+  const regulated = buildPodcastFacts({
+    ...pack({ ticker: "NVO", companyName: "Novo Nordisk" }),
+    regulatory: {
+      ticker: "NVO",
+      exposures: [{
+        title: "Preisregulierung",
+        description: "Erstattungsregeln drücken die Marge.",
+        regulationAxis: "price_regulation",
+        timeHorizon: "0-12m",
+        source: { url: "https://example.test/rule", publishedAt: "2026-01-01", snippet: "x" },
+      }],
+      gate: { id: "REGULATORY_EXPOSURE", rationale: "Materielles Risiko bei der Erstattung." },
+    },
+  } as FullAiPack);
+  const regPrompt = buildPodcastLlmPrompt("ki", regulated).prompt;
+  assert.match(regPrompt, /Erstattungsregeln drücken die Marge/);
+  assert.match(regPrompt, /Materielles Risiko bei der Erstattung/);
+  assert.equal(/price_regulation|REGULATORY_EXPOSURE|example\.test|0-12m|…-…m/.test(regPrompt), false, regPrompt);
+  ok("Deutsche Quelltitel bleiben, die These und das Lektorat prüfen den Inhalt, Regulierung bleibt deutscher Text");
 
   console.log(`ki-podcast names: ${n} checks ok`);
 }

@@ -7,6 +7,7 @@ import type { PodcastDropCounts, StockPodcastChapter, StockPodcastSource } from 
 import { PODCAST_DISCLAIMER, PODCAST_PROMPT_VERSION, PODCAST_STAGE_TIMEOUT_MS, resolveStockPodcastVoice, stockPodcastAudioPath } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts, type PodcastFacts } from "../shared/podcast-facts";
 import { assemblePodcastChapters, buildPodcastLlmPrompt, mergeProofread, proofreadPrompt } from "../shared/podcast-script";
+import type { LlmFailureReason } from "./llm-openrouter";
 import type { FullAiPack } from "./stock-podcast-full-ai";
 import { withStageTimeout } from "./stock-podcast-limit";
 
@@ -17,7 +18,7 @@ export interface StockPodcastLlm {
     maxTokens?: number;
     temperature?: number;
     signal?: AbortSignal;
-  }): Promise<{ data: any; modelUsed: string } | null>;
+  }): Promise<{ data: any; modelUsed: string | null; reason?: LlmFailureReason } | null>;
 }
 
 interface ScriptCacheEntry {
@@ -133,25 +134,28 @@ export async function renderStockPodcastScript(opts: {
     signal: ac.signal,
   });
   let raced = await withStageTimeout(ask(), budget);
-  const fastMiss = raced == null && Date.now() - started < 8000;
-  if (fastMiss) raced = await withStageTimeout(ask(), budget - (Date.now() - started));
+  const retryable = raced != null && raced !== "timeout" && raced.data == null
+    && (raced.reason === "http" || raced.reason === "network");
+  if (retryable) raced = await withStageTimeout(ask(), budget - (Date.now() - started));
   if (raced === "timeout") {
     ac.abort();
     return { ok: false, reason: "timeout" };
   }
-  if (raced == null) return { ok: false, reason: "empty" };
+  if (raced == null || raced.data == null) return { ok: false, reason: "empty" };
   let modelData = raced.data ?? null;
   const proof = proofreadPrompt(modelData);
   const left = budget - (Date.now() - started);
   if (proof && left > 2000) {
+    const proofAc = new AbortController();
     const edited = await withStageTimeout(opts.llm({
       prompt: proof.prompt,
       systemPrompt: proof.systemPrompt,
       maxTokens: 1500,
       temperature: 0,
-      signal: ac.signal,
+      signal: proofAc.signal,
     }), left);
-    if (edited && edited !== "timeout") modelData = mergeProofread(modelData, edited.data ?? null);
+    if (edited === "timeout") proofAc.abort();
+    else if (edited) modelData = mergeProofread(modelData, edited.data ?? null);
   }
   const assembled = assemblePodcastChapters(opts.source, facts, modelData);
   const chapters = assembled.map(chapter => ({

@@ -20,7 +20,7 @@ import {
   resolveStockPodcastVoice,
 } from "../shared/podcast-types";
 import { buildPodcastFacts, hashPodcastFacts } from "../shared/podcast-facts";
-import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
+import { callLLMJsonOutcome, isLLMAvailable } from "./llm-openrouter";
 import {
   peekPodcastPack,
   resetPodcastPackCache,
@@ -232,7 +232,10 @@ export async function handleStockPodcastScript(
     return { http: httpFor("RATE_LIMITED"), body: errorBody("RATE_LIMITED", "Tageslimit erreicht.", "script", ticker, source) };
   }
   counted = true;
-  const llm = deps.llm ?? callLLMJson;
+  const llm = deps.llm ?? (async opts => {
+    const outcome = await callLLMJsonOutcome(opts);
+    return outcome.ok ? { data: outcome.data, modelUsed: outcome.modelUsed } : { data: null, modelUsed: null, reason: outcome.reason };
+  });
   const rendered = await renderStockPodcastScript({ pack, source, voiceId: voice.id, llm, now });
   if (!rendered.ok) {
     podcastDailyRefund(ticker, now);

@@ -173,7 +173,7 @@ function copiesPayloadTitle(sentence: string, titles: readonly string[]): boolea
 
 const ENGLISH_STOP = new Set(["the", "and", "of", "for", "across", "with", "from", "into", "over", "under", "after", "before", "between", "without", "within", "through", "during", "while", "where", "when", "which", "that", "this", "these", "those", "their", "its", "are", "was", "were", "been", "being", "have", "has", "had", "will", "would", "can", "could", "should", "may", "might", "not", "but", "or", "if", "than", "then", "also", "more", "most", "other", "such", "only", "just", "about", "per", "via", "versus", "vs", "to", "in", "on", "at", "by", "as", "an", "be", "is", "it", "we", "our", "you", "your"]);
 
-const ENGLISH_LABEL_WORD = new Set(["demand", "expansion", "enterprise", "monetization", "recovery", "stalls", "permanently", "hydrogen", "fuel", "cell", "margin", "business", "core", "market", "growth", "revenue", "guidance", "omniverse", "backlash", "safety"]);
+const ENGLISH_LABEL_WORD = new Set(["demand", "expansion", "enterprise", "monetization", "recovery", "stalls", "permanently", "hydrogen", "fuel", "cell", "margin", "business", "core", "market", "growth", "revenue", "guidance", "omniverse", "backlash", "safety", "data", "center", "marketplaces"]);
 
 function contentWords(text: string): string[] {
   return text.toLowerCase().split(/[^a-z]+/).filter(word => word.length > 2);
@@ -419,15 +419,8 @@ function cleanedLabel(raw: string | undefined): { label: string | null; reason: 
   return { label, reason: null };
 }
 
-function groupLabels(keys: string[], ordinals: string[], labels: Record<string, string>, note: (reason: string) => void, sources: string[] = []): string[] {
-  const parsed = keys.map((key, index) => {
-    const result = cleanedLabel(labels[key]);
-    const source = sources[index]?.trim().toLowerCase();
-    if (result.label && source && result.label.trim().toLowerCase() === source) {
-      return { label: null, reason: "Label Rohtext" };
-    }
-    return result;
-  });
+function groupLabels(keys: string[], ordinals: string[], labels: Record<string, string>, note: (reason: string) => void): string[] {
+  const parsed = keys.map(key => cleanedLabel(labels[key]));
   if (parsed.some(item => !item.label)) {
     for (const item of parsed) if (item.reason) note(item.reason);
     return ordinals;
@@ -451,6 +444,14 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
   const add = (sentence: string) => {
     if (checkPodcastSentence(sentence, facts, id, "code").ok) out.push(sentence);
   };
+  const vetted = (sentence: string) => {
+    const line = sentence.trim();
+    const spoken = /[.!?]$/.test(line) ? line : `${line}.`;
+    if (isAbsentFiller(spoken)) return;
+    if (!checkPodcastSentence(spoken, facts, id, "model").ok) return;
+    if (lintReason(spoken, facts.protectedNames ?? [])) return;
+    out.push(spoken);
+  };
   switch (id) {
     case "einstieg": {
       if (v.ticker && v.company) add("{ticker}, {company}. Stand vom {as_of}.");
@@ -462,16 +463,8 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       break;
     }
     case "zusammenfassung":
-      if (v.price) add("Der Kurs steht bei {price}.");
       if (v.ampel) add("Die Ampel steht auf {ampel}.");
-      if (facts.thesisText) {
-        const line = /[.!?]$/.test(facts.thesisText.trim()) ? facts.thesisText.trim() : `${facts.thesisText.trim()}.`;
-        if (!isAbsentFiller(line)) out.push(line);
-      }
-      if (v.top_segment_share) {
-        const [segmentLabel] = groupLabels(["Segment 1"], ["Das größte Segment"], labels, note, [v.top_segment ?? ""]);
-        add(`${segmentLabel} hat einen Anteil von {top_segment_share}.`);
-      }
+      if (facts.thesisText) vetted(facts.thesisText);
       break;
     case "these":
       break;
@@ -480,7 +473,7 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       else if (v.fy_yoy) add("Das Umsatzwachstum im Geschäftsjahr beträgt {fy_yoy}.");
       else out.push("Das Umsatzwachstum im Geschäftsjahr liegt nicht vor.");
       if (v.top_segment_share) {
-        const [segmentLabel] = groupLabels(["Segment 1"], ["Das größte Segment"], labels, note, [v.top_segment ?? ""]);
+        const [segmentLabel] = groupLabels(["Segment 1"], ["Das größte Segment"], labels, note);
         add(`${segmentLabel} hat einen Anteil von {top_segment_share}.`);
       }
       break;
@@ -501,8 +494,8 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       else if (!v.entry) out.push("Der rechnerische Einstieg liegt nicht vor.");
       if (v.crv) add("Das Chance-Risiko-Verhältnis liegt bei {crv}.");
       else out.push("Das Chance-Risiko-Verhältnis liegt nicht vor.");
-      if (facts.peerBanner) out.push(facts.peerBanner);
-      if (facts.sectorFlag) out.push(facts.sectorFlag);
+      if (facts.peerBanner) vetted(facts.peerBanner);
+      if (facts.sectorFlag) vetted(facts.sectorFlag);
       break;
     case "s17":
       if (v.catalyst_mode) out.push(/[.!?]$/.test(v.catalyst_mode) ? v.catalyst_mode : `${v.catalyst_mode}.`);
@@ -511,7 +504,7 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
         const count = (facts.upsideNames ?? []).length;
         const keys = Array.from({ length: count }, (_item, index) => `Katalysator ${index + 1}`);
         const ordinals = keys.map((_key, index) => CATALYST_ORDINALS[index] ?? "Der Katalysator");
-        const chosen = groupLabels(keys, ordinals, labels, note, facts.upsideNames ?? []);
+        const chosen = groupLabels(keys, ordinals, labels, note);
         chosen.forEach((label, index) => {
           const key = (["netto_upside_1", "netto_upside_2", "netto_upside_3"] as const)[index];
           if (key && v[key]) add(`${label}: Der Netto-Upside liegt bei {${key}}.`);
@@ -524,7 +517,7 @@ function fallbackSentences(id: string, facts: PodcastFacts, labels: Record<strin
       {
         const parsed = facts.riskNames.map((_name, index) => cleanedLabel(labels[`Risiko ${index + 1}`]));
         if (parsed.length > 0 && parsed.every(item => item.label)) {
-          for (const item of parsed) out.push(`${item.label}.`);
+          out.push(`Die genannten Risiken sind ${parsed.map(item => item.label).join(" und ")}.`);
         } else {
           for (const item of parsed) if (item.reason) note(item.reason);
         }
@@ -789,6 +782,20 @@ function placeholderSeq(text: string): string {
   return Array.from(text.matchAll(/\{([a-z0-9_]+)\}/g)).map(match => match[1] ?? "").join("|");
 }
 
+function proofreadKeepsSentence(original: string, next: string): boolean {
+  if (placeholderSeq(original) !== placeholderSeq(next)) return false;
+  const words = (value: string) => value.toLowerCase().split(/[^a-zäöü]+/).filter(word => word.length > 2);
+  const origWords = words(original);
+  const nextSet = new Set(words(next));
+  if (origWords.length > 0) {
+    const covered = origWords.filter(word => nextSet.has(word)).length / origWords.length;
+    if (covered < 0.7) return false;
+  }
+  const body = next.replace(/^\s*\S+/, "");
+  const caps = body.match(/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß]+/g) ?? [];
+  return caps.every(word => original.includes(word));
+}
+
 /** Lektorat nur übernehmen, wenn die Platzhalter in Menge und Reihenfolge gleich bleiben. */
 export function mergeProofread(modelData: unknown, proof: unknown): unknown {
   if (!modelData || typeof modelData !== "object") return modelData;
@@ -817,7 +824,7 @@ export function mergeProofread(modelData: unknown, proof: unknown): unknown {
         sentences: sentences.map((sentence, index) => {
           if (typeof sentence !== "string") return sentence;
           const next = byId.get(`${id}:${index}`);
-          if (!next || placeholderSeq(sentence) !== placeholderSeq(next)) return sentence;
+          if (!next || !proofreadKeepsSentence(sentence, next)) return sentence;
           return next;
         }),
       };

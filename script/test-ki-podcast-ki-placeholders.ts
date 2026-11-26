@@ -120,7 +120,9 @@ function main() {
   const dcf = pdfWithValue.find(c => c.id === "dcf")?.spoken ?? "";
   const summary = pdfWithValue.find(c => c.id === "zusammenfassung")?.spoken ?? "";
   assert.match(dcf, /einhundertzwanzig/);
-  assert.match(summary, /Der Kurs steht bei/);
+  const start = pdfWithValue.find(c => c.id === "einstieg")?.spoken ?? "";
+  assert.match(start, /Der Kurs steht bei/);
+  assert.equal(summary.startsWith("Der Kurs steht bei"), false, summary);
   assertNoLeak("NVDA pdf dcf", dcf);
   ok("PDF spricht vorhandene DCF- und Kurswerte auch neben einem Modellsatz");
 
