@@ -818,45 +818,82 @@ function nameShaped(token: string): boolean {
   return /^[A-ZÄÖÜ]/.test(token);
 }
 
-function enOrdinary(clean: string): boolean {
-  if (EN_COMMON.has(clean) || EN_LEXICON.has(clean)) return true;
-  const stem = clean.endsWith("es") && clean.length > 4
-    ? clean.slice(0, -2)
-    : clean.endsWith("s") && clean.length > 3
-      ? clean.slice(0, -1)
-      : "";
-  if (!stem || companyForm(stem)) return false;
-  return EN_COMMON.has(stem) || EN_LEXICON.has(stem);
+function clearingHas(form: string): boolean {
+  if (!form) return false;
+  const folded = foldUmlaut(form);
+  return DE_LEXICON.has(form) || DE_LEXICON.has(folded)
+    || DE_CLOSED.has(form) || DE_CLOSED.has(folded)
+    || nounListed(form)
+    || EN_COMMON.has(form) || EN_LEXICON.has(form);
 }
 
-function noneTokenCleared(token: string, sheet: SpeechSheet): boolean {
+function lemmaForms(lower: string): string[] {
+  const forms: string[] = [];
+  const add = (value: string) => {
+    if (value.length >= 2 && !forms.includes(value)) forms.push(value);
+  };
+  add(lower);
+  add(foldUmlaut(lower));
+  for (const suffix of ["em", "es", "er", "en", "e", "n", "s"]) {
+    if (lower.length - suffix.length < 3 || !lower.endsWith(suffix)) continue;
+    const stem = lower.slice(0, -suffix.length);
+    add(stem);
+    add(foldUmlaut(stem));
+  }
+  if (lower.endsWith("ies") && lower.length > 5) add(`${lower.slice(0, -3)}y`);
+  if (lower.endsWith("ly") && lower.length > 4) add(lower.slice(0, -2));
+  for (const form of latinForms(lower)) add(form);
+  return forms;
+}
+
+function knownOrdinary(lower: string): boolean {
+  for (const form of lemmaForms(lower)) {
+    if (clearingHas(form)) return true;
+  }
+  return nounOrPlural(lower) || ordinaryCompound(lower);
+}
+
+function ownFirmTokens(sheet: SpeechSheet): Set<string> {
+  const out = new Set<string>();
+  for (const fact of sheet.facts) {
+    if (fact.id !== "company" && !/^peer_[abc]$/.test(fact.id)) continue;
+    for (const word of fact.spoken.toLowerCase().split(/[^a-zäöüß0-9]+/)) {
+      if (word.length >= 2) out.add(word);
+    }
+  }
+  return out;
+}
+
+function noneTokenCleared(token: string, sheet: SpeechSheet, none = false): boolean {
   const clean = withoutPossessive(token).toLowerCase();
-  if (!clean || !nameShaped(token)) return true;
+  if (!clean) return true;
+  const capital = nameShaped(token);
+  const ownFirm = none && ownFirmTokens(sheet).has(clean);
+  if (ownFirm) return false;
+  if (!capital) {
+    if (clean.length < 5 || DE_COMPANY_AMBIGUOUS_SET.has(clean) || !DE_COMPANY_SET.has(clean)) return true;
+    if (knownOrdinary(clean) || releasedNames(sheet).has(clean)) return true;
+    return false;
+  }
   if (codeAllowed(token, sheet)) return true;
+  if (DE_COMPANY_SET.has(clean) && !releasedNames(sheet).has(clean) && !inPackFacts(clean, sheet)) return false;
+  if (knownOrdinary(clean)) return true;
   if (releasedNames(sheet).has(clean) || inPackFacts(clean, sheet)) return true;
   if (clean.endsWith("n") && releasedNames(sheet).has(clean.slice(0, -1))) return true;
   if (clean.endsWith("en") && releasedNames(sheet).has(clean.slice(0, -2))) return true;
-  if (clean.endsWith("s") && clean.length > 3) {
-    const stem = clean.slice(0, -1);
-    if (!companyForm(stem) || releasedNames(sheet).has(stem) || inPackFacts(stem, sheet)) {
-      if (releasedNames(sheet).has(stem) || inPackFacts(stem, sheet) || nounOrPlural(stem)) return true;
-    }
-  }
+  if (clean.endsWith("s") && clean.length > 3 && (releasedNames(sheet).has(clean.slice(0, -1)) || inPackFacts(clean.slice(0, -1), sheet))) return true;
   if (token.includes("-")) {
     const parts = token.split("-").filter(Boolean);
-    if (parts.length > 1 && parts.every(part => noneTokenCleared(part, sheet))) return true;
+    if (parts.length > 1 && parts.every(part => noneTokenCleared(part, sheet, none))) return true;
   }
-  if (companyForm(clean)) return false;
-  if (sheet.language === "en") return enOrdinary(clean);
-  if (DE_LEXICON.has(clean) || DE_CLOSED.has(clean)) return true;
-  return nounOrPlural(clean) || ordinaryCompound(clean);
+  return false;
 }
 
-function noneNameMiss(text: string, sheet: SpeechSheet): string | null {
+function noneNameMiss(text: string, sheet: SpeechSheet, none = false): string | null {
   for (const sentence of podcastSentences(text)) {
     for (const word of sentence.split(/\s+/).filter(Boolean)) {
       const token = tokenBody(word);
-      if (!token || noneTokenCleared(token, sheet)) continue;
+      if (!token || noneTokenCleared(token, sheet, none)) continue;
       return token;
     }
   }
@@ -957,16 +994,18 @@ function releasedNames(sheet: SpeechSheet): Set<string> {
 }
 
 /** Exakter Firmenkurzname, vor jedem Substantiv-Beweis. Freigegebene Pack-Namen zählen nicht. */
-function companyLexiconHit(text: string, sheet: SpeechSheet): { word: string; ambiguous: boolean } | null {
+function companyLexiconHit(text: string, sheet: SpeechSheet, none = false): { word: string; ambiguous: boolean } | null {
   const released = releasedNames(sheet);
+  const own = ownFirmTokens(sheet);
   for (const sentence of podcastSentences(text)) {
     for (const word of sentence.split(/\s+/).filter(Boolean)) {
       const token = tokenCore(word);
       const clean = withoutPossessive(token).toLowerCase();
-      if (!clean || !DE_COMPANY_SET.has(clean) || released.has(clean)) continue;
+      if (!clean || !DE_COMPANY_SET.has(clean)) continue;
       const ambiguous = DE_COMPANY_AMBIGUOUS_SET.has(clean);
-      const ordinary = sheet.language === "en" ? enOrdinary(clean) : (DE_LEXICON.has(clean) || DE_CLOSED.has(clean));
-      if (!ambiguous && ordinary) continue;
+      const capital = /^[A-ZÄÖÜ0-9]/.test(token);
+      if (!capital && (ambiguous || clean.length < 5 || knownOrdinary(clean))) continue;
+      if (released.has(clean) && !(none && own.has(clean))) continue;
       return { word: tokenCore(word), ambiguous };
     }
   }
@@ -1273,13 +1312,13 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
-  const company = spoken ? companyLexiconHit(spoken, sheet) : null;
+  const company = spoken ? companyLexiconHit(spoken, sheet, none) : null;
   if (company) {
     note("name", company.word);
     if (company.ambiguous) note("ambiguous", company.word);
   }
   if (spoken) {
-    const missed = noneNameMiss(spoken, sheet);
+    const missed = noneNameMiss(spoken, sheet, none);
     if (missed && !notes.some(item => item === `name ${missed}`)) note("name", missed);
   }
   const possessive = spoken ? possessiveNameHit(spoken, sheet) : null;

@@ -759,7 +759,7 @@ async function main() {
   assert.ok(firmEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), firmEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const tokenOnly = "Wir sprechen heute über [[company]] und der Kurs bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.";
   const tokenEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: tokenOnly, entities: [], none: true }] }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
-  assert.equal(tokenEmpty.find(draft => draft.id === "einstieg")?.reasons.length, 0, tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
+  assert.ok(tokenEmpty.find(draft => draft.id === "einstieg")?.notes.some(note => note.toLowerCase().includes("nvidia")), tokenEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
   const possessive = "Nvidias Kurs bleibt der Maßstab im neuen Jahr und die Aktie stützt die Bewertung. Der Markt bleibt offen für die Firma.";
   const possessiveEmpty = seedDrafts(probeDe, "pdf", { chapters: [{ id: "einstieg", paragraph: possessive, entities: [] }] }, new Map([["einstieg", []]]));
   assert.ok(possessiveEmpty.find(draft => draft.id === "einstieg")?.reasons.includes("entities"), possessiveEmpty.find(draft => draft.id === "einstieg")?.notes.join("|"));
@@ -1326,11 +1326,21 @@ async function main() {
     assert.equal(judged.redo, true, name);
     assert.ok(judged.notes.some(note => note.startsWith("name")), `${name} ${judged.notes.join("|")}`);
   }
-  for (const name of ["Lilly", "Ozempic"]) {
-    const judged = noneOf(name);
-    assert.equal(judged.ok, true, `${name} ${judged.notes.join("|")}`);
-    assert.equal(judged.redo, false, name);
-  }
+  const lillyNone = noneOf("Lilly");
+  assert.equal(lillyNone.ok, false, lillyNone.notes.join("|"));
+  assert.equal(lillyNone.redo, true);
+  const ozempicNone = noneOf("Ozempic");
+  assert.equal(ozempicNone.ok, true, ozempicNone.notes.join("|"));
+  assert.equal(ozempicNone.redo, false);
+  const ownFirm = judgeHoldoutName({
+    pack: nonePack,
+    language: "de",
+    chapterId: "einstieg",
+    text: "Der Kurs bleibt der Maßstab und Novo Nordisk steht im Satz. Die Aktie stützt die Bewertung im neuen Jahr.",
+    column: "none",
+  });
+  assert.equal(ownFirm.redo, true, ownFirm.notes.join("|"));
+  assert.ok(ownFirm.notes.some(note => /novo|nordisk/i.test(note)), ownFirm.notes.join("|"));
   const wired = seedDrafts(nvoNames, "pdf", {
     chapters: [{ id: "einstieg", paragraph: noneSentence("Zepbound"), entities: [], none: true }],
   }, new Map([["einstieg", []]]), new Set(), new Set(["einstieg"]));
@@ -1353,7 +1363,7 @@ async function main() {
   assert.equal(quarterOk.reasons.includes("digit"), false, quarterOk.notes.join("|"));
   const product = verifyChapter("einstieg", "Das Produkt H100 bleibt der Maßstab für die Firma und der Kurs stützt die Bewertung im Markt.", deSheet, [], true);
   assert.equal(product.ok, false, product.notes.join("|"));
-  ok("none erreicht den Verifier, Firmen und Produktcodes werden Redo, Lilly und Ozempic bleiben");
+  ok("none erreicht den Verifier, der eigene Firmenname wird Redo, Ozempic aus dem Segment bleibt");
   for (const row of PODCAST_NAME_COLUMNS) {
     const sheet = row.language === "de" ? probeDe : probeEn;
     const asNull = verifyChapter(row.chapterId, row.text, sheet, null);
@@ -1420,7 +1430,10 @@ async function main() {
         total += 1;
         const drafts = seedDrafts(sheet, "pdf", { chapters: [{ id, paragraph: raw, entities: [], none: true }] }, new Map([[id, []]]), new Set(), new Set([id]));
         const draft = drafts.find(item => item.id === id);
-        if (draft?.reasons.length) fallen += 1;
+        const firm = new Set(sheet.facts.filter(fact => fact.id === "company" || /^peer_[abc]$/.test(fact.id)).flatMap(fact => fact.spoken.toLowerCase().split(/[^a-zäöüß0-9]+/)).filter(word => word.length >= 2));
+        const foreign = (draft?.notes ?? []).filter(note => note.startsWith("name ") && !firm.has(note.slice(5).toLowerCase()));
+        const other = (draft?.reasons ?? []).filter(reason => reason !== "name" && reason !== "ambiguous");
+        if (foreign.length || other.length) fallen += 1;
       }
     }
     return { total, fallen };
