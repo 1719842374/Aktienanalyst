@@ -1,8 +1,6 @@
 /**
- * Abnahme-Nenner, anderer Ticker-Satz als die 168er-Vorregistrierung.
- * Mindestens 100 Absätze pro Sprache. Dieselbe Bauart: zwölf Ticker,
- * Kapitel mit Fallback-Text, zwei Fassungen. Gemessen erst nach dem Commit,
- * auf dem Lexikon-Hash, der gemergt wird.
+ * Kein Abnahme-Set. Die Absätze entstehen aus fallbackParagraph, nicht aus einem Modell-Lauf.
+ * Die Abnahme steht in podcast-model-v18.ts, sobald echte Modell-Absätze vorliegen.
  */
 export const FALLBACK_FRESH_TICKERS = [
   "ORCL",
