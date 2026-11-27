@@ -49,6 +49,14 @@ import {
 } from "./stock-podcast-script";
 import { podcastAudioCacheId, resetPodcastAudioCache, synthesizePodcastAudio, type PodcastAudioEnv, type PodcastAudioFetch } from "./stock-podcast-audio";
 
+export function normalizePodcastLanguage(value: unknown): PodcastLanguage | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().toLowerCase().replace(/_/g, "-");
+  if (text === "en" || text.startsWith("en-")) return "en";
+  if (text === "de" || text.startsWith("de-")) return "de";
+  return undefined;
+}
+
 export const stockPodcastRequestSchema = z.object({
   ticker: z.string().min(1).max(32),
   source: z.enum(["pdf", "ki"]),
@@ -166,7 +174,10 @@ export async function handleStockPodcastScript(
   raw: unknown,
   deps: StockPodcastHandlerDeps = {},
 ): Promise<{ http: number; body: StockPodcastScriptResponse | StockPodcastRouteError }> {
-  const parsed = stockPodcastRequestSchema.safeParse(raw);
+  const normalized = raw && typeof raw === "object"
+    ? { ...(raw as Record<string, unknown>), ...("language" in (raw as Record<string, unknown>) ? { language: normalizePodcastLanguage((raw as { language?: unknown }).language) ?? (raw as { language?: unknown }).language } : {}) }
+    : raw;
+  const parsed = stockPodcastRequestSchema.safeParse(normalized);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     return {
@@ -304,7 +315,7 @@ export async function handleStockPodcastAudio(
   const ticker = typeof query.ticker === "string" ? query.ticker.toUpperCase() : "";
   const source = query.source === "pdf" || query.source === "ki" ? query.source : null;
   const cacheKey = typeof query.cacheKey === "string" ? query.cacheKey : "";
-  const language: PodcastLanguage = query.language === "en" ? "en" : "de";
+  const language: PodcastLanguage = normalizePodcastLanguage(query.language) ?? "de";
   const voice = resolveStockPodcastVoice(typeof query.voice === "string" ? query.voice : undefined, language);
   if (!chapterId || !ticker || !source || !cacheKey) {
     return { ok: false, http: 400, body: errorBody("BAD_REQUEST", "Ungültige Audio-Anfrage.", "audio", ticker || undefined, source ?? undefined) };

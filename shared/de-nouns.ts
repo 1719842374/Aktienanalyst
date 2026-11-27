@@ -1,8 +1,11 @@
-/** German noun lemmas, two to ten letters, no spaces.
+/** German noun lemmas, two to twenty letters, no spaces.
+ * Two to ten letters stay in this file. Eleven to twenty letters come from de-nouns-long.ts.
  * Source: Wikidata lexeme namespace, language German, lexical category noun.
  * License: CC0. https://www.wikidata.org/wiki/Wikidata:Copyright
  * "All structured data from the main, Property, Lexeme, and EntitySchema namespaces is available under the Creative Commons CC0 License."
  */
+import { DE_NOUN_LONG } from "./de-nouns-long";
+
 export const DE_NOUN_LEMMAS: string[] = `
 aa aachenerin aal aalbeere aalbestand aalfang aalfett aalfisch aalfischer aalhamen aalkasten aalkorb
 aalleiter aalmutter aalnetz aalquappe aalraupe aalreuse aalspeer aalstechen aalstrich aalsuppe aaltreppe aar
@@ -4905,4 +4908,4 @@ zündstoff zündung zündware zünftler zünglein zünsler äbtissin ächter äc
 überwacher überweg überwelt überwesen überwinder überwurf überzahl überzieher überzug überärmel üblichkeit übung
 übungsbuch übungsflug übungsform übungshang übungsheft übungslauf übungslift übungsraum übungsritt übungsteil übungstext übungsturm
 übungswart übungswehe ührchen ülk üppigkeit
-`.trim().split(/\s+/);
+`.trim().split(/\s+/).concat(DE_NOUN_LONG);

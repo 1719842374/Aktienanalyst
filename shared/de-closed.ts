@@ -2,6 +2,7 @@
  * Source: Wikidata lexeme namespace, language German.
  * Lexical categories: adjective (Q34698), adverb (Q380057), conjunction (Q36484),
  * contraction (Q126473), verb (Q24905).
+ * der, die and das are articles. The extract has no article category, so those three words are listed at the end.
  * License: CC0. https://www.wikidata.org/wiki/Wikidata:Copyright
  * "All structured data from the main, Property, Lexeme, and EntitySchema namespaces is available under the Creative Commons CC0 License."
  */
@@ -2885,6 +2886,7 @@ zünftig züricher äffisch ägyptisch ähnlich ährenbekränzt ältlich änderb
 überzeitlich überzeugend überzeugt überzivilisiert überzogen überzonal überzählig überzüchtet
 überängstlich überäugig überörtlich überübermorgen üblich üblicherweise übrig übrigens
 übriggeblieben übungshalber übungsmässig üppig
+der die das
 `.trim().split(/\s+/);
 
 export const DE_VERB_LEMMAS: string[] = `
