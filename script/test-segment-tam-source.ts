@@ -58,6 +58,7 @@ console.log("\nSchätz-Route relativ zum Peer-Anker");
     industry: "Software",
     coveragePct: 59,
     peerAnchor: { peerCount: 3, medianRevenueYoyPct: 12, p25RevenueYoyPct: 8, p75RevenueYoyPct: 18, source: "FMP income-statement Peer-Umsatz-YoY" },
+    peerEvidence: [],
     segments: [
       { segmentName: "Server", segmentRevenue: 129.4, segmentShare: 39, segmentGrowth: 31.5, matched: false, tamSize: null, tamCAGR: null },
     ],
@@ -72,7 +73,9 @@ console.log("\nSchätz-Route relativ zum Peer-Anker");
     },
   });
   check("Prompt nennt den Peer-Median", prompt.includes("PEER-ANKER") && prompt.includes("12"), prompt.slice(0, 240));
-  check("TAM ohne tamSource wird n/a", result.ok === true && result.ok && result.fills.length === 0, JSON.stringify(result));
+  const server = result.ok ? result.fills.find((f) => f.segmentName === "Server") : undefined;
+  check("TAM ohne tamSource wird nicht übernommen", result.ok === true && server?.tamSize == null, JSON.stringify(result));
+  check("CAGR-Proxy bleibt das Segment-Wachstum", server?.tamCAGR === 31.5 && server.formula?.includes("Proxy: Segmentwachstum MSFT") === true && result.ok === true);
   check("Grund bleibt am Server-TAM", result.ok === true && result.naReasons.some((r) => r.field === "tam"));
 }
 

@@ -3,6 +3,7 @@
  * Kein neuer Anbieter. Leer, wenn der Key fehlt oder keine zwei Jahre da sind.
  */
 import { fmpIncomeStatement, fmpPeers, isFmpAvailable } from "./fmp";
+import { adrCandidatesFor } from "./fmp-adr-map";
 import { roundGrowthPct } from "../shared/segment-growth-calc";
 import {
   PEER_ANCHOR_LIMIT,
@@ -27,22 +28,37 @@ const defaultDeps: PeerAnchorDeps = {
   available: isFmpAvailable,
 };
 
-export async function loadPeerGrowthAnchor(ticker: string, deps: PeerAnchorDeps = defaultDeps): Promise<PeerGrowthAnchor | null> {
-  if (!deps.available()) return null;
-  const self = ticker.toUpperCase();
+/**
+ * Listing zuerst, danach das US-/ADR-Symbol aus der bestehenden Map.
+ * SAP.DE hat bei FMP keine Peers (Plan 402); SAP hat sie. Ohne diesen Schritt
+ * bleibt der Peer-Anker leer und der Prompt verwirft die Schätzung.
+ */
+export function peerLookupSymbols(ticker: string): string[] {
+  const out: string[] = [];
+  const push = (symbol: string) => {
+    const upper = symbol.trim().toUpperCase();
+    if (!upper || out.includes(upper)) return;
+    out.push(upper);
+  };
+  push(ticker);
+  for (const candidate of adrCandidatesFor(ticker)) push(candidate.symbol);
+  return out;
+}
+
+async function anchorForSymbol(symbol: string, deps: PeerAnchorDeps): Promise<PeerGrowthAnchor | null> {
   let symbols: string[] = [];
   try {
-    symbols = (await deps.peers(self))
+    symbols = (await deps.peers(symbol))
       .map((s) => s.toUpperCase())
-      .filter((s) => s && s !== self)
+      .filter((s) => s && s !== symbol.toUpperCase())
       .slice(0, PEER_ANCHOR_LIMIT);
   } catch {
     return null;
   }
   const yoys: number[] = [];
-  await Promise.all(symbols.map(async (symbol) => {
+  await Promise.all(symbols.map(async (peer) => {
     try {
-      const raw = await deps.income(symbol);
+      const raw = await deps.income(peer);
       const rows = Array.isArray(raw) ? raw : [];
       const newest = Number((rows[0] as { revenue?: unknown })?.revenue);
       const prior = Number((rows[1] as { revenue?: unknown })?.revenue);
@@ -52,5 +68,16 @@ export async function loadPeerGrowthAnchor(ticker: string, deps: PeerAnchorDeps 
       // Ein Peer ohne Statement fällt aus der Stichprobe, er erfindet keine Zahl.
     }
   }));
-  return peerGrowthAnchorFromYoys(yoys);
+  const anchor = peerGrowthAnchorFromYoys(yoys);
+  if (!anchor) return null;
+  return { ...anchor, source: `${anchor.source} ${symbol}` };
+}
+
+export async function loadPeerGrowthAnchor(ticker: string, deps: PeerAnchorDeps = defaultDeps): Promise<PeerGrowthAnchor | null> {
+  if (!deps.available()) return null;
+  for (const symbol of peerLookupSymbols(ticker)) {
+    const anchor = await anchorForSymbol(symbol, deps);
+    if (anchor) return anchor;
+  }
+  return null;
 }

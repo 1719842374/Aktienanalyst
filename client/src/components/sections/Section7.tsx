@@ -384,7 +384,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                 )}
               </div>
                 <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
-                Violett/KI = Schätzung · berechnet = Formel aus FMP · Anteil am TAM & vs. TAM immer Formel
+                Violett/Schätzung = Quelle und Formel · berechnet = Formel aus FMP · Anteil am TAM & vs. TAM immer Formel
               </div>
               {tamAiFills && (
                 <div className="text-[10px] text-violet-700 dark:text-violet-300" data-testid="text-tam-na-coverage-note">
@@ -436,21 +436,27 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                             title={naGrowth?.reason ?? growthNote?.reason ?? "Keine Vorjahreszahl fuer dieses Segment berichtet"}
                           >
                             n/a
+                            {naGrowth?.reason && <div className="font-sans text-[8px] font-normal leading-tight text-muted-foreground/80">{naGrowth.reason}</div>}
                           </td>
                         ) : (
                           <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? kiEstimateTitle(tamAiFills?.[seg.segmentName]) : row.growthIsCalculated ? growthTitle(growthNote) : undefined}>
                             {row.growth >= 0 ? '+' : ''}{formatNumber(row.growth, 1)}%
                             {row.growthIsCalculated && <span className="ml-1 text-[8px] font-sans font-semibold uppercase tracking-wide text-sky-300">berechnet</span>}
                             {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />}
+                            {row.growthIsKi && <EstimateNote fill={tamAiFills?.[seg.segmentName]} />}
                           </td>
                         )}
                         {row.tamIsKi && row.tamSize != null ? (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} data-testid={`cell-tam-ki-size-${i}`}>
                             ${formatNumber(row.tamSize, 0)}B
                             <KiBadge testId={`badge-tam-ki-${i}`} title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
+                            <EstimateNote fill={tamAiFills?.[seg.segmentName]} />
                           </td>
                         ) : row.tamSize === null ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naTam?.reason ?? "Kein TAM-Markt zugeordnet"}>n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naTam?.reason ?? "Kein TAM-Markt zugeordnet"}>
+                            n/a
+                            {naTam?.reason && <div className="font-sans text-[8px] font-normal leading-tight text-muted-foreground/80">{naTam.reason}</div>}
+                          </td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(row.tamSize, 0)}B</td>
                         )}
@@ -458,9 +464,13 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title={kiEstimateTitle(tamAiFills?.[seg.segmentName])}>
                             {row.tamCagr}%
                             <KiBadge title={kiEstimateTitle(tamAiFills?.[seg.segmentName])} />
+                            <EstimateNote fill={tamAiFills?.[seg.segmentName]} />
                           </td>
                         ) : row.unmatched ? (
-                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naCagr?.reason}>n/a</td>
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title={naCagr?.reason}>
+                            n/a
+                            {naCagr?.reason && <div className="font-sans text-[8px] font-normal leading-tight text-muted-foreground/80">{naCagr.reason}</div>}
+                          </td>
                         ) : (
                           <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
                         )}
@@ -824,15 +834,33 @@ function tamRowView(seg: {
   };
 }
 
+function EstimateNote({ fill }: { fill?: TamNaFill }) {
+  if (!fill?.formula && !fill?.tamSource) return null;
+  return (
+    <>
+      {fill.formula && (
+        <div className="mt-0.5 line-clamp-3 font-sans text-[8px] font-normal leading-tight text-violet-700/90 dark:text-violet-200/90" title={fill.formula}>
+          {fill.formula}
+        </div>
+      )}
+      {fill.tamSource && (
+        <div className="line-clamp-2 font-sans text-[8px] font-normal leading-tight text-muted-foreground" title={fill.tamSource}>
+          Quelle: {fill.tamSource}
+        </div>
+      )}
+    </>
+  );
+}
+
 function KiBadge({ testId, title = "Schätzung" }: { testId?: string; title?: string }) {
   return (
     <span
-      className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-300"
+      className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold normal-case tracking-wide text-violet-700 dark:text-violet-300"
       title={title}
       aria-label={title}
       data-testid={testId}
     >
-      KI
+      Schätzung
     </span>
   );
 }
