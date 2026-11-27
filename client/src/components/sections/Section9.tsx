@@ -1,12 +1,14 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
+import { calculateRSL, RSL_MIN_PRICES, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
 import { formatNumber, formatCurrency, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 import { usePublishChatSection } from "@/lib/chatSectionData";
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../../../../shared/data-source";
 
 interface Props { data: StockAnalysis }
+
+const RSL_UNAVAILABLE_LABEL = `RSL n/a — weniger als ${RSL_MIN_PRICES} Kurse`;
 
 export function Section9({ data }: Props) {
   const sp = data.sectorProfile;
@@ -27,37 +29,50 @@ export function Section9({ data }: Props) {
   const malusAllowedForClass = lynchClass && lynchClass in LYNCH_DCF_DEFAULTS
     ? LYNCH_DCF_DEFAULTS[lynchClass as keyof typeof LYNCH_DCF_DEFAULTS].applyRslMalus
     : true; // keine bekannte Klasse → bisheriges (klassen-agnostisches) Verhalten
-  const rslWeak = !(rsl > 105);
+  const rslWeak = rsl != null && !(rsl > 105);
   const malusActive = rslWeak && malusAllowedForClass;
   // C1 (#252): Yahoo-Daten → kein DCF (Sektion 5 = n/a), also auch keine DCF-Wachstumsanpassung anzeigen.
   const yahooOnly = isYahooOnly(data);
 
   // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT),
   // aber NUR wenn die Lynch-Klasse den Malus erlaubt (applyRslMalus).
-  const growthAdj = yahooOnly ? `n/a (${YAHOO_NO_VALUATION_NOTICE})` : rsl > 110 ? "+0% (strong momentum)" :
+  // rsl null: calculateFCFFDCF setzt den Malus nicht (rsl != null). Anzeige folgt der Rechnung.
+  const growthAdj = yahooOnly ? `n/a (${YAHOO_NO_VALUATION_NOTICE})` : rsl == null ? "nicht angewendet" :
+    rsl > 110 ? "+0% (strong momentum)" :
     rsl > 105 ? "+0% (neutral)" :
     malusActive
       ? `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`
       : `+0% (kein Malus — Lynch-Klasse "${lynchClass}" schließt RSL-Malus aus)`;
-  const rslZone = rsl > 110 ? "Strong Momentum" : rsl > 105 ? "Neutral" : "Weak Momentum";
+  const rslZone = rsl == null ? "n/a" : rsl > 110 ? "Strong Momentum" : rsl > 105 ? "Neutral" : "Weak Momentum";
 
   // Gauge positioning
   const gaugeMin = 90;
   const gaugeMax = 130;
-  const gaugePos = Math.max(0, Math.min(100, ((rsl - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
+  const gaugePos = rsl == null ? 0 : Math.max(0, Math.min(100, ((rsl - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
 
   // PR 3 (Chat-Kontext): genau die angezeigten RSL-Werte veröffentlichen — keine eigene Rechnung.
   usePublishChatSection("stock", "11", {
     rsl: rsl != null && Number.isFinite(rsl) ? Math.round(rsl * 100) / 100 : null, rslZone,
     schnitt26W: Number.isFinite(avg26w) ? Math.round(avg26w * 100) / 100 : null, zyklusKlasse: sp?.cycleClass ?? null,
     dcfWachstumsAnpassung: growthAdj, malusAktiv: !yahooOnly && malusActive,
-    _auffaelligkeiten: !yahooOnly && rslWeak ? (malusActive ? `RSL < 105: DCF-Wachstum −${RSL_MOMENTUM_MALUS_PCT}%` : `RSL < 105, Malus durch Lynch-Klasse ausgesetzt`) : null,
+    _auffaelligkeiten: rsl == null ? RSL_UNAVAILABLE_LABEL : !yahooOnly && rslWeak ? (malusActive ? `RSL < 105: DCF-Wachstum −${RSL_MOMENTUM_MALUS_PCT}%` : `RSL < 105, Malus durch Lynch-Klasse ausgesetzt`) : null,
   });
 
   return (
     <SectionCard number={11} title="RSL-MOMENTUM (Levy RSL)">
+      {!yahooOnly && rsl == null && (
+        <div className="bg-muted/30 border border-border/50 rounded-lg p-3 flex items-start gap-2">
+          <span className="text-muted-foreground text-lg">ℹ</span>
+          <div>
+            <div className="text-xs font-bold text-muted-foreground">{RSL_UNAVAILABLE_LABEL}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              DCF-Malus nicht angewendet. Die Berechnung setzt den Malus nur bei einem vorliegenden RSL.
+            </div>
+          </div>
+        </div>
+      )}
       {/* RSL < 105 Warning */}
-      {!yahooOnly && rslWeak && malusActive && (
+      {!yahooOnly && rsl != null && rslWeak && malusActive && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-amber-500 text-lg">⚠</span>
           <div>
@@ -87,10 +102,10 @@ export function Section9({ data }: Props) {
         {/* RSL Gauge */}
         <div className="flex flex-col items-center">
           <div className="text-[10px] text-muted-foreground mb-2 uppercase tracking-wider">RSL Value</div>
-          <div className={`text-3xl font-bold font-mono tabular-nums ${getRSLColor(rsl)}`}>
-            {formatNumber(rsl, 1)}
+          <div className={`text-3xl font-bold font-mono tabular-nums ${rsl == null ? "text-muted-foreground" : getRSLColor(rsl)}`}>
+            {rsl == null ? RSL_UNAVAILABLE_LABEL : formatNumber(rsl, 1)}
           </div>
-          <div className={`text-xs font-medium mt-1 ${getRSLColor(rsl)}`}>{rslZone}</div>
+          <div className={`text-xs font-medium mt-1 ${rsl == null ? "text-muted-foreground" : getRSLColor(rsl)}`}>{rslZone}</div>
 
           {/* Visual gauge bar */}
           <div className="w-full mt-4 relative">
@@ -99,13 +114,14 @@ export function Section9({ data }: Props) {
               <div className="h-full bg-amber-500/30" style={{ width: '12.5%' }} />
               <div className="h-full bg-emerald-500/30" style={{ width: '50%' }} />
             </div>
-            {/* Marker */}
-            <div
-              className="absolute top-0 -translate-x-1/2 transition-all"
-              style={{ left: `${gaugePos}%` }}
-            >
-              <div className={`w-3 h-3 rounded-full border-2 border-background ${getRSLBgColor(rsl)}`} />
-            </div>
+            {rsl != null && (
+              <div
+                className="absolute top-0 -translate-x-1/2 transition-all"
+                style={{ left: `${gaugePos}%` }}
+              >
+                <div className={`w-3 h-3 rounded-full border-2 border-background ${getRSLBgColor(rsl)}`} />
+              </div>
+            )}
             {/* Labels */}
             <div className="flex justify-between mt-2 text-[10px] text-muted-foreground">
               <span>&lt;105 Weak</span>
@@ -130,7 +146,7 @@ export function Section9({ data }: Props) {
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">RSL = (Price / Avg) × 100</td>
-                  <td className={`py-1.5 px-2 text-right font-mono tabular-nums font-bold ${getRSLColor(rsl)}`}>{formatNumber(rsl, 2)}</td>
+                  <td className={`py-1.5 px-2 text-right font-mono tabular-nums font-bold ${rsl == null ? "text-muted-foreground" : getRSLColor(rsl)}`}>{rsl == null ? RSL_UNAVAILABLE_LABEL : formatNumber(rsl, 2)}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">Cycle Class</td>
