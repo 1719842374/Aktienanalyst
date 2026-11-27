@@ -42,6 +42,7 @@ export const KI_PODCAST_CHAPTERS: ChapterDef[] = [
   { id: "s17", title: "Katalysatoren", llmOwned: false },
   { id: "s13", title: "Moat und Porter", llmOwned: false },
   { id: "s14", title: "PESTEL", llmOwned: false },
+  { id: "these", title: "These", llmOwned: false },
   { id: "umsatz", title: "Umsatz", llmOwned: false },
   { id: "inversion", title: "Inversion", llmOwned: false },
   { id: "earnings", title: "Earnings Call", llmOwned: false },

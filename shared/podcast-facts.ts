@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { currencyWord } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis } from "../server/exec-summary-attach";
 import type { FullAiPack } from "../server/stock-podcast-full-ai";
+import { invertedDcf } from "./valuation-signal";
 import { keepCompleteSentences, priceLabelDe, rankAfterRounding, speakIsoDate, speakNewsAge, speakNormalize, speakPercent, speakPriceUsd, speakQuarterPhrase, speakYear } from "./podcast-speak";
 
 export const PODCAST_PLACEHOLDERS = [
@@ -115,6 +116,43 @@ export interface PodcastFacts {
   redactedContext: string;
   /** Rohwerte hinter der Sprechform. Gesetzt von buildPodcastFacts, für die englische Sprechform. */
   measures?: PodcastMeasures;
+  /** Geht in den Skript-Cache. Neue S10/S17/S3-Werte ändern den Schlüssel. */
+  narrativeKey: string;
+}
+
+/** Dieselben Eingaben wie Section8: Analyst-PT mal (1 − Total Expected Damage), Inverted DCF daneben. */
+export interface PodcastValuationAnchor {
+  analystPt: number;
+  totalDamagePct: number;
+  target: number;
+  upsideVsPricePct: number;
+  invertedPerShare: number | null;
+  invertedVsPtPct: number | null;
+  wideDivergence: boolean;
+}
+
+export interface PodcastRiskFigure {
+  name: string;
+  ew: number | null;
+  impact: number | null;
+  expectedDamage: number | null;
+}
+
+export interface PodcastRegionShare {
+  name: string;
+  percentage: number;
+  source: string | null;
+}
+
+export interface PodcastAsiaShare {
+  percentage: number;
+  members: string[];
+  source: string;
+}
+
+export interface PodcastChinaGeo {
+  label: string;
+  source: string;
 }
 
 /** Zahlen, die buildPodcastFacts schon geprüft hat. Die Sprechform entsteht daraus, nichts wird geschätzt. */
@@ -136,9 +174,17 @@ export interface PodcastMeasures {
   ampel: string | null;
   callDateIso: string | null;
   callQuarterRaw: string | null;
-  upsides: Array<{ name: string; upside: number }>;
+  upsides: Array<{ name: string; upside: number; pos: number | null }>;
   catalystNames: string[];
   riskNames: string[];
+  /** Risk-Adjusted Target und Inverted DCF aus denselben Eingaben wie Sektion 10. */
+  valuation: PodcastValuationAnchor | null;
+  riskRows: PodcastRiskFigure[];
+  /** null, sobald eine Region ohne Prozent dasteht. Sonst jede gemeldete Region. */
+  regions: PodcastRegionShare[] | null;
+  asiaShare: PodcastAsiaShare | null;
+  chinaGeo: PodcastChinaGeo | null;
+  catalystLogic: string | null;
 }
 
 function finite(v: unknown): v is number {
@@ -255,10 +301,188 @@ function plainSectorFlag(flag: string | null): string | null {
   return /[.!?]$/.test(cleaned) ? cleaned : `${cleaned}.`;
 }
 
-export function hashPodcastFacts(values: PodcastFactValues): string {
+export function hashPodcastFacts(values: PodcastFactValues, narrative = ""): string {
   const keys = Object.keys(values).sort();
-  const canon = JSON.stringify(keys.map(k => [k, values[k as PodcastPlaceholder]]));
+  const canon = JSON.stringify({
+    values: keys.map(k => [k, values[k as PodcastPlaceholder]]),
+    narrative,
+  });
   return createHash("sha256").update(canon).digest("hex");
+}
+
+const ASIA_CANON = new Set([
+  "China", "Japan", "India", "Pakistan", "Bangladesh", "Sri Lanka", "Indonesia", "Malaysia",
+  "Singapore", "Thailand", "Vietnam", "Philippines", "Taiwan", "Hong Kong", "South Korea",
+  "North Korea", "Asia",
+]);
+
+function namesCollide(left: string, right: string): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, " ").replace(/\s+/g, " ").trim();
+  const a = fold(left);
+  const b = fold(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 12 && b.length >= 12 && (a.includes(b) || b.includes(a));
+}
+
+function regionClass(name: string): "asia" | "other" | "unknown" {
+  const keys = new Set<string>();
+  const add = (bit: string) => {
+    const key = placeKey(bit.replace(/\./g, ""));
+    if (key.length >= 2) keys.add(key);
+  };
+  add(name);
+  for (const part of name.split(/[/|;]|\(|\)/)) add(part);
+  for (const key of Array.from(keys)) {
+    const group = COUNTRY_INDEX.get(key);
+    if (!group) continue;
+    const asia = group.some(alias => ASIA_CANON.has(alias));
+    return asia ? "asia" : "other";
+  }
+  return "unknown";
+}
+
+function readRiskRows(analysis: any): PodcastRiskFigure[] {
+  const rows = Array.isArray(analysis?.risks) ? analysis.risks : [];
+  const parsed: PodcastRiskFigure[] = [];
+  for (const row of rows) {
+    const name = text(row?.name);
+    if (!name) continue;
+    parsed.push({
+      name,
+      ew: finite(row?.ew) ? row.ew : null,
+      impact: finite(row?.impact) ? row.impact : null,
+      expectedDamage: finite(row?.expectedDamage) ? row.expectedDamage : null,
+    });
+  }
+  const ranked = parsed.some(row => row.expectedDamage != null)
+    ? [...parsed].sort((a, b) => (b.expectedDamage ?? -1) - (a.expectedDamage ?? -1))
+    : parsed;
+  return ranked.slice(0, 3);
+}
+
+function readRegions(analysis: any): { regions: PodcastRegionShare[] | null; asia: PodcastAsiaShare | null } {
+  const rows = Array.isArray(analysis?.geoSegments) ? analysis.geoSegments : [];
+  if (!rows.length) return { regions: [], asia: null };
+  const parsed: PodcastRegionShare[] = [];
+  for (const row of rows) {
+    const name = text(row?.name) ?? text(row?.countryOrRegion) ?? text(row?.region);
+    if (!name || !finite(row?.percentage)) return { regions: null, asia: null };
+    parsed.push({ name, percentage: row.percentage, source: text(row?.source) });
+  }
+  const classes = parsed.map(row => regionClass(row.name));
+  if (classes.some(kind => kind === "unknown")) return { regions: parsed, asia: null };
+  const members = parsed.filter((_row, index) => classes[index] === "asia");
+  if (!members.length) return { regions: parsed, asia: null };
+  const sources = Array.from(new Set(parsed.map(row => row.source).filter((item): item is string => !!item)));
+  return {
+    regions: parsed,
+    asia: {
+      percentage: members.reduce((sum, row) => sum + row.percentage, 0),
+      members: members.map(row => row.name),
+      source: sources.length === 1 ? sources[0]! : "Umsatzregionen",
+    },
+  };
+}
+
+function mentionsChinaGeo(value: string): boolean {
+  return /china|geopolit|taiwan/i.test(value);
+}
+
+function readChinaGeo(analysis: any): PodcastChinaGeo | null {
+  const catalysts = Array.isArray(analysis?.catalysts) ? analysis.catalysts : [];
+  for (const row of catalysts) {
+    const blob = [text(row?.deepDive?.risiken), text(row?.deepDive?.marktumfeld)].filter((item): item is string => !!item).join(" ");
+    if (blob && mentionsChinaGeo(blob) && !/\d/.test(blob)) {
+      return { label: "Geopolitik- und China-Exposure-Risiko", source: "analysis.catalysts.deepDive.risiken" };
+    }
+  }
+  const geoRisks = Array.isArray(analysis?.sectorProfile?.geopoliticalRisks) ? analysis.sectorProfile.geopoliticalRisks : [];
+  for (const row of geoRisks) {
+    const event = text(row?.event);
+    if (event && mentionsChinaGeo(event)) return { label: event, source: "analysis.sectorProfile.geopoliticalRisks" };
+  }
+  const correlations = Array.isArray(analysis?.macroCorrelations?.correlations) ? analysis.macroCorrelations.correlations : [];
+  for (const row of correlations) {
+    const blob = [text(row?.mechanism), text(row?.name)].filter((item): item is string => !!item).join(" ");
+    if (/china-exposure|china exposure|geopolit/i.test(blob)) {
+      return { label: "Geopolitik- und China-Exposure-Risiko", source: "analysis.macroCorrelations" };
+    }
+  }
+  return null;
+}
+
+function readValuation(analysis: any, priceUsd: number | null, reported: string, fx: number | null): PodcastValuationAnchor | null {
+  const risks = Array.isArray(analysis?.risks) ? analysis.risks : [];
+  if (!risks.length || !risks.every((row: any) => finite(row?.expectedDamage))) return null;
+  const totalDamagePct = risks.reduce((sum: number, row: any) => sum + row.expectedDamage, 0);
+  const ptRaw = finite(analysis?.analystPT?.median) && analysis.analystPT.median > 0 ? analysis.analystPT.median : null;
+  const analystPt = ptRaw == null ? null : usd(ptRaw, reported, fx);
+  if (analystPt == null || priceUsd == null || !(priceUsd > 0) || !Number.isFinite(totalDamagePct)) return null;
+  const target = analystPt * (1 - totalDamagePct / 100);
+  if (!Number.isFinite(target)) return null;
+  const profile = analysis?.sectorProfile ?? {};
+  const gBase = finite(profile?.growthAssumptions?.g1) ? profile.growthAssumptions.g1 : null;
+  const wacc = finite(profile?.waccScenarios?.kons) ? profile.waccScenarios.kons : null;
+  const terminalG = finite(profile?.growthAssumptions?.terminal) ? profile.growthAssumptions.terminal : null;
+  const fcfBase = finite(analysis?.fcfTTM) ? analysis.fcfTTM : null;
+  const shares = finite(analysis?.sharesOutstanding) ? analysis.sharesOutstanding : null;
+  const debt = finite(analysis?.totalDebt) ? analysis.totalDebt : null;
+  const cash = finite(analysis?.cashEquivalents) ? analysis.cashEquivalents : null;
+  const haircut = finite(analysis?.fcfHaircut) ? analysis.fcfHaircut : null;
+  let invertedPerShare: number | null = null;
+  if (gBase != null && wacc != null && terminalG != null && fcfBase != null && shares != null && debt != null && cash != null && haircut != null && shares > 0) {
+    const inverted = invertedDcf({
+      fcfBase,
+      gBase: Math.max(gBase, 1),
+      wacc,
+      terminalG,
+      sharesOutstanding: shares,
+      netDebt: debt - cash,
+      sigmaGbDown: -totalDamagePct / 100,
+      mode: "growth",
+      haircut,
+    });
+    const converted = usd(finite(inverted.perShare) && inverted.perShare > 0 ? inverted.perShare : null, reported, fx);
+    invertedPerShare = converted;
+  }
+  const invertedVsPtPct = invertedPerShare == null ? null : (invertedPerShare / analystPt - 1) * 100;
+  return {
+    analystPt,
+    totalDamagePct,
+    target,
+    upsideVsPricePct: (target / priceUsd - 1) * 100,
+    invertedPerShare,
+    invertedVsPtPct,
+    wideDivergence: invertedVsPtPct != null && Math.abs(invertedVsPtPct) > 50,
+  };
+}
+
+function proseWithoutDigits(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw || /\d/.test(raw)) return null;
+  const words = raw.split(/\s+/).filter(Boolean);
+  return words.length >= 8 ? raw : null;
+}
+
+function narrativeContext(valuation: PodcastValuationAnchor | null, china: PodcastChinaGeo | null, regions: PodcastRegionShare[] | null, logic: string | null): string {
+  const lines: string[] = [];
+  if (valuation) lines.push("Kontextwörter Abwärtsanker Analysten Zielkurs Bewertungsanker.");
+  if (china) lines.push("Kontextwörter Geopolitik China Exposure Risiko Gegenwind Makro Block.");
+  if (regions?.length) lines.push("Kontextwörter Umsatzregionen Herkunft.");
+  if (logic) lines.push("Kontextwörter Logik.");
+  return lines.join("\n");
+}
+
+function narrativeKeyOf(input: {
+  valuation: PodcastValuationAnchor | null;
+  riskRows: PodcastRiskFigure[];
+  regions: PodcastRegionShare[] | null;
+  asia: PodcastAsiaShare | null;
+  china: PodcastChinaGeo | null;
+  logic: string | null;
+}): string {
+  return JSON.stringify(input);
 }
 
 export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFacts {
@@ -313,9 +537,13 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     : null;
   const source = analysis.catalystsSource === "llm" || analysis.llmMode === true ? "llm" : "generic";
   const mode = spokenCatalystMode(analysis);
-  const risks = Array.isArray(analysis.risks) ? analysis.risks : [];
-  const riskNames: string[] = risks.map((r: any) => text(r?.name)).filter((n: string | null): n is string => !!n).slice(0, 3);
-  const upsides = catalystUpsides(analysis);
+  const riskRows = readRiskRows(analysis);
+  const riskNames = riskRows.map(row => row.name);
+  const upsides = catalystUpsides(analysis, riskNames);
+  const regionPack = readRegions(analysis);
+  const chinaGeo = readChinaGeo(analysis);
+  const valuation = readValuation(analysis, priceN, reported, fx);
+  const catalystLogic = proseWithoutDigits(analysis?.catalystReasoning?.whyInteresting);
   const fcfMargin = finite(analysis.fcfMargin) && analysis.fcfMargin !== 0 ? analysis.fcfMargin : null;
   const catalysts = Array.isArray(analysis.catalysts) ? analysis.catalysts : [];
   const rawTicker = text(analysis.ticker) ?? pack.ticker;
@@ -421,7 +649,15 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
     reportedQuarterLine,
     proSeed: values.price ? `Der Kurs steht bei ${values.price}.` : null,
     contraSeed: values.entry ? `Der rechnerische Einstieg liegt bei ${values.entry}.` : (spokenRisks.length ? `Die genannten Risiken sind ${spokenRisks.join(", ")}.` : null),
-    redactedContext: buildContext(pack, values, payloadTitles, upsides),
+    narrativeKey: narrativeKeyOf({
+      valuation,
+      riskRows,
+      regions: regionPack.regions,
+      asia: regionPack.asia,
+      china: chinaGeo,
+      logic: catalystLogic,
+    }),
+    redactedContext: [buildContext(pack, values, payloadTitles, upsides), narrativeContext(valuation, chinaGeo, regionPack.regions, catalystLogic)].filter(Boolean).join("\n"),
     measures: {
       companySource: text(analysis.podcastCompanySource) ?? (namedCompany ? "analysis.companyName" : null),
       asOfIso: asOf.iso,
@@ -445,6 +681,12 @@ export function buildPodcastFacts(pack: FullAiPack, now = new Date()): PodcastFa
       upsides,
       catalystNames,
       riskNames,
+      valuation,
+      riskRows,
+      regions: regionPack.regions,
+      asiaShare: regionPack.asia,
+      chinaGeo,
+      catalystLogic,
     },
   };
 }
@@ -475,14 +717,15 @@ function companyFromAnalysis(analysis: any, ticker: string): string | null {
   return null;
 }
 
-function catalystUpsides(analysis: any): Array<{ name: string; upside: number }> {
+function catalystUpsides(analysis: any, riskNames: readonly string[]): Array<{ name: string; upside: number; pos: number | null }> {
   const rows = Array.isArray(analysis?.catalysts) ? analysis.catalysts : [];
-  const out: Array<{ name: string; upside: number }> = [];
+  const out: Array<{ name: string; upside: number; pos: number | null }> = [];
   for (const row of rows) {
     const name = text(row?.name);
     const upside = finite(row?.nettoUpside) ? row.nettoUpside : null;
     if (!name || upside == null || upside === 0) continue;
-    out.push({ name, upside });
+    if (riskNames.some(risk => namesCollide(name, risk))) continue;
+    out.push({ name, upside, pos: finite(row?.pos) ? row.pos : null });
     if (out.length === 3) break;
   }
   return out;
