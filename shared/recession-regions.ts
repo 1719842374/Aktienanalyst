@@ -8,6 +8,12 @@ export const REGION_WEIGHT = { US: 0.7, EZ: 0.2, JP: 0.1 } as const;
 /** A monthly print older than this is shown and not scored. */
 export const STALE_MONTHS = 18;
 export const SAHM_ANALOG_THRESHOLD_PP = 0.5;
+/**
+ * Unavailable slots leave both the net and the max, so P is renormalized
+ * onto the slots that actually scored. The name is shown next to P.
+ */
+export const CATALOG_MISSING_INPUT = "renorm_available" as const;
+export type CatalogMissingInputPolicy = typeof CATALOG_MISSING_INPUT;
 
 export type RegionId = "US" | "EZ" | "JP";
 export type RegionBook = "recession" | "correction";
@@ -34,6 +40,10 @@ export interface RegionCatalog {
   slots: RegionSlot[];
   recessionProbability: number | null;
   correctionProbability: number | null;
+  /** Set by the scorer. Absent on hand-built fixtures. */
+  missingInputPolicy?: CatalogMissingInputPolicy;
+  recessionDropped?: string[];
+  correctionDropped?: string[];
 }
 
 export interface RegionalCatalogs {
@@ -81,6 +91,20 @@ export function catalogProbability(slots: RegionSlot[], book: RegionBook): numbe
   const net = scored.reduce((sum, slot) => sum + slot.weightedScore, 0);
   const max = scored.reduce((sum, slot) => sum + slot.maxWeighted, 0);
   return bookProbability(net, max);
+}
+
+/** Same P as catalogProbability. Dropped names are the disclosure for renorm_available. */
+export function catalogBookReport(slots: RegionSlot[], book: RegionBook): {
+  probability: number | null;
+  policy: CatalogMissingInputPolicy;
+  dropped: string[];
+} {
+  const inBook = slots.filter(slot => slot.book === book);
+  return {
+    probability: catalogProbability(slots, book),
+    policy: CATALOG_MISSING_INPUT,
+    dropped: inBook.filter(slot => !slot.available).map(slot => slot.name),
+  };
 }
 
 /**
@@ -182,23 +206,60 @@ export function levelAndDelta(points: DatedPoint[]): { level: number; delta: num
   };
 }
 
-/** Eurostat statistics API JSON. Time is the last dimension. An empty geo returns no points. */
+/** JSON-stat 2.0 category.index is an object. Some payloads use a label array instead. */
+function eurostatTimeLabels(index: unknown): string[] {
+  if (Array.isArray(index)) return index.map(item => String(item ?? "")).filter(period => period.length > 0);
+  if (!index || typeof index !== "object") return [];
+  return Object.entries(index as Record<string, unknown>)
+    .map(([period, pos]) => ({ period, pos: typeof pos === "number" ? pos : Number(pos) }))
+    .filter(row => Number.isFinite(row.pos))
+    .sort((a, b) => a.pos - b.pos)
+    .map(row => row.period);
+}
+
+/**
+ * Eurostat statistics API, JSON-stat 2.0 (`version: "2.0"`).
+ * Time is the last dimension when the other sizes are 1, so the value key is the time index.
+ * An empty geo (`size` of geo is 0, `value` is `{}`) returns no points.
+ */
 export function parseEurostatSeries(payload: unknown): DatedPoint[] {
   if (!payload || typeof payload !== "object") return [];
   const data = payload as {
-    value?: Record<string, number>;
-    dimension?: { time?: { category?: { index?: Record<string, number> } } };
+    value?: Record<string, unknown> | unknown[];
+    dimension?: { time?: { category?: { index?: unknown } } };
   };
-  const timeIndex = data.dimension?.time?.category?.index;
+  const times = eurostatTimeLabels(data.dimension?.time?.category?.index);
   const values = data.value;
-  if (!timeIndex || !values) return [];
-  const times = Object.entries(timeIndex).sort((a, b) => a[1] - b[1]).map(([period]) => period);
+  if (!times.length || values == null) return [];
+  const entries: Array<[string, unknown]> = Array.isArray(values)
+    ? values.map((value, index) => [String(index), value])
+    : Object.entries(values);
   const points: DatedPoint[] = [];
-  for (const [key, value] of Object.entries(values)) {
+  for (const [key, value] of entries) {
     const index = Number(key);
     const period = times[index];
     if (!period || typeof value !== "number" || !Number.isFinite(value)) continue;
     points.push({ date: period.length === 7 ? `${period}-01` : period, value });
+  }
+  return points.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+/** SDMX-CSV from the dissemination 2.1 endpoint. A SOAP fault or an HTML block is empty. */
+export function parseEurostatSdmxCsv(csv: string): DatedPoint[] {
+  if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE") || csv.includes(":Fault")) return [];
+  const lines = csv.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split("\n");
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map(cell => cell.trim().toUpperCase());
+  const timeIdx = header.indexOf("TIME_PERIOD");
+  const valueIdx = header.indexOf("OBS_VALUE");
+  if (timeIdx < 0 || valueIdx < 0) return [];
+  const points: DatedPoint[] = [];
+  for (const line of lines.slice(1)) {
+    const cols = line.split(",");
+    const period = (cols[timeIdx] ?? "").trim();
+    const value = Number((cols[valueIdx] ?? "").trim());
+    if (!/^\d{4}-\d{2}/.test(period) || !Number.isFinite(value)) continue;
+    points.push({ date: period.length === 7 ? `${period}-01` : period.slice(0, 10), value });
   }
   return points.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 }

@@ -8,13 +8,14 @@ import { fetchVstoxxVol } from "./recession-markets";
 import {
   REGION_WEIGHT,
   alignSpread,
-  catalogProbability,
   blendWeighted,
   closedSlot,
   isStale,
   laborSlot,
   levelAndDelta,
+  catalogBookReport,
   parseEurostatSeries,
+  parseEurostatSdmxCsv,
   sahmGapPp,
   yoyByMonth,
   type DatedPoint,
@@ -24,16 +25,25 @@ import {
   type ScoredReading,
 } from "../shared/recession-regions";
 
-const EUROSTAT = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data";
+const EUROSTAT_JSON = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data";
+const EUROSTAT_SDMX = "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data";
+const DBNOMICS = "https://api.db.nomics.world/v22/series";
+/** OECD short-term industrial production, euro area 20. Fresh when Eurostat itself does not answer. */
+const OECD_EA_IP = `${DBNOMICS}/OECD/DSD_STES@DF_INDSERV/EA20.M.PRVM.IX.BTE.Y._Z._Z.N?observations=1`;
+const ECB_IP = "https://data-api.ecb.europa.eu/service/data/STS/M.I8.W.PROD.NS0020.4.000";
+const FRED_EZ_UNEMPLOYMENT = "LRHUTTTTEZM156S";
+const FRED_EZ_IP = "EA19PRINTO01IXOBSAM";
+const SAHM_FORMULA = "Sahm-Analog 3M−min(12M)";
+const IP_FORMULA = "YoY Index_t/Index_t−12−1";
 const ECB_M3_YOY = "https://data-api.ecb.europa.eu/service/data/BSI/M.U2.Y.V.M30.X.I.U2.2300.Z01.A";
 const BOJ_M2_YOY = "MAM1YAM2M2MO";
 const FRED = "https://fred.stlouisfed.org/graph/fredgraph.csv";
 
 export interface RegionalPrints {
-  ezUnemployment: { geo: string; points: DatedPoint[] };
+  ezUnemployment: { geo: string; points: DatedPoint[]; source?: string };
   ezLong: DatedPoint[];
   ezShort: DatedPoint[];
-  ezIp: { geo: string; points: DatedPoint[] };
+  ezIp: { geo: string; points: DatedPoint[]; source?: string };
   ezM3Yoy: number | null;
   ezHy: number | null;
   ezPe: number | null;
@@ -96,9 +106,9 @@ async function fred(id: string, cosd: string): Promise<DatedPoint[]> {
   return parseFred(csv);
 }
 
-async function eurostat(dataset: string, query: string, geos: string[]): Promise<{ geo: string; points: DatedPoint[] }> {
+async function eurostatJson(dataset: string, query: string, geos: string[]): Promise<{ geo: string; points: DatedPoint[] }> {
   for (const geo of geos) {
-    const text = await getText(`${EUROSTAT}/${dataset}?format=JSON&lang=en&geo=${geo}&${query}`);
+    const text = await getText(`${EUROSTAT_JSON}/${dataset}?format=JSON&lang=en&geo=${geo}&${query}`);
     if (!text || text.includes("<html")) continue;
     try {
       const points = parseEurostatSeries(JSON.parse(text));
@@ -108,6 +118,82 @@ async function eurostat(dataset: string, query: string, geos: string[]): Promise
     }
   }
   return { geo: geos[0] ?? "", points: [] };
+}
+
+async function eurostatCsv(dataset: string, key: string): Promise<DatedPoint[]> {
+  const text = await getText(`${EUROSTAT_SDMX}/${dataset}/${key}?format=SDMX-CSV&startPeriod=2005-01&compressed=false`);
+  return parseEurostatSdmxCsv(text);
+}
+
+/** EA20 is an empty geo on une_rt_m (JSON-stat 2.0, size 0). EA21 is the live aggregate. */
+async function loadEzUnemployment(cosd: string): Promise<{ geo: string; points: DatedPoint[]; source?: string }> {
+  const json = await eurostatJson(
+    "une_rt_m",
+    "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01",
+    ["EA21", "EA20"],
+  );
+  if (json.points.length > 0) return json;
+  const csv = await eurostatCsv("une_rt_m", "M.SA.TOTAL.PC_ACT.T.EA21");
+  if (csv.length > 0) {
+    return { geo: "EA21", points: csv, source: `Eurostat SDMX-CSV une_rt_m EA21 · ${SAHM_FORMULA} · JSON-stat leer` };
+  }
+  const dbText = await getText(`${DBNOMICS}/Eurostat/une_rt_m/M.SA.TOTAL.PC_ACT.T.EA21?observations=1`);
+  let dbPoints: DatedPoint[] = [];
+  if (dbText && !dbText.includes("<html")) {
+    try {
+      dbPoints = parseDbNomicsSeries(JSON.parse(dbText));
+    } catch {
+      dbPoints = [];
+    }
+  }
+  if (dbPoints.length > 0) {
+    return { geo: "EA21", points: dbPoints, source: `DBnomics Eurostat une_rt_m EA21 · ${SAHM_FORMULA} · Eurostat-API leer` };
+  }
+  const fredPoints = await fred(FRED_EZ_UNEMPLOYMENT, cosd);
+  if (fredPoints.length > 0) {
+    return { geo: "EA", points: fredPoints, source: `FRED ${FRED_EZ_UNEMPLOYMENT} · ${SAHM_FORMULA} · Eurostat leer` };
+  }
+  return { geo: "EA20", points: [] };
+}
+
+async function loadEzIp(): Promise<{ geo: string; points: DatedPoint[]; source?: string }> {
+  const json = await eurostatJson(
+    "sts_inpr_m",
+    "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01",
+    ["EA20", "EA21"],
+  );
+  if (json.points.length > 0) return json;
+  for (const geo of ["EA20", "EA21"]) {
+    const csv = await eurostatCsv("sts_inpr_m", `M.PRD.B-D.SCA.I21.${geo}`);
+    if (csv.length > 0) {
+      return { geo, points: csv, source: `Eurostat SDMX-CSV sts_inpr_m ${geo} I21 · ${IP_FORMULA} · JSON-stat leer` };
+    }
+  }
+  const oecdText = await getText(OECD_EA_IP, 25000);
+  let oecd: DatedPoint[] = [];
+  if (oecdText && !oecdText.includes("<html")) {
+    try {
+      oecd = parseDbNomicsSeries(JSON.parse(oecdText));
+    } catch {
+      oecd = [];
+    }
+  }
+  if (oecd.length > 0) {
+    return { geo: "EA20", points: oecd, source: `OECD STES EA20.M.PRVM.IX.BTE.Y (DBnomics) · ${IP_FORMULA} · Eurostat sts_inpr_m leer` };
+  }
+  const fredPoints = await fred(FRED_EZ_IP, "2005-01-01");
+  if (fredPoints.length > 0) {
+    return { geo: "EA19", points: fredPoints, source: `FRED ${FRED_EZ_IP} · ${IP_FORMULA} · Eurostat sts_inpr_m leer` };
+  }
+  const ecbText = await getText(`${ECB_IP}?format=csvdata&startPeriod=2005-01&detail=dataonly`, 25000);
+  const ecb = parseEcbCsv(ecbText).map(row => ({
+    date: row.period.length === 7 ? `${row.period}-01` : row.period,
+    value: row.value,
+  }));
+  if (ecb.length > 0) {
+    return { geo: "I8", points: ecb, source: `ECB SDW STS.M.I8.W.PROD.NS0020.4.000 · ${IP_FORMULA} · Eurostat sts_inpr_m leer` };
+  }
+  return { geo: "EA20", points: [] };
 }
 
 function latestFinite(points: DatedPoint[]): number | null {
@@ -319,8 +405,8 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
   const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
-    eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
-    eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
+    loadEzUnemployment(cosd),
+    loadEzIp(),
     fred("IRLTLT01EZM156N", cosd),
     fred("IR3TIB01EZM156N", cosd),
     fred("BAMLHE00EHYIOAS", cosd),
@@ -385,6 +471,16 @@ function fromReading(id: RegionSlot["id"], name: string, book: RegionSlot["book"
   };
 }
 
+function laborFromSeries(name: string, source: string, points: DatedPoint[], today: string): RegionSlot {
+  if (points.length === 0) return laborSlot(name, source, NaN);
+  const sorted = [...points].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const last = sorted[sorted.length - 1];
+  if (isStale(last.date, today)) {
+    return closedSlot("labor", name, "recession", source, `${last.value.toFixed(2)}% (${last.date.slice(0, 7)})`);
+  }
+  return laborSlot(name, source, sahmGapPp(sorted.map(point => point.value)));
+}
+
 function activitySlot(name: string, source: string, points: DatedPoint[], today: string, score: RegionScorers["activity"]): RegionSlot {
   if (points.length === 0) return closedSlot("activity", name, "recession", source);
   const last = [...points].sort((a, b) => a.date < b.date ? -1 : 1).at(-1)!;
@@ -437,28 +533,34 @@ function curveSlot(
 }
 
 function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): RegionCatalog {
+  const recession = catalogBookReport(slots, "recession");
+  const correction = catalogBookReport(slots, "correction");
   return {
     id,
     label,
     weight: REGION_WEIGHT[id],
     slots,
-    recessionProbability: catalogProbability(slots, "recession"),
-    correctionProbability: catalogProbability(slots, "correction"),
+    recessionProbability: recession.probability,
+    correctionProbability: correction.probability,
+    missingInputPolicy: recession.policy,
+    recessionDropped: recession.dropped,
+    correctionDropped: correction.dropped,
   };
 }
 
 export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
   const { prints, scorers, today } = input;
-  const ezRates = prints.ezUnemployment.points.map(point => point.value);
-  const ezLaborSource = prints.ezUnemployment.points.length
-    ? `Eurostat une_rt_m ${prints.ezUnemployment.geo}`
-    : "Eurostat une_rt_m EA20";
+  const ezLaborSource = prints.ezUnemployment.source
+    ?? (prints.ezUnemployment.points.length
+      ? `Eurostat une_rt_m ${prints.ezUnemployment.geo}`
+      : "Eurostat une_rt_m EA20");
   const ezSpread = alignSpread(prints.ezLong, prints.ezShort);
-  const ezIpSource = prints.ezIp.points.length
-    ? `Eurostat sts_inpr_m ${prints.ezIp.geo} I21`
-    : "Eurostat sts_inpr_m";
+  const ezIpSource = prints.ezIp.source
+    ?? (prints.ezIp.points.length
+      ? `Eurostat sts_inpr_m ${prints.ezIp.geo} I21`
+      : "Eurostat sts_inpr_m");
   const ez: RegionSlot[] = [
-    laborSlot("ALQ Eurozone", ezLaborSource, sahmGapPp(ezRates)),
+    laborFromSeries("ALQ Eurozone", ezLaborSource, prints.ezUnemployment.points, today),
     curveSlot("Kurve EZ (10J−3M)", "FRED IRLTLT01EZM156N − IR3TIB01EZM156N", ezSpread, true, scorers.curve),
     activitySlot("Aktivität EZ", ezIpSource, prints.ezIp.points, today, scorers.activity),
     prints.ezM3Yoy == null
