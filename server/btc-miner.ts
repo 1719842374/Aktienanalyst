@@ -10,8 +10,23 @@
  * - Miner Score (composite 0–100 signal)
  */
 
-const MEMPOOL_BASE = 'https://mempool.space/api/v1';
+const DEFAULT_MEMPOOL_API_BASE = 'https://mempool.space/api/v1';
 const BLOCKCHAIN_CHARTS = "https://api.blockchain.info/charts";
+
+/**
+ * Root für mempool.space-kompatible Pfade (`/mining/hashrate/all`,
+ * `/mining/difficulty-adjustments`). `MEMPOOL_API_BASE` zeigt optional auf
+ * einen von diesem Host aus erreichbaren Relay mit demselben Pfadschema.
+ * Unset, leer oder nur Whitespace bleibt der öffentliche Default.
+ * Pro Request gelesen, nicht beim Modul-Load. Schlägt der Fetch fehl,
+ * bleibt der blockchain.info-Fallback darunter unverändert.
+ */
+function mempoolApiBase(): string {
+  const raw = process.env.MEMPOOL_API_BASE;
+  if (typeof raw !== 'string') return DEFAULT_MEMPOOL_API_BASE;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return trimmed.length > 0 ? trimmed : DEFAULT_MEMPOOL_API_BASE;
+}
 
 // Reference miner: Antminer S19 XP
 // Power: 3010W, Hash: 140 TH/s → 21.5 J/TH
@@ -516,7 +531,8 @@ function rememberFailure(err: MinerFetchError): void {
   _lastError = { code: err.code, message: err.message, cause: err.detail };
   console.error(
     `[BTC-MINER] ${err.code}: ${err.message}` +
-    (err.detail ? ` — ${err.detail.substring(0, 150)}` : "")
+    (err.detail ? ` — ${err.detail.substring(0, 150)}` : "") +
+    ` — base ${mempoolApiBase()}`
   );
 }
 
@@ -550,9 +566,10 @@ async function fetchMempoolSeries(): Promise<{
   // difficultyRibbonCompression immer 0. Response-Format ist außerdem ein
   // Array von Tupeln [timestamp, height, difficulty, change], nicht ein
   // Objekt-Array — Parsing unten entsprechend angepasst.
+  const base = mempoolApiBase();
   const [hashrateResp, difficultyResp] = await Promise.allSettled([
-    fetch(`${MEMPOOL_BASE}/mining/hashrate/all`, { signal: timeout }),
-    fetch(`${MEMPOOL_BASE}/mining/difficulty-adjustments?interval=144`, { signal: timeout }),
+    fetch(`${base}/mining/hashrate/all`, { signal: timeout }),
+    fetch(`${base}/mining/difficulty-adjustments?interval=144`, { signal: timeout }),
   ]);
 
   // ── Parse hashrate ────────────────────────────────────────────
@@ -734,7 +751,7 @@ export async function fetchMinerData(
       failure = classifyThrown(err);
       if (attempt === 0 && TRANSIENT_MINER_CODES.has(failure.code)) {
         console.warn(
-          `[BTC-MINER] ${failure.code} — single retry in ${RETRY_BACKOFF_MS}ms (${failure.message})`
+          `[BTC-MINER] ${failure.code} — single retry in ${RETRY_BACKOFF_MS}ms (${failure.message}) — base ${mempoolApiBase()}`
         );
         await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS));
         continue;
