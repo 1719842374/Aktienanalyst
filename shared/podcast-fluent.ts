@@ -5,17 +5,11 @@
  */
 import type { PodcastDropCounts, PodcastLanguage, StockPodcastChapter, StockPodcastSource } from "./podcast-types";
 import { emptyDropCounts, PODCAST_DISCLAIMER, PODCAST_DISCLAIMER_EN } from "./podcast-types";
-import { DE_ADJECTIVE_LEMMAS } from "./de-adjectives";
 import { DE_CLOSED_LEMMAS, DE_VERB_LEMMAS } from "./de-closed";
 import { DE_COMPANY_AMBIGUOUS, DE_COMPANY_NAMES } from "./de-companies";
-import { DE_NOUN_EXTRA } from "./de-nouns-extra";
 import { DE_PRODUCT_NAMES } from "./de-products";
 import { DE_NOUN_LEMMAS } from "./de-nouns";
-import { DE_VERB_BASE_LEMMAS } from "./de-verbs-base";
-import { EN_ADJECTIVE_LEMMAS } from "./en-adjectives";
 import { EN_COMMON_WORDS } from "./en-common";
-import { EN_NOUN_LEMMAS } from "./en-nouns";
-import { EN_VERB_LEMMAS } from "./en-verbs";
 import { MULTI_WORD_PLACES } from "./place-names";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { QUANTITY_WORDS } from "./quantity-words";
@@ -698,16 +692,10 @@ function withoutPossessive(word: string): string {
 }
 
 const DE_NOUNS = new Set(DE_NOUN_LEMMAS);
-const DE_EXTRA_NOUNS = new Set(DE_NOUN_EXTRA);
+
 const DE_CLOSED = new Set(DE_CLOSED_LEMMAS);
-const DE_ADJECTIVES = new Set(DE_ADJECTIVE_LEMMAS);
 const DE_VERBS = new Set(DE_VERB_LEMMAS);
-const DE_VERB_BASE = new Set(DE_VERB_BASE_LEMMAS);
 const DE_NOUNS_FOLDED = new Set(Array.from(DE_NOUNS, foldUmlaut));
-const DE_EXTRA_FOLDED = new Set(Array.from(DE_EXTRA_NOUNS, foldUmlaut));
-const EN_ADJECTIVES = new Set(EN_ADJECTIVE_LEMMAS);
-const EN_VERBS = new Set(EN_VERB_LEMMAS);
-const EN_NOUNS = new Set(EN_NOUN_LEMMAS);
 
 /** Fugen der Zerlegung. Der Lexikon-Hash umfasst diese Liste. */
 export const COMPOUND_FUGEN = ["", "s", "n", "en", "es", "e"] as const;
@@ -742,8 +730,7 @@ function companyForm(part: string): boolean {
 }
 
 function nounListed(lower: string): boolean {
-  const folded = foldUmlaut(lower);
-  return DE_NOUNS.has(lower) || DE_EXTRA_NOUNS.has(lower) || DE_NOUNS_FOLDED.has(folded) || DE_EXTRA_FOLDED.has(folded);
+  return DE_NOUNS.has(lower) || DE_NOUNS_FOLDED.has(foldUmlaut(lower));
 }
 
 function nounLeaf(part: string): boolean {
@@ -836,9 +823,7 @@ function adjectiveCompound(word: string, depth = 0): boolean {
 function closedOrdinary(part: string): boolean {
   const lower = foldUmlaut(withoutPossessive(part).toLowerCase());
   if (lower.length < 4 || companyForm(lower)) return false;
-  return DE_CLOSED.has(lower) || DE_ADJECTIVES.has(lower)
-    || DE_VERBS.has(lower) || DE_VERB_BASE.has(lower)
-    || DE_VERBS.has(`${lower}en`) || DE_VERB_BASE.has(`${lower}en`);
+  return DE_CLOSED.has(lower) || DE_VERBS.has(lower) || DE_VERBS.has(`${lower}en`);
 }
 
 function adjectiveHeadOk(head: string): boolean {
@@ -881,13 +866,10 @@ function clearingHas(form: string): boolean {
   const folded = foldUmlaut(form);
   return DE_LEXICON.has(form) || DE_LEXICON.has(folded)
     || DE_CLOSED.has(form) || DE_CLOSED.has(folded)
-    || DE_ADJECTIVES.has(form) || DE_ADJECTIVES.has(folded)
     || DE_VERBS.has(form) || DE_VERBS.has(folded)
-    || DE_VERB_BASE.has(form) || DE_VERB_BASE.has(folded)
     || QUANTITY.has(form) || QUANTITY.has(folded)
     || nounListed(form)
-    || EN_COMMON.has(form) || EN_LEXICON.has(form)
-    || EN_ADJECTIVES.has(form) || EN_VERBS.has(form) || EN_NOUNS.has(form);
+    || EN_COMMON.has(form) || EN_LEXICON.has(form);
 }
 
 function lemmaForms(lower: string): string[] {
