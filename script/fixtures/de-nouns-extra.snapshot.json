@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-26",
+  "endpoint": "https://query.wikidata.org/sparql",
+  "language": "de",
+  "languageQ": "Q188",
+  "lexicalCategory": "Q1084",
+  "category": "noun",
+  "minLength": 21,
+  "maxLength": 40,
+  "properNounExcluded": "Q147276",
+  "filter": "Lexical category is the one named in the query. A lexeme that also has proper-noun category Q147276 is excluded. After lowercasing, only letter lemmas are kept (German a-z äöüß, English a-z), so spaces, digits and hyphens drop out. Lemmas that also occur in de-companies or de-products are removed.",
+  "onlyMissingNouns": true,
+  "count": 5703,
+  "license": "CC0",
+  "lemmaSha256": "469eb1cc24606ae505725bf6947b510adf05bc6774cd734a580d9f1d7dbf8955"
+}
