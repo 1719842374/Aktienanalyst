@@ -358,13 +358,20 @@ export function peerDividendYieldPct(ratio: { dividendYield?: unknown; dividendY
   if (!ratio || typeof ratio !== "object") return null;
   const hasField = ratio.dividendYield != null || ratio.dividendYieldPercentage != null || ratio.dividendPerShare != null;
   if (!hasField) return null;
-  const priceN = typeof price === "number" && Number.isFinite(price) && price > 0 ? price : 0;
-  return normalizeDividendYieldPct({
-    price: priceN,
+  const priceOk = typeof price === "number" && Number.isFinite(price) && price > 0;
+  const result = normalizeDividendYieldPct({
+    price: priceOk ? price : 0,
     ratioDividendYield: ratio.dividendYield,
     ratioDividendYieldPercentage: ratio.dividendYieldPercentage,
     ratioDividendPerShare: ratio.dividendPerShare,
-  }).pct;
+  });
+  // Normalizer liefert bei „nichts verwertbar“ 0 (Score-Pfad der Aktie). Für Peers ist das nur
+  // eine echte Null-Dividende, wenn die Zeile 0 nennt. Fehlender Kurs bei reinem DPS → null, nicht 0.
+  if (result.basis === "none") {
+    const explicitZero = ratio.dividendYield === 0 || ratio.dividendYieldPercentage === 0 || ratio.dividendPerShare === 0;
+    return explicitZero ? 0 : null;
+  }
+  return result.pct;
 }
 
 export async function fetchPeerComparisonFromTickers(
