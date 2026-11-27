@@ -230,7 +230,7 @@ export async function handleStockPodcastScript(
   const scriptStarted = Date.now();
 
   const facts = buildPodcastFacts(pack, now);
-  const factsHash = hashPodcastFacts(facts.values);
+  const factsHash = hashPodcastFacts(facts.values, facts.narrativeKey);
   const voice = resolveStockPodcastVoice(parsed.data.voice, language);
   const scriptHit = !regenerate ? readCachedScript({ ticker, day: pack.day, source, factsHash, voiceId: voice.id, language }) : null;
   if (scriptHit) {

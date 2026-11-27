@@ -12,7 +12,7 @@ import { DE_NOUN_LEMMAS } from "./de-nouns";
 import { EN_COMMON_WORDS } from "./en-common";
 import { countryPhrases, PODCAST_PLACEHOLDERS, type PodcastFacts, type PodcastMeasures } from "./podcast-facts";
 import { chaptersForSource } from "./podcast-script";
-import { roundedParts, speakPercent } from "./podcast-speak";
+import { roundedParts, speakPercent, speakPriceUsd } from "./podcast-speak";
 
 export interface SpeechFact {
   id: string;
@@ -272,10 +272,12 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
     const key = slot[index];
     if (!key) return;
     const pct = language === "de" ? speakPercent(row.upside) : enPercent(row.upside);
+    const pos = row.pos == null ? null : (language === "de" ? speakPercent(row.pos) : enPercent(row.pos));
     if (!pct) return;
     const prefix = pairPrefix(language, index === 0);
     const title = speakableTitle(row.name, language, pendingTitles, `pair_${key}`, prefix);
-    addFact(out, `pair_${key}`, `${title ?? prefix} ${pairTail(language, pct)}`, "analysis.catalysts");
+    const tail = pairTail(language, pct, pos);
+    addFact(out, `pair_${key}`, `${title ?? prefix} ${tail}`, "analysis.catalysts");
   });
   if (!ranked.length) {
     (measures?.catalystNames ?? facts.upsideNames).slice(0, 3).forEach((name, index) => {
@@ -286,14 +288,24 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
       addFact(out, `pair_${key}`, title ?? prefix, "analysis.catalysts");
     });
   }
-  (measures?.riskNames ?? facts.riskNames).slice(0, 3).forEach((name, index) => {
+  const riskRows = measures?.riskRows?.length
+    ? measures.riskRows
+    : (measures?.riskNames ?? facts.riskNames).slice(0, 3).map(name => ({ name, ew: null, impact: null, expectedDamage: null }));
+  riskRows.slice(0, 3).forEach((row, index) => {
     const key = slot[index];
     if (!key) return;
     const prefix = riskPrefix(language, index);
-    const title = speakableTitle(name, language, pendingTitles, `risk_${key}`, prefix);
-    if (title) addFact(out, `risk_${key}`, title, "analysis.risks");
-    else if (pendingTitles.some(item => item.factId === `risk_${key}`)) addFact(out, `risk_${key}`, prefix, "analysis.risks");
+    const title = speakableTitle(row.name, language, pendingTitles, `risk_${key}`, prefix);
+    const metrics = riskMetricTail(language, row);
+    const head = title ?? (pendingTitles.some(item => item.factId === `risk_${key}`) ? prefix : null);
+    if (!head) return;
+    addFact(out, `risk_${key}`, metrics ? `${head}, ${metrics}` : head, "analysis.risks");
   });
+  addValuationFacts(out, measures, language);
+  addRegionFacts(out, measures, language);
+  addChinaFact(out, measures, language);
+  const logic = logicFact(facts, language);
+  if (logic) out.push(logic);
   const segmentPrefix = language === "de" ? "das größte Segment" : "the largest segment";
   const segmentName = measures?.segmentName ?? values.top_segment;
   if (segmentName) {
@@ -308,6 +320,11 @@ export function buildSpeechSheet(facts: PodcastFacts, language: PodcastLanguage)
   if (crv) codeLines.push({ chapterId: "dcf", spoken: crv });
   const thesis = thesisFact(facts, language);
   if (thesis) codeLines.push({ chapterId: "these", spoken: thesis.spoken });
+  if (logic) codeLines.push({ chapterId: "these", spoken: logic.spoken });
+  for (const id of ["regions", "asia"]) {
+    const line = out.find(fact => fact.id === id);
+    if (line) codeLines.push({ chapterId: "these", spoken: line.spoken });
+  }
   return {
     language,
     facts: out,
@@ -417,9 +434,128 @@ function riskPrefix(language: PodcastLanguage, index: number): string {
   return index === 0 ? "a verified risk" : index === 1 ? "a second verified risk" : "a third verified risk";
 }
 
-function pairTail(language: PodcastLanguage, pct: string): string {
-  if (language === "de") return `mit einem Potenzial von ${pct}`;
-  return `with a potential of ${pct}`;
+function pairTail(language: PodcastLanguage, pct: string, pos: string | null): string {
+  if (language === "de") {
+    return pos ? `mit einer Chance von ${pos} und einem Potenzial von ${pct}` : `mit einem Potenzial von ${pct}`;
+  }
+  return pos ? `with a chance of ${pos} and a potential of ${pct}` : `with a potential of ${pct}`;
+}
+
+function percentWords(language: PodcastLanguage, value: number | null): string | null {
+  if (value == null) return null;
+  return language === "de" ? speakPercent(value) : enPercent(value);
+}
+
+function riskMetricTail(language: PodcastLanguage, row: { ew: number | null; impact: number | null; expectedDamage: number | null }): string {
+  const bits: string[] = [];
+  const ew = percentWords(language, row.ew);
+  const impact = percentWords(language, row.impact);
+  const damage = percentWords(language, row.expectedDamage);
+  if (language === "de") {
+    if (ew) bits.push(`Eintrittswahrscheinlichkeit ${ew}`);
+    if (impact) bits.push(`Wirkung ${impact}`);
+    if (damage) bits.push(`erwarteter Schaden ${damage}`);
+  } else {
+    if (ew) bits.push(`probability ${ew}`);
+    if (impact) bits.push(`impact ${impact}`);
+    if (damage) bits.push(`expected damage ${damage}`);
+  }
+  return bits.join(", ");
+}
+
+function moneyWords(language: PodcastLanguage, value: number | null, sig: 3 | 4): string | null {
+  if (value == null) return null;
+  return language === "de" ? speakPriceUsd(value, sig) : enMoney(value, sig);
+}
+
+function addValuationFacts(out: SpeechFact[], measures: PodcastMeasures | undefined, language: PodcastLanguage): void {
+  const valuation = measures?.valuation;
+  if (!valuation) return;
+  const sig = measures?.sig ?? 3;
+  const source = "analysis.analystPT+analysis.risks";
+  addFact(out, "ra_pt", moneyWords(language, valuation.analystPt, sig), `${source}.median`);
+  addFact(out, "ra_damage", percentWords(language, valuation.totalDamagePct), "analysis.risks.expectedDamage");
+  addFact(out, "ra_target", moneyWords(language, valuation.target, sig), "section10.riskAdjustedTarget");
+  addFact(out, "ra_upside", percentWords(language, valuation.upsideVsPricePct), "section10.riskAdjustedTarget.vsPrice");
+  if (valuation.invertedPerShare == null) return;
+  addFact(out, "inv_dcf", moneyWords(language, valuation.invertedPerShare, sig), "section10.invertedDcf");
+  if (valuation.invertedVsPtPct == null) return;
+  addFact(out, "inv_gap", percentWords(language, valuation.invertedVsPtPct), "section10.invertedDcf.vsAnalystPt");
+  if (!valuation.wideDivergence) return;
+  addFact(
+    out,
+    "inv_note",
+    language === "de"
+      ? "Der Markt preist sehr starkes Wachstum ein"
+      : "The market prices in very strong growth",
+    "section10.divergenceNote",
+  );
+}
+
+function listSpoken(language: PodcastLanguage, items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  const head = items.slice(0, -1).join(", ");
+  const tail = items[items.length - 1] ?? "";
+  return language === "de" ? `${head} und ${tail}` : `${head} and ${tail}`;
+}
+
+function addRegionFacts(out: SpeechFact[], measures: PodcastMeasures | undefined, language: PodcastLanguage): void {
+  const regions = measures?.regions;
+  if (!regions?.length) return;
+  const de = language === "de";
+  const parts = regions.map(row => {
+    const pct = percentWords(language, row.percentage);
+    if (!pct) return null;
+    return de ? `${row.name} mit ${pct}` : `${row.name} at ${pct}`;
+  }).filter((item): item is string => !!item);
+  if (parts.length !== regions.length) return;
+  addFact(
+    out,
+    "regions",
+    de
+      ? `Die Umsatzregionen nennen ${listSpoken(language, parts)}.`
+      : `The revenue regions are ${listSpoken(language, parts)}.`,
+    "analysis.geoSegments",
+  );
+  const asia = measures?.asiaShare;
+  if (!asia) return;
+  const asiaPct = percentWords(language, asia.percentage);
+  if (!asiaPct) return;
+  const members = listSpoken(language, asia.members);
+  const origin = asia.source && asia.source !== "Umsatzregionen" ? asia.source : "";
+  addFact(
+    out,
+    "asia",
+    de
+      ? `Die Summe Asien aus ${members} liegt bei ${asiaPct} und die Quelle Umsatzregionen${origin ? `, Herkunft ${origin}` : ""} bleibt genannt.`
+      : `The Asia total from ${members} stands at ${asiaPct} and the source is the geographic segments${origin ? `, origin ${origin}` : ""}.`,
+    "analysis.geoSegments",
+  );
+}
+
+function addChinaFact(out: SpeechFact[], measures: PodcastMeasures | undefined, language: PodcastLanguage): void {
+  const china = measures?.chinaGeo;
+  if (!china) return;
+  const fromCatalyst = /deepDive/.test(china.source);
+  addFact(
+    out,
+    "china_geo",
+    language === "de"
+      ? `Das Geopolitik- und China-Exposure-Risiko aus ${fromCatalyst ? "den Katalysatoren" : "dem Makro-Block"} bleibt der genannte Gegenwind`
+      : `The geopolitics and China exposure risk from the ${fromCatalyst ? "catalysts" : "macro block"} stays the verified headwind`,
+    china.source,
+  );
+}
+
+function logicFact(facts: PodcastFacts, language: PodcastLanguage): SpeechFact | null {
+  const text = facts.measures?.catalystLogic?.trim() ?? "";
+  if (!text || /\d/.test(text)) return null;
+  const spoken = /[.!?]$/.test(text) ? text : `${text}.`;
+  if (spoken.split(/\s+/).filter(Boolean).length < 8) return null;
+  if (!verbsOk(spoken, language)) return null;
+  if (language === "de" && !DE_MARKER.test(spoken)) return null;
+  if (language === "en" && DE_LEAK.test(spoken)) return null;
+  return { id: "logic", spoken, source: "analysis.catalystReasoning.whyInteresting" };
 }
 
 function speakableTitle(
@@ -482,11 +618,11 @@ function thesisFact(facts: PodcastFacts, language: PodcastLanguage): SpeechFact 
 const CHAPTER_FACT_IDS: Record<string, string[]> = {
   einstieg: ["company", "price", "as_of"],
   zusammenfassung: ["company", "ampel"],
-  these: ["thesis"],
   umsatz: ["fy_yoy", "gj_year", "top_segment", "top_segment_share"],
   dcf: ["dcf_fair", "entry", "wacc", "g_star"],
-  s17: ["pair_a", "pair_b", "pair_c"],
-  inversion: ["entry", "risk_a", "risk_b", "risk_c"],
+  s17: ["pair_a", "pair_b", "pair_c", "china_geo"],
+  inversion: ["entry", "risk_a", "risk_b", "risk_c", "ra_pt", "ra_damage", "ra_target", "ra_upside", "inv_dcf", "inv_gap", "inv_note"],
+  these: ["thesis", "logic", "regions", "asia"],
   earnings: ["call_quarter", "call_date"],
   news: ["news_age"],
   "news-llm": ["news_age"],
@@ -1330,6 +1466,47 @@ const SLOT_UNIT = /\[\[(price|dcf_fair|entry|fy_yoy|wacc|g_star|top_segment_shar
 const ARTICLE_SLOT = /\b(ein|eine|einem|einen|one|a|an)\s+\[\[(fy_yoy|wacc|g_star|top_segment_share|fcf_margin|pair_[abc])\]\]/i;
 const DOUBLED_UNIT = /\b(Dollar|Prozent|Euro|dollars|percent)\s+\1\b/i;
 const DATE_ARTICLE = /\b(?:Der|Die|Das|Den|The)\s+\[\[(?:as_of|call_date)\]\]/;
+const LOCKED_FACT = /^(?:ra_|inv_|dcf_fair$|china_geo$|regions$|asia$|logic$)/;
+
+function foreignChapterToken(chapterId: string, raw: string, sheet: SpeechSheet): string | null {
+  const allowed = new Set(CHAPTER_FACT_IDS[chapterId] ?? []);
+  const re = /\[\[([a-z0-9_]+)\]\]/g;
+  let match: RegExpExecArray | null = re.exec(raw);
+  while (match) {
+    const id = match[1] ?? "";
+    if (LOCKED_FACT.test(id) && sheet.facts.some(fact => fact.id === id) && !allowed.has(id)) return id;
+    match = re.exec(raw);
+  }
+  return null;
+}
+
+function foreignChapterPhrase(chapterId: string, spoken: string, sheet: SpeechSheet): string | null {
+  const allowed = new Set(CHAPTER_FACT_IDS[chapterId] ?? []);
+  for (const fact of sheet.facts) {
+    if (!LOCKED_FACT.test(fact.id) || allowed.has(fact.id) || fact.spoken.length < 10) continue;
+    if (spoken.includes(fact.spoken)) return fact.id;
+  }
+  return null;
+}
+
+function anchorOrder(chapterId: string, spoken: string, facts: SpeechFact[]): string | null {
+  const sequences: Record<string, string[]> = {
+    inversion: ["ra_pt", "ra_damage", "ra_target", "ra_upside", "inv_dcf", "inv_gap", "inv_note"],
+    s17: ["china_geo"],
+    these: ["logic", "regions", "asia"],
+  };
+  const ids = sequences[chapterId];
+  if (!ids) return null;
+  let last = -1;
+  for (const id of ids) {
+    const fact = facts.find(item => item.id === id);
+    if (!fact) continue;
+    const at = spoken.indexOf(fact.spoken);
+    if (at < 0 || at < last) return id;
+    last = at;
+  }
+  return null;
+}
 
 export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet, entities?: string[] | null, none = false): ChapterVerdict {
   const facts = factsForChapter(sheet, chapterId);
@@ -1354,6 +1531,12 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   const unit = raw.match(SLOT_UNIT)?.[2] ?? raw.match(ARTICLE_SLOT)?.[1] ?? spoken.match(DOUBLED_UNIT)?.[1] ?? (DATE_ARTICLE.test(raw) ? "Datum" : null);
   if (unit) note("unit", unit);
   if (spoken && !languageOk(spoken, sheet.language, facts)) note("language", sheet.language);
+  const foreignToken = foreignChapterToken(chapterId, raw, sheet);
+  if (foreignToken) note("chapter", foreignToken);
+  const foreignPhrase = foreignChapterPhrase(chapterId, spoken, sheet);
+  if (foreignPhrase) note("chapter", foreignPhrase);
+  const order = anchorOrder(chapterId, spoken, facts);
+  if (order) note("order", order);
   const prep = spoken.match(DOUBLED_PREP);
   if (prep?.[0]) note("prep", prep[0].toLowerCase());
   const company = spoken ? companyLexiconHit(spoken, sheet) : null;
@@ -1458,7 +1641,33 @@ export function fallbackParagraph(chapterId: string, sheet: SpeechSheet): string
     const second = take("pair_b");
     if (first) parts.push(de ? `An der Spitze steht ${hostedName(first, true)}` : `At the top stands ${hostedName(first, false)}`);
     if (second) parts.push(de ? `Danach folgt ${hostedName(second, true)}` : `After that comes ${hostedName(second, false)}`);
+    const china = take("china_geo");
+    if (china) parts.push(china);
   } else if (chapterId === "inversion") {
+    const pt = take("ra_pt");
+    const damage = take("ra_damage");
+    const target = take("ra_target");
+    const upside = take("ra_upside");
+    if (pt && damage && target && upside) {
+      parts.push(de
+        ? `Der risikoadjustierte Zielkurs setzt den Analysten-Zielkurs von ${pt} nach dem erwarteten Schaden von ${damage} an und liegt bei ${target}, das sind ${upside} gegen den Kurs`
+        : `The risk-adjusted target applies the analyst target of ${pt} after expected damage of ${damage} and stands at ${target}, which is ${upside} against the price`);
+      const below = /^(?:minus|negative)\b/i.test(upside);
+      const flat = /^(?:null|zero)\b/i.test(upside);
+      parts.push(de
+        ? (below ? "Der Zielkurs liegt damit unter dem Kurs" : flat ? "Der Zielkurs liegt damit auf dem Kurs" : "Die Aktie ist damit fundamental unterbewertet")
+        : (below ? "The target stands below the price" : flat ? "The target stands at the price" : "The stock is fundamentally undervalued"));
+    }
+    const inverted = take("inv_dcf");
+    const gap = take("inv_gap");
+    const note = take("inv_note");
+    if (inverted) {
+      parts.push(de
+        ? `Der konservative invertierte Bewertungsanker liegt bei ${inverted} und bleibt der Abwärtsanker, nicht der faire Wert`
+        : `The conservative inverted anchor stands at ${inverted} and stays the downside anchor, not the fair value`);
+      if (gap) parts.push(de ? `Der Abstand zum Analysten-Zielkurs liegt bei ${gap}` : `The gap versus the analyst target stands at ${gap}`);
+      if (note) parts.push(note);
+    }
     const risks = ["risk_a", "risk_b", "risk_c"].map(take).filter((name): name is string => !!name);
     const entry = take("entry");
     const placeholder = de ? /^das genannte Risiko$|^ein weiteres Risiko$|^ein drittes Risiko$/ : /^a (?:second |third )?verified risk$/;
@@ -1583,8 +1792,8 @@ export function fluentPrompt(
     ? redo.map(row => `${row.id}: ${(row.notes && row.notes.length ? row.notes : row.reasons).join("; ")}`).join("\n")
     : "";
   const systemPrompt = sheet.language === "en"
-    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not add an s after a token. The company is only [[company]]. A peer is only [[peer_a]], [[peer_b]] or [[peer_c]], written as of [[peer_a]] or the stock of [[peer_a]]. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities lists every proper name in that paragraph. An empty list is valid only together with none true, and only when the paragraph has no proper name. titles translates each catalyst and risk title into English. Proper names stay."
-    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du hängst kein s an ein Token. Die eigene Firma nur als [[company]]. Eine Vergleichsfirma nur als [[peer_a]], [[peer_b]] oder [[peer_c]], in der Form von [[peer_a]] oder die Aktie von [[peer_a]]. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities nennt alle Eigennamen im Absatz. Eine leere Liste gilt nur zusammen mit none true, und nur wenn kein Eigenname vorkommt.";
+    ? "You write one connected paragraph per chapter, in whole sentences, the way a host speaks. Leave every [[id]] token unchanged. Do not add an s after a token. The company is only [[company]]. A peer is only [[peer_a]], [[peer_b]] or [[peer_c]], written as of [[peer_a]] or the stock of [[peer_a]]. Do not invent a number, a name, or a date. No lists, no one-word sentence, no sentence under four words. If a fact is absent, do not mention it. Do not say that something is missing. A token belongs only to its chapter. In inversion, the risk-adjusted target comes before the downside anchor. The inverted figure is not the fair value. A name is either a catalyst or a risk. Reply as JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities lists every proper name in that paragraph. An empty list is valid only together with none true, and only when the paragraph has no proper name. titles translates each catalyst and risk title into English. Proper names stay."
+    : "Du schreibst je Kapitel einen zusammenhängenden Absatz aus ganzen Sätzen, wie ein Moderator. Du lässt jedes Token [[id]] unverändert. Du hängst kein s an ein Token. Die eigene Firma nur als [[company]]. Eine Vergleichsfirma nur als [[peer_a]], [[peer_b]] oder [[peer_c]], in der Form von [[peer_a]] oder die Aktie von [[peer_a]]. Du erfindest keine Zahl, keinen Namen und kein Datum. Keine Aufzählung, kein Ein-Wort-Satz, kein Satz unter vier Wörtern. Was nicht als Fakt dasteht, erwähnst du nicht. Du sagst nicht, dass etwas fehlt. Ein Token gehört nur zu seinem Kapitel. In der Inversion steht der risikoadjustierte Zielkurs vor dem Abwärtsanker. Der invertierte Wert ist nicht der faire Wert. Ein Name ist entweder Katalysator oder Risiko. Antworte als JSON {\"chapters\":[{\"id\":\"...\",\"paragraph\":\"...\",\"entities\":[\"...\"],\"none\":false}]}. entities nennt alle Eigennamen im Absatz. Eine leere Liste gilt nur zusammen mit none true, und nur wenn kein Eigenname vorkommt.";
   const titleBlock = sheet.language === "en" && sheet.pendingTitles.length
     ? `TITEL\n${sheet.pendingTitles.map(item => item.raw).join("\n")}`
     : "";
@@ -1861,7 +2070,29 @@ export function chaptersFromDrafts(sheet: SpeechSheet, source: StockPodcastSourc
     chapters.push(chapterShell(def, spoken, false, sheet.language));
     reports.push({ id: def.id, attempts: draft.attempts, fallback: reason });
   }
-  return { chapters, dropped, reports };
+  return { chapters: dedupeChapterSentences(chapters), dropped, reports };
+}
+
+function dedupeChapterSentences(chapters: StockPodcastChapter[]): StockPodcastChapter[] {
+  const seen = new Set<string>();
+  const next: StockPodcastChapter[] = [];
+  for (const chapter of chapters) {
+    if (chapter.id === "schluss") {
+      next.push(chapter);
+      continue;
+    }
+    const kept = podcastSentences(chapter.spoken).filter(sentence => {
+      const key = sentence.replace(/\s+/g, " ").trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const spoken = kept.join(" ").trim();
+    if (!spoken) continue;
+    const words = spoken.split(/\s+/).filter(Boolean).length;
+    next.push({ ...chapter, spoken, durationSec: Math.max(8, Math.round(words / 2.4)) });
+  }
+  return next;
 }
 
 export function brokenDrafts(drafts: FluentDraft[]): FluentDraft[] {

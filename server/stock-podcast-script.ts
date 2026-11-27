@@ -125,7 +125,7 @@ export async function renderStockPodcastScript(opts: {
   const language = opts.language ?? "de";
   const voice = resolveStockPodcastVoice(opts.voiceId, language);
   const facts = buildPodcastFacts(opts.pack, opts.now ?? new Date());
-  const factsHash = hashPodcastFacts(facts.values);
+  const factsHash = hashPodcastFacts(facts.values, facts.narrativeKey);
   const cacheKey = scriptCacheId(opts.pack.ticker, opts.pack.day, opts.source, factsHash, language);
   const cached = peekPodcastScript(cacheKey);
   if (cached && cached.factsHash === factsHash) {
