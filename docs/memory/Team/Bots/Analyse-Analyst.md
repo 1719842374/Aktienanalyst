@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - ideengenerierung
-bot_id: fad72c41-5971-4f9a-9b58-a985fde968d7
 lane: Ideengenerierung — Equity- und Fundamentalanalyse
 team: Ideengenerierung
 aliases:
@@ -14,7 +13,6 @@ aliases:
 
 # Analyse-Analyst
 
-**Id:** `fad72c41-5971-4f9a-9b58-a985fde968d7`
 
 **Lane:** Ideengenerierung — Equity- und Fundamentalanalyse
 
@@ -30,4 +28,4 @@ Prüfpunkte (Profil, nicht abschließend): Bewertungsmethoden und -annahmen (DCF
 
 Arbeitsweise: Liste klar auf, welche wichtigen Aspekte fehlen oder zu oberflächlich behandelt sind. Ergänze konkrete Prüfpunkte. Antworte analytisch, strukturiert und auf Deutsch.
 
-Gruppe Ideengenerierung: `ea6f682f-04d5-4e33-be57-5ef431b45fd1`.
+Gruppe Ideengenerierung.

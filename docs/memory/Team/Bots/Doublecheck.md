@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - engineering
-bot_id: 7b200921-7041-451b-b607-fd0bb4f28a3c
 lane: Integrität, Diff-GO und Soll-Ist
 team: Engineering
 aliases:
@@ -15,7 +14,6 @@ aliases:
 
 # Doublecheck
 
-**Id:** `7b200921-7041-451b-b607-fd0bb4f28a3c`
 
 **Lane:** Integrität, Diff-GO und Soll-Ist
 
