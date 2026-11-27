@@ -37,11 +37,15 @@ export interface ExecSummaryInput {
   scoreCapped?: number | null;
   scoreGate?: string | null;
   s17Verdict?: string | null;
+  /** Ampel aus buildFazitSignal().rating. Liegt sie vor, ersetzt sie den Neutral-Default. */
+  fazitRating?: string | null;
   nextEarningsDate?: string | null;
   lastReportedQuarter?: string | null;
   /** S9 cache — omit Cross sentence when undefined */
   ma50AboveMA200?: boolean | null;
   priceAboveMA200?: boolean | null;
+  macdAboveZero?: boolean | null;
+  macdRising?: boolean | null;
   catalysts?: Array<{
     name: string; pos?: number; einpreisungsgrad?: number;
     gb?: number; nettoUpside?: number; generic?: boolean;
@@ -226,7 +230,10 @@ export function pickContra(input: ExecSummaryInput): ExecLine[] {
 
 export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
   const name = input.companyName || input.ticker;
-  const verdict = (input.s17Verdict || "NEUTRAL").toLowerCase();
+  const ratingSource = (typeof input.fazitRating === "string" && input.fazitRating.trim())
+    ? input.fazitRating.trim()
+    : (input.s17Verdict || "NEUTRAL");
+  const verdict = ratingSource.toLowerCase();
   const gStar = finite(input.gStarPct) ? input.gStarPct.toFixed(1) : null;
   const g1 = finite(input.g1Pct) ? input.g1Pct.toFixed(0) : null;
   const dcf = finite(input.dcfConservative) ? fmtPx(input.dcfConservative) : null;
@@ -239,9 +246,12 @@ export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
   const pxCcy = currencyWord(input.currency);
   const dcfCcy = currencyWord(input.statementCurrency ?? input.currency);
 
+  const dcfLabel = (typeof input.valuationBaseLabel === "string" && input.valuationBaseLabel.trim())
+    ? input.valuationBaseLabel.trim()
+    : (input.biasSwitched ? "Gehärteter Inverse-DCF" : "Das konservative DCF");
   const lage = [
     `${name} ist ${verdict}.`,
-    dcf ? `Das konservative DCF sitzt bei ${dcf} ${dcfCcy} gegenüber ${px} ${pxCcy} Kurs.` : null,
+    dcf ? `${dcfLabel} sitzt bei ${dcf} ${dcfCcy} gegenüber ${px} ${pxCcy} Kurs.` : null,
     gStar && g1 ? `Der Markt preist rund ${gStar} % Dauerwachstum, das Modell eher ${g1} %.` : null,
     pt ? `Das Analystenziel liegt bei ${pt} ${pxCcy}.` : "Ein Analystenziel liegt nicht vor.",
   ].filter(Boolean).join(" ");
@@ -311,6 +321,23 @@ export function buildPosLine(input: ExecSummaryInput): string {
 
 export function buildCrossLine(input: ExecSummaryInput): string {
   if (typeof input.ma50AboveMA200 !== "boolean") return "";
+  const fourKnown = typeof input.priceAboveMA200 === "boolean"
+    && typeof input.macdAboveZero === "boolean"
+    && typeof input.macdRising === "boolean";
+  if (fourKnown) {
+    const priceAbove = input.priceAboveMA200 === true;
+    const maAbove = input.ma50AboveMA200 === true;
+    const macdAbove = input.macdAboveZero === true;
+    const macdRising = input.macdRising === true;
+    const bits = [
+      priceAbove ? "Kurs über der 200-Tage" : "Kurs unter der 200-Tage",
+      maAbove ? "50-Tage über 200-Tage (Golden-Cross-Lage)" : "50-Tage unter 200-Tage (Death Cross)",
+      macdAbove ? "MACD über 0" : "MACD unter 0",
+      macdRising ? "MACD steigend" : "MACD nicht steigend",
+    ];
+    const buy = priceAbove && maAbove && macdAbove && macdRising;
+    return `${bits.join(", ")}. ${buy ? "Buy-Signal." : "Kein Buy-Signal."}`;
+  }
   if (input.ma50AboveMA200 === false) {
     return "Im Chart liegt ein Death Cross (50-Tage unter 200-Tage) — Bärenlage, die Bewertung ist kein Timing.";
   }
