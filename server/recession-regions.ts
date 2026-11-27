@@ -8,8 +8,10 @@ import { fetchVstoxxVol } from "./recession-markets";
 import {
   REGION_WEIGHT,
   alignSpread,
-  catalogProbability,
+  attachLiveSubgroups,
   blendWeighted,
+  buildRegionSubgroups,
+  catalogProbability,
   closedSlot,
   isStale,
   laborSlot,
@@ -18,6 +20,7 @@ import {
   sahmGapPp,
   yoyByMonth,
   type DatedPoint,
+  type LiveRegionSubgroup,
   type RegionCatalog,
   type RegionalCatalogs,
   type RegionSlot,
@@ -65,6 +68,8 @@ export interface ScoreInput {
   usCorrection12m: number;
   today: string;
   scorers: RegionScorers;
+  /** Live US books. Copied onto the US catalog; the regional formula does not recompute them. */
+  usLiveSubgroups?: LiveRegionSubgroup[];
 }
 
 async function getText(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): Promise<string> {
@@ -444,6 +449,7 @@ function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): Re
     slots,
     recessionProbability: catalogProbability(slots, "recession"),
     correctionProbability: catalogProbability(slots, "correction"),
+    subgroups: buildRegionSubgroups(slots),
   };
 }
 
@@ -490,6 +496,7 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
       : fromReading("vol", "JNVI", "correction", "JNVI", scorers.vol(prints.jpVol), prints.jpVol.toFixed(1)),
   ];
   const us = region("US", "USA", input.usSlots);
+  if (input.usLiveSubgroups) us.subgroups = attachLiveSubgroups(input.usLiveSubgroups);
   const euro = region("EZ", "Eurozone", ez);
   const japan = region("JP", "Japan", jp);
   return {
