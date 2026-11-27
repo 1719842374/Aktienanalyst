@@ -1,8 +1,8 @@
-> Aktueller Soll-Ist im Detail: [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). **Kopf-Tip:** main `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445). Der Inhalt unten ist der Stand vom 11.10.2026.
+> Aktueller Soll-Ist im Detail: [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). **Kopf-Tip:** main `d78c370492899c58bec150b8c3e0f2e6a37c9e6d` (#531). Historisch, nicht der Kopf: `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445). Der Inhalt unter „Status kompakt“ ist der Stand vom 11.10.2026 und ist nicht neu bewertet. Die Ampel zum Tip steht am Dateiende.
 
 # Offen — Future Soll/Ist (main)
 
-**Kopf-Tip:** `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445 `feat(chart): Kurslinie nach der gemeinsamen TA-Ampel färben`, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`). Dieser Nachzug setzt nur den Kopf.  
+**Kopf-Tip:** `d78c370492899c58bec150b8c3e0f2e6a37c9e6d` (#531). Historisch, nicht der Kopf: `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` (#445 `feat(chart): Kurslinie nach der gemeinsamen TA-Ampel färben`, Parent `5e198f0ddbcadde9202baab82218427164a1b76d`). Die Abschnitte darunter bleiben der Stand ihrer letzten Inventur.  
 **Geprüft gegen (Inventur 11.10.2026):** `origin/main` `5849ed15a956388fea2259f166a303c16fa6ed69`  
 **Commit-Betreff der Inventur:** `docs: document Peer-Add bug …`  
 **Datum der Inventur:** 11.10.2026  
@@ -500,3 +500,9 @@ Append only. Die Abschnitte darüber bleiben der Stand ihrer letzten Inventur, a
 | Kostolany-Rad | Future_Work | Sektorrotation ist `fertig_`. Kein Kostolany-Treffer im Panel | nein, solange es nur die Grafik ist |
 | Cache-Sync Analyse / Researcher / Portfolio | Future_Work | #400 gemeinsamer Refresh liegt. Volle bidirektionale Sync nicht | nein |
 | Konfliktmatrix | Future_Work (Fazit-Sektion) | Aktien-Matrix `client/src/components/sections/ConflictMatrixPanel.tsx` (#218/#221) und Asset-Matrix #328 liegen. Der Ist-Satz weiter oben in dieser Datei („Keine Konfliktmatrix-Komponente“) ist der Stand vom 11.10. und damit veraltet. Kein zweiter Bau | nur wenn das Fazit-Rating aus der Matrix neu gerechnet wird |
+
+## Ampel 27.11.2026, Tip `d78c3704`
+
+Status dieser Datei: **offen** (`Offen_`). Die Tabelle „Status kompakt“ und die Abschnitte (a)/(c) sind nicht umgeschrieben.
+
+Soll bleibt die Future-Liste (i18n, eine gemeinsame Rezessions-Chart-Sektion, Perzentil statt fester Zonen, Makro-Gewichte, adaptive Gold-Schicht, die Restlücken der Tabelle darüber). Ist auf `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`, nur die hier nachgesehenen Stellen: keine `client/src/i18n.ts`. `RecessionDashboard.tsx:194` `RecessionTaSection` und `:196` `BuffettRatioPanel` bleiben zwei Blöcke. `RegionGaugeSwitch.tsx:10` weiter „Asien (Japan)“. Podcast (#529 `3a07a85e`, #528 `61b12b96`, #531 `d78c3704`) und die DCF-Kalibrierung (#512 `5eec205a`, Flag false, #526 `0247d57b`) ändern diese Future-Sätze nicht. Fehlt: alles, was die Restlücken-Tabelle als offen oder Philip-OK führt. Die Zeilenzählung steht in `Offen_FUTURE_SOLL_IST_DETAIL.md` und ist auf diesem Tip nicht neu gemacht.

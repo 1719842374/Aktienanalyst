@@ -153,3 +153,9 @@ Jüngstes Jahr mit positiver Weltzeile: 2024, in der Quelle als Schätzung geken
 17 Länder-Bubbles, darunter Burkina Faso, Tansania und Kolumbien. „Other Countries“ (780/3300) ist keine Bubble. Die Differenz 50 t zwischen ausgewiesenen Zeilen (3250) und der gerundeten Weltzeile (3300) wird nicht verteilt.  
 Firmenzeilen: AISC weiter aus `gold-aisc.json`, `productionOz` bleibt null.  
 Koordinaten: Flächenschwerpunkt aus `world-atlas` countries-110m. Fehlt ein Land im Atlas, keine Ersatzkoordinate.
+
+## Ampel 27.11.2026, Tip `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`
+
+Status der Datei: **offen** (`Offen_`). Abschnitt 4 (Gold, #411 `a2ac30c8`) bleibt der Gold-Beleg und ist nicht umgeschrieben.
+
+Soll: Capex, Sektor und Bitcoin-Miner auf einer Karte, plus der Gold-Layer aus Abschnitt 4, mit konkreten Zahlen in den Side-Panels. Ist: `client/src/components/researcher/GeoMapPanel.tsx:43–51` führt die Layer `capex`, `sector`, `miner`, `gold`, `valuechain`. Route `GET /api/researcher/geo-map` über `server/routes-register.ts:16–17`. Miner-Daten `shared/miner-map.ts`. Kein Commit an `GeoMapPanel.tsx` zwischen `5eec205a` und `d78c3704`. Fehlt: die Acceptance (≥ 20 Länder, 8–10 Sektoren, 8–10 Mining-Regionen mit live geprüften Side-Panel-Zahlen) ist in diesem Docs-Lauf nicht gegen Prod geprüft. Miner-Kernformeln (Breakeven, Puell, Hash Ribbons) sind nicht geändert.

@@ -117,6 +117,19 @@
 - Ist: #267 (Squash vor `4820aaa3`) bringt ein Real10Y-Overlay (FRED DFII10, real) in `TechnicalChart.tsx`; nominaler 10Y laut Spec nicht belegt → **🟡 Teil**, Entscheidung „DFII10 reicht?“ offen.
 - Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §3 10Y-Overlay S12: ✅ über #267 Real10Y (DFII10) in `TechnicalChart.tsx`. Grund: Entscheidung Philip 19:33, dass Real 10Y reicht (von Stabschef übermittelt). Status jetzt ✅ (nicht mehr 🟡).
 
+### Soll-Ist 27.11.2026 (Kopf `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`)
+
+Die Blöcke darüber bleiben stehen. Dieser Block ist der Nachzug, Prefix bleibt `Offen_`.
+
+| Abschnitt | Soll | Ist auf `d78c3704` | fehlt | Status |
+|---|---|---|---|---|
+| §1 | Buffett nur im Rezessionsdashboard | `RecessionDashboard.tsx:13` Import, `:196` `<BuffettRatioPanel />`. Kein `BuffettMacroCard` in `client/src/pages/Dashboard.tsx`. #355 `597953df` | — | erledigt |
+| §1 Asia ^TPX | Benchmark im Buffett-Endpunkt | kein `^TPX` in `server/buffett-route.ts`. `^TPX` steht in `server/recession-regions.ts:274` (Index-KGV, nicht dieser Endpunkt) | Asia-Benchmark | offen |
+| §2 | Label „Asien“, Aggregation mindestens Japan und China | `RegionGaugeSwitch.tsx:10` „Asien (Japan)“. Kein Commit an dieser Datei in `4286b44f..d78c3704` | Aggregation und Score. #413 nicht anfassen | offen |
+| §3 | 10Y-Overlay in der Aktien-TA | `TechnicalChart.tsx:265` Real10Y, FRED DFII10, Toggle `button-real10y`. Philip 25.10. 19:33 | — | erledigt |
+
+Datei bleibt `Offen_` wegen §2 und Asia ^TPX.
+
 **Priorität:** Mittel (optional, aber sauber und relativ wenig Aufwand)  
 **Aufwand:** 2–4 Stunden
 
