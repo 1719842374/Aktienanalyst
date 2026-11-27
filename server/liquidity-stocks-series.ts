@@ -38,6 +38,16 @@ export const MSPD_MARKETABLE_URL =
   "?filter=security_type_desc:eq:Marketable" +
   "&sort=-record_date&page[size]=100&fields=record_date,security_class_desc,total_mil_amt";
 
+/** total_mil_amt is millions of USD. parseMarketableTotal divides by 1000, so the stock is Mrd. $. */
+export const US_BOND_UNIT = "Mrd. $";
+export const US_BOND_SOURCE = "MSPD Table 1 Marketable, Treasury Fiscal Data, total_mil_amt";
+/** Eurostat F3 is MIO_EUR. The fetch scales by 1/1000, so the stock is Mrd. €. */
+export const EU_BOND_UNIT = "Mrd. €";
+export const EU_BOND_SOURCE = "Eurostat gov_10q_ggdebt F3, MIO_EUR";
+/** BoJ FM05 is 100 million yen. bojHundredMillionYenToBillion divides by 10, so the stock is Mrd. ¥. */
+export const ASIA_BOND_UNIT = "Mrd. ¥";
+export const ASIA_BOND_SOURCE = "BoJ FM05 SMBIT1OG, 100 Mio. ¥";
+
 const US_IDS = ["GFDEGDQ188S", "DFII10", "DGS10", "CPIAUCSL", "M2V", "M2SL", "GDP", "GDPC1"] as const;
 const EU_IDS = ["GGGDTPEZA188N", "IRLTLT01EZM156N"] as const;
 const ASIA_IDS = ["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP", "JPNRGDPEXP"] as const;
@@ -366,6 +376,11 @@ function latest(points: Obs[] | undefined, now: Date, staleDays = STALE_DAYS): n
   return pts.length ? pts[pts.length - 1].value : null;
 }
 
+function latestObs(points: Obs[] | undefined, now: Date, staleDays = STALE_DAYS): Obs | null {
+  const pts = fresh(points, now, staleDays);
+  return pts.length ? pts[pts.length - 1] : null;
+}
+
 function atOrBefore(pts: Obs[], iso: string): Obs | null {
   let hit: Obs | null = null;
   for (const p of pts) {
@@ -415,13 +430,15 @@ function fiscalTrendOf(points: Obs[] | undefined, now: Date, staleDays = STALE_D
   return sOfZ((x - mu) / (sigma + 1e-9));
 }
 
-function velocityFrom(series: Record<string, Obs[] | undefined>, now: Date): { velocity: number | null; history: number[] | null } {
+function velocityFrom(series: Record<string, Obs[] | undefined>, now: Date): { velocity: number | null; history: number[] | null; label: string | null } {
   const official = fresh(series.M2V, now);
-  const source = official.length
-    ? last10y(official)
-    : ratioPoints(fresh(series.GDP, now), fresh(series.M2SL, now));
-  if (!source.length) return { velocity: null, history: null };
-  return { velocity: source[source.length - 1].value, history: source.map(p => p.value) };
+  if (official.length) {
+    const source = last10y(official);
+    return { velocity: source[source.length - 1].value, history: source.map(p => p.value), label: "M2V" };
+  }
+  const ratio = ratioPoints(fresh(series.GDP, now), fresh(series.M2SL, now));
+  if (!ratio.length) return { velocity: null, history: null, label: null };
+  return { velocity: ratio[ratio.length - 1].value, history: ratio.map(p => p.value), label: "BIP/M2" };
 }
 
 function yoySeries(points: Obs[] | undefined, now: Date): Obs[] {
@@ -538,12 +555,16 @@ function fillUs(input: StockInputs, series: Record<string, Obs[] | undefined>, n
   const vel = velocityFrom(series, now);
   input.velocity = vel.velocity;
   input.velocityHistory = vel.history;
+  input.velocityLabel = vel.label;
 
-  const bond = latest(series.MSPD_MARKETABLE, now);
+  const bondObs = latestObs(series.MSPD_MARKETABLE, now);
   const gdp = latest(series.GDP, now);
-  if (bond != null) {
-    input.bondMarketBn = bond;
-    if (gdp != null && gdp !== 0) input.bondMarketGdpPct = (bond / gdp) * 100;
+  if (bondObs != null) {
+    input.bondMarketBn = bondObs.value;
+    input.bondMarketUnit = US_BOND_UNIT;
+    input.bondMarketSource = US_BOND_SOURCE;
+    input.bondMarketAsOf = bondObs.date;
+    if (gdp != null && gdp !== 0) input.bondMarketGdpPct = (bondObs.value / gdp) * 100;
   }
 
   const m2 = yoyPercent(series.M2SL, now);
@@ -567,12 +588,16 @@ function fillEu(input: StockInputs, series: Record<string, Obs[] | undefined>, n
   const vel = velocityNgdpOverM(ngdp, m3, true);
   input.velocity = vel.velocity;
   input.velocityHistory = vel.history;
+  input.velocityLabel = vel.velocity == null ? null : "NGDP/M3";
 
-  const bond = latest(series.EZ_DEBT_SEC, now);
+  const bondObs = latestObs(series.EZ_DEBT_SEC, now);
   const ngdpLevel = ngdp.length ? ngdp[ngdp.length - 1].value : null;
-  if (bond != null) {
-    input.bondMarketBn = bond;
-    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bond / (ngdpLevel * 4)) * 100;
+  if (bondObs != null) {
+    input.bondMarketBn = bondObs.value;
+    input.bondMarketUnit = EU_BOND_UNIT;
+    input.bondMarketSource = EU_BOND_SOURCE;
+    input.bondMarketAsOf = bondObs.date;
+    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bondObs.value / (ngdpLevel * 4)) * 100;
   }
   const m3Yoy = yoyPercent(series.ECB_M3, now);
   if (m3Yoy != null) {
@@ -603,6 +628,7 @@ function fillAsia(input: StockInputs, series: Record<string, Obs[] | undefined>,
   const vel = velocityNgdpOverM(ngdp, m2, false);
   input.velocity = vel.velocity;
   input.velocityHistory = vel.history;
+  input.velocityLabel = vel.velocity == null ? null : "NGDP/M2";
 
   const m2Yoy = yoyPercent(series.BOJ_M2, now);
   if (m2Yoy != null) {
@@ -614,11 +640,14 @@ function fillAsia(input: StockInputs, series: Record<string, Obs[] | undefined>,
   if (realGdp != null) input.realGdpYoY = realGdp;
   if (m2.length) input.moneyStockBn = m2[m2.length - 1].value;
 
-  const bond = latest(series.BOJ_JGB, now);
+  const bondObs = latestObs(series.BOJ_JGB, now);
   const ngdpLevel = ngdp.length ? ngdp[ngdp.length - 1].value : null;
-  if (bond != null) {
-    input.bondMarketBn = bond;
-    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bond / ngdpLevel) * 100;
+  if (bondObs != null) {
+    input.bondMarketBn = bondObs.value;
+    input.bondMarketUnit = ASIA_BOND_UNIT;
+    input.bondMarketSource = ASIA_BOND_SOURCE;
+    input.bondMarketAsOf = bondObs.date;
+    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bondObs.value / ngdpLevel) * 100;
   }
 }
 
