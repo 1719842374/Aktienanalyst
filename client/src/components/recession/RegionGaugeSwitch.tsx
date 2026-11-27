@@ -7,7 +7,7 @@ import { getProbBg, getProbColor, getProbLabel, type RecessionAnalysis } from ".
 const BUTTONS: Array<{ id: RegionId; label: string }> = [
   { id: "US", label: "US" },
   { id: "EZ", label: "Europa" },
-  { id: "JP", label: "Asien (Japan)" },
+  { id: "JP", label: "Asien" },
 ];
 
 function CatalogGauge({ label, value }: { label: string; value: number | null }) {
@@ -82,6 +82,9 @@ export function RegionGaugeSwitch({ data, regions }: { data: RecessionAnalysis; 
                 ))}
               </ul>
             </div>
+          )}
+          {view.note && (
+            <p className="text-[11px] text-muted-foreground" data-testid="region-view-note">{view.note}</p>
           )}
           <p className="text-[11px] text-muted-foreground" data-testid="region-view-action-us">
             Nur Anzeige. Handlung bleibt auf den US-Büchern P_korr12 und P_rez12. Gewichtung 0,70 / 0,20 / 0,10 unverändert (Sektion 8).

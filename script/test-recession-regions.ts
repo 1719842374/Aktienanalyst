@@ -160,6 +160,8 @@ console.log("\n=== Catalog scores reuse the US readers ===");
       jpLong: shortCurve,
       jpIp: staleIp,
       jpM2Yoy: 2,
+      jpGdpUsd: 1,
+      jpGdpSource: "FRED MKTGDPJPA646NWDB 2025",
     }),
     usSlots: [],
     usRecession12m: 40,
@@ -366,6 +368,8 @@ console.log("\n=== Public adapters: iShares KGV, OECD IP, newer series ===");
     prints: prints({
       jpIp: points,
       jpIpSource: "OECD STES DF_INDSERV JPN.M.PRVM.IX.BTE.Y",
+      jpGdpUsd: 1,
+      jpGdpSource: "FRED MKTGDPJPA646NWDB 2025",
     }),
     usSlots: [],
     usRecession12m: 40,
