@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - engineering
-bot_id: caf59a7f-d3b0-43ab-befd-f3c134183592
 lane: Deploy, Preview-URL und Build-Logs
 team: Engineering
 aliases:
@@ -15,7 +14,6 @@ aliases:
 
 # Vercel
 
-**Id:** `caf59a7f-d3b0-43ab-befd-f3c134183592`
 
 **Lane:** Deploy, Preview-URL und Build-Logs
 
@@ -26,3 +24,5 @@ ONLY-Job laut aktuellem `profile.json`:
 Vercel/Render-Deploy-Lane für Aktienanalyst. Deployments, Preview-URLs, Build-Logs, Domains, Projekt-Einstellungen — Status holen, fehlgeschlagene Builds einordnen, Previews verlinken.
 
 Laut [[Team/Rollen und Ablauf|Team-Ablauf]]: Deploy, Preview-URL und Build-Logs macht Vercel.
+
+Iststand 27.11.2026, 09:38 Europe/Madrid: Die Produktion läuft auf Render ([aktienanalyst.onrender.com](https://aktienanalyst.onrender.com)), Auto-Deploy bei jedem Push auf `main`. Beleg: README, Abschnitt Produktion / Deployment.

@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - engineering
-bot_id: b9096ff4-fe85-4d14-a193-5fb721af938a
 lane: Live-Test
 team: Engineering
 aliases:
@@ -15,7 +14,6 @@ aliases:
 
 # Tester · Implementierungscheck Live
 
-**Id:** `b9096ff4-fe85-4d14-a193-5fb721af938a`
 
 **Lane:** Live-Test
 
