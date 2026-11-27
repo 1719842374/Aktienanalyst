@@ -14,10 +14,10 @@ aliases:
 
 # Aktienanalyst — Projektgedächtnis
 
-Obsidian-Vault als dauerhaftes Projektgedächtnis für [1719842374/Aktienanalyst](https://github.com/1719842374/Aktienanalyst). Ort auf der Box: `/workspace/obsidian/Aktienanalyst`. Geteilt von allen Bots Philips. Philips Desktop war beim Anlegen nicht verbunden.
+Obsidian-Vault als Projektgedächtnis für [1719842374/Aktienanalyst](https://github.com/1719842374/Aktienanalyst). Eine Kopie für Cursor-Agenten liegt unter `docs/memory/`. Bei Widerspruch gewinnt der Code auf origin/main, danach README/WORK_IMPLEMENTIERUNG_OFFEN.md. Ort des Box-Vaults: `/workspace/obsidian/Aktienanalyst` (nur Box, für Cloud-Agenten nicht lesbar). Geteilt von allen Bots Philips. Philips Desktop war beim Anlegen nicht verbunden.
 
 > [!tip] Wie dieser Vault gepflegt wird
-> Neue Entscheidungen unten im Log anhängen, [[Repo/Stand]] nach Merges aktualisieren, Notizen nie löschen. Alles steht in [[Pflege]].
+> Bau-Agenten lesen `docs/memory/` nur. Aktualisierung von [[Repo/Stand]] und Entscheidungen macht die Work.MD-Lane per Docs-PR. Notizen nie löschen. Alles steht in [[Pflege]].
 
 ## Team und Ablauf
 

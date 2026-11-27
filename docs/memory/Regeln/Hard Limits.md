@@ -23,14 +23,15 @@ Zusammengestellt aus den vorliegenden Quellen. Nichts hier ist neu erfunden; wo 
 - **Security, Breaking Changes, Production/Domain/Env, beschädigte Daten, neuer Tool-Zugang.** Philip fragen (Team-Ablauf Punkt 5 und Autonom-Merge-Ausnahmen).
 - **Design.** Philip zuerst fragen, sonst kein autonomes Mergen. Siehe [[Regeln/Design immer erst Philip fragen]].
 
-## Dokumentierte Team-Limits ohne eigenen Audit-Block in `/workspace/audit`
+## Dokumentierte Team-Limits ohne eigenen Audit-Block in `/workspace/audit` (nur Box, für Cloud-Agenten nicht lesbar)
 
-Die folgenden Punkte stehen in der laufenden Team-Koordination als weiterhin geltende Hard Limits, lagen beim Anlegen dieses Vaults aber nicht als eigener datierter Block unter `/workspace/audit/*.txt` vor:
+Die folgenden Punkte stehen in der laufenden Team-Koordination als weiterhin geltende Hard Limits, lagen beim Anlegen dieses Vaults aber nicht als eigener datierter Block unter `/workspace/audit/*.txt` (nur Box, für Cloud-Agenten nicht lesbar) vor:
 
 - Nicht direkt auf `main` pushen (Merges nur über die GitHub-Lane nach GO/PASS, siehe oben).
-- `analyze-route.ts` und `researcher.ts` nicht anfassen.
-- Keine zweite `.L`-Datenquelle.
-- ETFs bleiben auf dem Aktien-Dashboard gesperrt.
-- Keine `.DE`-Tests; AAPL ersetzt SAP.DE.
+- `analyze-route.ts` und `researcher.ts` nicht anfassen. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- Keine zweite `.L`-Datenquelle. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- ETFs bleiben auf dem Aktien-Dashboard gesperrt. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- Keine `.DE`-Tests/Specs. Quelle: Philip 18.11.2026 21:59.
+- AAPL statt SAP.DE. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
 
 Wenn ein datierter Originalblock auftaucht, hier nachtragen und verlinken, die Notiz nicht löschen ([[Pflege]]).
