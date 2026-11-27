@@ -76,7 +76,7 @@ console.log(`STARTS ${sOk}/${STARTS.length} ok`);
 const TRAPS = ["Toyota","Apple","Pfizer","Zepbound","Mounjaro","Lily","Pfizerwerk","Toyotawagen"];
 for (const n of [...TRAPS, "Lilly", "Ozempic"]) { const t = `Der stärkste Treiber ist [[pair_a]], und auch ${n} beobachtet den Markt sehr genau.`; console.log("TRAP", n.padEnd(12), "null:", verifyChapter("s17", t, de, null).notes.join(",") || "OK", "| []:", verifyChapter("s17", t, de, []).notes.join(",") || "OK", "| ents:", verifyChapter("s17", t, de, [n]).notes.join(",") || "OK", "| none:", verifyChapter("s17", t, de, [], true).notes.join(",") || "OK"); }
 const lexiconRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const lexiconFiles = ["shared/de-nouns.ts", "shared/de-closed.ts", "shared/de-companies.ts", "shared/de-nouns-long.ts", "shared/de-nouns-adj.ts", "shared/de-nouns-extra.ts", "shared/de-adjectives.ts", "shared/de-verbs-base.ts", "shared/de-products.ts", "shared/en-common.ts", "shared/en-adjectives.ts", "shared/en-verbs.ts", "shared/en-nouns.ts", "shared/place-names.ts", "shared/quantity-words.ts"];
+const lexiconFiles = ["shared/de-nouns.ts", "shared/de-closed.ts", "shared/de-companies.ts", "shared/de-nouns-long.ts", "shared/de-nouns-adj.ts", "shared/de-products.ts", "shared/en-common.ts", "shared/place-names.ts", "shared/quantity-words.ts"];
 const lexiconHash = createHash("sha256");
 for (const rel of lexiconFiles) {
   const bytes = readFileSync(join(lexiconRoot, rel));
