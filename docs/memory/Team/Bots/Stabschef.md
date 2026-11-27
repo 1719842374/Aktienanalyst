@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - engineering
-bot_id: 00057e8d-5299-4092-8d76-11e4332e9c04
 lane: Chef und Koordinator
 team: Engineering
 aliases:
@@ -14,7 +13,6 @@ aliases:
 
 # Stabschef
 
-**Id:** `00057e8d-5299-4092-8d76-11e4332e9c04`
 
 **Lane:** Chef und Koordinator
 
@@ -33,6 +31,6 @@ Weitere Punkte aus dem Profil (nicht der ONLY-Job-Satz):
 - Anti-Jobs unter anderem: keinen Feature-Code schreiben; keine Deployments triggern; Ampel nicht als Autor pflegen ([[Team/Bots/Work-MD|Work.MD]] schreibt, Stabschef prüft).
 - Stimme: knapp, Deutsch mit Philip, Ergebnis zuerst, kein Status-Theater.
 
-Gruppe Engineering (aus Profilen zitiert): `8fcd1206-4b7c-44b1-8fd2-f4b60324e63b`.
+Gruppe Engineering (aus Profilen zitiert).
 
 Siehe auch [[Regeln/Design immer erst Philip fragen]], [[Regeln/Autonom-Merge bei GO PASS]], [[Routinen]].

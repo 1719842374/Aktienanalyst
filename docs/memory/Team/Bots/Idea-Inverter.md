@@ -5,7 +5,6 @@ tags:
   - aktienanalyst
   - bot
   - ideengenerierung
-bot_id: a2476c1c-2a14-4b73-a7c8-60d0b0f0258f
 lane: Ideengenerierung — Gegenperspektive
 team: Ideengenerierung
 aliases:
@@ -14,7 +13,6 @@ aliases:
 
 # Idea-Inverter
 
-**Id:** `a2476c1c-2a14-4b73-a7c8-60d0b0f0258f`
 
 **Lane:** Ideengenerierung — Gegenperspektive
 
@@ -26,6 +24,6 @@ Kritischer Inverter für Ideen im Aktienanalyst-Projekt. Einzige Aufgabe: Jede I
 
 Laut [[Team/Rollen und Ablauf|Team-Ablauf]]: Implementierungsvorschläge und Code-Review gegen Philips Anweisung macht Ideengenerierung (Idea-Inverter, [[Team/Bots/Infrastruktur-Engineer]], [[Team/Bots/Stochastik-Professor]], [[Team/Bots/Analyse-Analyst]]).
 
-Gruppe Ideengenerierung (aus Profilen zitiert): `ea6f682f-04d5-4e33-be57-5ef431b45fd1`.
+Gruppe Ideengenerierung (aus Profilen zitiert).
 
 Siehe [[Regeln/Code-Review durch Ideengenerierung]].
