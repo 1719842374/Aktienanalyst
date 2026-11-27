@@ -170,7 +170,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
   const p20Text = zone?.thresholds.low == null ? "—" : `${zone.thresholds.low.toFixed(2)}×`;
   const p50Text = zone?.thresholds.high == null ? "—" : `${zone.thresholds.high.toFixed(2)}×`;
   const thresholdTitle = zone
-    ? `pLowRank=${zone.thresholds.pLowRank}, pHighRank=${zone.thresholds.pHighRank}, minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage, PERCENTILE.INC`
+    ? `pLowRank=${zone.thresholds.pLowRank}, pHighRank=${zone.thresholds.pHighRank}, minObs=${GOLD_MINER_ZONE_MIN_OBS}, ${zone.thresholds.obs} Tage, Perzentil über Quartale, PERCENTILE.INC`
     : undefined;
   const bandFrom = view.segments[0]?.x1 ?? null;
   const bandTo = view.segments.length ? view.segments[view.segments.length - 1].x2 : null;
@@ -351,7 +351,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
 
             <div data-testid="gold-miner-chart-multiple">
               <div className="text-xs font-semibold text-muted-foreground mb-1 break-words" data-testid="gold-miner-history-since">
-                Spot/AISC-Multiple — P20 {p20Text} · P50 {p50Text} (Perzentil {zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}/{zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK}, Historie seit {zone?.thresholds.since ?? "n/a"}{data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""})
+                Spot/AISC-Multiple — P20 {p20Text} · P50 {p50Text} (Perzentil {zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}/{zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK} über Quartale, Historie seit {zone?.thresholds.since ?? "n/a"}{data.aiscZoneSpotSource ? ` · Spot-Quelle ${data.aiscZoneSpotSource}` : ""})
               </div>
               <ResponsiveContainer width="100%" height={heights.multiple}>
                 <ComposedChart data={chartRows} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
@@ -395,8 +395,8 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
               <div>
                 AISC = All-in Sustaining Cost je Unze (by-product), Ø Newmont, Barrick, Agnico Eagle aus Quartalsberichten
                 (Quelle je Wert in server/data/gold-aisc.json). {GOLD_AISC_FORMULA}
-                Zonen-Schwellen sind Perzentile der eigenen Multiple-Historie, keine festen Zahlen.
-                Kein Einfluss auf GIS/Score (inScore false). Der Kapitulations-Score ist der Perzentil-Rang des aktuellen Multiples in dieser Historie
+                Zonen-Schwellen sind Perzentile der Quartals-Multiples (ein Wert je Quartal, das am Stichtag verfügbar war), keine festen Zahlen und nicht je Handelstag.
+                Kein Einfluss auf GIS/Score (inScore false). Der Kapitulations-Score ist der Perzentil-Rang des aktuellen Multiples in diesen Quartalen
                 (unter 1× auf höchstens 10 gekappt); eine längere Historie verschiebt nur die Stichprobe.
               </div>
               {gapPoint && (
@@ -412,7 +412,7 @@ export function GoldMinerBreakevenSection({ data }: { data: GoldAnalysis }) {
                 Parameter: method={line?.method ?? "mean"}, minCompanies={line?.minCompanies ?? "n/a"}, lagDays={line?.lagDays ?? "n/a"},
                 pLowRank={zone?.thresholds.pLowRank ?? GOLD_MINER_P_LOW_RANK}, pHighRank={zone?.thresholds.pHighRank ?? GOLD_MINER_P_HIGH_RANK},
                 minObs={GOLD_MINER_ZONE_MIN_OBS}.
-                <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-500">teilw. nicht point-in-time</span>
+                <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded border border-border text-muted-foreground">Stufe ab max(Quartalsende+60, Quellen-Datum)</span>
               </div>
             </div>
           </>

@@ -7,8 +7,9 @@
  *
  * Regeln: nur belegte Werte, nichts geschätzt oder interpoliert. Ø je Quartal nur ab
  * `minCompanies` Firmenwerten, sonst n/a (null). Eine n/a-Stufe beendet die Linie, bis
- * wieder ein belegtes Quartal kommt. Die Stufe beginnt `lagDays` nach Quartalsende
- * (Berichtsverzug: Q4-Berichte erscheinen bis ~52 Tage nach Quartalsende).
+ * wieder ein belegtes Quartal kommt. Die Stufe beginnt am späteren der beiden Termine
+ * `lagDays` nach Quartalsende und dem spätesten `sourceDate` der Firmen in der Stufe.
+ * Eine Vergleichsspalte aus einem späteren Filing ist davor nicht sichtbar.
  * Kein Score: GIS, getTechnicalScore und gold-adaptive-score bleiben unberührt (B2).
  */
 import type {
@@ -140,10 +141,14 @@ export function buildGoldAiscSeries(
       const rows = values.filter(v => v.quarter === q);
       for (const code of GOLD_AISC_COMPANY_CODES) if (!rows.some(r => r.company === code)) gaps.push(`${code} ${q}`);
       const periodEnd = quarterPeriodEnd(q);
+      let availableFrom = addDays(periodEnd, lagDays);
+      for (const row of rows) {
+        if (row.sourceDate > availableFrom) availableFrom = row.sourceDate;
+      }
       quarters.push({
         quarter: q,
         periodEnd,
-        availableFrom: addDays(periodEnd, lagDays),
+        availableFrom,
         aisc: rows.length >= minCompanies ? Math.round(rows.reduce((s, r) => s + r.aisc, 0) / rows.length) : null,
         count: rows.length,
         values: rows,
@@ -177,15 +182,19 @@ export function buildGoldAiscSeries(
  * minCompanies und lagDays kommen aus der Reihe (Defaults GOLD_AISC_MIN_COMPANIES, GOLD_AISC_LAG_DAYS).
  */
 export const GOLD_AISC_FORMULA =
-  "Ø = gerundet(Mittelwert der belegten Quartals-AISC), nur wenn Anzahl ≥ minCompanies; Stufe ab Quartalsende + lagDays; Multiple = Spot / Ø; Marge = (Spot − Ø) / Spot. Keine Interpolation.";
+  "Ø = gerundet(Mittelwert der belegten Quartals-AISC), nur wenn Anzahl ≥ minCompanies; Stufe ab max(Quartalsende + lagDays, spätestes sourceDate der Firmen in der Stufe); Multiple = Spot / Ø; Marge = (Spot − Ø) / Spot. Keine Interpolation.";
 
-/** Letzte Stufe mit availableFrom ≤ date, auch wenn ihr AISC n/a ist. Vor der ersten Stufe → null. */
+/**
+ * Letzte Stufe mit availableFrom ≤ date, auch wenn ihr AISC n/a ist. Vor der ersten Stufe → null.
+ * Die Quartale stehen älteste zuerst. availableFrom ist nicht zwingend monoton: eine frühere
+ * Periode kann aus einer späteren Vergleichsspalte stammen. Ein noch nicht veröffentlichtes
+ * Quartal darf ein schon bekanntes späteres Quartal nicht verdecken.
+ */
 export function goldAiscCovering(series: GoldAiscSeries | null | undefined, date: string): GoldAiscQuarterStep | null {
   if (!series) return null;
   let hit: GoldAiscQuarterStep | null = null;
   for (const q of series.quarters) {
     if (q.availableFrom <= date) hit = q;
-    else break;
   }
   return hit;
 }
@@ -206,7 +215,7 @@ export function goldAiscNaReason(series: GoldAiscSeries | null | undefined, date
   if (hit?.aisc != null) return null;
   const first = series.quarters[0];
   if (!hit) {
-    return `vor der ersten belegten Stufe ${first.quarter} (gültig ab ${first.availableFrom}, Lag ${series.lagDays} Tage nach Quartalsende). Nicht interpoliert.`;
+    return `vor der ersten belegten Stufe ${first.quarter} (gültig ab ${first.availableFrom}, max(Quartalsende + ${series.lagDays} Tage, Quellen-Datum)). Nicht interpoliert.`;
   }
   const gaps = series.gaps.filter(gap => gap.endsWith(hit.quarter));
   const missing = gaps.length > 0 ? gaps.join(", ") : "belegte Firmen unter dem Minimum";

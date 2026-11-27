@@ -5,9 +5,12 @@
  * → GET /api/analyze-gold (historicalPrices + aiscLine) → buildGoldMinerZone
  * → GoldAnalysis.aiscZone → GoldDashboard. Nur Anzeige, `inScore: false`.
  *
- * Schwellen am Tag d stammen nur aus Multiple-Werten ≤ d (kein Lookahead).
- * P20 / P50 sind Perzentil-Ränge (Design-Default); die Multiple-Grenzen sind
- * adaptiv. `multiple < 1` (Spot unter AISC) ist die harte Kostengrenze, keine
+ * Schwellen am Tag d stammen nur aus Quartals-Multiples von Stufen mit
+ * availableFrom ≤ d (ein Wert je Quartal: der letzte Kurs dieser Stufe bis d).
+ * Handelstage zählen nicht mehrfach. P20 / P50 sind Perzentil-Ränge
+ * (Design-Default); die Multiple-Grenzen sind adaptiv. Unter
+ * GOLD_MINER_ZONE_MIN_OBS = 120 Handelstagen bleibt die Zone null.
+ * `multiple < 1` (Spot unter AISC) ist die harte Kostengrenze, keine
  * kalibrierte Zonen-Zahl. Die Euphorie-Zone ≥ P90 wird nicht klassifiziert
  * (`thresholds.euph` bleibt null) — ja/nein entscheidet Philip.
  * Die BTC-Punktetabelle (Puell, Hash Ribbon) bleibt unberührt. Die Bänder
@@ -26,7 +29,7 @@ export const GOLD_MINER_P_EUPH_RANK = 90;
 /**
  * Obergrenze der ausgelieferten Punkte. 10 Jahre Handelstage aus /api/analyze-gold
  * (~2520) bleiben vollständig, damit 3M nicht auf eine ausgedünnte Linie fällt.
- * Der Score rechnet immer auf der vollen Stichprobe, vor dem Ausdünnen.
+ * Der Rang rechnet auf der vollen Quartals-Stichprobe, vor dem Ausdünnen.
  */
 export const GOLD_MINER_ZONE_MAX_POINTS = 4000;
 const MAX_POINTS = GOLD_MINER_ZONE_MAX_POINTS;
@@ -80,15 +83,11 @@ export function percentileRank(sorted: readonly number[], x: number): number {
   return ((prev + frac) / (n - 1)) * 100;
 }
 
-function insertSorted(sorted: number[], value: number): void {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid] < value) lo = mid + 1;
-    else hi = mid;
-  }
-  sorted.splice(lo, 0, value);
+function sortedQuarterMultiples(lastByQuarter: ReadonlyMap<string, number>): number[] {
+  const values: number[] = [];
+  lastByQuarter.forEach(value => { values.push(value); });
+  values.sort((a, b) => a - b);
+  return values;
 }
 
 /** Kapitulation unter 1× oder unter P20. Übergang bis P50. Darüber profitabel. Keine Euphorie. */
@@ -128,6 +127,7 @@ function clipSegments(segments: GoldMinerZone["segments"], keptDates: readonly s
 /**
  * Baut die Miner-Zone. `series === null` → `null` (ungültige/fehlende AISC-Datei).
  * Unter 120 Handelstagen mit gültigem Multiple: Objekt mit `naReason`, Zonen null.
+ * P20, P50 und der Rang zählen jedes verfügbare Quartal einmal, nicht jeden Handelstag.
  * Punkte ohne gültige Stufe behalten den Spot und lassen Multiple/Zone leer (keine Interpolation).
  */
 export function buildGoldMinerZone(
@@ -148,33 +148,40 @@ export function buildGoldMinerZone(
 
   const points: GoldMinerZonePoint[] = [];
   const multiples: number[] = [];
+  const quarterAt: (string | null)[] = [];
   let since: string | null = null;
   for (const date of dates) {
     const spot = byDate[date];
     const step = goldAiscStepAt(series, date);
     if (step?.aisc == null || !(step.aisc > 0)) {
       points.push({ date, spot, aisc: null, multiple: null, marginPct: null, zone: null });
+      quarterAt.push(null);
       continue;
     }
     const aisc = step.aisc;
     const multiple = spot / aisc;
     if (since == null) since = date;
     points.push({ date, spot, aisc, multiple, marginPct: (spot - aisc) / spot, zone: null });
+    quarterAt.push(step.quarter);
     multiples.push(multiple);
   }
 
   const obs = multiples.length;
   const enough = obs >= GOLD_MINER_ZONE_MIN_OBS;
   const rawZones: (GoldMinerZoneName | null)[] = points.map(() => null);
+  const lastByQuarter = new Map<string, number>();
   if (enough) {
-    const expanding: number[] = [];
+    let dayCount = 0;
     for (let i = 0; i < points.length; i++) {
       const multiple = points[i].multiple;
-      if (multiple == null) continue;
-      insertSorted(expanding, multiple);
-      if (expanding.length < GOLD_MINER_ZONE_MIN_OBS) continue;
-      const pLow = percentileValue(expanding, GOLD_MINER_P_LOW_RANK);
-      const pHigh = percentileValue(expanding, GOLD_MINER_P_HIGH_RANK);
+      const quarter = quarterAt[i];
+      if (multiple == null || quarter == null) continue;
+      dayCount++;
+      lastByQuarter.set(quarter, multiple);
+      if (dayCount < GOLD_MINER_ZONE_MIN_OBS) continue;
+      const sample = sortedQuarterMultiples(lastByQuarter);
+      const pLow = percentileValue(sample, GOLD_MINER_P_LOW_RANK);
+      const pHigh = percentileValue(sample, GOLD_MINER_P_HIGH_RANK);
       rawZones[i] = classifyMultiple(multiple, pLow, pHigh);
     }
   }
@@ -189,7 +196,7 @@ export function buildGoldMinerZone(
     segments = clipSegments(segments, delivered.map(p => p.date));
   }
 
-  const allSorted = multiples.slice().sort((a, b) => a - b);
+  const allSorted = sortedQuarterMultiples(lastByQuarter);
   const low = enough ? percentileValue(allSorted, GOLD_MINER_P_LOW_RANK) : null;
   const high = enough ? percentileValue(allSorted, GOLD_MINER_P_HIGH_RANK) : null;
 

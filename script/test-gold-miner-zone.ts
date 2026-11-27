@@ -4,9 +4,8 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { buildGoldAiscSeries, type GoldAiscFile } from "../shared/gold-aisc";
+import { buildGoldAiscSeries, goldAiscStepAt, goldAiscStress, type GoldAiscFile } from "../shared/gold-aisc";
 import type { GoldAiscCompanyCode, GoldAiscSeries, GoldAiscValue } from "../shared/schema";
-import { goldAiscStress } from "../shared/gold-aisc";
 import {
   GOLD_MINER_ZONE_MIN_OBS,
   buildGoldMinerZone,
@@ -260,14 +259,23 @@ console.log("\nechte GC=F-Schlüsse gegen echte AISC-Datei: Zonen und Score übe
   check("erstes Multiple vor 2017", !!withMultiple[0] && withMultiple[0].date < "2017-01-01", withMultiple[0]?.date);
   check("letzte Stufe 2026-Q2 AISC 1649 aus der Datei", latest.quarter === "2026-Q2" && latest.aisc === 1649, `${latest.quarter} ${latest.aisc}`);
   check("latest.multiple = Spot/AISC der echten Schlüsse", Math.abs(latest.multiple - latest.spot / latest.aisc) < 1e-9, String(latest.multiple));
-  const rawRank = percentileRank(sorted, latest.multiple);
+  const byQuarter = new Map<string, number>();
+  for (const point of withMultiple) {
+    const quarter = goldAiscStepAt(series, point.date)?.quarter;
+    if (quarter && point.multiple != null) byQuarter.set(quarter, point.multiple);
+  }
+  const quarterly = [...byQuarter.values()].sort((a, b) => a - b);
+  const rawRank = percentileRank(quarterly, latest.multiple);
+  const dailyRank = percentileRank(sorted, latest.multiple);
   const expectedScore = latest.multiple < 1 ? Math.min(rawRank, 10) : rawRank;
-  check("Score ist der Rang in der vollen Stichprobe", Math.abs(latest.score - expectedScore) < 1e-9, `score ${latest.score} rang ${rawRank}`);
-  check("volle Historie: obs 2497, P20 1.493, P50 1.677, Score 87.34, profitabel",
+  check("Score ist der Rang in der Quartals-Stichprobe, nicht der Tagesrang",
+    Math.abs(latest.score - expectedScore) < 1e-9 && Math.abs(latest.score - dailyRank) > 1,
+    `score ${latest.score} quartal ${rawRank} tag ${dailyRank}`);
+  check("volle Historie: obs 2497, P20 1.515, P50 1.630, Score 87.88, profitabel",
     zone.thresholds.obs === 2497
-    && zone.thresholds.low!.toFixed(3) === "1.493"
-    && zone.thresholds.high!.toFixed(3) === "1.677"
-    && latest.score.toFixed(2) === "87.34"
+    && zone.thresholds.low!.toFixed(3) === "1.515"
+    && zone.thresholds.high!.toFixed(3) === "1.630"
+    && latest.score.toFixed(2) === "87.88"
     && latest.zone === "profitable"
     && latest.multiple.toFixed(3) === "2.399",
     `obs ${zone.thresholds.obs} P20 ${zone.thresholds.low} P50 ${zone.thresholds.high} score ${latest.score} ${latest.zone} ×${latest.multiple}`);
@@ -287,7 +295,7 @@ console.log("\nechte GC=F-Schlüsse gegen echte AISC-Datei: Zonen und Score übe
   const day = zone.points.find(p => p.date === "2018-06-15");
   check("2018-06-15: echte Stufe 883, Multiple = Schluss/883", !!day && day.aisc === 883 && day.multiple != null && Math.abs(day.multiple - day.spot / 883) < 1e-9, day ? `${day.spot}/${day.aisc}` : "fehlt");
   const late = buildGoldMinerZone(spotFile.points, { ...series, quarters: series.quarters.filter(q => q.quarter >= "2024-Q1") })!;
-  check("ohne Historie vor 2024-Q1 fällt der Start auf 2024-05-30 zurück", late.thresholds.since === "2024-05-30", late.thresholds.since ?? "");
+  check("ohne Historie vor 2024-Q1 beginnt die Reihe am Quellen-Datum 2026-02-19", late.thresholds.since === "2026-02-19", late.thresholds.since ?? "");
   check("die kurze Reihe hat weniger als 800 Tage, die volle nicht", late.thresholds.obs < 800 && zone.thresholds.obs > late.thresholds.obs, `voll ${zone.thresholds.obs} kurz ${late.thresholds.obs}`);
   console.log(`  echte Werte: seit ${zone.thresholds.since}, obs ${zone.thresholds.obs}, P20 ${zone.thresholds.low?.toFixed(3)} P50 ${zone.thresholds.high?.toFixed(3)}, Score ${latest.score.toFixed(2)}, Zone ${latest.zone}, Multiple ${latest.multiple.toFixed(3)}, Spot ${latest.spot}, Bänder ${zone.segments.length}`);
 }
@@ -305,7 +313,14 @@ console.log("\nSkala und Rechnung analog BTC, nicht das TA-Overlay");
   check("2,4×-Abstand bleibt auf einer Achse lesbar", !!wide && wide[0] < 1649 && wide[1] > 3899 && wide[0] > 1400, wide ? wide.map(v => v.toFixed(0)).join("…") : "");
 
   const dates = businessDays("2024-01-02", 201);
-  const series = seriesAt(1000, dates[0]);
+  const series = seriesAt(1000, dates[0], {
+    quarter: "2024-Q2",
+    periodEnd: "2024-06-30",
+    availableFrom: dates[dates.length - 1],
+    aisc: 1000,
+    count: 3,
+    values: [companyValue("NEM", 1000), companyValue("B", 1000), companyValue("AEM", 1000)],
+  });
   const built = buildGoldMinerZone(dates.map((date, i) => ({ date, close: i === dates.length - 1 ? 1120 : 2000 })), series)!;
   const last = built.latest!;
   check("Multiple = Spot/AISC, Marge = Spot−AISC",
