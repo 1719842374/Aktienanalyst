@@ -11,7 +11,7 @@ aliases:
 
 # Design immer erst Philip fragen
 
-Quelle: Punkt 4 des Blocks `/workspace/audit/team-ablauf-block-20261125.txt` (Philip, 25.11.2026 16:19 Europe/Madrid).
+Quelle: Punkt 4 des Blocks `/workspace/audit/team-ablauf-block-20261125.txt` (nur Box, für Cloud-Agenten nicht lesbar) (Philip, 25.11.2026 16:19 Europe/Madrid).
 
 > [!warning] Verbatim aus dem Team-Ablauf
 > Bei jeder Design-Frage (Layout, Farben, neue oder umgebaute UI-Elemente, Darstellung) wird Philip IMMER zuerst gefragt, über Stabschef bzw. Designer, bevor gebaut oder gemergt wird. Das autonome Mergen gilt nicht für Design-Entscheidungen ohne Philips OK.

@@ -12,7 +12,7 @@ aliases:
 
 # Code-Review durch Ideengenerierung
 
-Philip, 19.11.2026 11:31 Europe/Madrid. Quelle: `/workspace/audit/ideen-review-block-20261119.txt`.
+Philip, 19.11.2026 11:31 Europe/Madrid. Quelle: `/workspace/audit/ideen-review-block-20261119.txt` (nur Box, für Cloud-Agenten nicht lesbar).
 
 > [!warning] Verbatim-Block
 

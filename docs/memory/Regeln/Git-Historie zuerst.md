@@ -12,7 +12,7 @@ aliases:
 
 # Git-Historie zuerst
 
-Philip, 19.11.2026 10:52 Europe/Madrid. Quelle: `/workspace/audit/git-historie-block-20261119.txt`. Pflicht für jeden Bot und jeden beauftragten Helfer/Cursor-Agenten; in jeden Auftrag weitergeben.
+Philip, 19.11.2026 10:52 Europe/Madrid. Quelle: `/workspace/audit/git-historie-block-20261119.txt` (nur Box, für Cloud-Agenten nicht lesbar). Pflicht für jeden Bot und jeden beauftragten Helfer/Cursor-Agenten; in jeden Auftrag weitergeben.
 
 > [!warning] Verbatim-Block
 

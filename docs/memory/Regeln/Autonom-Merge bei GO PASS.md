@@ -12,7 +12,7 @@ aliases:
 
 # Autonom-Merge bei GO/PASS
 
-Der Standing-Text steht in den aktuellen Bot-Profilen (z. B. [[Team/Bots/Stabschef]]) unter der Überschrift **AUTONOM-MERGE & LIVE-REVIEW**, ohne eigenes Datum im Absatz. Das Datum 2026-10-05 ist die Datierung im Entscheidungslog dieses Vaults ([[Entscheidungen/Entscheidungslog]]); ein eigener datierter Audit-Block für genau den 05.10.2026 lag in `/workspace/audit` nicht vor.
+Der Standing-Text steht in den aktuellen Bot-Profilen (z. B. [[Team/Bots/Stabschef]]) unter der Überschrift **AUTONOM-MERGE & LIVE-REVIEW**, ohne eigenes Datum im Absatz. Das Datum 2026-10-05 ist die Datierung im Entscheidungslog dieses Vaults ([[Entscheidungen/Entscheidungslog]]); ein eigener datierter Audit-Block für genau den 05.10.2026 lag in `/workspace/audit` (nur Box, für Cloud-Agenten nicht lesbar) nicht vor.
 
 > [!info] Verbatim aus dem Stabschef-Profil (Standing)
 
