@@ -12,7 +12,7 @@ aliases:
 
 # Rollen und Ablauf
 
-Quelle: `/workspace/audit/team-ablauf-block-20261125.txt` (Philip, 25.11.2026 16:19 Europe/Madrid). Gilt für alle Engineering- und Ideengenerierung-Bots und jeden beauftragten Cursor-Agenten; ergänzt, ersetzt nichts.
+Quelle: `/workspace/audit/team-ablauf-block-20261125.txt` (nur Box, für Cloud-Agenten nicht lesbar) (Philip, 25.11.2026 16:19 Europe/Madrid). Gilt für alle Engineering- und Ideengenerierung-Bots und jeden beauftragten Cursor-Agenten; ergänzt, ersetzt nichts.
 
 > [!info] Verbatim-Block
 > Der folgende Text ist der unveränderte Block aus der Audit-Datei.
@@ -26,6 +26,8 @@ TEAM-ABLAUF AKTIENANALYST (Philip, 25.11.2026 16:19 Europe/Madrid; gilt für all
 5) PHILIP FRAGEN bei Design, Score-, Rating-, Entry- und Peer-Änderungen, neuem Tool-Zugang, Security, Breaking Changes, Production/Domain/Env oder beschädigten Daten. Alles andere läuft autonom.
 6) ROUTINEN. Jede Lane hält ihre eigenen Routinen aktiv (ListRoutines prüfen). Fehlt eine nach einem Update, legt die Lane sie sofort selbst wieder an und meldet das Stabschef.
 ```
+
+Iststand 27.11.2026, 09:38 Europe/Madrid: Der Verbatim-Block bleibt unverändert. Die Produktion läuft auf Render ([aktienanalyst.onrender.com](https://aktienanalyst.onrender.com)), Auto-Deploy bei jedem Push auf `main`. Beleg: README, Abschnitt Produktion / Deployment.
 
 ## Lesbare Struktur
 

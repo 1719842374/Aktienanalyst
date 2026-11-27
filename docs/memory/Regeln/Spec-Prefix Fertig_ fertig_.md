@@ -13,7 +13,7 @@ aliases:
 
 # Spec-Prefix Fertig_/fertig_
 
-Standing-Text in den aktuellen Bot-Profilen unter **SOLL-IST-SPECS**. Das Datum 2026-10-05 ist die Datierung im [[Entscheidungen/Entscheidungslog]]; ein eigener datierter Audit-Block für genau den 05.10.2026 lag in `/workspace/audit` nicht vor.
+Standing-Text in den aktuellen Bot-Profilen unter **SOLL-IST-SPECS**. Das Datum 2026-10-05 ist die Datierung im [[Entscheidungen/Entscheidungslog]]; ein eigener datierter Audit-Block für genau den 05.10.2026 lag in `/workspace/audit` (nur Box, für Cloud-Agenten nicht lesbar) nicht vor.
 
 > [!info] Verbatim aus dem Stabschef-Profil (Standing)
 
