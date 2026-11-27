@@ -35,9 +35,23 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
   const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
-  // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
+  // Branchen-Wachstum, nur Anzeige. Ein fehlender tamCAGR wird nicht durch eine feste Zahl ersetzt.
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
-  const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
+  const [industryAi, setIndustryAi] = useState<IndustryGrowthAi | null>(null);
+  const [industryAiLoading, setIndustryAiLoading] = useState(false);
+  const [industryAiNote, setIndustryAiNote] = useState<string | null>(null);
+  const industryAiRequest = useRef(0);
+  const sectorDisplay = resolveSectorGrowthDisplay({
+    tamCAGR: data.tamAnalysis?.tamCAGR,
+    tamSource: data.tamAnalysis?.tamSource,
+    tamLabel: data.tamAnalysis?.tamLabel,
+    quality: data.tamAnalysis?.quality,
+    peerRevenueGrowths: (data.peerComparison?.peers ?? []).map((peer) => peer.revenueGrowth),
+    ai: industryAi,
+  });
+  const sectorNumber = sectorDisplay.kind === "tam" || sectorDisplay.kind === "peer-median" || sectorDisplay.kind === "ai"
+    ? sectorDisplay.value
+    : null;
   // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
   // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
   // FMP-Analysen: false, Anzeige unverändert.
@@ -57,7 +71,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     { label: "Forward P/E", stock: data.forwardPE, sector: sectorFwdPE, premium: fwdPEPremium, desc: "Erwartet" },
     { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium, desc: "" },
     { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: data.sectorAvgPEG > 0 ? ((data.pegRatio / data.sectorAvgPEG) - 1) * 100 : 0, desc: "" },
-    { label: "Revenue Growth", stock: companyGrowth, sector: sectorGrowth, premium: companyGrowth - sectorGrowth, desc: "YoY vs. Branche", isGrowth: true },
+    { label: "Revenue Growth", stock: companyGrowth, sector: sectorNumber ?? 0, premium: sectorNumber == null ? 0 : companyGrowth - sectorNumber, desc: "YoY vs. Branche", isGrowth: true },
   ] as const;
 
   const tam = data.tamAnalysis;
@@ -96,6 +110,13 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     setPeerKiError(null);
     setPeerKiLoading(false);
   }, [data.ticker, factPeerCount]);
+
+  useEffect(() => {
+    industryAiRequest.current += 1;
+    setIndustryAi(null);
+    setIndustryAiNote(null);
+    setIndustryAiLoading(false);
+  }, [data.ticker]);
 
   const visibleTamSegments = useMemo(
     () => (tam?.segments ?? []).filter((s) => hasPositiveSegmentRevenue(s.segmentRevenue)),
@@ -228,6 +249,40 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     return Math.round((rows.reduce((sum, row) => sum + row.growth * row.share, 0) / weight) * 10) / 10;
   }, [visibleTamSegments, segmentGrowth.data]);
 
+  async function requestIndustryGrowthEstimate() {
+    if (industryAiLoading || industryAi || sectorDisplay.kind !== "na") return;
+    const requestId = ++industryAiRequest.current;
+    setIndustryAiLoading(true);
+    setIndustryAiNote(null);
+    try {
+      const res = await apiRequest("POST", "/api/industry-growth-estimate", {
+        sector: data.sector,
+        industry: data.industry,
+        description: data.description,
+        quality: data.tamAnalysis?.quality ?? null,
+        tamLabel: data.tamAnalysis?.tamLabel ?? null,
+        tamSource: data.tamAnalysis?.tamSource ?? null,
+        tamCAGR: data.tamAnalysis?.tamCAGR ?? null,
+      });
+      let json: { value?: unknown; source?: unknown; rationale?: unknown; reason?: string; error?: string } | null = null;
+      try { json = await res.json(); } catch { json = null; }
+      if (requestId !== industryAiRequest.current) return;
+      const value = typeof json?.value === "number" && Number.isFinite(json.value) ? json.value : null;
+      const source = typeof json?.source === "string" ? json.source.trim() : "";
+      const rationale = typeof json?.rationale === "string" ? json.rationale.trim() : "";
+      if (!res.ok || value == null || !source || !rationale) {
+        setIndustryAiNote(json?.reason || json?.error || "KI-Schätzung ohne Quelle oder Begründung");
+        return;
+      }
+      setIndustryAi({ value, source, rationale });
+    } catch (err: unknown) {
+      if (requestId !== industryAiRequest.current) return;
+      setIndustryAiNote(err instanceof Error ? err.message : "KI-Schätzung fehlgeschlagen");
+    } finally {
+      if (requestId === industryAiRequest.current) setIndustryAiLoading(false);
+    }
+  }
+
   return (
     <SectionCard number={9} title="RELATIVE BEWERTUNG">
       <div className="overflow-x-auto">
@@ -258,10 +313,14 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
                     {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
+                    {isGrowthRow && sectorDisplay.kind === "peer-span"
+                      ? <span data-testid="revenue-growth-sector-span">{signedGrowthPct(sectorDisplay.min)}…{signedGrowthPct(sectorDisplay.max)}</span>
+                      : isGrowthRow && sectorNumber == null
+                        ? "n/a"
+                        : <>{isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
-                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid ? 'text-muted-foreground' : premiumColor}`}>
-                    {stockInvalid ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
+                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid || (isGrowthRow && sectorNumber == null) ? 'text-muted-foreground' : premiumColor}`}>
+                    {stockInvalid || (isGrowthRow && sectorNumber == null) ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
                   </td>
                 </tr>
               );
@@ -282,8 +341,22 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
-            <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorNumber == null ? 0 : Math.abs(sectorNumber), 1) * 1.5} color={sectorNumber == null ? (companyGrowth >= 0 ? 'bg-emerald-500' : 'bg-red-500') : (companyGrowth >= sectorNumber ? 'bg-emerald-500' : 'bg-red-500')} suffix="%" />
+            <BarRow label="Branche" value={sectorNumber} max={Math.max(Math.abs(companyGrowth), sectorNumber == null ? 0 : Math.abs(sectorNumber), 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
+            <div className="text-[10px] text-muted-foreground/70 italic" data-testid="revenue-growth-sector-source">{sectorGrowthSourceText(sectorDisplay)}</div>
+            {sectorDisplay.kind === "na" && (
+              <button
+                type="button"
+                onClick={() => { if (!industryAiLoading) void requestIndustryGrowthEstimate(); }}
+                disabled={industryAiLoading}
+                className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 hover:bg-violet-500/20 disabled:opacity-50 dark:text-violet-300"
+                data-testid="button-industry-growth-estimate"
+              >
+                {industryAiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                KI-Schätzung
+              </button>
+            )}
+            {industryAiNote && <div className="text-[10px] text-red-500" data-testid="industry-growth-estimate-note">{industryAiNote}</div>}
           </div>
         </div>
       </div>
@@ -314,7 +387,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a'}</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5" data-testid="tam-card-cagr">{sectorGrowthRejection({ quality: tam.quality, tamLabel: tam.tamLabel, tamSource: tam.tamSource, tamCAGR: tam.tamCAGR }) ?? (tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a')}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -822,6 +895,101 @@ function tamRowView(seg: {
     vs,
     vsIsKi: vs != null && (kiGrowth != null || kiCagr != null),
   };
+}
+
+export type IndustryGrowthAi = { value: number; source: string; rationale: string };
+
+export type SectorGrowthDisplay =
+  | { kind: "tam"; value: number; source: string }
+  | { kind: "peer-median"; value: number; source: string; n: number }
+  | { kind: "peer-span"; min: number; max: number; source: string; n: number }
+  | { kind: "ai"; value: number; source: string; rationale: string }
+  | { kind: "na"; reason: string };
+
+function finitePeerRates(values: readonly (number | null | undefined)[] | null | undefined): number[] {
+  if (!values) return [];
+  return values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+const IMF_FIVE_SOURCE = "IMF / World Bank GDP Growth Estimate";
+
+/** Abgelehnte Katalogwerte. Kein Ersatz durch eine andere feste Zahl. */
+export function sectorGrowthRejection(input: {
+  quality?: string | null;
+  tamLabel?: string | null;
+  tamSource?: string | null;
+  tamCAGR?: number | null;
+}): string | null {
+  const quality = (input.quality ?? "").trim().toLowerCase();
+  const label = (input.tamLabel ?? "").trim().toLowerCase();
+  const source = (input.tamSource ?? "").trim().toLowerCase();
+  if (quality === "unreliable") return "tamCAGR verworfen: Segment-TAM unzuverlässig";
+  if (label === "global market" || source === "global market") return "Global Market ist keine Branchenquelle";
+  if (source === IMF_FIVE_SOURCE.toLowerCase() && input.tamCAGR === 5) return "IMF-Pauschale 5 % ist keine Branchenquelle";
+  return null;
+}
+
+/** Anzeige-Kette für Sektion 9. Kein Score. Fehlende Peer-Raten zählen nicht als 0. */
+export function resolveSectorGrowthDisplay(input: {
+  tamCAGR?: number | null;
+  tamSource?: string | null;
+  tamLabel?: string | null;
+  quality?: string | null;
+  peerRevenueGrowths?: readonly (number | null | undefined)[] | null;
+  ai?: IndustryGrowthAi | null;
+}): SectorGrowthDisplay {
+  const rejected = sectorGrowthRejection(input);
+  if (!rejected && typeof input.tamCAGR === "number" && Number.isFinite(input.tamCAGR)) {
+    const source = (input.tamSource ?? "").trim() || "tamCAGR";
+    return { kind: "tam", value: input.tamCAGR, source };
+  }
+  const rates = finitePeerRates(input.peerRevenueGrowths);
+  const n = rates.length;
+  if (n >= 5) {
+    const sorted = [...rates].sort((a, b) => a - b);
+    const mid = Math.floor(n / 2);
+    const value = n % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    return { kind: "peer-median", value, source: `Peer-Median (n=${n})`, n };
+  }
+  if (n >= 3) {
+    return { kind: "peer-span", min: Math.min(...rates), max: Math.max(...rates), source: `Peer-Spanne (n=${n})`, n };
+  }
+  const ai = input.ai;
+  const aiRejected = ai != null && sectorGrowthRejection({
+    tamLabel: ai.source,
+    tamSource: ai.source,
+    tamCAGR: ai.value,
+  }) != null;
+  if (!aiRejected && ai && Number.isFinite(ai.value) && ai.source.trim() && ai.rationale.trim()) {
+    return { kind: "ai", value: ai.value, source: ai.source.trim(), rationale: ai.rationale.trim() };
+  }
+  const tamReason = rejected ?? "tamCAGR fehlt";
+  const peerReason = n === 0 ? "keine Peer-Umsatzwachstumsraten" : `Peer-Umsatzwachstum n=${n} (unter 3)`;
+  const aiReason = aiRejected ? "KI-Schätzung abgelehnt" : input.ai ? "KI-Schätzung ohne Quelle oder Begründung verworfen" : "keine KI-Schätzung";
+  return { kind: "na", reason: `${tamReason}; ${peerReason}; ${aiReason}` };
+}
+
+export function sectorGrowthSourceText(resolved: SectorGrowthDisplay): string {
+  switch (resolved.kind) {
+    case "tam":
+      return resolved.source;
+    case "peer-median":
+      return resolved.source;
+    case "peer-span":
+      return resolved.source;
+    case "ai":
+      return `KI-Schätzung: ${resolved.source}. ${resolved.rationale}`;
+    case "na":
+      return resolved.reason;
+    default: {
+      const unreachable: never = resolved;
+      return unreachable;
+    }
+  }
+}
+
+function signedGrowthPct(value: number): string {
+  return `${value >= 0 ? "+" : ""}${formatNumber(value, 1)}%`;
 }
 
 function KiBadge({ testId, title = "Schätzung" }: { testId?: string; title?: string }) {
