@@ -1,0 +1,38 @@
+---
+alwaysApply: true
+---
+
+# Projektgedächtnis
+
+Kurz: vor der Arbeit `docs/memory/00 Start.md` und `docs/memory/Regeln/` (einschließlich Hard Limits) lesen. `docs/memory/Repo/Stand.md` nur bei Bedarf (Logbuch, keine Pflichtlektüre). Pflege: `docs/memory/Pflege.md`.
+
+Bei Widerspruch gewinnt der Code auf origin/main, danach README/WORK_IMPLEMENTIERUNG_OFFEN.md.
+
+## NO-GO
+
+Vor jedem Edit die betroffenen Dateien vollständig lesen. Nie spekulativ löschen, kürzen oder umschreiben. Keine Blind-Edits, kein „Aufräumen“ ohne Auftrag und ohne gelesenen Ist-Stand.
+
+Git-Historie zuerst. Soll-Ist gegen main. Revert-PR statt Force-Push.
+
+## Hard Limits (Auszug)
+
+- Nie direkt auf `main` pushen
+- Kein Force-Push. Revert-PR statt Force-Push.
+- Vor Änderungen an analyze-route.ts Stabschef fragen (Quelle wird mit Philip geklärt)
+- `researcher.ts` nicht anfassen. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- Keine Score-, Rating-, Entry- oder Peer-Änderungen ohne Philip. Änderung nur mit Philips Vorher/Nachher-OK: Vorher- und Nachher-Wert zeigen.
+- Design-Fragen immer erst an Philip
+- Keine `.DE`-Tests/Specs. Quelle: Philip 18.11.2026 21:59
+- AAPL statt SAP.DE. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- Keine zweite `.L`-Datenquelle. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+- ETFs bleiben auf dem Aktien-Dashboard gesperrt. Datierte Quelle wird nachgetragen; gilt bis Philip anders entscheidet.
+
+Neue Verbote entstehen nur durch Philip. Über das Streichen eines Verbots entscheidet nur Philip.
+
+## Security
+
+- Keys nie loggen
+- npm via `env -u`
+- Kein POST `/api/analyze` auf Prod
+
+Bau-Agenten lesen `docs/memory/` nur. Die Work.MD-Lane aktualisiert nach Merges per eigenem Docs-PR (nach jedem Squash einen datierten Nachtrag in Stand.md). Keine Doku-Edits in Feature-PRs.
