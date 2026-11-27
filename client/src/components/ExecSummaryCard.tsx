@@ -13,6 +13,8 @@ import { usePublishChatSection } from "@/lib/chatSectionData";
 import type { GBMMonteCarloResult } from "@/lib/calculations";
 import { execLageFromFazit } from "@/lib/execLageFromFazit";
 import { DividendNotableHint } from "@/components/sections/DividendYieldContext";
+import { PodcastPlayer } from "@/components/PodcastPlayer";
+import { formatPodcastAsOf, formatPodcastPrice } from "@/hooks/usePodcast";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -109,9 +111,16 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
         </div>
 
         {s.headline && (
-          <p className="font-semibold text-foreground tracking-tight" data-testid="exec-summary-headline">
-            {s.headline}
-          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5" data-testid="podcast-headline-wrap">
+            <p className="font-semibold text-foreground tracking-tight min-w-0 max-w-full w-fit break-words" data-testid="exec-summary-headline">
+              {s.headline}
+            </p>
+            <PodcastPlayer
+              ticker={data.ticker}
+              asOfLabel={formatPodcastAsOf(data.dataTimestamp ?? "", "")}
+              priceLabel={Number.isFinite(data.currentPrice) ? formatPodcastPrice(data.currentPrice) : ""}
+            />
+          </div>
         )}
         {(bias?.modeLabel || s.modeLine) && (
           <p className="text-[11px] text-muted-foreground" data-testid="exec-summary-mode">{bias?.modeLabel ?? s.modeLine}</p>
