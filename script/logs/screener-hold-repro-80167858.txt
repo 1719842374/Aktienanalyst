@@ -1,0 +1,27 @@
+# Pre-fix reproduction on HEAD 80167858e731dbdd77aa25494666518775bb4c04
+# Command: npx tsx /tmp/screener-hold/repro-80167858.mts
+# Node v22.23.4
+# Exit: 0
+# Productive imports: shared/custom-screen.ts rowFromLoadedCandidate, criteriaFromInputs, projectLoadedScreen
+# Not a live 13F/FMP call. The 13F producer still emits 0 when epsAvg is missing; this fixture passes a finite -5.
+
+CASE1 mapper {"marketCap":2000000000,"industry":null,"country":null,"roic":null,"forwardPe":null}
+CASE1 project {"visible":[],"skipped":["n/a — Forward P/E fehlt im geladenen Response, nicht als 0 gewertet"],"wrongNa":true}
+
+CASE2 crossed {"criteria":{"marketCapMin":2000,"marketCapMax":1000,"industryIncludes":null,"countryIncludes":null,"roicMin":null,"forwardPeMax":null},"notes":[],"visible":[]}
+CASE2 negative {"criteria":{"marketCapMin":-5,"marketCapMax":-1,"industryIncludes":null,"countryIncludes":null,"roicMin":null,"forwardPeMax":null},"notes":[],"visible":[]}
+
+CASE3 overflow rawFinite true
+CASE3 scaled 1e308 * 1e6 = Infinity
+CASE3 criteria.marketCapMin Number.isFinite false value Infinity
+CASE3 notes []
+CASE3 visible []
+# JSON.stringify prints Infinity as null, so the first tee log showed "marketCapMin":null. The value is Infinity, and every finite market cap fails the min comparison.
+
+# UI probe, same HEAD, react-test-renderer, fetch stub, no second request:
+# calls after load [ '/api/screener' ]
+# loaded row forwardPE -5, then input screener-fwd-pe = 20
+# calls after criteria [ '/api/screener' ]
+# notes include "n/a — Forward P/E fehlt im geladenen Response, nicht als 0 gewertet"
+# AAPL removed from the rendered tree (still AAPL false)
+# ScreenerPanel min 2000 / max 1000: crossed tickers []

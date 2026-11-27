@@ -1,0 +1,54 @@
+{
+  "mode": "main",
+  "url": "http://127.0.0.1:5175/#/screener",
+  "width": 375,
+  "height": 900,
+  "filled": 2,
+  "callsAfterLoad": 1,
+  "callsAfterFilter": 1,
+  "callsAfterReset": 1,
+  "refilled": 2,
+  "measure": {
+    "found": true,
+    "tag": "TD",
+    "text": "Keine Ergebnisse",
+    "box": {
+      "x": 17,
+      "y": 419.5,
+      "width": 649.53125,
+      "height": 80.5,
+      "top": 419.5,
+      "right": 666.53125,
+      "bottom": 500,
+      "left": 17
+    },
+    "viewport": {
+      "width": 375,
+      "height": 900,
+      "scrollX": 0
+    },
+    "scroller": {
+      "clientWidth": 341,
+      "scrollWidth": 650,
+      "scrollLeft": 0,
+      "box": {
+        "x": 17,
+        "y": 383,
+        "width": 341,
+        "height": 117,
+        "top": 383,
+        "right": 358,
+        "bottom": 500,
+        "left": 17
+      }
+    },
+    "fullyInsideViewport": false,
+    "clippedByScroller": true
+  },
+  "calls": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:5175/api/screener"
+    }
+  ]
+}

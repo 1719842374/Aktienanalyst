@@ -1,0 +1,38 @@
+
+> rest-express@1.0.0 build
+> node --import tsx/esm script/build.ts
+
+[build] building client (Vite)...
+vite v7.3.1 building client environment for production...
+transforming...
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 3309 modules transformed.
+rendering chunks...
+computing gzip size...
+../dist/public/index.html                               2.31 kB │ gzip:   0.86 kB
+../dist/public/assets/countries-110m-B3KlhDC_.json    107.76 kB │ gzip:  38.42 kB
+../dist/public/assets/index-B68p5YX7.css              139.50 kB │ gzip:  22.68 kB
+../dist/public/assets/exportPdf-BNAy2Ga-.js             4.97 kB │ gzip:   2.62 kB
+../dist/public/assets/purify.es-21m173o_.js            22.71 kB │ gzip:   8.72 kB
+../dist/public/assets/index.es-8YNz-dKY.js            158.83 kB │ gzip:  53.04 kB
+../dist/public/assets/html2canvas.esm-DXEQVQnt.js     201.04 kB │ gzip:  47.43 kB
+../dist/public/assets/jspdf.es.min-JsiXoe8P.js        386.02 kB │ gzip: 126.33 kB
+../dist/public/assets/index-CNuxaAF0.js             2,713.50 kB │ gzip: 776.74 kB
+
+(!) Some chunks are larger than 2000 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 9.76s
+[build] client build complete.
+[build] building server (esbuild)...
+
+  dist/index.cjs  2.2mb ⚠️
+
+⚡ Done in 150ms
+[build] server build complete.
+BUILD:0

@@ -1,0 +1,4 @@
+{"width":375,"result":{"filled":{"text":null,"calls":1,"rows":1,"scroller":{"clientWidth":341,"scrollWidth":695},"textBox":null},"empty":{"text":"Keine Ergebnisse","calls":1,"rows":0,"scroller":{"clientWidth":341,"scrollWidth":638},"textBox":{"left":139.28125,"right":235.703125,"width":96.421875,"fullyInsideViewport":true,"fullyInsideScroller":true}},"reset":{"text":null,"calls":1,"rows":1,"scroller":{"clientWidth":341,"scrollWidth":695},"textBox":null}}}
+{"width":1280,"result":{"filled":{"text":null,"calls":1,"rows":1,"scroller":{"clientWidth":1246,"scrollWidth":1246},"textBox":null},"empty":{"text":"Keine Ergebnisse","calls":1,"rows":0,"scroller":{"clientWidth":1246,"scrollWidth":1246},"textBox":{"left":591.78125,"right":688.203125,"width":96.421875,"fullyInsideViewport":true,"fullyInsideScroller":true}},"reset":{"text":null,"calls":1,"rows":1,"scroller":{"clientWidth":1246,"scrollWidth":1246},"textBox":null}}}
+screener empty layout: OK
+EXIT:0

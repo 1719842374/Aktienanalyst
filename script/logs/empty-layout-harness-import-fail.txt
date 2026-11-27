@@ -1,0 +1,19 @@
+# stderr of: node /tmp/screener-empty-measure.mjs http://127.0.0.1:5174/#/screener head 375 900
+# stdout was empty, so the first tee file had no bytes. Exit of that node process was 1.
+# The shell line printed HEAD375:0 because tee was the pipeline status.
+
+file:///tmp/screener-empty-measure.mjs:1
+import { chromium } from "/agent/repos/Aktienanalyst/node_modules/playwright-core/index.js";
+         ^^^^^^^^
+SyntaxError: Named export 'chromium' not found. The requested module '/agent/repos/Aktienanalyst/node_modules/playwright-core/index.js' is a CommonJS module, which may not support all module.exports as named exports.
+CommonJS modules can always be imported via the default export, for example using:
+
+import pkg from '/agent/repos/Aktienanalyst/node_modules/playwright-core/index.js';
+const { chromium } = pkg;
+
+    at ModuleJob._instantiate (node:internal/modules/esm/module_job:226:21)
+    at async ModuleJob.run (node:internal/modules/esm/module_job:335:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v22.23.4

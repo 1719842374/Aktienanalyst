@@ -1,0 +1,119 @@
+client/src/components/sections/EpsGrowthChart.tsx(22,29): error TS2802: Type 'Set<number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+client/src/components/sections/Section3.tsx(59,52): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section3.tsx(63,52): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section3.tsx(74,62): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section3.tsx(78,62): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section3.tsx(104,63): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section8.tsx(72,29): error TS2339: Property 'revenueGrowth' does not exist on type 'StockAnalysis'.
+client/src/components/sections/Section9.tsx(30,21): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(37,72): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(38,5): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(42,19): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(42,51): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(47,48): error TS18047: 'rsl' is possibly 'null'.
+client/src/components/sections/Section9.tsx(66,35): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(90,84): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(91,27): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(93,67): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(107,96): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(133,105): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/Section9.tsx(133,127): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+client/src/components/sections/SummarySection.tsx(212,30): error TS18047: 'dcfUpside' is possibly 'null'.
+client/src/components/sections/SummarySection.tsx(212,85): error TS18047: 'dcfUpside' is possibly 'null'.
+client/src/components/sections/SummarySection.tsx(212,112): error TS18047: 'dcfUpside' is possibly 'null'.
+client/src/pages/BTCDashboard.tsx(1059,52): error TS2345: Argument of type 'BTCAnalysis' is not assignable to parameter of type 'import("/tmp/aa-main-01bf608/client/src/lib/btcAnalysis").BTCAnalysis'.
+  Types of property 'historicalVol' are incompatible.
+    Type '{ vol30d: number; vol90d: number; vol365d: number; volAnn30d: number; volAnn90d: number; volAnn365d: number; } | undefined' is not assignable to type 'HistoricalVolatility'.
+      Type 'undefined' is not assignable to type 'HistoricalVolatility'.
+client/src/pages/BTCDashboard.tsx(3044,33): error TS2322: Type 'BTCAnalysis' is not assignable to type 'import("/tmp/aa-main-01bf608/client/src/lib/btcAnalysis").BTCAnalysis'.
+  Types of property 'historicalVol' are incompatible.
+    Type '{ vol30d: number; vol90d: number; vol365d: number; volAnn30d: number; volAnn90d: number; volAnn365d: number; } | undefined' is not assignable to type 'HistoricalVolatility'.
+      Type 'undefined' is not assignable to type 'HistoricalVolatility'.
+client/src/pages/Compare.tsx(147,64): error TS2339: Property 'revenueGrowth' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(147,89): error TS2339: Property 'revenueGrowth' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(159,53): error TS2339: Property 'rsl' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(159,75): error TS2339: Property 'rsl' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(163,64): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(163,120): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(163,211): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(163,267): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(164,65): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(164,102): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(165,60): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(165,99): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(166,65): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(166,106): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(186,31): error TS2339: Property 'rsl' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(186,53): error TS2339: Property 'rsl' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(187,31): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/Compare.tsx(187,70): error TS2339: Property 'monteCarloResults' does not exist on type 'StockAnalysis'.
+client/src/pages/PortfolioPage.tsx(178,21): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/analyze-helpers.ts(886,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(887,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(888,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(890,41): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(894,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(895,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(896,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(898,40): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(902,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(903,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(905,38): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(909,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(910,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(912,45): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(916,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(917,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(919,45): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(923,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(924,7): error TS2353: Object literal may only specify known properties, and 'item' does not exist in type 'PESTELFactorItem'.
+server/analyze-helpers.ts(926,37): error TS2353: Object literal may only specify known properties, and 'emoji' does not exist in type 'PESTELFactor'.
+server/analyze-helpers.ts(928,47): error TS2339: Property 'overallImpact' does not exist on type 'PESTELFactor'.
+server/analyze-helpers.ts(929,47): error TS2339: Property 'overallImpact' does not exist on type 'PESTELFactor'.
+server/analyze-helpers.ts(932,21): error TS2353: Object literal may only specify known properties, and 'overallSentiment' does not exist in type 'PESTELAnalysis'.
+server/analyze-route.ts(415,47): error TS2322: Type '"Hoch" | "Mittel" | "Niedrig"' is not assignable to type '"Low" | "Medium" | "High"'.
+  Type '"Hoch"' is not assignable to type '"Low" | "Medium" | "High"'.
+server/analyze-route.ts(1485,134): error TS2339: Property 'beneficiaryEntry' does not exist on type 'never'.
+server/analyze-route.ts(1489,13): error TS2322: Type '{ expectedDamage: number; name: string; category: string; ew: number; impact: number; }[]' is not assignable to type 'Risk[]'.
+  Type '{ expectedDamage: number; name: string; category: string; ew: number; impact: number; }' is not assignable to type 'Risk'.
+    Types of property 'category' are incompatible.
+      Type 'string' is not assignable to type '"Binary" | "Gradual" | "Correlated"'.
+server/analyze-route.ts(1564,65): error TS2339: Property 'sector' does not exist on type 'never'.
+server/analyze-route.ts(1564,98): error TS2339: Property 'programmes' does not exist on type 'never'.
+server/analyze-route.ts(1564,134): error TS2339: Property 'beneficiaryEntry' does not exist on type 'never'.
+server/analyze-route.ts(2117,110): error TS2339: Property 'region' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2122,45): error TS2339: Property 'overallSentiment' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2123,31): error TS2339: Property 'overallSentiment' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2124,66): error TS2339: Property 'region' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2124,105): error TS2339: Property 'overallSentiment' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2125,46): error TS2339: Property 'overallSentiment' does not exist on type 'PESTELAnalysis'.
+server/analyze-route.ts(2125,99): error TS2339: Property 'overallSentiment' does not exist on type 'PESTELAnalysis'.
+server/buffett-ratio.ts(227,14): error TS2802: Type 'MapIterator<RatioObs>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/buffett-route.ts(278,26): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/factpack-validate.ts(165,23): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/fiscal-frontend.ts(188,32): error TS2802: Type 'URLSearchParams' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/liquidity-regime-math.ts(403,14): error TS18047: 'input.zNotes13w' is possibly 'null'.
+server/liquidity-regime-math.ts(403,39): error TS18047: 'input.notesDelta13wBn' is possibly 'null'.
+server/liquidity-regime-math.ts(404,15): error TS18047: 'input.zBills13w' is possibly 'null'.
+server/liquidity-regime-math.ts(404,40): error TS18047: 'input.zNotes13w' is possibly 'null'.
+server/llm-openrouter.ts(301,22): error TS2551: Property 'sentimentSource' does not exist on type '{ title: string; source: string; relativeTime: string; pubDate: string; url: string; sentiment?: string | undefined; sentimentScore?: number | undefined; matchedCatalyst?: string | undefined; matchedCatalystIdx?: number | undefined; }'. Did you mean 'sentimentScore'?
+server/recession-bridge.ts(178,14): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/recession-cape-route.ts(47,23): error TS2802: Type 'RegExpStringIterator<RegExpExecArray>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/recession-markets.ts(371,38): error TS2367: This comparison appears to be unintentional because the types '"VIXCLS" | "V2TX"' and '"realized20"' have no overlap.
+server/recession-sahm.ts(65,14): error TS2802: Type 'MapIterator<FredPoint>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/recession-sahm.ts(180,20): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/recession.ts(1174,23): error TS2802: Type 'RegExpStringIterator<RegExpExecArray>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/researcher.ts(1354,45): error TS2339: Property '_fallback' does not exist on type '{ summary: string; keyDrivers: string[]; riskFreeRateView: string; liquidityView: string; fiscalView: string; investmentImplications: string[]; actionRecommendation: "Buy" | "Avoid" | "Watch"; actionRationale: string; keyEvents: { ...; }[]; }'.
+server/researcher.ts(1365,37): error TS2339: Property '_fallback' does not exist on type '{ summary: string; keyDrivers: string[]; riskFreeRateView: string; liquidityView: string; fiscalView: string; investmentImplications: string[]; actionRecommendation: "Buy" | "Avoid" | "Watch"; actionRationale: string; keyEvents: { ...; }[]; }'.
+server/stablecoin-channel-math.ts(146,14): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/stablecoin-channel-math.ts(158,33): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+shared/bias-fixes.ts(627,32): error TS2339: Property 'force' does not exist on type 'PorterForce'.
+shared/btc-spot.ts(145,28): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+TSC_MAIN:2
