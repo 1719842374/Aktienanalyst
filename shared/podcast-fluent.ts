@@ -554,10 +554,8 @@ function languageOk(text: string, language: PodcastLanguage, facts: SpeechFact[]
   if (contentTokenCount(text) < 8) return true;
   const masked = maskFacts(text, facts);
   if (language === "de") {
-    const germanMarkers = masked.match(new RegExp(DE_MARKER.source, "gi"))?.length ?? 0;
-    const germanVerbs = masked.match(new RegExp(DE_VERB.source, "gi"))?.length ?? 0;
-    const german = germanMarkers + germanVerbs;
-    const english = masked.match(new RegExp(EN_MARKER.source, "gi"))?.length ?? 0;
+    const german = masked.match(new RegExp(DE_MARKER, "gi"))?.length ?? 0;
+    const english = masked.match(new RegExp(EN_MARKER, "gi"))?.length ?? 0;
     return german > 0 && german >= english;
   }
   if (language === "en") return !DE_LEAK.test(masked);
@@ -1136,34 +1134,6 @@ function nonePositiveHit(text: string, sheet: SpeechSheet): string | null {
   return null;
 }
 
-function partCleared(part: string, sheet: SpeechSheet, released: Set<string>): boolean {
-  const clean = withoutPossessive(part).toLowerCase();
-  if (!clean) return true;
-  if (released.has(clean) || inPackFacts(clean, sheet)) return true;
-  return knownOrdinary(clean);
-}
-
-/** Unter none: großgeschrieben, ohne Ziffer, und keine Lemma-Form ist gewöhnlich. */
-function noneCapitalHit(text: string, sheet: SpeechSheet): string | null {
-  const released = releasedNames(sheet);
-  for (const sentence of podcastSentences(text)) {
-    for (const word of sentence.split(/\s+/).filter(Boolean)) {
-      const token = tokenBody(word);
-      if (!token || !/^[A-ZÄÖÜ]/.test(token) || /\d/.test(token)) continue;
-      const clean = withoutPossessive(token).toLowerCase();
-      if (!clean || released.has(clean) || inPackFacts(clean, sheet)) continue;
-      if (token.includes("-")) {
-        const parts = token.split("-").filter(Boolean);
-        if (parts.length > 1 && parts.every(part => partCleared(part, sheet, released))) continue;
-        return token;
-      }
-      if (knownOrdinary(clean)) continue;
-      return token;
-    }
-  }
-  return null;
-}
-
 function reportedLexiconHit(entities: string[] | null | undefined, raw: string, spoken: string, sheet: SpeechSheet): string | null {
   if (!entities?.length) return null;
   const released = releasedNames(sheet);
@@ -1487,8 +1457,6 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   if (none && spoken) {
     const positive = nonePositiveHit(spoken, sheet);
     if (positive && !notes.some(item => item === `name ${positive}`)) note("name", positive);
-    const capital = noneCapitalHit(spoken, sheet);
-    if (capital && !notes.some(item => item === `name ${capital}`)) note("name", capital);
   }
   const reported = spoken ? reportedLexiconHit(entities, raw, spoken, sheet) : null;
   if (reported && !notes.some(item => item === `name ${reported}`)) note("name", reported);
@@ -1497,7 +1465,7 @@ export function verifyChapter(chapterId: string, raw: string, sheet: SpeechSheet
   const leaked = spoken ? packNameLeak(spoken, sheet) : null;
   const extra = spoken ? entityHit(entities, raw, spoken, sheet) : null;
   const name = leaked ?? extra;
-  if (name && !(none && notes.some(item => item === `name ${name}`))) note("name", name);
+  if (name) note("name", name);
   const quantity = spoken ? quantityWord(spoken, sheet) : null;
   if (quantity) note("number", quantity);
   const flu = fluencyStats(spoken);
