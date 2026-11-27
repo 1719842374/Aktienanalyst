@@ -10,13 +10,22 @@ Stand: 18.11.2026 23:05 Europe/Madrid. Quelle: Raum Ideengenerierung, Philip 22:
 2. Bei Finanzlage Moderat oder schlechter liegt die Basis durch die Inputs nicht über dem Kurs, darunter schon. Kein harter Deckel „DCF ≤ Kurs“.
 3. Eine Quelle für die Finanzlage für DCF, Segmente und Katalysatoren.
 
-## Ist (main cd26c249)
+## Ist (historisch, main `cd26c249`, nicht der aktuelle Baum)
+
+`cd26c249` (#507) liegt in den 21 Commits, die #520 (`65ba08dd`, Tree = `4220d4e9`) aus dem Baum genommen hat. Die Zeilen darunter beschreiben diesen alten Stand und sind nicht der Ist von `d78c3704`.
+
 - Finanzlage Excellent…Critical: `server/analyze-route.ts:1809–1813` → `financialStatements.health`. Kein Input von `buildDefaultDCFParams` (`shared/valuation-signal.ts:322–419`) und kein Bias-Trigger.
 - DCF-Härtung nur sprunghaft ab ≥2 Triggern: `shared/bias-fixes.ts:372–407` (Schritte 19–21: +0,625/+1,05/+1,6 Pp WACC; g × 0,85/0,75/0,9). Triggerliste `bias-fixes.ts:302–343`.
 - g* existiert: `calculateReverseDCF` `valuation-signal.ts:714–715` (g* = WACC − FCF/EV); genutzt nur als Trigger `reverse_g` (`bias-fixes.ts:298–300`).
 - Terminal-Deckel fehlt; TV-Anteil wird nicht ausgewiesen.
 - Altman/Piotroski/Interest Coverage: nicht verdrahtet. Keine sektorrelativen Health-Schwellen (FCF-Marge 20/10/0/−10, D/E 1/2 absolut).
 - Zweiter, einfacher Server-DCF `analyze-route.ts:1714–1726` (clamp −5…+25 %) — nicht Teil dieses Auftrags, nur dokumentieren.
+
+## Ist auf main `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`
+
+Status der Datei: **offen** (`Offen_`).
+
+Soll: Bilanz-Finanzlage steuert WACC und Wachstum. Solange Philip die Vorher/Nachher-Tabelle nicht freigibt, bleibt das Flag aus. Ist: #512 Squash `5eec205a19be43bf55bd33e51a1d94c61a4e72af` (nach #520) legt `shared/dcf-calibration.ts` an. `DCF_CALIBRATION.enabled` ist `false` (`:21`). `shared/valuation-signal.ts:510` gibt bei Flag aus `buildRawDefaultDcfParams` zurück, `:519` gibt `null` zurück. `Section5.tsx:142–143` liest die Kalibrierung nur bei `enabled`. #526 Squash `0247d57bd00ff456318a5e8427b1143c8513b829` lässt CI rot werden, wenn die importierte Konstante nicht false ist (`script/test-dcf-flag-off.ts`, `.github/workflows/dcf-calibration-test.yml`). #523 ist keine Pull Request. Fehlt: Einschalten, echte Firmen-Fixtures (die Tabelle in `docs/dcf-calibration-before-after.md` ist synthetisch), Konsens-Anker und sektorrelative Stufen aus „Offen / blockiert“. Wirkung auf DCF, Score und Entry: aus.
 
 ## Messwerte (Fixtures, keine FMP-Calls)
 | Ticker | Lage | g1 | g* | WACC | DCF | Kurs | Abstand | TV-Anteil | terminal |

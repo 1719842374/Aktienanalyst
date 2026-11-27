@@ -99,3 +99,9 @@ Repo: https://github.com/1719842374/Aktienanalyst*
 | Spec-Datei | offen | bleibt `Offen_WORK_CAPEX_SECTOR_MAP.md` (kein Rename). Live-Acceptance ≥20 Länder / Top-Firmen-Panel nicht in diesem Lauf gegen Prod geprüft → nicht 🟢 |
 
 Kette (Capex/Sektor): UI `client/src/components/researcher/GeoMapPanel.tsx` + Mount `Researcher.tsx` Tab capex → `apiRequest`/`queryClient` → `GET /api/researcher/geo-map?layer=capex|sector|…` → `server/routes-register.ts` `registerGeoMapRoute` → `server/researcher-geo-map-route.ts` → `server/researcher-geo-map.ts` → `shared/geo-map.ts` / `shared/geo-map-layers.ts`.
+
+### Ampel 27.11.2026, Tip `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`
+
+Die Tabelle vom 09.11. bleibt. Dieser Block prüft denselben Soll gegen den neuen Tip. Status der Datei: **offen** (`Offen_`).
+
+Soll: Capex-Karte und Sektor-Overlay mit konkreten Zahlen, Acceptance ≥ 20 Länder und 8–10 Sektoren. Ist: `GeoMapPanel.tsx:43–51` Layer `capex`, `sector`, `miner`, `gold`, `valuechain`, alle `available: true`. Registrierung `server/routes-register.ts:16–17` `registerGeoMapRoute`. `git log 5eec205a..d78c3704` ändert `GeoMapPanel.tsx` nicht. Fehlt: die Live-Acceptance (Länderzahl, Side-Panel-Prozent) ist in diesem Docs-Lauf nicht gegen Prod geprüft. Nicht 🟢.

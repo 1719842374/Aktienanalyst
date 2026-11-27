@@ -6,14 +6,51 @@ Stand: 26.11.2026, Auftrag Philip (Stabschef). Nur Doku. Kein App-Code.
 
 | | |
 |---|---|
-| main | `5eec205a19be43bf55bd33e51a1d94c61a4e72af` (25.11.2026 17:49 +0100, #512) |
+| main | `d78c370492899c58bec150b8c3e0f2e6a37c9e6d` (27.11.2026, #531). `git rev-parse origin/main` am 27.11.2026 |
+| Audit der Tabellen in Abschnitt 2–7 | geschrieben gegen `5eec205a19be43bf55bd33e51a1d94c61a4e72af` (25.11.2026 17:49 +0100, #512). Diese Tabellen sind nicht umgeschrieben. Der Nachzug steht in Abschnitt 0 |
 | Code-Baum vor #512 | `65ba08dd5ea9faa00a6f8fdc8cc5277ba95c7e46` (#520) = Tree von `4220d4e9e46cecf19364d56630044b46f320d966` (#490, 11.11.2026 19:18 Europe/Madrid; Revert-Text nennt den Baum Stand 16.11.2026) |
 | Nach dem Revert auf main | #521 nur Kopf von `WORK_IMPLEMENTIERUNG_OFFEN.md`; #512 DCF-Bilanz-Kalibrierung, Flag `enabled: false` |
 | #523 | existiert nicht (GitHub: keine PR mit dieser Nummer). Philip-Ja zur Vorher/Nachher-Tabelle fehlt. `Offen_WORK_DCF_BILANZ_KALIBRIERUNG.md` bleibt `Offen_` |
 
-`git diff --stat 4220d4e9 HEAD` ändert 14 Dateien. Davon Doku: `Offen_WORK_DCF_BILANZ_KALIBRIERUNG.md`, `WORK_IMPLEMENTIERUNG_OFFEN.md`, `docs/dcf-calibration-before-after.md`. Code nur die Kalibrierung hinter dem ausgeschalteten Flag (`shared/dcf-calibration.ts`, `shared/valuation-signal.ts`, `shared/bias-fixes.ts`, `shared/schema.ts`, `client/src/components/sections/Section5.tsx`, `Section6.tsx`, `server/pdf-export.ts`, Tests und Guard). Alles, was nur in den 21 First-Parent-Commits `4220d4e9..7aaa13ce` lag, ist auf main nicht mehr im Baum. Diese Punkte sind **offen**, Vermerk **revertiert durch #520**.
+`git diff --stat 4220d4e9 HEAD` ändert 14 Dateien. Dieser Satz ist der Audit gegen `5eec205a`. Gegen `d78c3704` ist das Diff größer (Podcast #529/#528/#531 und der CI-Guard #526 kommen dazu). Davon Doku: `Offen_WORK_DCF_BILANZ_KALIBRIERUNG.md`, `WORK_IMPLEMENTIERUNG_OFFEN.md`, `docs/dcf-calibration-before-after.md`. Code nur die Kalibrierung hinter dem ausgeschalteten Flag (`shared/dcf-calibration.ts`, `shared/valuation-signal.ts`, `shared/bias-fixes.ts`, `shared/schema.ts`, `client/src/components/sections/Section5.tsx`, `Section6.tsx`, `server/pdf-export.ts`, Tests und Guard). Alles, was nur in den 21 First-Parent-Commits `4220d4e9..7aaa13ce` lag, ist auf main nicht mehr im Baum. Diese Punkte sind **offen**, Vermerk **revertiert durch #520**.
 
-Geprüft ohne Live-UI. Ein ✅ ist ein Code-Beleg auf diesem SHA (Pfad und Zeile oder Merge-PR, deren Commit Ancestor von `4220d4e9` ist, plus #512). Draft-PRs zählen nicht als Ist.
+Geprüft ohne Live-UI. Ein ✅ in Abschnitt 2–7 ist ein Code-Beleg auf `5eec205a` (Pfad und Zeile oder Merge-PR, deren Commit Ancestor von `4220d4e9` ist, plus #512). Draft-PRs zählen nicht als Ist. Abschnitt 0 ist der Nachzug auf `d78c3704`.
+
+## 0. Nachzug 27.11.2026 auf `d78c3704`
+
+Nur ergänzt. Die Abschnitte 1–7 bleiben der Audit vom 26.11. gegen `5eec205a`. Commits danach, First-Parent `5eec205a..d78c3704`: #524 `fdb162c4`, #525 `70048c8f`, #526 `0247d57b`, #529 `3a07a85e`, #528 `61b12b96`, #531 `d78c3704`. Kein App-Code in diesem Docs-Nachzug.
+
+| PR | Squash | Was auf `d78c3704` liegt | Status |
+|---|---|---|---|
+| [#531](https://github.com/1719842374/Aktienanalyst/pull/531) | `d78c370492899c58bec150b8c3e0f2e6a37c9e6d` | Namensprüfung Stand A. `shared/podcast-fluent.ts:880` `noneNameMiss`, `:1334` `verifyChapter`. Prompt `shared/podcast-types.ts:26` `stock-podcast-v18`. Stand B (LLM-Prüfer) nicht im Modul | 🟡 offen für Stand B |
+| [#528](https://github.com/1719842374/Aktienanalyst/pull/528) | `61b12b962f7e0e6014ebc3c9fbb683daafc06812` | Player `ExecSummaryCard.tsx:118`. Limit 2 je Ticker und Tag, DE und EN gemeinsam: `PODCAST_DAILY_MAX = 2`, `server/stock-podcast-limit.ts` Schlüssel Ticker, `usePodcast.ts:213` Scope `ticker` | 🟢 für diesen Satz |
+| [#529](https://github.com/1719842374/Aktienanalyst/pull/529) | `3a07a85ec423fd78bd29454ab99eebfe003c7bf6` | Backend `POST /api/podcast/script`, `GET /api/podcast/audio/:chapterId`, Registrierung `server/routes-register.ts:71–72` | 🟡 Namensprüfung nur bis Stand A |
+| [#526](https://github.com/1719842374/Aktienanalyst/pull/526) | `0247d57bd00ff456318a5e8427b1143c8513b829` | CI-Guard `.github/workflows/dcf-calibration-test.yml` + `script/test-dcf-flag-off.ts`. Flag bleibt false | 🟢 Sperre. Einschalten offen |
+| [#525](https://github.com/1719842374/Aktienanalyst/pull/525) | `70048c8ff047f5a01ee480394d1d0cfe1e25f2eb` | Docs-Anker und vier `fertig_`-Renames | Doku |
+| [#524](https://github.com/1719842374/Aktienanalyst/pull/524) | `fdb162c45b8c9e3706b4d3f00567a6cc30cb8149` | diese Inventur und `Future_*` → `fertig_` | Doku |
+| [#512](https://github.com/1719842374/Aktienanalyst/pull/512) | `5eec205a19be43bf55bd33e51a1d94c61a4e72af` | nach #520 im Baum. `shared/dcf-calibration.ts:21` `enabled: false`. `valuation-signal.ts:510` und `:519` überspringen die Kalibrierung | 🟡 Code da, Wirkung aus |
+
+#505–#511 und #513 sind nicht live. #520 ([#520](https://github.com/1719842374/Aktienanalyst/pull/520)) Squash `65ba08dd5ea9faa00a6f8fdc8cc5277ba95c7e46`, Tree = `4220d4e9`. Keiner dieser Squashes ist nach `65ba08dd` erneut auf main. #512 ist der einzige aus dieser Nummernspanne, der danach im Baum liegt. Weiter fehlend im Baum: `client/src/lib/taCrossConfirmation.ts`, `shared/segment-yoy-fill.ts`, `script/test-fx-statement-usd.ts`, `script/test-ta-overlay-fx.ts`, `script/test-recession-growth-pp-render.ts`, `client/src/lib/catalystEnrichFlow.ts`, `script/ampel-badge-layout/index.html`. S9 bleibt 🔴: `Section7.tsx:40` `tamCAGR ?? 5`, `server/sector-data.ts:526`. Draft [#522](https://github.com/1719842374/Aktienanalyst/pull/522) offen, Head `e07cc16932eb30c167688c33433c138b546912cf`, nicht gemergt.
+
+none-Namen 9/16 auf Hold-out v8: PR-Body von #531 und Squash-Message von `d78c3704` (Messwerte `adb83a5f`, v8 none-ok DE 12/12, EN 11/11). Keine Test-Assertion dieser Quote im Baum. Nicht als „nicht im Repo belegt“ geführt, weil der PR-Body und die Squash-Message im Repo stehen.
+
+### Dublette, nicht angefasst
+
+`docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` ist die Kopie der Root-Datei `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md`. Letzter Commit der Dublette `5fc64114` (#130), der Root-Datei `191792c5`. `diff`: die Dublette hat eine Zeile mehr (`> Kopie 04.09.2026 … Original bleibt ./Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md`; diese `Offen_`-Datei gibt es nicht mehr). Spillover-Zeile: Root enthält nach `US` ein Tab-Byte und den Buchstaben `o` (`US<TAB>o EZ`); die Dublette enthält den Pfeil `→` (`e2 86 92`, `US→EZ`), ebenso für Asia. Sonst derselbe Text. Nichts gelöscht, nichts verschoben.
+
+### Soll-Ist der sieben `Offen_`-Specs auf `d78c3704`
+
+Prefix bleibt `Offen_`. Zeilen der Abschnitte 2 unten, die auf `5eec205a` noch stimmen, sind hier nicht wiederholt, nur der Nachzug und was auf diesem Tip nachgesehen wurde.
+
+| Datei | Soll | Ist auf `d78c3704` | fehlt | Status |
+|---|---|---|---|---|
+| `Offen_FUTURE_SOLL_IST.md` | die offenen Future-Punkte (i18n, eine Rezessions-Chart-Sektion, Perzentil statt Zonen, Makro-Gewichte, adaptive Gold-Schicht) | Kopf bisher `4286b44f` / Restlücken gegen `5eec205a`. Nachgesehen: keine `client/src/i18n.ts`. `RecessionDashboard.tsx:194` `RecessionTaSection` und `:196` `BuffettRatioPanel` bleiben getrennt. Podcast und DCF-Flag ändern diese Future-Sätze nicht | die Restlücken-Tabelle am Dateiende gilt weiter. Zeilen der Status-kompakt-Tabelle vom 11.10. sind nicht neu bewertet | offen |
+| `Offen_FUTURE_SOLL_IST_DETAIL.md` | Zeilenliste der elf Future-Dateien | Kopf `4286b44f`. Die 233 Zeilen sind auf `d78c3704` nicht neu gezählt (119 ✅ / 33 🟡 / 65 ❌ / 16 ⛔ bleiben die letzte Zählung) | keine neue Zählung | offen |
+| `Offen_WORK_BUFFETT_ASIA_10Y.md` | §1 nur Rezession; §2 Asien mindestens Japan+China; §3 10Y-Overlay S12 | §1: `RecessionDashboard.tsx:196` `BuffettRatioPanel`, kein `BuffettMacroCard` in `Dashboard.tsx`. §3: `TechnicalChart.tsx:265` Real10Y DFII10. Kein `^TPX` in `server/buffett-route.ts` (`^TPX` nur `server/recession-regions.ts:274`, Index-KGV) | §2: `RegionGaugeSwitch.tsx:10` weiter „Asien (Japan)“. Asia-Benchmark ^TPX im Buffett-Endpunkt | offen (§1 und §3 erledigt) |
+| `Offen_WORK_CAPEX_SECTOR_MAP.md` | Capex-Karte und Sektor-Overlay, ≥20 Länder, 8–10 Sektoren | `GeoMapPanel.tsx:46–51` Layer capex, sector, miner, gold, valuechain. Route `GET /api/researcher/geo-map` über `routes-register.ts:16–17`. Kein Commit an diesen Dateien in `5eec205a..d78c3704` | Live-Acceptance ≥20 Länder und 8–10 Sektoren nicht in diesem Lauf geprüft | offen (teilweise) |
+| `Offen_WORK_DCF_BILANZ_KALIBRIERUNG.md` | Bilanz steuert WACC und Wachstum, Flag bis zur Freigabe aus | Modul `shared/dcf-calibration.ts:21` `enabled: false` seit #512 `5eec205a`. Guard #526 `0247d57b`. Bei false: `valuation-signal.ts:510` und `:519` | Wirksam schalten (#523 keine PR). Echte Firmen-Fixtures. Konsens-Anker und sektorrelative Stufen | offen |
+| `Offen_WORK_GOLD_MINER_BREAKEVEN.md` | AISC-Block, adaptive Schwellen, keine festen 1,10/1,15 als Zonenregel, Euphorie nur nach Philip | Link `GoldPriceChart.tsx:615` `gold-aisc-link-s9`. `shared/gold-aisc.ts:66` `GOLD_AISC_STRESS_LOW = 1.10`. #429 `53a964cc` (AISC-Historie seit 2016, Ancestor von `d78c3704`, nicht von #520 zurückgenommen). #454 `24fd3641` ist durch #457 `ee632920` zurück | Euphorie-Zone wird nicht vergeben (`pEuphRank: 90` reserviert, `shared/gold-miner-zone.ts:223`). BTC-Schwellen adaptiv nicht dieser Auftrag | offen |
+| `Offen_WORK_RESEARCHER_CAPEX_MAP.md` | Capex, Sektor, Miner, dazu Gold-Layer | dieselben Layer wie die Capex-Sector-Map. Gold-Layer #411 `a2ac30c8` bleibt der letzte Gold-Karten-Commit in der Spec. Miner-Layer `shared/miner-map.ts` | dieselben Acceptance-Lücken (Länderzahl, Side-Panel live). Miner-Kernformeln nicht angefasst | offen (teilweise) |
 
 ## 1. Inventur Root (und docs/)
 

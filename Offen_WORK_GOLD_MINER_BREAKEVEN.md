@@ -56,7 +56,13 @@ Belegt per `git log` und `git show` auf main: `ef79c90cc7783f2e0795a4467ff76b3c2
 | Euphorie ≥ P90 | Entscheidung Philip | `shared/gold-miner-zone.ts` ist nicht im Squash. Keine Euphorie-Zone. | ❌ |
 | BTC-Schwellen adaptiv | nicht dieser Auftrag | BTC-Code nicht unter den drei Dateien. | offen |
 
-Auf Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` steht der Link `gold-aisc-link-s9` weiter in `GoldPriceChart.tsx`. `yDomain` dort weiter nur Kurs und sichtbare MAs. Dateiname bleibt `Offen_`.
+Auf Tip `4286b44f48532e2d501fb8cbf3ae2122c7456b4f` steht der Link `gold-aisc-link-s9` weiter in `GoldPriceChart.tsx`. `yDomain` dort weiter nur Kurs und sichtbare MAs. Dateiname bleibt `Offen_`. Diese Tip-Zeile ist historisch.
+
+### Ampel 27.11.2026, Tip `d78c370492899c58bec150b8c3e0f2e6a37c9e6d`
+
+Status der Datei: **offen** (`Offen_`), solange S5 und Euphorie offen sind.
+
+Soll: AISC nicht im Preis-Chart, eigener Block, Schwellen aus der eigenen Historie, keine Euphorie-Zone ohne Philip. Ist: Link `data-testid="gold-aisc-link-s9"` in `GoldPriceChart.tsx:615`. `shared/gold-aisc.ts:66` `GOLD_AISC_STRESS_LOW = 1.10` (S5 weiter 🟡). #429 Squash `53a964ccaf8a3177b48430f36734522cbeff571a` (Miner-Zonen über die AISC-Historie seit 2016) ist Ancestor von diesem Tip und nicht unter den von #520 zurückgenommenen Commits. #454 `24fd3641` (Signallinien) ist durch #457 `ee632920` zurück, also nicht im Baum. `shared/gold-miner-zone.ts:223` `pEuphRank: 90`; die Tests in `script/test-gold-miner-zone.ts` erwarten `euph == null` und keine Euphorie-Zone. Fehlt: Euphorie-Entscheidung und das Entfernen der festen 1,10/1,15 als Modul-Konstanten. BTC-Schwellen adaptiv bleiben offen und sind nicht angefasst.
 
 ## Offen (Philip, nicht in diesem Auftrag entschieden)
 
