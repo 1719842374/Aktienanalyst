@@ -1399,7 +1399,11 @@ async function main() {
     "Steigende Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Mehr Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Einige Werte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Außergewöhnliche Nachfrage bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Gekaufte Ware bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Geplante Ware bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Die Aktienmärkte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
+    "Die Arbeitsmarktentwicklungen bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Die Märkte bleiben der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Der Kurs trägt die Märkte und die Firma bleibt der Maßstab im neuen Jahr. Die Aktie stützt die Bewertung.",
     "Das Großunternehmen bleibt der Maßstab für die Firma im neuen Jahr. Die Aktie stützt die Bewertung.",
@@ -1420,6 +1424,9 @@ async function main() {
     "Growing demand remains the verified view for the firm this year. Competition holds the market.",
     "Several buyers remain the verified view for the firm this year. Competition holds the market.",
     "Largest demand remains the verified view for the firm this year. Competition holds the market.",
+    "Significant demand remains the verified view for the firm this year. Competition holds the market.",
+    "Improved demand remains the verified view for the firm this year. Competition holds the market.",
+    "The firm keeps Markets inside the verified view this year. Competition holds the line.",
   ];
   for (const text of calmEn) {
     const verdict = verifyChapter("einstieg", text, probeEn, null);
