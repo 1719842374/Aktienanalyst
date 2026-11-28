@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactNode } from "react";
+import { Children, isValidElement, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -6,7 +6,15 @@ import {
   type SegmentChildrenResult,
 } from "@shared/segment-children";
 
-export type RequestFn = (method: string, url: string) => Promise<Response>;
+export type RequestFn = (method: string, url: string, data?: unknown) => Promise<Response>;
+
+export interface ChildEstimateContext {
+  parentRevenue: number | null;
+  parentYoy: number | null;
+  fiscalYear: string | null;
+  currency: string | null;
+  regions: { name: string; revenue: number | null; growth: number | null }[];
+}
 
 export function segmentChildrenUrl(ticker: string, parent: string, kind: "product" | "geographic"): string {
   const params = new URLSearchParams({ parent, kind });
@@ -75,7 +83,36 @@ export function visibleBasis(text: string, max = VISIBLE_BASIS_MAX): string {
   return `${clean.slice(0, end).trimEnd()}…`;
 }
 
-export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
+export async function requestChildRefill(
+  input: {
+    ticker: string;
+    parent: string;
+    kind: "product" | "geographic";
+    child: string;
+    knownChildren: string[];
+  } & ChildEstimateContext,
+  request: RequestFn = (method, url, data) => apiRequest(method, url, data),
+): Promise<{ child?: SegmentChildrenResult["children"][number]; error?: string }> {
+  const response = await request("POST", `${SEGMENT_CHILDREN_ROUTE}/${encodeURIComponent(input.ticker)}`, input);
+  const body = await response.json().catch(() => null) as { child?: SegmentChildrenResult["children"][number]; error?: unknown } | null;
+  if (!response.ok || !body?.child) {
+    const reason = body && typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : "n/a — KI-Schätzung fehlgeschlagen";
+    return { error: reason };
+  }
+  return { child: body.child };
+}
+
+export function SegmentChildrenList({
+  data,
+  onEstimate,
+  estimating,
+}: {
+  data: SegmentChildrenResult;
+  onEstimate?: (name: string) => void;
+  estimating?: string | null;
+}) {
   if (data.children.length === 0) {
     return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">{data.reason ?? "n/a"}</p>;
   }
@@ -100,17 +137,25 @@ export function SegmentChildrenList({ data }: { data: SegmentChildrenResult }) {
           ) : null}
           {childSourceDomain(child.basis) ? (
             <span className="font-mono text-muted-foreground" data-testid="segment-child-domain">{childSourceDomain(child.basis)}</span>
-          ) : child.source === "KI" ? (
+          ) : child.source === "KI" && !child.basis ? (
             <span className="text-muted-foreground" data-testid="segment-child-source-missing">n/a — ohne Quelle</span>
           ) : null}
-          <span
-            className={child.source === "KI"
-              ? "rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200"
-              : "text-muted-foreground"}
-            data-testid="segment-child-source"
-          >
-            {child.source === "KI" ? "KI-Schätzung" : child.source}
-          </span>
+          {child.source === "KI" ? (
+            <button
+              type="button"
+              className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-violet-700 dark:text-violet-200"
+              disabled={estimating === child.name}
+              onClick={(event) => {
+                event.stopPropagation();
+                onEstimate?.(child.name);
+              }}
+              data-testid="segment-child-source"
+            >
+              {estimating === child.name ? "…" : "KI-Schätzung"}
+            </button>
+          ) : (
+            <span className="text-muted-foreground" data-testid="segment-child-source">{child.source}</span>
+          )}
         </div>
       ))}
     </div>
@@ -122,12 +167,17 @@ export function SegmentChildrenPanel({
   parent,
   kind,
   request,
+  context,
 }: {
   ticker: string;
   parent: string;
   kind: "product" | "geographic";
   request?: RequestFn;
+  context?: ChildEstimateContext;
 }) {
+  const [estimating, setEstimating] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filled, setFilled] = useState<Record<string, SegmentChildrenResult["children"][number]>>({});
   const query = useQuery({
     queryKey: [SEGMENT_CHILDREN_ROUTE, ticker, kind, parent],
     enabled: parent.trim().length > 0,
@@ -143,5 +193,36 @@ export function SegmentChildrenPanel({
     const message = /serverseitigen Liste/.test(raw) ? `${raw} Bitte die Schätzung erneut auslösen.` : raw;
     return <p className="pl-4 text-[10px] text-muted-foreground" data-testid="segment-children-empty">{message}</p>;
   }
-  return <SegmentChildrenList data={query.data} />;
+  const data: SegmentChildrenResult = {
+    ...query.data,
+    children: query.data.children.map((child) => filled[child.name] ?? child),
+  };
+  return (
+    <>
+      <SegmentChildrenList
+        data={data}
+        estimating={estimating}
+        onEstimate={(name) => {
+          if (estimating) return;
+          setEstimating(name);
+          setError(null);
+          const facts = context ?? { parentRevenue: null, parentYoy: null, fiscalYear: null, currency: null, regions: [] };
+          void requestChildRefill({
+            ticker,
+            parent,
+            kind,
+            child: name,
+            knownChildren: data.children.map((child) => child.name),
+            ...facts,
+          }, request).then((result) => {
+            if (result.child) setFilled((current) => ({ ...current, [result.child!.name]: result.child! }));
+            else setError(result.error ?? "n/a — KI-Schätzung fehlgeschlagen");
+          }).catch((err: unknown) => {
+            setError(err instanceof Error ? err.message : "n/a — KI-Schätzung fehlgeschlagen");
+          }).finally(() => setEstimating(null));
+        }}
+      />
+      {error ? <p className="pl-4 text-[10px] text-red-500" data-testid="segment-child-estimate-error">{error}</p> : null}
+    </>
+  );
 }

@@ -558,6 +558,7 @@ export function SegmentEstimateBlock({ data }: Props) {
   const [businessOutlineNote, setBusinessOutlineNote] = useState<string | null>(null);
   const [geoOutlineNote, setGeoOutlineNote] = useState<string | null>(null);
   const [outlineLoading, setOutlineLoading] = useState<"product" | "geographic" | null>(null);
+  const [geoFills, setGeoFills] = useState<Record<string, OutlineItem>>({});
   const tickerRef = useRef(data.ticker);
   const outlineTicket = useRef(0);
   tickerRef.current = data.ticker;
@@ -570,6 +571,7 @@ export function SegmentEstimateBlock({ data }: Props) {
     setBusinessOutlineNote(null);
     setGeoOutlineNote(null);
     setOutlineLoading(null);
+    setGeoFills({});
     setOpenBusiness({});
     setOpenGeo({});
     outlineTicket.current += 1;
@@ -589,11 +591,45 @@ export function SegmentEstimateBlock({ data }: Props) {
       else setGeoOutlineError(message);
     };
     try {
-      const res = await apiRequest("POST", "/api/segment-outline", { ticker: started, kind });
+      const regionsKnown = kind === "geographic" && (data.geoSegments?.length ?? 0) > 0;
+      const res = await apiRequest("POST", "/api/segment-outline", regionsKnown ? {
+        ticker: started,
+        kind,
+        rows: (data.geoSegments ?? []).map((seg) => ({
+          name: seg.name,
+          revenue: seg.revenue,
+          share: seg.percentage,
+          growth: typeof seg.growth === "number" ? seg.growth : null,
+        })),
+        context: {
+          currency: data.currency || null,
+          fiscalYear: data.revenueSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
+            ?? data.geoSegments?.find((seg) => seg.fiscalYear)?.fiscalYear
+            ?? null,
+          totalRevenue: typeof data.revenue === "number" ? data.revenue : null,
+          segments: (data.revenueSegments ?? []).map((seg) => ({
+            name: seg.name,
+            revenue: seg.revenue,
+            growth: typeof (seg.growth ?? seg.yoyChangePercent) === "number" ? (seg.growth ?? seg.yoyChangePercent) : null,
+          })),
+        },
+      } : { ticker: started, kind });
       if (!current()) return;
       const json = await res.json().catch(() => null) as { items?: OutlineItem[]; reason?: string; error?: string } | null;
-      if (!res.ok || !json || !Array.isArray(json.items) || json.items.length === 0) {
+      if (!res.ok || !json || !Array.isArray(json.items)) {
         setError(json?.reason || json?.error || "KI-Schätzung unvollständig — nichts übernommen");
+        return;
+      }
+      if (regionsKnown) {
+        const next: Record<string, OutlineItem> = {};
+        for (const item of json.items) next[item.name] = item;
+        setGeoFills(next);
+        setGeoOutlineNote(json.reason ?? null);
+        if (json.items.length === 0) setError(json.reason || "KI-Schätzung unvollständig — nichts übernommen");
+        return;
+      }
+      if (json.items.length === 0) {
+        setError(json.reason || json.error || "KI-Schätzung unvollständig — nichts übernommen");
         return;
       }
       if (kind === "product") {
@@ -676,7 +712,22 @@ export function SegmentEstimateBlock({ data }: Props) {
                       />
                     </div>
                     {openBusiness[seg.name] === true && (
-                      <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="product" />
+                      <SegmentChildrenPanel
+                        ticker={data.ticker}
+                        parent={seg.name}
+                        kind="product"
+                        context={{
+                          parentRevenue: seg.revenue > 0 ? seg.revenue : null,
+                          parentYoy: typeof (seg.growth ?? seg.yoyChangePercent) === "number" ? (seg.growth ?? seg.yoyChangePercent) as number : null,
+                          fiscalYear: seg.fiscalYear ?? data.revenueSegments?.find((row) => row.fiscalYear)?.fiscalYear ?? null,
+                          currency: data.currency || null,
+                          regions: (data.geoSegments ?? []).map((row) => ({
+                            name: row.name,
+                            revenue: row.revenue > 0 ? row.revenue : null,
+                            growth: typeof row.growth === "number" ? row.growth : null,
+                          })),
+                        }}
+                      />
                     )}
                   </SegmentLine>
                 ))}
@@ -724,7 +775,27 @@ export function SegmentEstimateBlock({ data }: Props) {
             non-geo duplicates. geoSegmentsNote is the spelled footnote when
             that removal happened. */}
         <div>
-          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+            {(data.geoSegments?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                data-testid="button-segment-outline-geo"
+                disabled={outlineLoading !== null || data.geoSegments!.every((seg) => typeof seg.growth === "number")}
+                title={data.geoSegments!.every((seg) => typeof seg.growth === "number") ? "Keine N/A-Zellen" : "N/A mit KI schätzen"}
+                onClick={() => { void estimateOutline("geographic"); }}
+                className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 disabled:opacity-50 dark:text-violet-300"
+              >
+                {outlineLoading === "geographic" ? "…" : "N/A mit KI schätzen"}
+              </button>
+            )}
+          </div>
+          {geoOutlineNote && (data.geoSegments?.length ?? 0) > 0 && (
+            <p className="mb-1 text-[10px] text-muted-foreground" data-testid="segment-outline-note-geo">{geoOutlineNote}</p>
+          )}
+          {geoOutlineError && (data.geoSegments?.length ?? 0) > 0 && (
+            <p className="mb-1 text-[10px] text-red-500" data-testid="segment-outline-error-geo">{geoOutlineError}</p>
+          )}
           {!(data.geoSegments && data.geoSegments.length > 0) && (
             <>
               <button
@@ -754,6 +825,16 @@ export function SegmentEstimateBlock({ data }: Props) {
                         fact={seg.growth}
                         annotation={annotationByName(segmentGrowth.data?.geographic, seg.name)}
                       />
+                      {(() => {
+                        const fill = geoFills[seg.name];
+                        if (!fill) return null;
+                        const growth = fill.growthPct != null ? ` ${fill.growthPct > 0 ? "+" : ""}${fill.growthPct.toFixed(1)}%` : " n/a";
+                        return (
+                          <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 text-[10px] text-violet-700 dark:text-violet-200" data-testid={`region-ki-${seg.name}`}>
+                            KI-Schätzung{growth}{fill.basis ? ` ${fill.basis}` : " n/a — ohne Quelle"}
+                          </span>
+                        );
+                      })()}
                       <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
                     </div>
                   </div>
@@ -764,7 +845,22 @@ export function SegmentEstimateBlock({ data }: Props) {
                     />
                   </div>
                   {openGeo[seg.name] === true && (
-                    <SegmentChildrenPanel ticker={data.ticker} parent={seg.name} kind="geographic" />
+                    <SegmentChildrenPanel
+                      ticker={data.ticker}
+                      parent={seg.name}
+                      kind="geographic"
+                      context={{
+                        parentRevenue: seg.revenue > 0 ? seg.revenue : null,
+                        parentYoy: typeof seg.growth === "number" ? seg.growth : null,
+                        fiscalYear: seg.fiscalYear ?? null,
+                        currency: data.currency || null,
+                        regions: (data.geoSegments ?? []).map((row) => ({
+                          name: row.name,
+                          revenue: row.revenue > 0 ? row.revenue : null,
+                          growth: typeof row.growth === "number" ? row.growth : null,
+                        })),
+                      }}
+                    />
                   )}
                 </SegmentLine>
               ))}

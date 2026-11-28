@@ -246,6 +246,14 @@ export interface SegmentChildrenDeps {
   brandSearch?: (query: string) => Promise<{ status: number; ok?: boolean; companies: readonly PeerCompany[] }>;
   now?: () => number;
   rateLimit?: { max: number; windowMs: number };
+  /** Optionaler LLM-Aufruf für den Klick auf ein Untersegment oder eine Region. Ohne ihn gilt callLLMJson. */
+  llm?: (opts: {
+    prompt: string;
+    systemPrompt?: string;
+    maxTokens?: number;
+    temperature?: number;
+    signal?: AbortSignal;
+  }) => Promise<{ data: unknown; modelUsed?: string } | null>;
 }
 
 export interface OutlineIdentity {
@@ -672,6 +680,144 @@ export async function loadSegmentChildren(
   };
 }
 
+function clipText(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function yearOf(value: unknown): string | null {
+  const raw = typeof value === "number" && Number.isInteger(value) ? String(value) : value;
+  if (typeof raw !== "string") return null;
+  const match = raw.match(/(?:19|20)\d{2}/);
+  return match ? match[0] : null;
+}
+
+function moneyOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e15 ? value : null;
+}
+
+function currencyOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : null;
+}
+
+interface NamedAmount {
+  name: string;
+  revenue: number | null;
+  growth: number | null;
+}
+
+function namedAmounts(value: unknown, max: number): NamedAmount[] {
+  if (!Array.isArray(value)) return [];
+  const out: NamedAmount[] = [];
+  for (const row of value) {
+    if (out.length >= max) break;
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { name?: unknown; revenue?: unknown; growth?: unknown };
+    const name = clipText(rec.name, 80);
+    if (!name) continue;
+    const growth = typeof rec.growth === "number" && Number.isFinite(rec.growth) ? rec.growth : null;
+    out.push({ name, revenue: moneyOrNull(rec.revenue), growth });
+  }
+  return out;
+}
+
+export interface ChildRefillInput {
+  parent: string;
+  kind: "product" | "geographic";
+  child: string;
+  knownChildren: string[];
+  parentRevenue: number | null;
+  parentYoy: number | null;
+  fiscalYear: string | null;
+  currency: string | null;
+  regions: NamedAmount[];
+}
+
+export function readChildRefill(body: unknown): ChildRefillInput | null {
+  const b = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  const parent = clipText(b.parent, 120);
+  const child = clipText(b.child, 80);
+  const kind = b.kind === "geographic" ? "geographic" : b.kind === "product" ? "product" : null;
+  if (!parent || !child || !kind) return null;
+  const knownChildren: string[] = [];
+  if (Array.isArray(b.knownChildren)) {
+    for (const name of b.knownChildren) {
+      if (knownChildren.length >= 24) break;
+      const clean = clipText(name, 80);
+      if (clean) knownChildren.push(clean);
+    }
+  }
+  const yoy = typeof b.parentYoy === "number" && Number.isFinite(b.parentYoy) ? b.parentYoy : null;
+  return {
+    parent,
+    kind,
+    child,
+    knownChildren,
+    parentRevenue: moneyOrNull(b.parentRevenue),
+    parentYoy: yoy,
+    fiscalYear: yearOf(b.fiscalYear),
+    currency: currencyOrNull(b.currency),
+    regions: namedAmounts(b.regions, 24),
+  };
+}
+
+export function childRefillPrompt(ticker: string, input: ChildRefillInput): string {
+  const children = input.knownChildren.join(", ") || "n/a";
+  const regions = input.regions.length > 0
+    ? input.regions.map((row) => `${row.name}: Umsatz ${row.revenue ?? "n/a"}, YoY ${row.growth ?? "n/a"}`).join("; ")
+    : "n/a";
+  return [
+    "BEKANNTE FAKTEN. Diese Zahlen nicht ersetzen. Nur die genannte Lücke füllen.",
+    `Ticker ${ticker}. Elternsegment: ${input.parent}.`,
+    `Umsatz des Elternsegments: ${input.parentRevenue ?? "n/a"}. YoY des Elternsegments: ${input.parentYoy ?? "n/a"}.`,
+    `Geschäftsjahr: ${input.fiscalYear ?? "n/a"}. Währung: ${input.currency ?? "n/a"}.`,
+    `Regionen: ${regions}.`,
+    `Bekannte Untersegmente: ${children}.`,
+    `Schätze nur "${input.child}": shareOfParentPct und growthPct. Eine Zahl nur mit Quelle, sonst null.`,
+    `Antwortform: {"companyEcho":"","industryEcho":"","children":[{"name":"${input.child}","owner":"","shareOfParentPct":null,"growthPct":null,"basis":"Begründung","source":null}]}.`,
+  ].join("\n");
+}
+
+interface RegionGapRow extends NamedAmount {
+  share: number | null;
+}
+
+function regionRows(value: unknown): RegionGapRow[] {
+  if (!Array.isArray(value)) return [];
+  const out: RegionGapRow[] = [];
+  for (const row of value) {
+    if (out.length >= 24) break;
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { name?: unknown; revenue?: unknown; share?: unknown; growth?: unknown };
+    const name = clipText(rec.name, 80);
+    if (!name) continue;
+    const share = typeof rec.share === "number" && Number.isFinite(rec.share) ? rec.share : null;
+    const growth = typeof rec.growth === "number" && Number.isFinite(rec.growth) ? rec.growth : null;
+    out.push({ name, revenue: moneyOrNull(rec.revenue), share, growth });
+  }
+  return out;
+}
+
+export function regionGapPrompt(ticker: string, companyName: string, rows: RegionGapRow[], context: unknown): string {
+  const b = context && typeof context === "object" ? context as Record<string, unknown> : {};
+  const segments = namedAmounts(b.segments, 24);
+  const segmentLine = segments.length > 0
+    ? segments.map((row) => `${row.name}: Umsatz ${row.revenue ?? "n/a"}, YoY ${row.growth ?? "n/a"}`).join("; ")
+    : "n/a";
+  const regionLine = rows.map((row) => `${row.name}: Umsatz ${row.revenue ?? "n/a"}, Anteil ${row.share ?? "n/a"}, YoY ${row.growth ?? "n/a"}`).join("; ");
+  return [
+    "BEKANNTE FAKTEN. Diese Zahlen nicht ersetzen. Nur Regionen mit YoY n/a schätzen.",
+    `Ticker ${ticker}. Firma: ${companyName}.`,
+    `Geschäftsjahr: ${yearOf(b.fiscalYear) ?? "n/a"}. Währung: ${currencyOrNull(b.currency) ?? "n/a"}. Gesamtumsatz: ${moneyOrNull(b.totalRevenue) ?? "n/a"}.`,
+    `Geschäftssegmente: ${segmentLine}.`,
+    `Bekannte Regionen: ${regionLine}.`,
+    `Eine Zeile mit einer YoY-Zahl bleibt unverändert und kommt nicht in children.`,
+    `Antwortform: {"companyEcho":"${companyName}","industryEcho":"","children":[{"name":"","owner":"${companyName}","shareOfParentPct":null,"growthPct":null,"basis":"Begründung der Lücke","source":null}]}.`,
+  ].join("\n");
+}
+
 export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentChildrenDeps): void {
   app.get("/api/segment-growth/:ticker", async (req: Request, res: Response) => {
     const raw = req.params.ticker;
@@ -793,6 +939,58 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     }
   });
 
+  app.post(`${SEGMENT_CHILDREN_ROUTE}/:ticker`, async (req: Request, res: Response) => {
+    const raw = req.params.ticker;
+    const ticker = (Array.isArray(raw) ? raw[0] : raw) ?? "";
+    const input = readChildRefill(req.body);
+    if (!TICKER_RE.test(ticker) || !input) {
+      return res.status(400).json({ error: "ticker, parent, kind oder child fehlt" });
+    }
+    const deps = childrenDeps ?? defaultSegmentChildrenDeps();
+    const now = deps.now?.() ?? Date.now();
+    const limit = deps.rateLimit ?? { max: DEFAULT_RATE_MAX, windowMs: DEFAULT_RATE_WINDOW_MS };
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    if (!takeSegmentChildrenSlot(ip, now, limit.max, limit.windowMs)) {
+      return res.status(429).json({ error: "Zu viele Abfragen" });
+    }
+    try {
+      let identity: OutlineIdentity | null = null;
+      if (deps.identity) {
+        try { identity = await deps.identity(ticker); } catch { identity = null; }
+      }
+      const run = deps.llm ?? callLLMJson;
+      let payload: unknown = null;
+      try {
+        const result = await run({
+          systemPrompt: "Antworte nur mit JSON. Schätze nur das genannte Untersegment dieser Firma. Eine Zahl nur mit Quelle. Das Label ist KI-Schätzung.",
+          prompt: childRefillPrompt(ticker, input),
+          maxTokens: 600,
+          temperature: 0.2,
+          signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+        });
+        payload = result?.data ?? null;
+      } catch {
+        payload = null;
+      }
+      if (payload == null) return res.status(503).json({ error: KI_UNAVAILABLE });
+      const reviewed = reviewKiChildren(input.parent, payload, input.parentRevenue, {
+        kind: input.kind,
+        siblings: input.knownChildren.filter((name) => name.toLowerCase() !== input.child.toLowerCase()),
+        companyName: identity?.companyName,
+        ticker,
+        description: identity?.description,
+      });
+      const match = reviewed.children.find((row) => row.name.toLowerCase() === input.child.toLowerCase());
+      if (!match || (match.shareOfParentPct == null && match.growthPct == null)) {
+        return res.status(422).json({ error: reviewed.reason || "n/a — KI-Schätzung ohne Beleg" });
+      }
+      return res.json({ child: match, reason: reviewed.reason });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Untersegment-Schätzung fehlgeschlagen";
+      return res.status(502).json({ error: message.slice(0, 200) });
+    }
+  });
+
   app.post("/api/segment-outline", async (req: Request, res: Response) => {
     const ticker = typeof req.body?.ticker === "string" ? req.body.ticker.trim() : "";
     const kind = req.body?.kind === "geographic" ? "geographic" : req.body?.kind === "product" ? "product" : null;
@@ -809,6 +1007,35 @@ export function registerSegmentGrowthRoute(app: Express, childrenDeps?: SegmentC
     try {
       const identity = deps.identity ? await deps.identity(ticker) : await loadOutlineIdentity(ticker);
       if (!identity?.companyName) return res.json({ items: [], reason: OUTLINE_NO_IDENTITY });
+      const knownRegions = kind === "geographic" ? regionRows(req.body?.rows) : [];
+      if (knownRegions.length > 0) {
+        const gaps = knownRegions.filter((row) => row.growth == null);
+        if (gaps.length === 0) return res.json({ items: [], reason: "Keine N/A-Zellen" });
+        const run = deps.llm ?? callLLMJson;
+        let payload: unknown = null;
+        try {
+          const result = await run({
+            systemPrompt: "Antworte nur mit JSON. Schätze nur fehlendes Regionenwachstum der genannten Firma. Eine bekannte YoY-Zahl bleibt. Das Label ist KI-Schätzung.",
+            prompt: regionGapPrompt(ticker, identity.companyName, knownRegions, req.body?.context),
+            maxTokens: 800,
+            temperature: 0.2,
+            signal: AbortSignal.timeout(SEGMENT_CHILDREN_KI_TIMEOUT_MS),
+          });
+          payload = result?.data ?? null;
+        } catch {
+          payload = null;
+        }
+        if (payload == null) return res.status(503).json({ error: KI_UNAVAILABLE });
+        if (!outlineEchoMatches(payload, identity.companyName, identity.industry, identity.sector)) {
+          return res.json({ items: [], reason: OUTLINE_MISMATCH });
+        }
+        const reviewed = reviewSegmentOutline(payload, identity.companyName, {
+          ticker,
+          description: identity.description,
+        });
+        const wanted = new Set(gaps.map((row) => row.name.toLowerCase()));
+        return res.json({ ...reviewed, items: reviewed.items.filter((item) => wanted.has(item.name.toLowerCase())) });
+      }
       const payload = deps.outline
         ? await deps.outline(ticker, kind, identity)
         : await defaultOutline(ticker, kind, identity);

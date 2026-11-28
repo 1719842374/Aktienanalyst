@@ -115,14 +115,26 @@ export function SegmentSupplementBody({
             value={drafts[row.name] ?? ""}
             onChange={(event) => onDraft?.(row.name, event.target.value)}
           />
-          <button
-            type="button"
-            className="ml-1 rounded border border-border px-1"
-            data-testid="segment-override-confirm"
-            onClick={() => onConfirm?.(row.name)}
-          >
-            Bestätigen
-          </button>
+          {(() => {
+            const draft = (drafts[row.name] ?? "").trim();
+            const typed = draft === "" ? null : Number(draft);
+            const canConfirm = (typed != null && Number.isFinite(typed)) || row.nextYearGrowthPct != null;
+            return (
+              <>
+                <button
+                  type="button"
+                  className={`ml-1 rounded border border-border px-1${canConfirm ? "" : " opacity-50"}`}
+                  data-testid="segment-override-confirm"
+                  disabled={!canConfirm}
+                  title={canConfirm ? "Zahl bestätigen" : "Keine Zahl zum Bestätigen"}
+                  onClick={() => { if (canConfirm) onConfirm?.(row.name); }}
+                >
+                  Bestätigen
+                </button>
+                {!canConfirm ? <span data-testid="segment-override-disabled">Keine Zahl zum Bestätigen</span> : null}
+              </>
+            );
+          })()}
         </div>
       ))}
       {data.subItems.map((item) => (
