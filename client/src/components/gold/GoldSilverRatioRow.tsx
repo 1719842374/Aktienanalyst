@@ -1,6 +1,7 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { GdxGldRatioRow } from "@/components/gold/GdxGldRatioRow";
 
 /** JOB 17: Gold/Silber-Ratio als Indikator-Zeile, nur Anzeige (kein Score). */
 export interface GoldSilverRatioData {
@@ -54,5 +55,6 @@ export function GoldSilverRatioRow() {
     staleTime: 5 * 60 * 1000,
     retry: 0,
   });
-  return <GoldSilverRatioView data={data} />;
+  // FW-16: GDX/GLD-Zeile direkt darunter (eigene Route, nur Anzeige).
+  return <><GoldSilverRatioView data={data} /><GdxGldRatioRow /></>;
 }
