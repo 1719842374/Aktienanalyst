@@ -114,7 +114,8 @@ assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.inner.z) - 0.75) < 1
   assert.equal(cone.points.length, 6);
   const fit = fitLogPriceTrend(closes, closes.length);
   assert.equal(cone.sigmaDaily, fit.residualSigma);
-  assert.equal(cone.driftPerDay, fit.slope);
+  assert.equal(cone.rawDriftPerDay, fit.slope);
+  assert.equal(cone.driftPerDay, 0);
   const t = 4;
   const drift = cone.driftPerDay!;
   assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(10.8, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, drift)) < 1e-9);
@@ -133,7 +134,8 @@ assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.inner.z) - 0.75) < 1
   assert.equal(cone.points[0].p50, 40);
 }
 
-// Negative Ziele bleiben Zahlen (nicht verworfen, nicht auf 0 geklemmt). PoS fehlt → Label ohne %.
+// Negativer PT und g* ≤ −100 % sind kein Log-Kurs: n/a, nicht auf 0 und nicht auf einen Ersatzkurs gesetzt.
+// Ein Schaden ≥ 100 % trifft die benannte Bear-Untergrenze, der Kurs bleibt positiv.
 {
   const cone = buildScenarioCone(input({
     closes: Array(10).fill(50),
@@ -141,32 +143,30 @@ assert.ok(Math.abs(standardNormalCdf(CONE_PARAMS.confidence.inner.z) - 0.75) < 1
     anchorDate: "2026-02-02",
     gStarPct: -150,
     forwardConsensusPrice: -5,
-    expectedDamagePct: 180,
+    expectedDamagesPct: [180],
     horizonDays: 8,
   }));
   assert.ok(cone);
   const bull = cone.markers.find(m => m.id === "bull")!;
   const base = cone.markers.find(m => m.id === "base")!;
   const bear = cone.markers.find(m => m.id === "bear")!;
-  assert.equal(bull.price, -5);
-  assert.ok(base.price != null && base.price < 0, String(base.price));
-  assert.ok(Math.abs(base.price - 50 * (1 + (-150) / CONE_PARAMS.percent)) < 1e-9);
-  assert.ok(bear.price != null && bear.price < 0);
-  assert.ok(Math.abs(bear.price - 50 * (1 - 180 / CONE_PARAMS.percent)) < 1e-9);
-  for (const m of cone.markers) {
-    assert.equal(m.probability, null);
-    assert.equal(m.posText, POS_NA);
-    assert.equal(m.posText.includes("%"), false);
-  }
+  assert.equal(bull.price, null);
+  assert.match(bull.posReason ?? "", /nicht positiv/);
+  assert.equal(base.price, null);
+  assert.match(base.posReason ?? "", /nicht positiv/);
+  assert.ok(bear.price != null && bear.price > 0);
+  assert.match(bear.formula ?? "", /Untergrenze/);
+  assert.match(bear.formula ?? "", /Rohprodukt/);
+  assert.notEqual(bear.price, 0);
   const samples = coneDomainValues(cone);
-  assert.ok(samples.some(v => v < 0));
+  assert.equal(samples.some(v => v < 0), false);
   assert.equal(samples.includes(0), false);
   const attached = attachConeSeries([{ date: "2026-02-02", close: 50 }], cone);
   assert.equal(attached[0].close, 50);
   assert.equal(attached[0].coneP10, 50);
   assert.equal(attached[attached.length - 1].close, null);
-  assert.equal(attached[attached.length - 1].coneBearLabel, "P(≤ Bear-Ziel) PoS n/a");
-  assert.equal(String(attached[attached.length - 1].coneBearLabel).includes("%"), false);
+  assert.equal(attached[attached.length - 1].coneBull, null);
+  assert.ok(attached[attached.length - 1].coneBear != null && attached[attached.length - 1].coneBear! > 0);
 }
 
 // Echte PoS nur wenn übergeben. 0 ist eine Zahl, null ist „PoS n/a“. Kein 50/30/20-Default.
@@ -237,26 +237,39 @@ function assertDisplayedUnit(cone: { markers: { id: string; probability: number 
   assert.equal(cone.points[0].p90, last.close);
   assert.equal(cone.shortHistory, false);
   assert.equal(cone.horizonDays, horizonTradingDays(msft.catalysts.map((c: { timeline: string }) => c.timeline)));
-  const damage = msft.risks.reduce((s: number, r: { expectedDamage: number }) => s + r.expectedDamage, 0);
+  const ratio = cone.horizonDays / CONE_PARAMS.tradingDaysPerYear;
   const bull = cone.markers.find(m => m.id === "bull")!;
   const base = cone.markers.find(m => m.id === "base")!;
   const bear = cone.markers.find(m => m.id === "bear")!;
-  assert.equal(bull.price, msft.analystPT.median);
-  assert.ok(Math.abs(base.price! - last.close * (1 + msft.impliedGStar / CONE_PARAMS.percent)) < 1e-6);
-  assert.ok(Math.abs(bear.price! - last.close * (1 - damage / CONE_PARAMS.percent)) < 1e-6);
+  const factor = msft.risks.reduce((p: number, r: { expectedDamage: number }) => p * (1 - r.expectedDamage / CONE_PARAMS.percent), 1);
+  assert.ok(factor > 0);
+  assert.ok(Math.abs(bull.price! - last.close * Math.pow(msft.analystPT.median / last.close, ratio)) < 1e-6);
+  assert.ok(Math.abs(base.price! - last.close * Math.pow(1 + msft.impliedGStar / CONE_PARAMS.percent, ratio)) < 1e-6);
+  assert.ok(Math.abs(bear.price! - last.close * Math.pow(factor, ratio)) < 1e-6);
+  assert.equal(cone.driftPerDay, 0);
+  assert.ok(cone.rawDriftPerDay != null);
   assert.equal(cone.formula, CONE_FORMULA);
   assert.equal(cone.source, CONE_SOURCE);
   assert.equal(cone.bandReason, null);
   const catalystHorizon = horizonTradingDays(msft.catalysts.map((c: { timeline: string }) => c.timeline));
   assert.equal(cone.horizonDays, catalystHorizon);
   assert.notEqual(catalystHorizon, 252);
+  assert.match(cone.orderReason ?? "", /Ordnung/);
   for (const m of cone.markers) {
+    if (m.posReason && /Ordnung/.test(m.posReason)) {
+      assert.equal(m.probability, null);
+      assert.equal(m.sourceLabel, null);
+      assert.equal(m.price != null, true);
+      continue;
+    }
     const derived = scenarioProbability(m.id, m.price, last.close, cone.driftPerDay, cone.sigmaDaily, cone.horizonDays);
     assert.equal(m.probability, derived.probability);
     assert.equal(m.sourceLabel, CONE_POS_SOURCE.regression);
     assert.equal(m.fallback, true);
-    assert.equal(m.shownHorizon, null);
+    assert.equal(m.shownHorizon, cone.horizonDays);
     assert.match(m.caption, /Fallback/);
+    assert.match(m.formula ?? "", new RegExp(`H=${cone.horizonDays}`));
+    assert.match(m.formula ?? "", /σ_η=/);
     assert.doesNotMatch(m.caption, /S17|Katalysator/);
   }
   assertDisplayedUnit(cone);
@@ -268,12 +281,29 @@ function assertDisplayedUnit(cone: { markers: { id: string; probability: number 
   assert.equal(withMc.horizonDays, mcHorizon);
   assert.equal(withMc.points.length, mcHorizon + 1);
   const mcBull = withMc.markers.find(m => m.id === "bull")!;
-  assert.equal(mcBull.sourceLabel, CONE_POS_SOURCE.monteCarlo);
-  assert.equal(mcBull.fallback, false);
-  assert.equal(mcBull.shownHorizon, mcHorizon);
-  assert.match(mcBull.caption, new RegExp(`${mcHorizon} Handelstage`));
-  assert.ok(Math.abs(mcBull.probability! - 0.75) < 1e-9);
+  assert.equal(mcBull.probability, null);
+  assert.match(mcBull.posReason ?? "", /Ordnung/);
+  assert.equal(mcBull.price != null, true);
   assertDisplayedUnit(withMc);
+  const orderedMc = buildScenarioCone(input({
+    closes: Array(30).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-01-05",
+    gStarPct: 10,
+    forwardConsensusPrice: 150,
+    expectedDamagesPct: [20],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
+    monteCarlo: { terminalPrices: [100, 600, 700, 800], horizonDays: CONE_PARAMS.tradingDaysPerYear },
+  }));
+  assert.ok(orderedMc);
+  assert.equal(orderedMc.orderReason, null);
+  const orderedBull = orderedMc.markers.find(m => m.id === "bull")!;
+  assert.equal(orderedBull.sourceLabel, CONE_POS_SOURCE.monteCarlo);
+  assert.equal(orderedBull.fallback, false);
+  assert.equal(orderedBull.shownHorizon, CONE_PARAMS.tradingDaysPerYear);
+  assert.match(orderedBull.caption, new RegExp(`${CONE_PARAMS.tradingDaysPerYear} Handelstage`));
+  assert.match(orderedBull.formula ?? "", /σ_η=/);
+  assert.ok(Math.abs(orderedBull.probability! - 0.75) < 1e-9);
   const viaResponse = scenarioConeFromAnalysis(
     { ...msft, monteCarlo: { terminalPrices: [100, 600, 700, 800], horizonDays: mcHorizon - 10 } },
     last,
@@ -283,7 +313,8 @@ function assertDisplayedUnit(cone: { markers: { id: string; probability: number 
   assert.equal(viaResponse!.points.length, mcHorizon - 9);
   const noHorizon = scenarioConeFromAnalysis(msft, last, { terminalPrices: [100, 600, 700, 800], horizonDays: null });
   assert.equal(noHorizon!.horizonDays, catalystHorizon);
-  assert.equal(noHorizon!.markers.find(m => m.id === "bull")!.sourceLabel, CONE_POS_SOURCE.regression);
+  assert.match(noHorizon!.orderReason ?? "", /Ordnung/);
+  assert.equal(noHorizon!.markers.find(m => m.id === "bull")!.sourceLabel, null);
   const t = 20;
   assert.ok(Math.abs(cone.points[t].p90 - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.outer.z, t, cone.driftPerDay!)) < 1e-6);
   assert.ok(Math.abs(cone.points[t].innerHigh - coneBandPrice(last.close, cone.sigmaDaily!, CONE_PARAMS.confidence.inner.z, t, cone.driftPerDay!)) < 1e-6);
@@ -334,7 +365,7 @@ for (const [ticker, file] of [["SAP.DE", "script/fixtures/yahoo-chart-SAP.DE.jso
     anchorDate: "2026-10-16",
     gStarPct: 4,
     forwardConsensusPrice: null,
-    expectedDamagePct: 12,
+    expectedDamagesPct: [12],
     horizonDays: horizonTradingDays(["6-12M", "12-18M"]),
   }));
   assert.ok(cone, ticker);
@@ -552,8 +583,8 @@ assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
     anchorDate: "2026-01-05",
     gStarPct: 0,
     forwardConsensusPrice: 128,
-    expectedDamagePct: 20,
-    horizonDays: 5,
+    expectedDamagesPct: [20],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
   }));
   assert.ok(shown);
   const byId = Object.fromEntries(shown.markers.map(m => [m.id, m]));
@@ -607,6 +638,116 @@ assert.equal(CONE_LEGEND.forecastStart, "Prognosestart");
     { id: "p90", xPx, widthPx: labelWidth, yPx: 118, heightPx: fontPx },
     { id: "p10", xPx, widthPx: labelWidth, yPx: 124, heightPx: fontPx },
   ]);
+}
+
+// Ordnung Bear<Base<Bull. PT unter Base nach einer Rally bleibt als Kurs stehen, die PoS wird n/a.
+{
+  const cone = buildScenarioCone(input({
+    closes: Array(8).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-06-01",
+    gStarPct: 10,
+    forwardConsensusPrice: 80,
+    expectedDamagesPct: [10],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
+  }));
+  assert.ok(cone);
+  const byId = Object.fromEntries(cone.markers.map(m => [m.id, m]));
+  assert.ok(Math.abs(byId.bear.price - 90) < 1e-9);
+  assert.ok(Math.abs(byId.base.price - 110) < 1e-9);
+  assert.ok(Math.abs(byId.bull.price - 80) < 1e-9);
+  assert.equal(byId.bull.probability, null);
+  assert.equal(byId.base.probability, null);
+  assert.match(cone.orderReason ?? "", /Ordnung/);
+  assert.match(byId.bull.posReason ?? "", /nicht überschrieben/);
+  assert.equal(byId.bear.probability, null);
+}
+
+// Produkt statt Summe. 60+60 überschreitet 100, das Produkt bleibt positiv. 120 trifft die Untergrenze.
+{
+  const product = buildScenarioCone(input({
+    closes: Array(8).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-06-01",
+    gStarPct: 0,
+    forwardConsensusPrice: 130,
+    expectedDamagesPct: [60, 60],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
+  }));
+  assert.ok(product);
+  const bear = product.markers.find(m => m.id === "bear")!;
+  assert.ok(Math.abs(bear.price! - 100 * 0.4 * 0.4) < 1e-9);
+  assert.ok(bear.price! > 0);
+  const floored = buildScenarioCone(input({
+    closes: Array(8).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-06-01",
+    gStarPct: 0,
+    forwardConsensusPrice: 130,
+    expectedDamagesPct: [120],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
+  }));
+  assert.ok(floored);
+  const flooredBear = floored.markers.find(m => m.id === "bear")!;
+  assert.ok(Math.abs(flooredBear.price! - 100 * CONE_PARAMS.bearFactorFloor) < 1e-18);
+  assert.match(flooredBear.formula ?? "", /Number\.EPSILON/);
+  const sumOnly = buildScenarioCone(input({
+    closes: Array(8).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-06-01",
+    expectedDamagePct: 180,
+    horizonDays: CONE_PARAMS.tradingDaysPerYear,
+  }));
+  assert.equal(sumOnly!.markers.find(m => m.id === "bear")!.price, null);
+  assert.match(sumOnly!.markers.find(m => m.id === "bear")!.posReason ?? "", /Einzelschäden/);
+}
+
+// Halber Horizont: der 12-Monats-PT und der Jahresschritt skalieren mit der Wurzel.
+{
+  const cone = buildScenarioCone(input({
+    closes: Array(8).fill(100),
+    anchorPrice: 100,
+    anchorDate: "2026-06-01",
+    gStarPct: 0,
+    forwardConsensusPrice: 200,
+    expectedDamagesPct: [20],
+    horizonDays: CONE_PARAMS.tradingDaysPerYear / 2,
+  }));
+  assert.ok(cone);
+  const byId = Object.fromEntries(cone.markers.map(m => [m.id, m]));
+  assert.ok(Math.abs(byId.bull.price - 100 * Math.sqrt(2)) < 1e-9);
+  assert.ok(Math.abs(byId.base.price - 100) < 1e-9);
+  assert.ok(Math.abs(byId.bear.price - 100 * Math.sqrt(0.8)) < 1e-9);
+  assert.match(byId.bull.formula, /12-Monats-PT/);
+  assert.match(byId.bull.formula, /H=126/);
+  assert.match(byId.bull.formula, /σ_η=/);
+}
+
+// Trend in der Historie. Die Bänder lesen die auf 0 geschrumpfte Drift, der Roh-Slope bleibt stehen.
+{
+  const closes = [10, 11, 12, 13, 14, 16];
+  const cone = buildScenarioCone(input({
+    closes,
+    anchorPrice: 16,
+    anchorDate: "2026-07-01",
+    horizonDays: 4,
+  }));
+  assert.ok(cone);
+  const fit = fitLogPriceTrend(closes, closes.length);
+  assert.ok(fit.slope != null && fit.slope > 0);
+  assert.equal(cone.rawDriftPerDay, fit.slope);
+  assert.equal(cone.driftPerDay, 0);
+  assert.equal(cone.points[cone.points.length - 1].p50, 16);
+}
+
+{
+  const ui = read("client/src/components/sections/TechnicalChart.tsx");
+  const lib = read("client/src/lib/scenarioCone.ts");
+  assert.match(ui, /data-testid="cone-active-source"/);
+  assert.match(ui, /data-raw-drift/);
+  assert.match(lib, /bearFactorFloor: Number\.EPSILON/);
+  assert.match(lib, /Anzeige-Drift = 0/);
+  assert.doesNotMatch(lib, /from ["'][^"']*calculations/);
 }
 
 console.log("test-scenario-cone: OK");

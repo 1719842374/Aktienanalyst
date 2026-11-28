@@ -13,6 +13,13 @@
  * Wahrscheinlichkeit aus derselben Verteilung am Horizont. Geht das nicht,
  * bleibt „PoS n/a“ mit Grund. Die Platzhalter 50/30/20 werden nicht eingesetzt.
  *
+ * Ziele am Horizont H (nur Anzeige):
+ * Bull skaliert den 12-Monats-PT, Base und Bear skalieren einen Jahresschritt
+ * (g* bzw. ∏(1−d_i)). Die Anzeige-Drift ist 0: S18-Variante A mischt
+ * b_adj = w·b_hist + (1−w)·b_prior. Der Prior ist 0. Ein τ steht in S18 nicht
+ * im Code; ein selbst gesetztes τ wäre eine neue Schwelle. Deshalb w = 0.
+ * Der OLS-Slope bleibt als Rohwert sichtbar. σ_η bleibt die Streuung um den Roh-Slope.
+ *
  * Herkunft der Fenster: Philip 01.11.2026 12:36 — Schwellen aus den Daten
  * (Median der Katalysator-Horizonte), Gewichte/Fenster nur als benannte
  * Konstanten. volWindowDays = 63 = ein Quartal des Börsenjahrs.
@@ -70,6 +77,19 @@ export const CONE_PARAMS = {
   /** Relative Toleranz, wenn σ = 0 und der Pfad auf einem Ziel liegt. */
   priceMatchRel: 1e-9,
   /**
+   * Untergrenze des Bear-Faktors, Bruchteil von P0.
+   * Number.EPSILON = 2^−52, die Maschinengenauigkeit: kleinster relativer
+   * Abstand, den ein IEEE-754-Double von 1 noch unterscheidet.
+   * Begründung: log(P/P0) ist nur für P>0 endlich. Ein Produkt ∏(1−d_i) ≤ 0
+   * (ein Schaden ≥ 100 % oder ein nicht positives Produkt) ist kein Kurs.
+   * Number.MIN_VALUE unterläuft bei üblichen Kursen zu 0 (P0·5e−324 = 0).
+   * EPSILON bleibt bis zu Kursen um 1e292 ein strikt positiver, log-fähiger Faktor.
+   * Keine Plausibilitäts-Kappung: jedes d_i geht ungekürzt ins Rohprodukt,
+   * der Rohwert steht am Marker, nur ein nicht positives Produkt hebt den
+   * Faktor auf diesen Boden.
+   */
+  bearFactorFloor: Number.EPSILON,
+  /**
    * Unter dieser Residuen-σ gilt die Serie als ohne Streuung (Gleitkomma-Rest
    * einer flachen Log-Reihe). Kein Konfidenzniveau.
    */
@@ -85,7 +105,7 @@ export const CONE_SOURCE = "eigene Kurshistorie (Schlusskurse bis zum letzten Cl
  * nicht die Niveaustreuung von ε und nicht noch einmal mit √t als Tages-σ).
  * z aus CONE_PARAMS.confidence, t in Handelstagen ab dem Anker.
  */
-export const CONE_FORMULA = "log P = a + b·t + ε; σ_η = Streuung(Δlog P − b); Band(t) = P₀·exp(b·t ± z·σ_η·√t); z = Φ⁻¹((1+Niveau)/2); PoS = Φ derselben Verteilung am Horizont";
+export const CONE_FORMULA = "log P = a + b·t + ε; σ_η = Streuung(Δlog P − b); Anzeige-Drift = 0 (S18-Variante A, Prior 0, w = 0, Roh-b sichtbar); Band(t) = P₀·exp(0·t ± z·σ_η·√t); z = Φ⁻¹((1+Niveau)/2); PoS = Φ derselben Verteilung am Horizont";
 
 /** Die drei Ereignisse sind keine Zerlegung. Die Summe muss nicht 100 % sein. */
 export const CONE_PROBABILITY_HINT = "Einzelwahrscheinlichkeiten, Summe ≠ 100 %";
@@ -498,8 +518,15 @@ export interface ScenarioCone {
   anchorDate: string;
   /** Residuen-σ der Log-Regression. null = Regression steht nicht. */
   sigmaDaily: number | null;
-  /** Steigung b von log(Kurs) je Handelstag. null = Regression steht nicht. */
+  /**
+   * Anzeige-Drift. 0, sobald die Regression einen Slope hat (auf den Prior 0
+   * geschrumpft). null = Regression steht nicht.
+   */
   driftPerDay: number | null;
+  /** OLS-Slope vor der Schrumpfung. null = Regression steht nicht. */
+  rawDriftPerDay: number | null;
+  /** null, wenn Bear < Base < Bull unter den vorhandenen Zielkursen gilt. */
+  orderReason: string | null;
   volSample: number;
   shortHistory: boolean;
   /** null, wenn die Bänder stehen. Sonst der n/a-Grund. */
@@ -523,8 +550,14 @@ export interface ScenarioConeInput {
    * 0 = in dieser Response „kein Ziel“ (FMP-Leerwert), nicht ein Ziel bei 0.
    */
   forwardConsensusPrice: number | null;
-  /** Summe risks[].expectedDamage in Prozent. null = kein Bear-Marker. */
+  /**
+   * Summe risks[].expectedDamage in Prozent. Wird nicht zum Bear-Kurs.
+   * Liegt nur die Summe vor, bleibt der Bear-Marker n/a: das Produkt braucht
+   * die Einzelschäden.
+   */
   expectedDamagePct: number | null;
+  /** Einzelschäden in Prozent, Reihenfolge der Response. null = keine Liste. */
+  expectedDamagesPct?: readonly number[] | null;
   /**
    * Szenario-PoS als Anteil 0–1.
    * null = aus der Log-Regression am Horizont ableiten (kein 50/30/20-Platzhalter).
@@ -591,7 +624,7 @@ function marker(
     posText,
     eventLabel: CONE_EVENT_LABEL[id],
     sourceLabel: p == null ? null : sourceLabel,
-    formula: p == null ? null : formula,
+    formula,
     fallback: useFallback,
     shownHorizon: horizon,
     caption: markerCaption(id, posText, horizon, useFallback),
@@ -674,6 +707,143 @@ export function scenarioProbability(
   return { probability: standardNormalCdf(z + half) - standardNormalCdf(z - half), reason: null };
 }
 
+/**
+ * Schrittkurs auf den Horizont H legen: P₀·(P_step/P₀)^(H/refDays).
+ * H = refDays lässt den Schrittkurs stehen. Ein nicht positiver Schrittkurs
+ * wird nicht durch einen anderen Kurs ersetzt.
+ */
+export function scaleLogTarget(
+  anchor: number,
+  stepPrice: number,
+  horizon: number,
+  refDays: number,
+): { price: number | null; reason: string | null } {
+  if (!(anchor > 0)) return { price: null, reason: "n/a — Ankerkurs nicht positiv" };
+  if (!(stepPrice > 0) || !Number.isFinite(stepPrice)) {
+    return { price: null, reason: "n/a — Schrittkurs nicht positiv, Log-Skalierung nicht belegbar" };
+  }
+  if (!(refDays > 0)) return { price: null, reason: "n/a — Referenzhorizont fehlt" };
+  if (!(horizon > 0)) return { price: null, reason: "n/a — kein Horizont, Skalierung nicht belegbar" };
+  if (horizon === refDays) return { price: stepPrice, reason: null };
+  const scaled = anchor * Math.pow(stepPrice / anchor, horizon / refDays);
+  if (!(scaled > 0) || !Number.isFinite(scaled) || !Number.isFinite(Math.log(scaled / anchor))) {
+    return { price: null, reason: "n/a — skalierter Kurs nicht positiv" };
+  }
+  return { price: scaled, reason: null };
+}
+
+/**
+ * ∏(1−d_i/100). d_i in Prozent, ungekürzt. Nicht positives Produkt → bearFactorFloor.
+ */
+export function bearSurvivalFactor(damagesPct: readonly number[]): {
+  factor: number | null;
+  raw: number | null;
+  floored: boolean;
+  reason: string | null;
+} {
+  if (damagesPct.length === 0) {
+    return { factor: null, raw: null, floored: false, reason: "n/a — kein Expected Damage" };
+  }
+  let raw = 1;
+  for (const d of damagesPct) {
+    if (typeof d !== "number" || !Number.isFinite(d)) {
+      return { factor: null, raw: null, floored: false, reason: "n/a — Einzelschaden nicht endlich, Produkt nicht belegbar" };
+    }
+    raw *= 1 - d / CONE_PARAMS.percent;
+  }
+  if (!Number.isFinite(raw)) {
+    return { factor: null, raw: null, floored: false, reason: "n/a — Produkt der Schäden nicht endlich" };
+  }
+  if (raw > 0 && Number.isFinite(Math.log(raw))) {
+    return { factor: raw, raw, floored: false, reason: null };
+  }
+  return { factor: CONE_PARAMS.bearFactorFloor, raw, floored: true, reason: null };
+}
+
+/** Paare unter den vorhandenen Zielkursen. Fehlende Kurse sind kein stilles Umsortieren. */
+export function brokenScenarioOrder(
+  prices: Record<ScenarioMarkerId, number | null>,
+): { ids: ScenarioMarkerId[]; reason: string | null } {
+  const bad = new Set<ScenarioMarkerId>();
+  const parts: string[] = [];
+  const { bear, base, bull } = prices;
+  const ok = (v: number | null): v is number => v != null && Number.isFinite(v);
+  if (ok(bear) && ok(base) && !(bear < base)) {
+    bad.add("bear");
+    bad.add("base");
+    parts.push("Bear nicht unter Base");
+  }
+  if (ok(base) && ok(bull) && !(base < bull)) {
+    bad.add("base");
+    bad.add("bull");
+    parts.push("Base nicht unter Bull");
+  }
+  if (ok(bear) && ok(bull) && !(bear < bull)) {
+    bad.add("bear");
+    bad.add("bull");
+    parts.push("Bear nicht unter Bull");
+  }
+  if (bad.size === 0) return { ids: [], reason: null };
+  return {
+    ids: MARKER_ORDER.filter(id => bad.has(id)),
+    reason: `n/a — Ordnung Bear<Base<Bull verletzt (${parts.join("; ")}). Ziele nicht überschrieben`,
+  };
+}
+
+function formatSigma(sigma: number | null): string {
+  if (sigma == null || !Number.isFinite(sigma)) return "σ_η n/a";
+  return `σ_η=${sigma.toFixed(4)}`;
+}
+
+interface BuiltTarget {
+  price: number | null;
+  formula: string | null;
+  reason: string | null;
+}
+
+function joinFormula(target: string | null, extra: string | null): string | null {
+  if (target && extra) return `${target} · ${extra}`;
+  return target ?? extra;
+}
+
+function scaledTarget(
+  anchor: number,
+  stepPrice: number | null,
+  horizon: number,
+  missingReason: string,
+  formulaLead: string,
+): BuiltTarget {
+  if (stepPrice == null || !Number.isFinite(stepPrice)) {
+    return { price: null, formula: null, reason: missingReason };
+  }
+  const scaled = scaleLogTarget(anchor, stepPrice, horizon, CONE_PARAMS.tradingDaysPerYear);
+  if (scaled.price == null) return { price: null, formula: formulaLead, reason: scaled.reason };
+  return { price: scaled.price, formula: formulaLead, reason: null };
+}
+
+function bearTarget(anchor: number, horizon: number, input: ScenarioConeInput): BuiltTarget {
+  const ref = CONE_PARAMS.tradingDaysPerYear;
+  const lead = `Bear = P₀·∏(1−d_i/100)^(H/${ref}) · Schäden ein Jahresschritt`;
+  const list = input.expectedDamagesPct;
+  if (list == null) {
+    if (input.expectedDamagePct != null && Number.isFinite(input.expectedDamagePct)) {
+      return { price: null, formula: lead, reason: "n/a — nur Σd, das Produkt braucht die Einzelschäden" };
+    }
+    return { price: null, formula: null, reason: "n/a — kein Expected Damage" };
+  }
+  const survived = bearSurvivalFactor(list);
+  if (survived.factor == null) {
+    return { price: null, formula: lead, reason: survived.reason };
+  }
+  const scaled = scaleLogTarget(anchor, anchor * survived.factor, horizon, ref);
+  const floorNote = survived.floored
+    ? ` · Untergrenze ${CONE_PARAMS.bearFactorFloor} (Number.EPSILON, Log-Kurs bleibt positiv), Rohprodukt ${survived.raw}`
+    : "";
+  const formula = `${lead}${floorNote}`;
+  if (scaled.price == null) return { price: null, formula, reason: scaled.reason };
+  return { price: scaled.price, formula, reason: null };
+}
+
 export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null {
   const last = input.anchorPrice;
   if (!Number.isFinite(last) || last <= 0 || !input.anchorDate) return null;
@@ -684,7 +854,8 @@ export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null
   const canFan = fit.residualSigma != null && fit.slope != null && horizon > 0;
   const dates = canFan ? addTradingDays(input.anchorDate, horizon) : [];
   const steps = canFan ? horizon : 0;
-  const slope = fit.slope ?? 0;
+  const displayDrift = fit.slope == null ? null : 0;
+  const slope = displayDrift ?? 0;
   const sigma = fit.residualSigma ?? 0;
   const points: ConePoint[] = [];
   for (let t = 0; t <= steps; t++) {
@@ -699,51 +870,75 @@ export function buildScenarioCone(input: ScenarioConeInput): ScenarioCone | null
       innerHigh: coneBandPrice(last, sigma, zInner, t, slope),
     });
   }
-  const bullPrice = input.forwardConsensusPrice != null
+  const ref = CONE_PARAMS.tradingDaysPerYear;
+  const bullStep = input.forwardConsensusPrice != null
     && Number.isFinite(input.forwardConsensusPrice)
     && input.forwardConsensusPrice !== 0
     ? input.forwardConsensusPrice
     : null;
-  const basePrice = input.gStarPct != null && Number.isFinite(input.gStarPct)
+  const bullBuilt = scaledTarget(last, bullStep, horizon, "n/a — kein Forward-Konsens", `Bull = P₀·(PT/P₀)^(H/${ref}) · 12-Monats-PT`);
+  const baseStep = input.gStarPct != null && Number.isFinite(input.gStarPct)
     ? last * (1 + input.gStarPct / CONE_PARAMS.percent)
     : null;
-  const bearPrice = input.expectedDamagePct != null && Number.isFinite(input.expectedDamagePct)
-    ? last * (1 - input.expectedDamagePct / CONE_PARAMS.percent)
-    : null;
+  const baseBuilt = scaledTarget(last, baseStep, horizon, "n/a — g* fehlt", `Base = P₀·(1+g*/100)^(H/${ref}) · g* ein Jahresschritt (WACC−FCF/EV, jährlich)`);
+  const bearBuilt = bearTarget(last, horizon, input);
+  const built: Record<ScenarioMarkerId, BuiltTarget> = { bull: bullBuilt, base: baseBuilt, bear: bearBuilt };
   const explicit: Record<ScenarioMarkerId, number | null> = {
     bull: input.probabilityBull,
     base: input.probabilityBase,
     bear: input.probabilityBear,
   };
-  const prices: Record<ScenarioMarkerId, number | null> = { bull: bullPrice, base: basePrice, bear: bearPrice };
-  const band = baseIntervalPrices(basePrice, fit.residualSigma, horizon);
+  const prices: Record<ScenarioMarkerId, number | null> = {
+    bull: bullBuilt.price,
+    base: baseBuilt.price,
+    bear: bearBuilt.price,
+  };
+  const order = brokenScenarioOrder(prices);
+  const band = baseIntervalPrices(prices.base, fit.residualSigma, horizon);
   const mc = monteCarloScenarioShares(input.monteCarlo?.terminalPrices, {
-    bull: bullPrice,
-    bear: bearPrice,
+    bull: prices.bull,
+    bear: prices.bear,
     baseLow: band.low,
     baseHigh: band.high,
   });
   const mcHorizon = input.monteCarlo?.horizonDays != null && input.monteCarlo.horizonDays > 0 ? input.monteCarlo.horizonDays : null;
   const markers = MARKER_ORDER.map(id => {
+    const price = prices[id];
+    const targetFormula = built[id].formula;
+    const broken = order.ids.includes(id);
     const given = explicit[id];
-    if (given != null && Number.isFinite(given)) return marker(id, prices[id], given, null, null, null, false, null);
+    if (given != null && Number.isFinite(given)) {
+      return marker(id, price, given, null, null, joinFormula(targetFormula, broken ? order.reason : null), false, null);
+    }
+    if (broken) return marker(id, price, null, order.reason, null, targetFormula, false, null);
+    if (price == null) return marker(id, null, null, built[id].reason, null, targetFormula, false, null);
     const mcShare = unitProbability(mc[id]);
     if (mcHorizon != null && mcShare != null) {
       const baseFormula = id === "bull" ? CONE_POS_FORMULA.monteCarloBull : id === "bear" ? CONE_POS_FORMULA.monteCarloBear : CONE_POS_FORMULA.monteCarloBase;
-      return marker(id, prices[id], mcShare, null, CONE_POS_SOURCE.monteCarlo, `${baseFormula} · Horizont ${mcHorizon} Handelstage`, false, mcHorizon);
+      return marker(
+        id, price, mcShare, null, CONE_POS_SOURCE.monteCarlo,
+        joinFormula(targetFormula, `${baseFormula} · H=${mcHorizon} · ${formatSigma(fit.residualSigma)}`),
+        false, mcHorizon,
+      );
     }
-    const derived = scenarioProbability(id, prices[id], last, fit.slope, fit.residualSigma, horizon);
+    const derived = scenarioProbability(id, price, last, displayDrift, fit.residualSigma, horizon);
     const reg = unitProbability(derived.probability);
     if (reg != null) {
-      return marker(id, prices[id], reg, null, CONE_POS_SOURCE.regression, CONE_POS_FORMULA.regression, true, null);
+      return marker(
+        id, price, reg, null, CONE_POS_SOURCE.regression,
+        joinFormula(targetFormula, `${CONE_POS_FORMULA.regression} · H=${horizon} · ${formatSigma(fit.residualSigma)}`),
+        true, horizon,
+      );
     }
-    return marker(id, prices[id], null, derived.reason, null, null, false, null);
+    return marker(id, price, null, built[id].reason ?? derived.reason, null, targetFormula, false, null);
   });
   return {
     anchorPrice: last,
     anchorDate: input.anchorDate.slice(0, 10),
     sigmaDaily: fit.residualSigma,
-    driftPerDay: fit.slope,
+    driftPerDay: displayDrift,
+    rawDriftPerDay: fit.slope,
+    orderReason: order.reason,
     volSample: fit.sample,
     shortHistory: fit.shortHistory,
     bandReason: fit.reason,
@@ -799,18 +994,12 @@ export function scenarioConeFromAnalysis(
   const closes = closesUntil(series, anchor.date);
   const gFromScore = data.scoring?.gateInputs?.impliedGrowthPercent;
   const gStar = finiteOrNull(data.impliedGStar) ?? finiteOrNull(gFromScore);
-  let damage: number | null = null;
+  let damages: number[] | null = null;
   if (Array.isArray(data.risks) && data.risks.length > 0) {
-    let sum = 0;
-    let any = false;
-    for (const r of data.risks) {
+    damages = data.risks.map(r => {
       const v = finiteOrNull(r?.expectedDamage);
-      if (v != null) {
-        sum += v;
-        any = true;
-      }
-    }
-    if (any) damage = sum;
+      return v == null ? Number.NaN : v;
+    });
   }
   const timelines = Array.isArray(data.catalysts) ? data.catalysts.map(c => c?.timeline) : [];
   const fromResponse = usableMonteCarlo(data.monteCarlo);
@@ -822,7 +1011,8 @@ export function scenarioConeFromAnalysis(
     anchorDate: anchor.date,
     gStarPct: gStar,
     forwardConsensusPrice: finiteOrNull(data.analystPT?.median),
-    expectedDamagePct: damage,
+    expectedDamagePct: null,
+    expectedDamagesPct: damages,
     // Kein Bull/Base/Bear-PoS-Feld in StockAnalysis. S18 nur mit Endkursen und Horizont aus dem Ergebnis, sonst Log-Regression.
     probabilityBull: null,
     probabilityBase: null,

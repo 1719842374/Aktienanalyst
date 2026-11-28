@@ -1298,6 +1298,8 @@ export function TechnicalChart({
           data-horizon={scenarioCone.horizonDays}
           data-short={scenarioCone.shortHistory ? "1" : "0"}
           data-drift={scenarioCone.driftPerDay ?? ""}
+          data-raw-drift={scenarioCone.rawDriftPerDay ?? ""}
+          data-order={scenarioCone.orderReason ?? ""}
           data-formula={CONE_FORMULA}
           title={`${CONE_SOURCE}. ${CONE_FORMULA}`}
         >
@@ -1305,6 +1307,8 @@ export function TechnicalChart({
           {" "}({scenarioCone.anchorDate}) · Horizont {scenarioCone.horizonDays} Handelstage
           {scenarioCone.sigmaDaily != null && <> · σ<sub>η</sub> <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
           {scenarioCone.driftPerDay != null && <> · b <span className="font-mono">{scenarioCone.driftPerDay.toFixed(6)}</span></>}
+          {scenarioCone.rawDriftPerDay != null && scenarioCone.rawDriftPerDay !== scenarioCone.driftPerDay && <> · b roh <span className="font-mono">{scenarioCone.rawDriftPerDay.toFixed(6)}</span> · auf 0 geschrumpft</>}
+          {scenarioCone.orderReason && <> · {scenarioCone.orderReason}</>}
           {scenarioCone.shortHistory && <> · Regressionsfenster kürzer als {CONE_PARAMS.regressionWindowDays} Tage</>}
           {scenarioCone.bandReason && <> · {scenarioCone.bandReason}</>}
           {" "}· 50%-Band und 80%-Band
@@ -1794,6 +1798,14 @@ function ConeTooltipRows({ p, formatPx, cone, priceSymbol, priceFactor }: { p: C
         <div>{CONE_SOURCE}</div>
         <div>{CONE_FORMULA}</div>
         <div>{coneIntervalLegend("outer")} · {coneIntervalLegend("inner")}</div>
+        <div data-testid="cone-active-source">
+          {cone.markers.map(m => {
+            const src = m.sourceLabel ?? "Quelle n/a";
+            const h = m.shownHorizon ?? cone.horizonDays;
+            const sig = cone.sigmaDaily != null ? cone.sigmaDaily.toFixed(4) : "n/a";
+            return `${CONE_HORIZON_NAME[m.id]}: ${src} · H=${h} · σ_η=${sig}`;
+          }).join(" · ")}
+        </div>
       </div>
       {row(CONE_STYLE.outerStroke, CONE_EDGE_LABEL.p10, p.coneP10)}
       {row(CONE_STYLE.innerStroke, CONE_EDGE_LABEL.p25, p.coneInnerLow)}
