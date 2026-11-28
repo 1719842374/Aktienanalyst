@@ -17,7 +17,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Ey
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { attachEarningsToPoints, beatRateLabelForWindow, type EarningsMarker } from "@shared/earnings-markers";
+import { EARNINGS_LAMP_CONFIG, attachEarningsToPoints, beatRateLabelForWindow, type EarningsMarker } from "@shared/earnings-markers";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
 import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
@@ -48,9 +48,9 @@ export type { TimeRange };
 
 /** Earnings-Punkte und der Text dazu. marker.kind bleibt die Klassifikation. */
 const EARNINGS_POINT_COLOR = {
-  beat: "#22c55e",
-  miss: "#ef4444",
-  inline: "#94a3b8",
+  beat: EARNINGS_LAMP_CONFIG.colors.beat,
+  miss: EARNINGS_LAMP_CONFIG.colors.miss,
+  inline: EARNINGS_LAMP_CONFIG.colors.inline,
 } as const;
 
 function earningsPointColor(kind: string | null | undefined): string {
@@ -1326,7 +1326,7 @@ export function TechnicalChart({
         <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
           {earningsQuery.isLoading && "Earnings: werden geladen …"}
           {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
-          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · <span style={{ color: EARNINGS_POINT_COLOR.beat }}>Grün</span> Beat, <span style={{ color: EARNINGS_POINT_COLOR.miss }}>Rot</span> Miss, <span style={{ color: EARNINGS_POINT_COLOR.inline }}>Grau</span> Inline · kein Score</>}
+          {earningsQuery.data && <>{earningsBadge}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · <span style={{ color: EARNINGS_POINT_COLOR.beat }}>Grün</span> Beat, <span style={{ color: EARNINGS_POINT_COLOR.inline }}>Gelb</span> in-line, <span style={{ color: EARNINGS_POINT_COLOR.miss }}>Rot</span> Miss, <span style={{ color: EARNINGS_LAMP_CONFIG.colors.na }}>Grau</span> kein Konsens · kein Score</>}
         </div>
       )}
       {showDividend && showKursA && !chartEmpty && (
@@ -1813,6 +1813,10 @@ type EarningsTipFields = {
   _earnRevEst?: number | null;
   _earnRev?: number | null;
   _earnEps?: number | null;
+  _earnRevLamp?: string | null;
+  _earnEpsLamp?: string | null;
+  _earnRevSue?: number | null;
+  _earnEpsSue?: number | null;
   _earnReason?: string | null;
 };
 
@@ -1832,8 +1836,8 @@ function EarningsTooltipRows({ p }: { p: EarningsTipFields }) {
       <div style={{ color }}>Earnings {p._earnKind}</div>
       <div style={{ color }}>Revenue Actual {formatReported(p._earnRevActual)}</div>
       <div>Revenue Estimate {formatReported(p._earnRevEst)}</div>
-      <div style={{ color }}>Surprise <span style={{ color }}>{surprise(p._earnRev)}</span></div>
-      <div style={{ color }}>EPS Surprise <span style={{ color }}>{surprise(p._earnEps)}</span></div>
+      <div style={{ color: earningsPointColor(p._earnRevLamp ?? p._earnKind) }} title={p._earnRevSue != null ? `SUE ${p._earnRevSue.toFixed(2)}` : undefined}>Surprise <span style={{ color: earningsPointColor(p._earnRevLamp ?? p._earnKind) }}>{surprise(p._earnRev)}</span></div>
+      <div style={{ color: earningsPointColor(p._earnEpsLamp ?? p._earnKind) }} title={p._earnEpsSue != null ? `SUE ${p._earnEpsSue.toFixed(2)}` : undefined}>EPS Surprise <span style={{ color: earningsPointColor(p._earnEpsLamp ?? p._earnKind) }}>{surprise(p._earnEps)}</span></div>
       {p._earnReason ? <div style={{ color }}>{p._earnReason}</div> : null}
     </div>
   );

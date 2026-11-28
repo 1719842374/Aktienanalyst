@@ -11,8 +11,9 @@ const { buildEarningsMarkers, attachEarningsToPoints } = await import("../shared
 const thin = buildEarningsMarkers([
   { date: "2024-01-01", revenueActual: 10, revenueEstimate: 9, epsActual: null, epsEstimate: null },
 ]);
-assert.equal(thin.markers[0].kind, null);
-assert.match(thin.beatRateLabel, /n\/a/);
+assert.equal(thin.markers[0].kind, "beat");
+assert.equal(thin.markers[0].revenueLamp, "beat");
+assert.match(thin.beatRateLabel, /^Revenue Beat 1\/1 \(100 %\)$/);
 
 const marks = buildEarningsMarkers([
   { date: "2024-01-01", revenueActual: 100, revenueEstimate: 100, epsActual: 1, epsEstimate: 1 },
@@ -49,7 +50,9 @@ assert.match(ui, /Revenue Estimate/);
 assert.match(ui, /EPS Surprise/);
 assert.match(ui, /#22c55e/);
 assert.match(ui, /#ef4444/);
-assert.match(ui, /#94a3b8/);
+assert.match(ui, /Revenue Estimate \{formatReported/);
+assert.doesNotMatch(ui, /style=\{\{ color \}\}>Revenue Estimate/);
+assert.match(readFileSync("shared/earnings-markers.ts", "utf8"), /inline: "#eab308"/);
 assert.doesNotMatch(ui, /paintAmpelClose/);
 assert.doesNotMatch(ui, /_closeGreen/);
 assert.match(ui, /data-testid="chart-ampel-label"/);
